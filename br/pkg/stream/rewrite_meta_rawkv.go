@@ -246,32 +246,31 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 }
 
 func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
-	oldDBInfo := new(model.DBInfo)
-	if err := json.Unmarshal(value, oldDBInfo); err != nil {
+	dbInfo := new(model.DBInfo)
+	if err := json.Unmarshal(value, dbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	if sr.IsPreConsturctMapStatus() {
-		if dr, exist := sr.DbMap[oldDBInfo.ID]; !exist {
+		if dr, exist := sr.DbMap[dbInfo.ID]; !exist {
 			newID, err := sr.genGenGlobalID(context.Background())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			sr.DbMap[oldDBInfo.ID] = NewDBReplace(oldDBInfo.Name.O, newID)
+			sr.DbMap[dbInfo.ID] = NewDBReplace(dbInfo.Name.O, newID)
 		} else {
-			dr.Name = oldDBInfo.Name.O
+			dr.Name = dbInfo.Name.O
 		}
 		return nil, nil
 	}
 
-	dbMap, exist := sr.DbMap[oldDBInfo.ID]
+	dbMap, exist := sr.DbMap[dbInfo.ID]
 	if !exist {
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", oldDBInfo.ID)
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", dbInfo.ID)
 	}
 
-	newDBInfo := oldDBInfo.Clone()
-	newDBInfo.ID = dbMap.DbID
-	newValue, err := json.Marshal(newDBInfo)
+	dbInfo.ID = dbMap.DbID
+	newValue, err := json.Marshal(dbInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +278,7 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 }
 
 func (sr *SchemasReplace) rewriteEntryForDB(e *kv.Entry, cf string) (*kv.Entry, error) {
-	r, err := sr.rewriteValueV2(
+	r, err := sr.rewriteValue(
 		e.Value,
 		cf,
 		func(value []byte) ([]byte, error) {
@@ -389,7 +388,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 		return nil, errors.Trace(err)
 	}
 
-	// update table ID
+	// construct or find the id map.
 	dbReplace, exist = sr.DbMap[dbID]
 	if !exist {
 		if sr.IsRestoreKVStatus() {
@@ -426,10 +425,8 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	}
 
 	// update table ID and partition ID.
-	newTableInfo := tableInfo.Clone()
-	newTableInfo.ID = tableReplace.TableID
-
-	partitions := newTableInfo.GetPartitionInfo()
+	tableInfo.ID = tableReplace.TableID
+	partitions := tableInfo.GetPartitionInfo()
 	if partitions != nil {
 		for i, tbl := range partitions.Definitions {
 			newID, exist := tableReplace.PartitionMap[tbl.ID]
@@ -457,15 +454,15 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	}
 
 	// Force to disable TTL_ENABLE when restore
-	if newTableInfo.TTLInfo != nil {
-		newTableInfo.TTLInfo.Enable = false
+	if tableInfo.TTLInfo != nil {
+		tableInfo.TTLInfo.Enable = false
 	}
 	if sr.AfterTableRewritten != nil {
-		sr.AfterTableRewritten(false, newTableInfo)
+		sr.AfterTableRewritten(false, &tableInfo)
 	}
 
 	// marshal to json
-	newValue, err := json.Marshal(&newTableInfo)
+	newValue, err := json.Marshal(&tableInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -478,7 +475,7 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 		return nil, errors.Trace(err)
 	}
 
-	result, err := sr.rewriteValueV2(
+	result, err := sr.rewriteValue(
 		e.Value,
 		cf,
 		func(value []byte) ([]byte, error) {
@@ -489,9 +486,9 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 		return nil, errors.Trace(err)
 	}
 
-	newTableID := 0
+	var newTableID int64 = 0
 	newKey, err := sr.rewriteKeyForTable(e.Key, cf, meta.ParseTableKey, func(tableID int64) []byte {
-		newTableID = int(tableID)
+		newTableID = tableID
 		return meta.TableKey(tableID)
 	})
 	if err != nil {
@@ -506,7 +503,7 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	//       get a view of (is_delete, table_id, table_info) at the same time :(.
 	//       Maybe we can extract the rewrite part from rewriteTableInfo.
 	if result.Deleted && sr.AfterTableRewritten != nil {
-		sr.AfterTableRewritten(true, &model.TableInfo{ID: int64(newTableID)})
+		sr.AfterTableRewritten(true, &model.TableInfo{ID: newTableID})
 	}
 
 	return &kv.Entry{Key: newKey, Value: result.NewValue}, nil
@@ -559,8 +556,8 @@ type rewriteResult struct {
 	NewValue []byte
 }
 
-// rewriteValueV2 likes rewriteValueV1, but provides a richer return value.
-func (sr *SchemasReplace) rewriteValueV2(value []byte, cf string, rewrite func([]byte) ([]byte, error)) (rewriteResult, error) {
+// rewriteValue rewrite the value if cf is "default", or rewrite the shortValue if cf is "write".
+func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewrite func([]byte) ([]byte, error)) (rewriteResult, error) {
 	switch cf {
 	case DefaultCF:
 		newValue, err := rewrite(value)

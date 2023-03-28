@@ -2268,8 +2268,8 @@ func (rc *Client) RestoreMetaKVFiles(
 	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
 	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
-	// Preconstruct the map
-	if err := rc.reconstructAndSaveIDMap(
+	// Preconstruct the map and save it into external storage.
+	if err := rc.PreConstructAndSaveIDMap(
 		ctx,
 		filesInWriteCF,
 		filesInDefaultCF,
@@ -2298,7 +2298,8 @@ func (rc *Client) RestoreMetaKVFiles(
 	return nil
 }
 
-func (rc *Client) reconstructAndSaveIDMap(
+// PreConstructAndSaveIDMap constructs id mapping and save it.
+func (rc *Client) PreConstructAndSaveIDMap(
 	ctx context.Context,
 	fsInWriteCF, fsInDefaultCF []*backuppb.DataFileInfo,
 	sr *stream.SchemasReplace,
@@ -2312,7 +2313,7 @@ func (rc *Client) reconstructAndSaveIDMap(
 		return errors.Trace(err)
 	}
 
-	if err := rc.SaveSchemas(ctx, sr); err != nil {
+	if err := rc.SaveIDMap(ctx, sr); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -2785,7 +2786,8 @@ func (rc *Client) GetGCRows() []string {
 	return rc.deleteRangeQuery
 }
 
-func (rc *Client) SaveSchemas(
+// SaveIDMap saves the id mapping information.
+func (rc *Client) SaveIDMap(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
 ) error {

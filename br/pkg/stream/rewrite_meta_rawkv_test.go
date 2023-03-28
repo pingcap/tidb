@@ -522,7 +522,7 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 	// create empty schemasReplace
 	sr := MockEmptySchemasReplace(nil)
 
-	// preConsutruct Map infomation.
+	// preConsutruct Map information.
 	sr.SetPreConstructMapStatus()
 	newValue, err := sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)
