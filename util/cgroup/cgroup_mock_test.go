@@ -170,6 +170,14 @@ func TestCgroupsGetMemoryInactiveFileUsage(t *testing.T) {
 		},
 		{
 			paths: map[string]string{
+				"/proc/self/cgroup":                 v1CgroupWithEccentricMemoryController,
+				"/proc/self/mountinfo":              v1MountsWithEccentricMemController,
+				"/sys/fs/cgroup/memory/memory.stat": v1MemoryStat,
+			},
+			value: 1363746816,
+		},
+		{
+			paths: map[string]string{
 				"/proc/self/cgroup":    v2CgroupWithMemoryController,
 				"/proc/self/mountinfo": v2Mounts,
 			},
