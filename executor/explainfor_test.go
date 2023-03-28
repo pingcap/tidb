@@ -623,9 +623,9 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[0][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[3][0], Matches, ".*IndexFullScan.*")
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexFullScan.*")
 
 	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
 		"where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699;")
@@ -661,11 +661,9 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[1][4], Equals, "lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexReader.*")
-	c.Assert(res.Rows()[4][0], Matches, ".*IndexRangeScan.*")
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
 
 	res = tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
 		"where (a between 0 and 2 or a < 2) and b < 1;")
@@ -708,12 +706,11 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 6)
-	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexLookUp.*")
-	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
-	c.Assert(res.Rows()[4][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[5][0], Matches, ".*TableRowIDScan.*")
+	c.Assert(len(res.Rows()), Equals, 5)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+	c.Assert(res.Rows()[3][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
 
 	res = tk.MustQuery("explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) " +
 		"where (a between 0 and 2 or a < 2) and b < 1;")
