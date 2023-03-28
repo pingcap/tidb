@@ -112,7 +112,6 @@ go_library(
         "//util/domainutil",
         "//util/filter",
         "//util/gcutil",
-        "//util/generic",
         "//util/gpool",
         "//util/gpool/spmc",
         "//util/hack",

@@ -75,6 +75,8 @@ func TestLoadDataInitParam(t *testing.T) {
 		exeerrors.ErrLoadDataUnsupportedFormat)
 	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format 'aaa' into table load_data_test"),
 		exeerrors.ErrLoadDataUnsupportedFormat)
+	require.ErrorIs(t, tk.ExecToErr("load data local infile '/a' format 'parquet' into table load_data_test"),
+		exeerrors.ErrLoadParquetFromLocal)
 	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'sql file' into table load_data_test fields terminated by 'a'"),
 		"cannot specify FIELDS ... or LINES")
 	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test fields terminated by 'a'"),
@@ -118,7 +120,7 @@ func TestLoadDataInitParam(t *testing.T) {
 		[]string{"NULL"}, false)
 
 	// positive case
-	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'parquet' into table load_data_test"))
+	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'sql file' into table load_data_test"))
 	ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NoError(t, tk.ExecToErr("load data local infile '/a' into table load_data_test fields terminated by 'a'"))
 	ctx.SetValue(executor.LoadDataVarKey, nil)

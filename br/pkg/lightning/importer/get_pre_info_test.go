@@ -25,6 +25,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
@@ -604,7 +605,7 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 	}
 	for _, subTest := range subTests {
 		require.NoError(t, mockSrc.GetStorage().WriteFile(ctx, dataFileName, subTest.Data))
-		sampledIndexRatio, isRowOrderedFromSample, err := ig.sampleDataFromTable(ctx, "db01", mdTblMeta, dbInfos["db01"].Tables["tbl01"].Core, nil, defaultImportantVariables)
+		sampledIndexRatio, isRowOrderedFromSample, err := ig.sampleDataFromTable(ctx, "db01", mdTblMeta, dbInfos["db01"].Tables["tbl01"].Core, nil, common.DefaultImportantVariables)
 		require.NoError(t, err)
 		t.Logf("%v, %v", sampledIndexRatio, isRowOrderedFromSample)
 		require.Greater(t, sampledIndexRatio, 1.0)
@@ -698,7 +699,7 @@ func TestGetPreInfoSampleSourceCompressed(t *testing.T) {
 	}
 	for _, subTest := range subTests {
 		require.NoError(t, mockSrc.GetStorage().WriteFile(ctx, dataFileName, subTest.Data))
-		sampledIndexRatio, isRowOrderedFromSample, err := ig.sampleDataFromTable(ctx, "db01", mdTblMeta, dbInfos["db01"].Tables["tbl01"].Core, nil, defaultImportantVariables)
+		sampledIndexRatio, isRowOrderedFromSample, err := ig.sampleDataFromTable(ctx, "db01", mdTblMeta, dbInfos["db01"].Tables["tbl01"].Core, nil, common.DefaultImportantVariables)
 		require.NoError(t, err)
 		t.Logf("%v, %v", sampledIndexRatio, isRowOrderedFromSample)
 		require.Greater(t, sampledIndexRatio, 1.0)

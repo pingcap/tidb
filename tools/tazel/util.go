@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,20 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv_test
+package main
 
 import (
-	"testing"
+	"os"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/stretchr/testify/require"
+	"github.com/bazelbuild/buildtools/build"
+	"github.com/pingcap/tidb/util/set"
 )
 
-func TestSession(t *testing.T) {
-	session := kv.NewSessionCtx(&encode.SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890}, log.L())
-	_, err := session.Txn(true)
-	require.NoError(t, err)
+func write(path string, f *build.File) error {
+	build.Rewrite(f)
+	out := build.Format(f)
+	return os.WriteFile(path, out, 0644)
+}
+
+func skipFlaky(path string) bool {
+	var pmap = set.NewStringSet()
+	pmap.Insert("tests/realtikvtest/addindextest/BUILD.bazel")
+	return pmap.Exist(path)
+}
+
+func skipTazel(path string) bool {
+	var pmap = set.NewStringSet()
+	pmap.Insert("build/BUILD.bazel")
+	return pmap.Exist(path)
 }

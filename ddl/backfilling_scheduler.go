@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -41,10 +42,12 @@ type backfillScheduler struct {
 	jobCtx       *JobContext
 
 	workers []*backfillWorker
+	wg      sync.WaitGroup
 	maxSize int
 
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
+	closed   bool
 
 	copReqSenderPool *copReqSenderPool // for add index in ingest way.
 }
@@ -193,7 +196,9 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		}
 		runner.taskCh = b.taskCh
 		runner.resultCh = b.resultCh
+		runner.wg = &b.wg
 		b.workers = append(b.workers, runner)
+		b.wg.Add(1)
 		go runner.run(reorgInfo.d, worker, job)
 	}
 	// Decrease the worker.
@@ -243,11 +248,18 @@ func canSkipError(jobID int64, workerCnt int, err error) bool {
 	return false
 }
 
-func (b *backfillScheduler) Close() {
-	if b.copReqSenderPool != nil {
-		b.copReqSenderPool.close()
+func (b *backfillScheduler) close(force bool) {
+	if b.closed {
+		return
 	}
-	closeBackfillWorkers(b.workers)
+	if b.copReqSenderPool != nil {
+		b.copReqSenderPool.close(force)
+	}
 	close(b.taskCh)
+	if force {
+		closeBackfillWorkers(b.workers)
+	}
+	b.wg.Wait()
 	close(b.resultCh)
+	b.closed = true
 }

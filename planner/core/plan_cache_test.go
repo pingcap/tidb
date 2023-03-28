@@ -419,6 +419,18 @@ func TestNonPreparedPlanCacheHints(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestNonPreparedPlanCacheParamInit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table tx(a double, b int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	tk.MustExec(`insert into tx values (3.0, 3)`)
+	tk.MustQuery("select json_object('k', a) = json_object('k', b) from tx").Check(testkit.Rows("1")) // no error
+	tk.MustQuery("select json_object('k', a) = json_object('k', b) from tx").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestNonPreparedPlanCacheBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -901,6 +913,25 @@ func TestIssue38710(t *testing.T) {
 	rows = tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f;`)
 	require.Equal(t, 2, len(rows.Rows()))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // can not use the cache because the types for @a and @b are not equal to the cached plan
+}
+
+func TestPlanCacheExprBlacklistCompatibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	tk.MustExec("prepare st from 'select * from t where mod(a, 2)=1'")
+	tk.MustExec("execute st")
+	tk.MustExec("execute st")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('mod')")
+	tk.MustExec(`admin reload expr_pushdown_blacklist`)
+	tk.MustExec("execute st")                                              // no `mod can not be pushed-down` error
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // expr blacklist is updated
+	tk.MustExec("execute st")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestPlanCacheDiagInfo(t *testing.T) {
@@ -1651,6 +1682,19 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 		_, _, err = planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err) // not panic
 	}
+}
+
+func TestNonPreparedPlanCacheUnicode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`create table t1 (a varchar(10) character set latin1, b int)`)
+	tk.MustExec(`insert into t1 values ('a',1)`)
+	tk.MustQuery(`select concat(a, if(b>10, N'x', N'y')) from t1`).Check(testkit.Rows("ay")) // no error
+	tk.MustQuery(`select concat(a, if(b>10, N'x', N'y')) from t1`).Check(testkit.Rows("ay"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
