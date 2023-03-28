@@ -16,6 +16,7 @@ go_library(
 
 go_test(
     name = "keyspace_test",
+    timeout = "short",
     srcs = ["keyspace_test.go"],
     embed = [":keyspace"],
     flaky = True,
