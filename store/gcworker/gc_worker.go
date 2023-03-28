@@ -864,7 +864,8 @@ func isRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	// All nodes should have the same type of engine
 	raftVersion, err := hex.DecodeString(row.GetString(3))
 	if err != nil {
-		return false, errors.Trace(err)
+		// If mock store is used, we cannot decode the result, so just return false is ok.
+		return false, nil
 	}
 	return string(raftVersion) == raftKv2, nil
 }
