@@ -32,53 +32,17 @@ type Progress struct {
 	// larger than the actual loaded data size, but due to the fact that reading
 	// is once-a-block and a block may generate multiple tasks that are
 	// concurrently executed, we can't know the actual loaded data size easily.
-	LoadedFileSize atomicInt64JSONWrapper
+	LoadedFileSize *atomic.Int64
 	// LoadedRowCnt is the number of rows that has been loaded.
-	LoadedRowCnt atomicUint64JSONWrapper
-}
-
-type atomicInt64JSONWrapper struct {
-	*atomic.Int64
-}
-
-func (w *atomicInt64JSONWrapper) MarshalJSON() ([]byte, error) {
-	return json.Marshal(w.Load())
-}
-
-func (w *atomicInt64JSONWrapper) UnmarshalJSON(bs []byte) error {
-	var v int64
-	err := json.Unmarshal(bs, &v)
-	if err != nil {
-		return err
-	}
-	w.Int64 = atomic.NewInt64(v)
-	return nil
-}
-
-type atomicUint64JSONWrapper struct {
-	*atomic.Uint64
-}
-
-func (w *atomicUint64JSONWrapper) MarshalJSON() ([]byte, error) {
-	return json.Marshal(w.Load())
-}
-
-func (w *atomicUint64JSONWrapper) UnmarshalJSON(bs []byte) error {
-	var v uint64
-	err := json.Unmarshal(bs, &v)
-	if err != nil {
-		return err
-	}
-	w.Uint64 = atomic.NewUint64(v)
-	return nil
+	LoadedRowCnt *atomic.Uint64
 }
 
 // NewProgress creates a new Progress.
 func NewProgress() *Progress {
 	return &Progress{
 		SourceFileSize: -1,
-		LoadedFileSize: atomicInt64JSONWrapper{atomic.NewInt64(0)},
-		LoadedRowCnt:   atomicUint64JSONWrapper{atomic.NewUint64(0)},
+		LoadedFileSize: atomic.NewInt64(0),
+		LoadedRowCnt:   atomic.NewUint64(0),
 	}
 }
 

@@ -737,6 +737,7 @@ func (w *encodeWorker) readOneBatchRows(ctx context.Context, parser mydump.Parse
 		if err != nil {
 			return err
 		}
+		parser.RecycleRow(parser.LastRow())
 		w.rows = append(w.rows, r)
 		w.curBatchCnt++
 		if w.maxRowsInBatch != 0 && w.rowCount%w.maxRowsInBatch == 0 {
