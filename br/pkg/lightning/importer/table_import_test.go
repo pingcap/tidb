@@ -988,6 +988,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		errorMgr:          errormanager.New(nil, cfg, log.L()),
 		taskMgr:           noopTaskMetaMgr{},
 		preInfoGetter:     preInfoGetter,
+		encBuilder:        tidb.NewEncodingBuilder(),
 	}
 	go func() {
 		for scp := range chptCh {
