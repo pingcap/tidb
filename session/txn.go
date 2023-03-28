@@ -400,6 +400,24 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	return err
 }
 
+// ChangeLockIntoPut tries to cache a locked key-value pair that might be converted to PUT on commit, returns true if
+// the key-value pair has been cached.
+func (txn *LazyTxn) ChangeLockIntoPut(ctx context.Context, key kv.Key, value []byte) bool {
+	if len(value) == 0 {
+		return false
+	}
+	cache, ok := txn.Transaction.(interface{ SetLockedKeyValue([]byte, []byte) })
+	if !ok {
+		return false
+	}
+	_, err := txn.GetMemBuffer().Get(ctx, key)
+	if !kv.IsErrNotFound(err) {
+		return false
+	}
+	cache.SetLockedKeyValue(key, value)
+	return true
+}
+
 func (txn *LazyTxn) reset() {
 	txn.cleanup()
 	txn.changeToInvalid()

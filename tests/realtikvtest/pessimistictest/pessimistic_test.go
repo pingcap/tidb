@@ -2913,6 +2913,40 @@ func TestChangeLockToPut(t *testing.T) {
 	tk.MustExec("admin check table t1")
 }
 
+func TestIssue28011(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, tt := range []struct {
+		name      string
+		lockQuery string
+		finalRows [][]interface{}
+	}{
+		{"Update", "update t set b = 'x' where a = 'a'", testkit.Rows("a x", "b y", "c z")},
+		{"BatchUpdate", "update t set b = 'x' where a in ('a', 'b', 'c')", testkit.Rows("a x", "b y", "c x")},
+		{"SelectForUpdate", "select a from t where a = 'a' for update", testkit.Rows("a x", "b y", "c z")},
+		{"BatchSelectForUpdate", "select a from t where a in ('a', 'b', 'c') for update", testkit.Rows("a x", "b y", "c z")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (a varchar(10) primary key nonclustered, b varchar(10))")
+			tk.MustExec("insert into t values ('a', 'x'), ('b', 'x'), ('c', 'z')")
+			tk.MustExec("begin pessimistic")
+			tk.MustExec(tt.lockQuery)
+			tk.MustQuery("select a from t").Check(testkit.Rows("a", "b", "c"))
+			tk.MustExec("replace into t values ('b', 'y')")
+			tk.MustQuery("select a from t").Check(testkit.Rows("a", "b", "c"))
+			tk.MustQuery("select a, b from t order by a").Check(tt.finalRows)
+			tk.MustExec("commit")
+			tk.MustQuery("select a, b from t order by a").Check(tt.finalRows)
+			tk.MustExec("admin check table t")
+		})
+	}
+}
+
 func createTable(part bool, columnNames []string, columnTypes []string) string {
 	var str string
 	str = "create table t("
