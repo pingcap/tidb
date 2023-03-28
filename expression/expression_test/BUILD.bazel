@@ -2,13 +2,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "expression_test_test",
-    timeout = "short",
     srcs = [
         "constant_fold_test.go",
         "multi_valued_index_test.go",
         "typeinfer_test.go",
     ],
-    flaky = True,
     deps = [
         "//errno",
         "//kv",
