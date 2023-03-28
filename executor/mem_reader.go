@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/tracing"
 )
 
 type memReader interface {
@@ -65,11 +65,7 @@ type memIndexReader struct {
 }
 
 func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("buildMemIndexReader", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		opentracing.ContextWithSpan(ctx, span1)
-	}
+	defer tracing.StartRegion(ctx, "buildMemIndexReader").End()
 	kvRanges := idxReader.kvRanges
 	outputOffset := make([]int, 0, len(us.columns))
 	for _, col := range idxReader.outputColumns {
@@ -90,11 +86,7 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 }
 
 func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("memIndexReader.getMemRows", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		opentracing.ContextWithSpan(ctx, span1)
-	}
+	defer tracing.StartRegion(ctx, "memIndexReader.getMemRows").End()
 	tps := make([]*types.FieldType, 0, len(m.index.Columns)+1)
 	cols := m.table.Columns
 	for _, col := range m.index.Columns {
@@ -190,11 +182,7 @@ type allocBuf struct {
 }
 
 func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *TableReaderExecutor) *memTableReader {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("buildMemTableReader", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		opentracing.ContextWithSpan(ctx, span1)
-	}
+	defer tracing.StartRegion(ctx, "buildMemTableReader").End()
 	colIDs := make(map[int64]int, len(us.columns))
 	for i, col := range us.columns {
 		colIDs[col.ID] = i
@@ -235,11 +223,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *Tabl
 
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
 func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("memTableReader.getMemRows", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		opentracing.ContextWithSpan(ctx, span1)
-	}
+	defer tracing.StartRegion(ctx, "memTableReader.getMemRows").End()
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	resultRows := make([]types.Datum, len(m.columns))
 	m.offsets = make([]int, len(m.columns))
@@ -490,11 +474,8 @@ type memIndexLookUpReader struct {
 }
 
 func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUpReader *IndexLookUpExecutor) *memIndexLookUpReader {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("buildMemIndexLookUpReader", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		opentracing.ContextWithSpan(ctx, span1)
-	}
+	defer tracing.StartRegion(ctx, "buildMemIndexLookUpReader").End()
+
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
@@ -527,11 +508,9 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 }
 
 func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("memIndexLookUpReader.getMemRows", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "memIndexLookUpReader.getMemRows")
+	defer r.End()
+
 	kvRanges := [][]kv.KeyRange{m.idxReader.kvRanges}
 	tbls := []table.Table{m.table}
 	if m.partitionMode {
@@ -604,11 +583,7 @@ type memIndexMergeReader struct {
 }
 
 func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMergeReader *IndexMergeReaderExecutor) *memIndexMergeReader {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("buildMemIndexMergeReader", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		opentracing.ContextWithSpan(ctx, span1)
-	}
+	defer tracing.StartRegion(ctx, "buildMemIndexMergeReader").End()
 	indexCount := len(indexMergeReader.indexes)
 	memReaders := make([]memReader, 0, indexCount)
 	for i := 0; i < indexCount; i++ {
@@ -661,11 +636,8 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 }
 
 func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("memIndexMergeReader.getMemRows", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "memIndexMergeReader.getMemRows")
+	defer r.End()
 	tbls := []table.Table{m.table}
 	// [partNum][indexNum][rangeNum]
 	var kvRanges [][][]kv.KeyRange

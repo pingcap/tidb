@@ -12,7 +12,7 @@ import (
 	gomock "github.com/golang/mock/gomock"
 	uuid "github.com/google/uuid"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
-	kv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	encode "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	config "github.com/pingcap/tidb/br/pkg/lightning/config"
 	model "github.com/pingcap/tidb/parser/model"
 	table "github.com/pingcap/tidb/table"
@@ -96,7 +96,7 @@ func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1, arg2 interface{}) *go
 }
 
 // CollectLocalDuplicateRows mocks base method.
-func (m *MockBackend) CollectLocalDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *kv.SessionOptions) (bool, error) {
+func (m *MockBackend) CollectLocalDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *encode.SessionOptions) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CollectLocalDuplicateRows", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(bool)
@@ -111,7 +111,7 @@ func (mr *MockBackendMockRecorder) CollectLocalDuplicateRows(arg0, arg1, arg2, a
 }
 
 // CollectRemoteDuplicateRows mocks base method.
-func (m *MockBackend) CollectRemoteDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *kv.SessionOptions) (bool, error) {
+func (m *MockBackend) CollectRemoteDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *encode.SessionOptions) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CollectRemoteDuplicateRows", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(bool)
@@ -212,10 +212,10 @@ func (mr *MockBackendMockRecorder) LocalWriter(arg0, arg1, arg2 interface{}) *go
 }
 
 // MakeEmptyRows mocks base method.
-func (m *MockBackend) MakeEmptyRows() kv.Rows {
+func (m *MockBackend) MakeEmptyRows() encode.Rows {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "MakeEmptyRows")
-	ret0, _ := ret[0].(kv.Rows)
+	ret0, _ := ret[0].(encode.Rows)
 	return ret0
 }
 
@@ -226,18 +226,18 @@ func (mr *MockBackendMockRecorder) MakeEmptyRows() *gomock.Call {
 }
 
 // NewEncoder mocks base method.
-func (m *MockBackend) NewEncoder(arg0 context.Context, arg1 table.Table, arg2 *kv.SessionOptions) (kv.Encoder, error) {
+func (m *MockBackend) NewEncoder(arg0 context.Context, arg1 *encode.EncodingConfig) (encode.Encoder, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "NewEncoder", arg0, arg1, arg2)
-	ret0, _ := ret[0].(kv.Encoder)
+	ret := m.ctrl.Call(m, "NewEncoder", arg0, arg1)
+	ret0, _ := ret[0].(encode.Encoder)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // NewEncoder indicates an expected call of NewEncoder.
-func (mr *MockBackendMockRecorder) NewEncoder(arg0, arg1, arg2 interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) NewEncoder(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewEncoder", reflect.TypeOf((*MockBackend)(nil).NewEncoder), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewEncoder", reflect.TypeOf((*MockBackend)(nil).NewEncoder), arg0, arg1)
 }
 
 // OpenEngine mocks base method.
@@ -310,6 +310,20 @@ func (mr *MockBackendMockRecorder) ShouldPostProcess() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ShouldPostProcess", reflect.TypeOf((*MockBackend)(nil).ShouldPostProcess))
 }
 
+// TotalMemoryConsume mocks base method.
+func (m *MockBackend) TotalMemoryConsume() int64 {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TotalMemoryConsume")
+	ret0, _ := ret[0].(int64)
+	return ret0
+}
+
+// TotalMemoryConsume indicates an expected call of TotalMemoryConsume.
+func (mr *MockBackendMockRecorder) TotalMemoryConsume() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TotalMemoryConsume", reflect.TypeOf((*MockBackend)(nil).TotalMemoryConsume))
+}
+
 // MockEngineWriter is a mock of EngineWriter interface.
 type MockEngineWriter struct {
 	ctrl     *gomock.Controller
@@ -334,7 +348,7 @@ func (m *MockEngineWriter) EXPECT() *MockEngineWriterMockRecorder {
 }
 
 // AppendRows mocks base method.
-func (m *MockEngineWriter) AppendRows(arg0 context.Context, arg1 string, arg2 []string, arg3 kv.Rows) error {
+func (m *MockEngineWriter) AppendRows(arg0 context.Context, arg1 string, arg2 []string, arg3 encode.Rows) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AppendRows", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(error)
@@ -374,17 +388,4 @@ func (m *MockEngineWriter) IsSynced() bool {
 func (mr *MockEngineWriterMockRecorder) IsSynced() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSynced", reflect.TypeOf((*MockEngineWriter)(nil).IsSynced))
-}
-
-func (m *MockBackend) TotalMemoryConsume() int64 {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TotalMemoryConsume")
-	ret0, _ := ret[0].(int64)
-	return ret0
-}
-
-// LocalWriter indicates an expected call of LocalWriter.
-func (mr *MockBackendMockRecorder) TotalMemoryConsume() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TotalMemoryConsume", reflect.TypeOf((*MockBackend)(nil).OpenEngine))
 }

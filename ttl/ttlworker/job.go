@@ -43,6 +43,29 @@ const finishJobTemplate = `UPDATE mysql.tidb_ttl_table_status
 		current_job_status_update_time = NULL
 	WHERE table_id = %? AND current_job_id = %?`
 const removeTaskForJobTemplate = "DELETE FROM mysql.tidb_ttl_task WHERE job_id = %?"
+const createJobHistoryRowTemplate = `INSERT INTO
+    mysql.tidb_ttl_job_history (
+        job_id,
+        table_id,
+        parent_table_id,
+        table_schema,
+        table_name,
+        partition_name,
+        create_time,
+        finish_time,
+        ttl_expire,
+        status
+    )
+VALUES
+    (%?, %?, %?, %?, %?, %?, %?, FROM_UNIXTIME(1), %?, %?)`
+const finishJobHistoryTemplate = `UPDATE mysql.tidb_ttl_job_history
+	SET finish_time = %?,
+	    summary_text = %?,
+	    expired_rows = %?,
+	    deleted_rows = %?,
+	    error_delete_rows = %?,
+	    status = %?
+	WHERE job_id = %?`
 
 func updateJobCurrentStatusSQL(tableID int64, oldStatus cache.JobStatus, newStatus cache.JobStatus, jobID string) (string, []interface{}) {
 	return updateJobCurrentStatusTemplate, []interface{}{string(newStatus), tableID, string(oldStatus), jobID}
@@ -56,11 +79,43 @@ func removeTaskForJob(jobID string) (string, []interface{}) {
 	return removeTaskForJobTemplate, []interface{}{jobID}
 }
 
+func createJobHistorySQL(jobID string, tbl *cache.PhysicalTable, expire time.Time, now time.Time) (string, []interface{}) {
+	var partitionName interface{}
+	if tbl.Partition.O != "" {
+		partitionName = tbl.Partition.O
+	}
+
+	return createJobHistoryRowTemplate, []interface{}{
+		jobID,
+		tbl.ID,
+		tbl.TableInfo.ID,
+		tbl.Schema.O,
+		tbl.Name.O,
+		partitionName,
+		now.Format(timeFormat),
+		expire.Format(timeFormat),
+		string(cache.JobStatusRunning),
+	}
+}
+
+func finishJobHistorySQL(jobID string, finishTime time.Time, summary *TTLSummary) (string, []interface{}) {
+	return finishJobHistoryTemplate, []interface{}{
+		finishTime.Format(timeFormat),
+		summary.SummaryText,
+		summary.TotalRows,
+		summary.SuccessRows,
+		summary.ErrorRows,
+		string(cache.JobStatusFinished),
+		jobID,
+	}
+}
+
 type ttlJob struct {
 	id      string
 	ownerID string
 
-	createTime time.Time
+	createTime    time.Time
+	ttlExpireTime time.Time
 
 	tbl *cache.PhysicalTable
 
@@ -71,17 +126,23 @@ type ttlJob struct {
 }
 
 // finish turns current job into last job, and update the error message and statistics summary
-func (job *ttlJob) finish(se session.Session, now time.Time, summary string) {
+func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary) {
 	// at this time, the job.ctx may have been canceled (to cancel this job)
 	// even when it's canceled, we'll need to update the states, so use another context
 	err := se.RunInTxn(context.TODO(), func() error {
-		sql, args := finishJobSQL(job.tbl.ID, now, summary, job.id)
+		sql, args := finishJobSQL(job.tbl.ID, now, summary.SummaryText, job.id)
 		_, err := se.ExecuteSQL(context.TODO(), sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
 		sql, args = removeTaskForJob(job.id)
+		_, err = se.ExecuteSQL(context.TODO(), sql, args...)
+		if err != nil {
+			return errors.Wrapf(err, "execute sql: %s", sql)
+		}
+
+		sql, args = finishJobHistorySQL(job.id, now, summary)
 		_, err = se.ExecuteSQL(context.TODO(), sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)

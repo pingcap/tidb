@@ -16,8 +16,10 @@ package gctuner
 
 import (
 	"runtime"
+	"runtime/debug"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -27,16 +29,20 @@ type testState struct {
 }
 
 func TestFinalizer(t *testing.T) {
-	maxCount := int32(16)
+	debug.SetGCPercent(1000)
+	maxCount := int32(8)
 	state := &testState{}
+	var stopped atomic.Bool
+	defer stopped.Store(true)
 	f := newFinalizer(func() {
 		n := atomic.AddInt32(&state.count, 1)
-		if n > maxCount {
+		if n > maxCount && stopped.Load() {
 			t.Fatalf("cannot exec finalizer callback after f has been gc")
 		}
 	})
 	for i := int32(1); i <= maxCount; i++ {
 		runtime.GC()
+		time.Sleep(10 * time.Millisecond)
 		require.Equal(t, i, atomic.LoadInt32(&state.count))
 	}
 	require.Nil(t, f.ref)

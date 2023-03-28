@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "resourcegroup",
@@ -12,17 +12,5 @@ go_library(
         "//parser/model",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
-        "@io_k8s_apimachinery//pkg/api/resource",
-    ],
-)
-
-go_test(
-    name = "resourcegroup_test",
-    srcs = ["group_test.go"],
-    embed = [":resourcegroup"],
-    deps = [
-        "//parser/model",
-        "@com_github_pingcap_kvproto//pkg/resource_manager",
-        "@com_github_stretchr_testify//require",
     ],
 )

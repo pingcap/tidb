@@ -39,7 +39,7 @@ var (
 	_ ExprNode = &IsTruthExpr{}
 	_ ExprNode = &ParenthesesExpr{}
 	_ ExprNode = &PatternInExpr{}
-	_ ExprNode = &PatternLikeExpr{}
+	_ ExprNode = &PatternLikeOrIlikeExpr{}
 	_ ExprNode = &PatternRegexpExpr{}
 	_ ExprNode = &PositionExpr{}
 	_ ExprNode = &RowExpr{}
@@ -873,8 +873,8 @@ func (n *IsTruthExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// PatternLikeExpr is the expression for like operator, e.g, expr like "%123%"
-type PatternLikeExpr struct {
+// PatternLikeOrIlikeExpr is the expression for like operator, e.g, expr like "%123%"
+type PatternLikeOrIlikeExpr struct {
 	exprNode
 	// Expr is the expression to be checked.
 	Expr ExprNode
@@ -883,6 +883,8 @@ type PatternLikeExpr struct {
 	// Not is true, the expression is "not like".
 	Not bool
 
+	IsLike bool
+
 	Escape byte
 
 	PatChars []byte
@@ -890,19 +892,27 @@ type PatternLikeExpr struct {
 }
 
 // Restore implements Node interface.
-func (n *PatternLikeExpr) Restore(ctx *format.RestoreCtx) error {
+func (n *PatternLikeOrIlikeExpr) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Expr.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore PatternLikeExpr.Expr")
+		return errors.Annotate(err, "An error occurred while restore PatternLikeOrIlikeExpr.Expr")
 	}
 
-	if n.Not {
-		ctx.WriteKeyWord(" NOT LIKE ")
+	if n.IsLike {
+		if n.Not {
+			ctx.WriteKeyWord(" NOT LIKE ")
+		} else {
+			ctx.WriteKeyWord(" LIKE ")
+		}
 	} else {
-		ctx.WriteKeyWord(" LIKE ")
+		if n.Not {
+			ctx.WriteKeyWord(" NOT ILIKE ")
+		} else {
+			ctx.WriteKeyWord(" ILIKE ")
+		}
 	}
 
 	if err := n.Pattern.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore PatternLikeExpr.Pattern")
+		return errors.Annotate(err, "An error occurred while restore PatternLikeOrIlikeExpr.Pattern")
 	}
 
 	escape := string(n.Escape)
@@ -914,13 +924,22 @@ func (n *PatternLikeExpr) Restore(ctx *format.RestoreCtx) error {
 }
 
 // Format the ExprNode into a Writer.
-func (n *PatternLikeExpr) Format(w io.Writer) {
+func (n *PatternLikeOrIlikeExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
-	if n.Not {
-		fmt.Fprint(w, " NOT LIKE ")
+	if n.IsLike {
+		if n.Not {
+			fmt.Fprint(w, " NOT LIKE ")
+		} else {
+			fmt.Fprint(w, " LIKE ")
+		}
 	} else {
-		fmt.Fprint(w, " LIKE ")
+		if n.Not {
+			fmt.Fprint(w, " NOT ILIKE ")
+		} else {
+			fmt.Fprint(w, " ILIKE ")
+		}
 	}
+
 	n.Pattern.Format(w)
 	if n.Escape != '\\' {
 		fmt.Fprint(w, " ESCAPE ")
@@ -929,12 +948,12 @@ func (n *PatternLikeExpr) Format(w io.Writer) {
 }
 
 // Accept implements Node Accept interface.
-func (n *PatternLikeExpr) Accept(v Visitor) (Node, bool) {
+func (n *PatternLikeOrIlikeExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*PatternLikeExpr)
+	n = newNode.(*PatternLikeOrIlikeExpr)
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {

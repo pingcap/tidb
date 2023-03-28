@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -2250,7 +2251,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
 				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", executor.ErrQueryInterrupted.Error(), comment, 10)
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", exeerrors.ErrQueryInterrupted.Error(), comment, 10)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
@@ -2323,7 +2324,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
 				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", executor.ErrQueryInterrupted.Error(), comment, 10)
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", exeerrors.ErrQueryInterrupted.Error(), comment, 10)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
@@ -3087,13 +3088,12 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	sql := "analyze table t with 1.0 samplerate;" // Need about 100MB
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
-	}()
 	_, err := tk0.Exec(sql)
 	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 	runtime.GC()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
+	tk0.MustExec(sql)
 }
 
 func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {

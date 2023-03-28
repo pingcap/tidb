@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
@@ -387,6 +388,7 @@ type DuplicateManager struct {
 	tableName   string
 	splitCli    split.SplitClient
 	tikvCli     *tikv.KVStore
+	tikvCodec   tikv.Codec
 	errorMgr    *errormanager.ErrorManager
 	decoder     *kv.TableKVDecoder
 	logger      log.Logger
@@ -401,8 +403,9 @@ func NewDuplicateManager(
 	tableName string,
 	splitCli split.SplitClient,
 	tikvCli *tikv.KVStore,
+	tikvCodec tikv.Codec,
 	errMgr *errormanager.ErrorManager,
-	sessOpts *kv.SessionOptions,
+	sessOpts *encode.SessionOptions,
 	concurrency int,
 	hasDupe *atomic.Bool,
 	logger log.Logger,
@@ -417,6 +420,7 @@ func NewDuplicateManager(
 		tableName:   tableName,
 		splitCli:    splitCli,
 		tikvCli:     tikvCli,
+		tikvCodec:   tikvCodec,
 		errorMgr:    errMgr,
 		decoder:     decoder,
 		logger:      logger,
@@ -436,6 +440,10 @@ func (m *DuplicateManager) RecordDataConflictError(ctx context.Context, stream D
 		if errors.Cause(err) == io.EOF {
 			break
 		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		key, err = m.tikvCodec.DecodeKey(key)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -501,6 +509,10 @@ func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream 
 		if errors.Cause(err) == io.EOF {
 			break
 		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		key, err = m.tikvCodec.DecodeKey(key)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -580,6 +592,11 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 		keyRanges.ForEachPartition(func(ranges []tidbkv.KeyRange) {
 			putToTaskFunc(ranges, indexInfo)
 		})
+	}
+
+	// Encode all the tasks
+	for i := range tasks {
+		tasks[i].StartKey, tasks[i].EndKey = m.tikvCodec.EncodeRange(tasks[i].StartKey, tasks[i].EndKey)
 	}
 	return tasks, nil
 }
@@ -683,8 +700,8 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 			}
 
 			// Delete the key range in duplicate DB since we have the duplicates have been collected.
-			rawStartKey := keyAdapter.Encode(nil, task.StartKey, math.MinInt64)
-			rawEndKey := keyAdapter.Encode(nil, task.EndKey, math.MinInt64)
+			rawStartKey := keyAdapter.Encode(nil, task.StartKey, MinRowID)
+			rawEndKey := keyAdapter.Encode(nil, task.EndKey, MinRowID)
 			err = dupDB.DeleteRange(rawStartKey, rawEndKey, nil)
 			return errors.Trace(err)
 		})

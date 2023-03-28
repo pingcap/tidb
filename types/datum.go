@@ -1254,7 +1254,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 		}
 		t, err = t.RoundFrac(sc, fsp)
 	case KindString, KindBytes:
-		t, err = ParseTime(sc, d.GetString(), mysql.TypeTimestamp, fsp)
+		t, err = ParseTime(sc, d.GetString(), mysql.TypeTimestamp, fsp, nil)
 	case KindInt64:
 		t, err = ParseTimeFromNum(sc, d.GetInt64(), mysql.TypeTimestamp, fsp)
 	case KindMysqlDecimal:
@@ -1267,7 +1267,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 			ret.SetMysqlTime(t)
 			return ret, err
 		}
-		t, err = ParseTime(sc, s, mysql.TypeTimestamp, fsp)
+		t, err = ParseTime(sc, s, mysql.TypeTimestamp, fsp, nil)
 	default:
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
@@ -1308,7 +1308,7 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 	case KindMysqlDecimal:
 		t, err = ParseTimeFromFloatString(sc, d.GetMysqlDecimal().String(), tp, fsp)
 	case KindString, KindBytes:
-		t, err = ParseTime(sc, d.GetString(), tp, fsp)
+		t, err = ParseTime(sc, d.GetString(), tp, fsp, nil)
 	case KindInt64:
 		t, err = ParseTimeFromNum(sc, d.GetInt64(), tp, fsp)
 	case KindUint64:
@@ -1327,7 +1327,7 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 			ret.SetMysqlTime(t)
 			return ret, err
 		}
-		t, err = ParseTime(sc, s, tp, fsp)
+		t, err = ParseTime(sc, s, tp, fsp, nil)
 	default:
 		return invalidConv(d, tp)
 	}
@@ -1991,6 +1991,20 @@ func (d *Datum) ToBytes() ([]byte, error) {
 			return nil, errors.Trace(err)
 		}
 		return []byte(str), nil
+	}
+}
+
+// ToHashKey gets the bytes representation of the datum considering collation.
+func (d *Datum) ToHashKey() ([]byte, error) {
+	switch d.k {
+	case KindString, KindBytes:
+		return collate.GetCollator(d.Collation()).Key(d.GetString()), nil
+	default:
+		str, err := d.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return collate.GetCollator(d.Collation()).Key(str), nil
 	}
 }
 

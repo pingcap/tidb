@@ -17,6 +17,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/metrics"
+	"go.uber.org/zap"
 )
 
 // emptyClusterIndexUsage is empty ClusterIndexUsage, deprecated.
@@ -60,6 +62,8 @@ type featureUsage struct {
 	AutoIDNoCache             bool                             `json:"autoIDNoCache"`
 	IndexMergeUsageCounter    *m.IndexMergeUsageCounter        `json:"indexMergeUsageCounter"`
 	ResourceControlUsage      *resourceControlUsage            `json:"resourceControl"`
+	TTLUsage                  *ttlUsageCounter                 `json:"ttlUsage"`
+	StoreBatchCoprUsage       *m.StoreBatchCoprCounter         `json:"storeBatchCopr"`
 }
 
 type placementPolicyUsage struct {
@@ -80,7 +84,7 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	var err error
 	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx, sctx)
 	if err != nil {
-		logutil.BgLogger().Info(err.Error())
+		logutil.BgLogger().Info("Failed to get feature usage", zap.Error(err))
 		return nil, err
 	}
 
@@ -116,6 +120,10 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.EnableGlobalMemoryControl = getGlobalMemoryControl()
 
 	usage.IndexMergeUsageCounter = getIndexMergeUsageInfo()
+
+	usage.TTLUsage = getTTLUsageInfo(ctx, sctx)
+
+	usage.StoreBatchCoprUsage = getStoreBatchUsage(sctx)
 
 	return &usage, nil
 }
@@ -238,15 +246,17 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 // TxnUsage records the usage info of transaction related features, including
 // async-commit, 1PC and counters of transactions committed with different protocols.
 type TxnUsage struct {
-	AsyncCommitUsed           bool                     `json:"asyncCommitUsed"`
-	OnePCUsed                 bool                     `json:"onePCUsed"`
-	TxnCommitCounter          metrics.TxnCommitCounter `json:"txnCommitCounter"`
-	MutationCheckerUsed       bool                     `json:"mutationCheckerUsed"`
-	AssertionLevel            string                   `json:"assertionLevel"`
-	RcCheckTS                 bool                     `json:"rcCheckTS"`
-	RCWriteCheckTS            bool                     `json:"rcWriteCheckTS"`
-	SavepointCounter          int64                    `json:"SavepointCounter"`
-	LazyUniqueCheckSetCounter int64                    `json:"lazyUniqueCheckSetCounter"`
+	AsyncCommitUsed           bool                      `json:"asyncCommitUsed"`
+	OnePCUsed                 bool                      `json:"onePCUsed"`
+	TxnCommitCounter          metrics.TxnCommitCounter  `json:"txnCommitCounter"`
+	MutationCheckerUsed       bool                      `json:"mutationCheckerUsed"`
+	AssertionLevel            string                    `json:"assertionLevel"`
+	RcCheckTS                 bool                      `json:"rcCheckTS"`
+	RCWriteCheckTS            bool                      `json:"rcWriteCheckTS"`
+	FairLocking               bool                      `json:"fairLocking"`
+	SavepointCounter          int64                     `json:"SavepointCounter"`
+	LazyUniqueCheckSetCounter int64                     `json:"lazyUniqueCheckSetCounter"`
+	FairLockingUsageCounter   m.FairLockingUsageCounter `json:"FairLockingUsageCounter"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
@@ -260,6 +270,8 @@ var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
 var initialDDLUsageCounter m.DDLUsageCounter
 var initialIndexMergeCounter m.IndexMergeUsageCounter
+var initialStoreBatchCoprCounter m.StoreBatchCoprCounter
+var initialFairLockingUsageCounter m.FairLockingUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -289,13 +301,23 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCWriteCheckTs); err == nil {
 		rcWriteCheckTSUsed = val == variable.On
 	}
+	fairLockingUsed := false
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBPessimisticTransactionFairLocking); err == nil {
+		fairLockingUsed = val == variable.On
+	}
+
 	currSavepointCount := m.GetSavepointStmtCounter()
 	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
+
 	currLazyUniqueCheckSetCount := m.GetLazyPessimisticUniqueCheckSetCounter()
 	diffLazyUniqueCheckSetCount := currLazyUniqueCheckSetCount - initialLazyPessimisticUniqueCheckSetCount
+
+	currFairLockingUsageCounter := m.GetFairLockingUsageCounter()
+	diffFairLockingUsageCounter := currFairLockingUsageCounter.Sub(initialFairLockingUsageCounter)
+
 	return &TxnUsage{asyncCommitUsed, onePCUsed, diff,
 		mutationCheckerUsed, assertionUsed, rcCheckTSUsed, rcWriteCheckTSUsed,
-		diffSavepointCount, diffLazyUniqueCheckSetCount,
+		fairLockingUsed, diffSavepointCount, diffLazyUniqueCheckSetCount, diffFairLockingUsageCounter,
 	}
 }
 
@@ -318,6 +340,10 @@ func PostSavepointCount() {
 
 func postReportLazyPessimisticUniqueCheckSetCount() {
 	initialLazyPessimisticUniqueCheckSetCount = m.GetLazyPessimisticUniqueCheckSetCounter()
+}
+
+func postReportFairLockingUsageCounter() {
+	initialFairLockingUsageCounter = m.GetFairLockingUsageCounter()
 }
 
 // getCTEUsageInfo gets the CTE usages.
@@ -427,4 +453,19 @@ func getIndexMergeUsageInfo() *m.IndexMergeUsageCounter {
 	curr := m.GetIndexMergeCounter()
 	diff := curr.Sub(initialIndexMergeCounter)
 	return &diff
+}
+
+func getStoreBatchUsage(ctx sessionctx.Context) *m.StoreBatchCoprCounter {
+	curr := m.GetStoreBatchCoprCounter()
+	diff := curr.Sub(initialStoreBatchCoprCounter)
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBStoreBatchSize); err == nil {
+		if batchSize, err := strconv.Atoi(val); err == nil {
+			diff.BatchSize = batchSize
+		}
+	}
+	return &diff
+}
+
+func postStoreBatchUsage() {
+	initialStoreBatchCoprCounter = m.GetStoreBatchCoprCounter()
 }

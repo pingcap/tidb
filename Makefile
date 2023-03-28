@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive
 
-check: parser_yacc check-parallel lint tidy testSuite errdoc check-bazel-prepare
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -55,6 +55,12 @@ errdoc:tools/bin/errdoc-gen
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+
+license:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
+		--run_under="cd $(CURDIR) && " \
+		 @com_github_apache_skywalking_eyes//cmd/license-eye:license-eye --run_under="cd $(CURDIR) && "  -- -c ./.github/licenserc.yml  header check
+
 
 tidy:
 	@echo "go mod tidy"
@@ -106,7 +112,7 @@ explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 ddltest:
-	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
+	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
 
 CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm
 
@@ -239,7 +245,7 @@ ifeq ("$(pkg)", "")
 else
 	@echo "Running unit test for github.com/pingcap/tidb/$(pkg)"
 	@export log_level=fatal; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -tags 'intest' -v -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
@@ -326,6 +332,10 @@ br_compatibility_test:
 mock_s3iface:
 	@mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API > br/pkg/mock/s3iface.go
 
+mock_lightning:
+	@mockgen -package mock -mock_names AbstractBackend=MockBackend github.com/pingcap/tidb/br/pkg/lightning/backend AbstractBackend,EngineWriter > br/pkg/mock/backend.go
+	@mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend/encode Encoder,Rows,Row > br/pkg/mock/encode.go
+
 # There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
 # but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
 # cgo enabled on regular builds is performance.
@@ -397,15 +407,20 @@ check-bazel-prepare:
 	@echo "make bazel_prepare"
 	./tools/check/check-bazel-prepare.sh
 
-bazel_test: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
+bazel_test: failpoint-enable bazel_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
+		--define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
 
-bazel_coverage_test: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
-		--build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock \
+bazel_coverage_test: check-bazel-prepare failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,distributereorg \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
@@ -438,27 +453,27 @@ bazel_golangcilinter:
 	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.golangci.yaml
 
 bazel_brietest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/brietest/...
 
 bazel_pessimistictest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/pessimistictest/...
 
 bazel_sessiontest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/sessiontest/...
 
 bazel_statisticstest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/statisticstest/...
 
 bazel_txntest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/txntest/...
 
 bazel_addindextest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest/...
 
 bazel_lint: bazel_prepare

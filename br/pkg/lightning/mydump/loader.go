@@ -89,6 +89,7 @@ type SourceFileMeta struct {
 	// WARNING: variables below are not persistent
 	ExtendData ExtendColumnData
 	RealSize   int64
+	Rows       int64 // only for parquet
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -120,6 +121,11 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 		return "", err
 	}
 	return string(schema), nil
+}
+
+// FullTableName return FQDN of the table.
+func (m *MDTableMeta) FullTableName() string {
+	return common.UniqueTable(m.DB, m.Name)
 }
 
 // MDLoaderSetupConfig stores the configs when setting up a MDLoader.

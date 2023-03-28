@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -73,6 +75,8 @@ const (
 	flagPartitionProcessor
 	flagCollectPredicateColumnsPoint
 	flagPushDownAgg
+	flagDeriveTopNFromWindow
+	flagPredicateSimplification
 	flagPushDownTopN
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
@@ -95,6 +99,8 @@ var optRuleList = []logicalOptRule{
 	&partitionProcessor{},
 	&collectPredicateColumnsPoint{},
 	&aggregationPushDownSolver{},
+	&deriveTopNFromWindow{},
+	&predicateSimplification{},
 	&pushDownTopNOptimizer{},
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
@@ -144,8 +150,8 @@ type logicalOptRule interface {
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
 func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, types.NameSlice, error) {
-	sctx.GetSessionVars().PlanID = 0
-	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().PlanID.Store(0)
+	sctx.GetSessionVars().PlanColumnID.Store(0)
 	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
@@ -395,6 +401,8 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	handleFineGrainedShuffle(ctx, sctx, plan)
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
+	disableReuseChunkIfNeeded(sctx, plan)
+	tryEnableLateMaterialization(sctx, plan)
 	return plan, nil
 }
 
@@ -534,6 +542,22 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) er
 		}
 	}
 	return nil
+}
+
+// tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator
+// @brief: push down some filter conditions to the table scan operator
+// @param: sctx: session context
+// @param: plan: the physical plan to be pruned
+// @note: this optimization is only applied when the TiFlash is used.
+// @note: the following conditions should be satisfied:
+//   - Only the filter conditions with high selectivity should be pushed down.
+//   - The filter conditions which contain heavy cost functions should not be pushed down.
+//   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
+func tryEnableLateMaterialization(sctx sessionctx.Context, plan PhysicalPlan) {
+	// check if EnableLateMaterialization is set
+	if sctx.GetSessionVars().EnableLateMaterialization {
+		predicatePushDownToTableScan(sctx, plan)
+	}
 }
 
 /*
@@ -747,14 +771,20 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
 			logicalCpus, err := strconv.Atoi(row[5].GetString())
-			if err == nil && logicalCpus > 0 && uint64(logicalCpus) < minLogicalCores {
-				minLogicalCores = uint64(logicalCpus)
+			if err == nil && logicalCpus > 0 {
+				minLogicalCores = mathutil.Min(minLogicalCores, uint64(logicalCpus))
 			}
 		}
 	}
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
 	if minLogicalCores > 1 && minLogicalCores != initialMaxCores {
-		return true, minLogicalCores / 2
+		if runtime.GOARCH == "amd64" {
+			// In most x86-64 platforms, `Thread(s) per core` is 2
+			return true, minLogicalCores / 2
+		}
+		// ARM cpus don't implement Hyper-threading.
+		return true, minLogicalCores
+		// Other platforms are too rare to consider
 	}
 
 	return false, 0
@@ -1209,4 +1239,57 @@ func init() {
 	expression.RewriteAstExpr = rewriteAstExpr
 	DefaultDisabledLogicalRulesList = new(atomic.Value)
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
+}
+
+func disableReuseChunkIfNeeded(sctx sessionctx.Context, plan PhysicalPlan) {
+	if !sctx.GetSessionVars().IsAllocValid() {
+		return
+	}
+
+	if checkOverlongColType(sctx, plan) {
+		return
+	}
+
+	for _, child := range plan.Children() {
+		disableReuseChunkIfNeeded(sctx, child)
+	}
+}
+
+// checkOverlongColType Check if read field type is long field.
+func checkOverlongColType(sctx sessionctx.Context, plan PhysicalPlan) bool {
+	if plan == nil {
+		return false
+	}
+	switch plan.(type) {
+	case *PhysicalTableReader, *PhysicalIndexReader,
+		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGetPlan:
+		if existsOverlongType(plan.Schema()) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true
+		}
+	}
+	return false
+}
+
+// existsOverlongType Check if exists long type column.
+func existsOverlongType(schema *expression.Schema) bool {
+	if schema == nil {
+		return false
+	}
+	for _, column := range schema.Columns {
+		switch column.RetType.GetType() {
+		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+			mysql.TypeBlob, mysql.TypeJSON:
+			return true
+		case mysql.TypeVarString, mysql.TypeVarchar:
+			// if the column is varchar and the length of
+			// the column is defined to be more than 1000,
+			// the column is considered a large type and
+			// disable chunk_reuse.
+			if column.RetType.GetFlen() > 1000 {
+				return true
+			}
+		}
+	}
+	return false
 }

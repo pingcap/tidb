@@ -17,14 +17,16 @@ package ttlworker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -38,12 +40,14 @@ import (
 	"go.uber.org/zap"
 )
 
+const scanTaskNotificationType string = "scan"
+
 const insertNewTableIntoStatusTemplate = "INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (%?, %?)"
 const setTableStatusOwnerTemplate = `UPDATE mysql.tidb_ttl_table_status
 	SET current_job_id = %?,
 		current_job_owner_id = %?,
 		current_job_start_time = %?,
-		current_job_status = 'waiting',
+		current_job_status = 'running',
 		current_job_status_update_time = %?,
 		current_job_ttl_expire = %?,
 		current_job_owner_hb_time = %?
@@ -55,6 +59,8 @@ const taskGCTemplate = `DELETE task FROM
 		mysql.tidb_ttl_table_status job
 	ON task.job_id = job.current_job_id
 	WHERE job.table_id IS NULL`
+
+const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE create_time < CURDATE() - INTERVAL 90 DAY`
 
 const timeFormat = "2006-01-02 15:04:05"
 
@@ -82,8 +88,9 @@ type JobManager struct {
 	// id is the ddl id of this instance
 	id string
 
-	store  kv.Storage
-	cmdCli client.CommandClient
+	store           kv.Storage
+	cmdCli          client.CommandClient
+	notificationCli client.NotificationClient
 
 	// infoSchemaCache and tableStatusCache are a cache stores the information from info schema and the tidb_ttl_table_status
 	// table. They don't need to be protected by mutex, because they are only used in job loop goroutine.
@@ -97,6 +104,8 @@ type JobManager struct {
 	runningJobs []*ttlJob
 
 	taskManager *taskManager
+
+	lastReportDelayMetricsTime time.Time
 }
 
 // NewJobManager creates a new ttl job manager
@@ -113,12 +122,14 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 	manager.tableStatusCache = cache.NewTableStatusCache(getUpdateTTLTableStatusCacheInterval())
 
 	if etcdCli != nil {
-		manager.cmdCli = client.NewEtcdCommandClient(etcdCli)
+		manager.cmdCli = client.NewCommandClient(etcdCli)
+		manager.notificationCli = client.NewNotificationClient(etcdCli)
 	} else {
 		manager.cmdCli = client.NewMockCommandClient()
+		manager.notificationCli = client.NewMockNotificationClient()
 	}
 
-	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id)
+	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id, store)
 
 	return
 }
@@ -138,7 +149,7 @@ func (m *JobManager) jobLoop() error {
 	infoSchemaCacheUpdateTicker := time.Tick(m.infoSchemaCache.GetInterval())
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
 	resizeWorkersTicker := time.Tick(getResizeWorkersInterval())
-	taskGC := time.Tick(jobManagerLoopTickerInterval)
+	gcTicker := time.Tick(ttlGCInterval)
 
 	scheduleJobTicker := time.Tick(jobManagerLoopTickerInterval)
 	jobCheckTicker := time.Tick(jobManagerLoopTickerInterval)
@@ -146,13 +157,15 @@ func (m *JobManager) jobLoop() error {
 
 	scheduleTaskTicker := time.Tick(getTaskManagerLoopTickerInterval())
 	updateTaskHeartBeatTicker := time.Tick(ttlTaskHeartBeatTickerInterval)
-	taskCheckTicker := time.Tick(getTaskManagerLoopTickerInterval())
+	taskCheckTicker := time.Tick(time.Second * 5)
 	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
 
 	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
+	scanTaskNotificationWatcher := m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
 	m.taskManager.resizeWorkersWithSysVar()
 	for {
-		m.reportMetrics()
+		m.reportMetrics(se)
+		m.taskManager.reportMetrics()
 		now := se.Now()
 
 		select {
@@ -169,12 +182,9 @@ func (m *JobManager) jobLoop() error {
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to update table status cache", zap.Error(err))
 			}
-		case <-taskGC:
-			taskGCCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-			_, err = se.ExecuteSQL(taskGCCtx, taskGCTemplate)
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to gc redundant scan task", zap.Error(err))
-			}
+		case <-gcTicker:
+			gcCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
+			DoGC(gcCtx, se)
 			cancel()
 		// Job Schedule loop:
 		case <-updateJobHeartBeatTicker:
@@ -207,6 +217,17 @@ func (m *JobManager) jobLoop() error {
 
 		// Task Manager Loop
 		case <-scheduleTaskTicker:
+			m.taskManager.rescheduleTasks(se, now)
+		case _, ok := <-scanTaskNotificationWatcher:
+			if !ok {
+				if m.ctx.Err() != nil {
+					return nil
+				}
+
+				logutil.BgLogger().Warn("The TTL scan task notification watcher is closed unexpectedly, re-watch it again")
+				scanTaskNotificationWatcher = m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
+				continue
+			}
 			m.taskManager.rescheduleTasks(se, now)
 		case <-taskCheckTicker:
 			m.taskManager.checkInvalidTask(se)
@@ -328,7 +349,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 	)
 }
 
-func (m *JobManager) reportMetrics() {
+func (m *JobManager) reportMetrics(se session.Session) {
 	var runningJobs, cancellingJobs float64
 	for _, job := range m.runningJobs {
 		switch job.status {
@@ -340,6 +361,16 @@ func (m *JobManager) reportMetrics() {
 	}
 	metrics.RunningJobsCnt.Set(runningJobs)
 	metrics.CancellingJobsCnt.Set(cancellingJobs)
+
+	if time.Since(m.lastReportDelayMetricsTime) > 10*time.Minute {
+		m.lastReportDelayMetricsTime = time.Now()
+		records, err := GetDelayMetricRecords(m.ctx, se, time.Now())
+		if err != nil {
+			logutil.Logger(m.ctx).Info("failed to get TTL delay metrics", zap.Error(err))
+		} else {
+			metrics.UpdateDelayMetrics(records)
+		}
+	}
 }
 
 // checkNotOwnJob removes the job whose current job owner is not yourself
@@ -504,13 +535,12 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 
 	startTime := tableStatus.LastJobStartTime
 
-	interval := table.TTLInfo.JobInterval
-	d, err := duration.ParseDuration(interval)
+	interval, err := table.TTLInfo.GetJobInterval()
 	if err != nil {
-		logutil.Logger(m.ctx).Warn("illegal job interval", zap.String("interval", interval))
+		logutil.Logger(m.ctx).Warn("illegal job interval", zap.Error(err))
 		return false
 	}
-	return startTime.Add(d).Before(now)
+	return startTime.Add(interval).Before(now)
 }
 
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
@@ -518,6 +548,7 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 // It could be nil, nil, if the table query doesn't return error but the job has been locked by other instances.
 func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, ignoreScheduleInterval bool) (*ttlJob, error) {
 	var expireTime time.Time
+	var jobID string
 
 	err := se.RunInTxn(ctx, func() error {
 		sql, args := cache.SelectFromTTLTableStatusWithID(table.ID)
@@ -557,7 +588,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return err
 		}
 
-		jobID := uuid.New().String()
+		jobID = uuid.New().String()
 		jobExist := false
 		if len(tableStatus.CurrentJobID) > 0 {
 			// don't create new job if there is already one running
@@ -579,6 +610,12 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		// if the job already exist, don't need to submit scan tasks
 		if jobExist {
 			return nil
+		}
+
+		sql, args = createJobHistorySQL(jobID, table, expireTime, now)
+		_, err = se.ExecuteSQL(ctx, sql, args...)
+		if err != nil {
+			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
 		ranges, err := table.SplitScanRanges(ctx, m.store, splitScanCount)
@@ -611,23 +648,30 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 	if err != nil {
 		return nil, err
 	}
-	return m.createNewJob(now, table)
+
+	job := m.createNewJob(jobID, expireTime, now, table)
+
+	// job is created, notify every scan managers to fetch new tasks
+	err = m.notificationCli.Notify(m.ctx, scanTaskNotificationType, job.id)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("fail to trigger scan tasks", zap.Error(err))
+	}
+	return job, nil
 }
 
-func (m *JobManager) createNewJob(now time.Time, table *cache.PhysicalTable) (*ttlJob, error) {
-	id := m.tableStatusCache.Tables[table.ID].CurrentJobID
-
+func (m *JobManager) createNewJob(id string, expireTime time.Time, now time.Time, table *cache.PhysicalTable) *ttlJob {
 	return &ttlJob{
 		id:      id,
 		ownerID: m.id,
 
-		createTime: now,
+		createTime:    now,
+		ttlExpireTime: expireTime,
 		// at least, the info schema cache and table status cache are consistent in table id, so it's safe to get table
 		// information from schema cache directly
 		tbl: table,
 
-		status: cache.JobStatusWaiting,
-	}, nil
+		status: cache.JobStatusRunning,
+	}
 }
 
 // updateHeartBeat updates the heartbeat for all task with current instance as owner
@@ -687,7 +731,13 @@ func (m *JobManager) GetCommandCli() client.CommandClient {
 	return m.cmdCli
 }
 
-type ttlSummary struct {
+// GetNotificationCli returns the notification client
+func (m *JobManager) GetNotificationCli() client.NotificationClient {
+	return m.notificationCli
+}
+
+// TTLSummary is the summary for TTL job
+type TTLSummary struct {
 	TotalRows   uint64 `json:"total_rows"`
 	SuccessRows uint64 `json:"success_rows"`
 	ErrorRows   uint64 `json:"error_rows"`
@@ -697,22 +747,24 @@ type ttlSummary struct {
 	FinishedScanTask  int `json:"finished_scan_task"`
 
 	ScanTaskErr string `json:"scan_task_err,omitempty"`
+	SummaryText string `json:"-"`
 }
 
-func summarizeErr(err error) (string, error) {
-	summary := &ttlSummary{
+func summarizeErr(err error) (*TTLSummary, error) {
+	summary := &TTLSummary{
 		ScanTaskErr: err.Error(),
 	}
 
 	buf, err := json.Marshal(summary)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(buf), nil
+	summary.SummaryText = string(buf)
+	return summary, nil
 }
 
-func summarizeTaskResult(tasks []*cache.TTLTask) (string, error) {
-	summary := &ttlSummary{}
+func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
+	summary := &TTLSummary{}
 	var allErr error
 	for _, t := range tasks {
 		if t.State != nil {
@@ -738,7 +790,127 @@ func summarizeTaskResult(tasks []*cache.TTLTask) (string, error) {
 
 	buf, err := json.Marshal(summary)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(buf), nil
+	summary.SummaryText = string(buf)
+	return summary, nil
+}
+
+// DoGC deletes some old TTL job histories and redundant scan tasks
+func DoGC(ctx context.Context, se session.Session) {
+	if _, err := se.ExecuteSQL(ctx, taskGCTemplate); err != nil {
+		logutil.Logger(ctx).Warn("fail to gc redundant scan task", zap.Error(err))
+	}
+
+	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCTemplate); err != nil {
+		logutil.Logger(ctx).Warn("fail to gc ttl job history", zap.Error(err))
+	}
+}
+
+// GetDelayMetricRecords gets the records of TTL delay metrics
+func GetDelayMetricRecords(ctx context.Context, se session.Session, now time.Time) (map[int64]*metrics.DelayMetricsRecord, error) {
+	sql := `SELECT
+    parent_table_id as tid,
+    CAST(UNIX_TIMESTAMP(MIN(create_time)) AS SIGNED) as job_ts
+FROM
+    (
+        SELECT
+            table_id,
+            parent_table_id,
+            MAX(create_time) AS create_time
+        FROM
+            mysql.tidb_ttl_job_history
+        WHERE
+            create_time > CURDATE() - INTERVAL 7 DAY
+            AND status = 'finished'
+            AND JSON_VALID(summary_text)
+            AND summary_text ->> "$.scan_task_err" IS NULL
+        GROUP BY
+            table_id,
+            parent_table_id
+    ) t
+GROUP BY
+    parent_table_id;`
+
+	rows, err := se.ExecuteSQL(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+
+	records := make(map[int64]*metrics.DelayMetricsRecord, len(rows))
+	for _, row := range rows {
+		r := &metrics.DelayMetricsRecord{
+			TableID:     row.GetInt64(0),
+			LastJobTime: time.Unix(row.GetInt64(1), 0),
+		}
+
+		if now.After(r.LastJobTime) {
+			r.AbsoluteDelay = now.Sub(r.LastJobTime)
+		}
+		records[r.TableID] = r
+	}
+
+	isVer := se.GetDomainInfoSchema()
+	is, ok := isVer.(infoschema.InfoSchema)
+	if !ok {
+		logutil.Logger(ctx).Error(fmt.Sprintf("failed to cast information schema for type: %v", isVer))
+		return records, nil
+	}
+
+	noRecordTables := make([]string, 0)
+	for _, db := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(db.Name) {
+			tblInfo := tbl.Meta()
+			if tblInfo.TTLInfo == nil {
+				continue
+			}
+
+			interval, err := tblInfo.TTLInfo.GetJobInterval()
+			if err != nil {
+				logutil.Logger(ctx).Error("failed to get table's job interval",
+					zap.Error(err),
+					zap.String("db", db.Name.String()),
+					zap.String("table", tblInfo.Name.String()),
+				)
+				interval = time.Hour
+			}
+
+			record, ok := records[tblInfo.ID]
+			if !ok {
+				noRecordTables = append(noRecordTables, strconv.FormatInt(tblInfo.ID, 10))
+				continue
+			}
+
+			if record.AbsoluteDelay > interval {
+				record.ScheduleRelativeDelay = record.AbsoluteDelay - interval
+			}
+		}
+	}
+
+	if len(noRecordTables) > 0 {
+		sql = fmt.Sprintf("select TIDB_TABLE_ID, CAST(UNIX_TIMESTAMP(CREATE_TIME) AS SIGNED) from information_schema.tables WHERE TIDB_TABLE_ID in (%s)", strings.Join(noRecordTables, ", "))
+		if rows, err = se.ExecuteSQL(ctx, sql); err != nil {
+			logutil.Logger(ctx).Error("failed to exec sql",
+				zap.Error(err),
+				zap.String("sql", sql),
+			)
+		} else {
+			for _, row := range rows {
+				tblID := row.GetInt64(0)
+				tblCreateTime := time.Unix(row.GetInt64(1), 0)
+				r := &metrics.DelayMetricsRecord{
+					TableID: tblID,
+				}
+
+				if now.After(tblCreateTime) {
+					r.AbsoluteDelay = now.Sub(tblCreateTime)
+					r.ScheduleRelativeDelay = r.AbsoluteDelay
+				}
+
+				records[tblID] = r
+			}
+		}
+	}
+
+	return records, nil
 }

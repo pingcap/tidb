@@ -42,7 +42,7 @@ func TestCommandClient(t *testing.T) {
 	defer cluster.Terminate(t)
 	etcd := cluster.RandClient()
 
-	etcdCli := NewEtcdCommandClient(etcd)
+	etcdCli := NewCommandClient(etcd)
 	mockCli := NewMockCommandClient()
 
 	ctx, cancel := context.WithTimeout(context.TODO(), time.Minute)

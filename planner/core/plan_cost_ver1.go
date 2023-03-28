@@ -77,7 +77,7 @@ func (p *PhysicalSelection) getPlanCostVer1(taskType property.TaskType, option *
 	switch taskType {
 	case property.RootTaskType, property.MppTaskType:
 		cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
-	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
 		cpuFactor = p.ctx.GetSessionVars().GetCopCPUFactor()
 	default:
 		return 0, errors.Errorf("unknown task type %v", taskType)
@@ -181,7 +181,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer1(taskType property.TaskType, 
 	p.planCost = 0
 	// child's cost
 	for _, child := range []PhysicalPlan{p.indexPlan, p.tablePlan} {
-		childCost, err := child.getPlanCostVer1(property.CopDoubleReadTaskType, option)
+		childCost, err := child.getPlanCostVer1(property.CopMultiReadTaskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -194,7 +194,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer1(taskType property.TaskType, 
 	for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
 	}
 	ts := tmp.(*PhysicalTableScan)
-	tblCost, err := ts.getPlanCostVer1(property.CopDoubleReadTaskType, option)
+	tblCost, err := ts.getPlanCostVer1(property.CopMultiReadTaskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -1027,7 +1027,7 @@ func (p *PhysicalHashAgg) getPlanCostVer1(taskType property.TaskType, option *Pl
 	switch taskType {
 	case property.RootTaskType:
 		p.planCost += p.GetCost(statsCnt, true, false, costFlag)
-	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
 		p.planCost += p.GetCost(statsCnt, false, false, costFlag)
 	case property.MppTaskType:
 		p.planCost += p.GetCost(statsCnt, false, true, costFlag)

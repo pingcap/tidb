@@ -27,7 +27,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -57,6 +57,7 @@ import (
 
 // TableCommon is shared by both Table and partition.
 type TableCommon struct {
+	// TODO: Why do we need tableID, when it is already in meta.ID ?
 	tableID int64
 	// physicalTableID is a unique int64 to identify a physical table.
 	physicalTableID                 int64
@@ -235,6 +236,11 @@ func (t *TableCommon) GetPhysicalID() int64 {
 	return t.physicalTableID
 }
 
+// GetPartitionedTable implements table.Table GetPhysicalID interface.
+func (t *TableCommon) GetPartitionedTable() table.PartitionedTable {
+	return nil
+}
+
 type getColsMode int64
 
 const (
@@ -330,6 +336,31 @@ func (t *TableCommon) IndexPrefix() kv.Key {
 // RecordKey implements table.Table interface.
 func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
+}
+
+// shouldAssert checks if the partition should be in consistent
+// state and can have assertion.
+func (t *TableCommon) shouldAssert(sctx sessionctx.Context) bool {
+	p := t.Meta().Partition
+	if p != nil {
+		// This disables asserting during Reorganize Partition.
+		switch sctx.GetSessionVars().AssertionLevel {
+		case variable.AssertionLevelFast:
+			// Fast option, just skip assertion for all partitions.
+			if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
+				return false
+			}
+		case variable.AssertionLevelStrict:
+			// Strict, only disable assertion for intermediate partitions.
+			// If there were an easy way to get from a TableCommon back to the partitioned table...
+			for i := range p.AddingDefinitions {
+				if t.physicalTableID == p.AddingDefinitions[i].ID {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -448,7 +479,13 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			}
 		}
 	})
-	if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
+
+	if t.shouldAssert(sctx) {
+		err = txn.SetAssertion(key, kv.SetAssertExist)
+	} else {
+		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+	}
+	if err != nil {
 		return err
 	}
 
@@ -700,11 +737,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	var ctx context.Context
 	if opt.Ctx != nil {
 		ctx = opt.Ctx
-		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-			span1 := span.Tracer().StartSpan("table.AddRecord", opentracing.ChildOf(span.Context()))
-			defer span1.Finish()
-			ctx = opentracing.ContextWithSpan(ctx, span1)
-		}
+		var r tracing.Region
+		r, ctx = tracing.StartRegionEx(ctx, "table.AddRecord")
+		defer r.End()
 	} else {
 		ctx = context.Background()
 	}
@@ -926,9 +961,15 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			return nil, err
 		}
 	}
+
 	if sessVars.TxnCtx == nil {
 		return recordID, nil
 	}
+
+	if shouldIncreaseTTLMetricCount(t.meta) {
+		sessVars.TxnCtx.InsertTTLRowsCount += 1
+	}
+
 	colSize := make(map[int64]int64, len(r))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc, r[id])
@@ -1134,6 +1175,8 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
+	logutil.BgLogger().Debug("RemoveRecord",
+		zap.Stringer("key", t.RecordKey(h)))
 	err = t.removeRowData(ctx, h)
 	if err != nil {
 		return err
@@ -1304,7 +1347,11 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 			}
 		}
 	})
-	err = txn.SetAssertion(key, kv.SetAssertExist)
+	if t.shouldAssert(ctx) {
+		err = txn.SetAssertion(key, kv.SetAssertExist)
+	} else {
+		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+	}
 	if err != nil {
 		return err
 	}
@@ -1592,6 +1639,10 @@ func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
 		return false
 	}
 	return !ctx.GetSessionVars().InRestrictedSQL
+}
+
+func shouldIncreaseTTLMetricCount(tblInfo *model.TableInfo) bool {
+	return tblInfo.TTLInfo != nil
 }
 
 func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation {

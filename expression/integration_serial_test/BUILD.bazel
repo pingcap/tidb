@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "integration_serial_test_test",
+    timeout = "short",
+    srcs = [
+        "integration_serial_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    shard_count = 50,
+    deps = [
+        "//config",
+        "//parser/mysql",
+        "//parser/terror",
+        "//planner/core",
+        "//session",
+        "//sessionctx/variable",
+        "//testkit",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "//types",
+        "//util/timeutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

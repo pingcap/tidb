@@ -15,6 +15,8 @@
 package variable_test
 
 import (
+	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -25,10 +27,12 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
@@ -50,6 +54,7 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TxnIsolation, "SERIALIZABLE", true},
 		{variable.TimeZone, "xyz", true},
 		{variable.TiDBOptAggPushDown, "1", false},
+		{variable.TiDBOptDeriveTopN, "1", false},
 		{variable.TiDBOptDistinctAggPushDown, "1", false},
 		{variable.TiDBMemQuotaQuery, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
@@ -202,6 +207,8 @@ func TestSlowLogFormat(t *testing.T) {
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
 	resultFields := `# Txn_start_ts: 406649736972468225
+# Keyspace_name: keyspace_a
+# Keyspace_ID: 1
 # User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
 # Exec_retry_time: 5.1 Exec_retry_count: 3
@@ -242,6 +249,8 @@ func TestSlowLogFormat(t *testing.T) {
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
+		KeyspaceName:      "keyspace_a",
+		KeyspaceID:        1,
 		SQL:               sql,
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
@@ -480,56 +489,34 @@ func TestGetReuseChunk(t *testing.T) {
 	require.Nil(t, sessVars.ChunkPool.Alloc)
 }
 
-func TestPretectedTSList(t *testing.T) {
-	lst := &variable.NewSessionVars(nil).ProtectedTSList
-
-	// empty set
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
-	require.Equal(t, 0, lst.Size())
-
-	// hold 1
-	unhold1 := lst.HoldTS(1)
-	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
-
-	// hold 2 twice
-	unhold2a := lst.HoldTS(2)
-	unhold2b := lst.HoldTS(2)
-	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
-	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
-	require.Equal(t, 2, lst.Size())
-
-	// unhold 2a
-	unhold2a()
-	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
-	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
-	require.Equal(t, 2, lst.Size())
-	// unhold 2a again
-	unhold2a()
-	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
-	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
-	require.Equal(t, 2, lst.Size())
-
-	// unhold 1
-	unhold1()
-	require.Equal(t, uint64(2), lst.GetMinProtectedTS(0))
-	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
-	require.Equal(t, 1, lst.Size())
-
-	// unhold 2b
-	unhold2b()
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
-	require.Equal(t, 0, lst.Size())
-
-	// unhold 2b again
-	unhold2b()
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
-	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
-	require.Equal(t, 0, lst.Size())
+func TestUserVarConcurrently(t *testing.T) {
+	sv := variable.NewSessionVars(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	var wg util2.WaitGroupWrapper
+	wg.Run(func() {
+		for i := 0; ; i++ {
+			select {
+			case <-time.After(time.Millisecond):
+				name := strconv.Itoa(i)
+				sv.SetUserVarVal(name, types.Datum{})
+				sv.GetUserVarVal(name)
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+	wg.Run(func() {
+		for {
+			select {
+			case <-time.After(time.Millisecond):
+				var states sessionstates.SessionStates
+				require.NoError(t, sv.EncodeSessionStates(ctx, &states))
+				require.NoError(t, sv.DecodeSessionStates(ctx, &states))
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+	wg.Wait()
+	cancel()
 }

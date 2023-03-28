@@ -56,7 +56,7 @@ func testDatumToBool(t *testing.T, in interface{}, res int) {
 	datum := NewDatum(in)
 	res64 := int64(res)
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	b, err := datum.ToBool(sc)
 	require.NoError(t, err)
 	require.Equal(t, res64, b)
@@ -93,7 +93,7 @@ func TestToBool(t *testing.T) {
 	testDatumToBool(t, CreateBinaryJSON(true), 1)
 	testDatumToBool(t, CreateBinaryJSON(false), 1)
 	testDatumToBool(t, CreateBinaryJSON(""), 1)
-	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
+	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
 	require.NoError(t, err)
 	testDatumToBool(t, t1, 1)
 
@@ -108,7 +108,7 @@ func TestToBool(t *testing.T) {
 	testDatumToBool(t, v, 1)
 	d := NewDatum(&invalidMockType{})
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	_, err = d.ToBool(sc)
 	require.Error(t, err)
 }
@@ -116,7 +116,7 @@ func TestToBool(t *testing.T) {
 func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
 	d := NewDatum(val)
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	b, err := d.ToInt64(sc)
 	require.NoError(t, err)
 	require.Equal(t, expect, b)
@@ -136,7 +136,7 @@ func TestToInt64(t *testing.T) {
 
 	t1, err := ParseTime(&stmtctx.StatementContext{
 		TimeZone: time.UTC,
-	}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
+	}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0, nil)
 	require.NoError(t, err)
 	testDatumToInt64(t, t1, int64(20111110111112))
 
@@ -154,7 +154,7 @@ func TestToInt64(t *testing.T) {
 func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bool) {
 	d := NewDatum(val)
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 
 	ft := NewFieldType(mysql.TypeLong)
 	ft.AddFlag(mysql.UnsignedFlag)
@@ -206,7 +206,7 @@ func TestConvertToFloat(t *testing.T) {
 	}
 
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	for _, testCase := range testCases {
 		converted, err := testCase.d.ConvertTo(sc, NewFieldType(testCase.tp))
 		if testCase.errMsg == "" {
@@ -226,7 +226,7 @@ func TestConvertToFloat(t *testing.T) {
 }
 
 func mustParseTime(s string, tp byte, fsp int) Time {
-	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp)
+	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp, nil)
 	if err != nil {
 		panic("ParseTime fail")
 	}
@@ -311,7 +311,7 @@ func TestToBytes(t *testing.T) {
 		{Datum{}, []byte{}},
 	}
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	for _, tt := range tests {
 		bin, err := tt.a.ToBytes()
 		require.NoError(t, err)
@@ -360,7 +360,7 @@ func TestCloneDatum(t *testing.T) {
 	}
 
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	for _, tt := range tests {
 		tt1 := *tt.Clone()
 		res, err := tt.Compare(sc, &tt1, collate.GetBinaryCollator())
@@ -414,7 +414,7 @@ func TestEstimatedMemUsage(t *testing.T) {
 
 func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	sc.OverflowAsWarning = true
 	// TODO: add more reserve convert tests for each pair of convert type.
 	testData := []struct {
@@ -539,7 +539,7 @@ func TestStringToMysqlBit(t *testing.T) {
 		{NewStringDatum("b'0'"), []byte{0}},
 	}
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	tp := NewFieldType(mysql.TypeBit)
 	tp.SetFlen(1)
 	for _, tt := range tests {

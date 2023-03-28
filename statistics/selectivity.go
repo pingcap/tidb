@@ -335,7 +335,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				case ast.LogicOr:
 					notCoveredDNF[i] = x
 					continue
-				case ast.Like, ast.Regexp, ast.RegexpLike:
+				case ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 					notCoveredStrMatch[i] = x
 					continue
 				case ast.UnaryNot:
@@ -343,7 +343,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 					innerSF, ok := inner.(*expression.ScalarFunction)
 					if ok {
 						switch innerSF.FuncName.L {
-						case ast.Like, ast.Regexp, ast.RegexpLike:
+						case ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 							notCoveredNegateStrMatch[i] = x
 							continue
 						}
@@ -442,7 +442,7 @@ OUTER:
 	// Try to cover remaining string matching functions by evaluating the expressions with TopN to estimate.
 	if ctx.GetSessionVars().EnableEvalTopNEstimationForStrMatch() {
 		for i, scalarCond := range notCoveredStrMatch {
-			ok, sel, err := coll.GetSelectivityByFilter(ctx, ctx.GetSessionVars().GetStrMatchDefaultSelectivity(), []expression.Expression{scalarCond})
+			ok, sel, err := coll.GetSelectivityByFilter(ctx, []expression.Expression{scalarCond})
 			if err != nil {
 				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
 			}
@@ -454,7 +454,7 @@ OUTER:
 			delete(notCoveredStrMatch, i)
 		}
 		for i, scalarCond := range notCoveredNegateStrMatch {
-			ok, sel, err := coll.GetSelectivityByFilter(ctx, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity(), []expression.Expression{scalarCond})
+			ok, sel, err := coll.GetSelectivityByFilter(ctx, []expression.Expression{scalarCond})
 			if err != nil {
 				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
 			}

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -140,6 +141,7 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
 	dbLowerName := strings.ToLower(db)
 	tblLowerName := strings.ToLower(table)
+
 	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
 	// There are some hard rules which overwrite system tables and schemas as read-only at most.
 	semEnabled := sem.IsEnabled()
@@ -308,6 +310,16 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 		return record.User, record.Host, true
 	}
 	return "", "", false
+}
+
+// MatchUserResourceGroupName implements the Manager interface.
+func (p *UserPrivileges) MatchUserResourceGroupName(resourceGroupName string) (u string, success bool) {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchResoureGroup(resourceGroupName)
+	if record != nil {
+		return record.User, true
+	}
+	return "", false
 }
 
 // GetAuthWithoutVerification implements the Manager interface.
@@ -494,6 +506,14 @@ func BuildPasswordLockingJSON(failedLoginAttempts int64,
 
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars) (info privilege.VerificationInfo, err error) {
+	if SkipWithGrant {
+		p.user = authUser
+		p.host = authHost
+		// special handling to existing users or root user initialized with insecure
+		info.ResourceGroupName = "default"
+		return
+	}
+
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
@@ -501,18 +521,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(authUser, authHost)
-
-	if SkipWithGrant {
-		p.user = authUser
-		p.host = authHost
-		// special handling to existing users or root user initialized with insecure
-		if record == nil || record.ResourceGroup == "" {
-			info.ResourceGroupName = "default"
-		} else {
-			info.ResourceGroupName = record.ResourceGroup
-		}
-		return
-	}
 
 	if record == nil {
 		logutil.BgLogger().Error("get authUser privilege record fail",
@@ -534,7 +542,13 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
-	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+	// If the user uses session token to log in, skip checking record.AuthPlugin.
+	if user.AuthPlugin == mysql.AuthTiDBSessionToken {
+		if err = sessionstates.ValidateSessionToken(authentication, user.Username); err != nil {
+			logutil.BgLogger().Warn("verify session token failed", zap.String("username", user.Username), zap.Error(err))
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	} else if record.AuthPlugin == mysql.AuthTiDBAuthToken {
 		if len(authentication) == 0 {
 			logutil.BgLogger().Error("empty authentication")
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
@@ -607,7 +621,11 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	} else {
 		info.ResourceGroupName = record.ResourceGroup
 	}
-	info.InSandBoxMode, err = p.CheckPasswordExpired(sessionVars, record)
+	// Skip checking password expiration if the session is migrated from another session.
+	// Otherwise, the user cannot log in or execute statements after migration.
+	if user.AuthPlugin != mysql.AuthTiDBSessionToken {
+		info.InSandBoxMode, err = p.CheckPasswordExpired(sessionVars, record)
+	}
 	return
 }
 

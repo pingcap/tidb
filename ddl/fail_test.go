@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -38,7 +38,7 @@ func TestFailBeforeDecodeArgs(t *testing.T) {
 	tableID = int64(tableIDi)
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 
 	first := true
 	stateCnt := 0

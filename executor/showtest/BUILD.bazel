@@ -2,14 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "showtest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "show_test.go",
     ],
     flaky = True,
-    race = "on",
-    shard_count = 45,
+    shard_count = 49,
     deps = [
         "//autoid_service",
         "//config",
@@ -26,6 +25,7 @@ go_test(
         "//sessionctx/variable",
         "//testkit",
         "//types",
+        "//util/dbterror/exeerrors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",

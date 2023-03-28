@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
@@ -33,7 +33,7 @@ type BackendContext struct {
 	jobID    int64
 	backend  *backend.Backend
 	ctx      context.Context
-	cfg      *config.Config
+	cfg      *lightning.Config
 	EngMgr   engineManager
 	sysVars  map[string]string
 	diskRoot DiskRoot
@@ -55,7 +55,7 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 
 	// Check remote duplicate value for the index.
 	if unique {
-		hasDupe, err := bc.backend.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &kv.SessionOptions{
+		hasDupe, err := bc.backend.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
@@ -99,7 +99,7 @@ func (bc *BackendContext) Flush(indexID int64) error {
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 			zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
 			zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
-		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys))
+		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
 		if err != nil {
 			logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
 				zap.Error(err), zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),

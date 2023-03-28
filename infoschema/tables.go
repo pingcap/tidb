@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -58,6 +59,7 @@ import (
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -823,6 +825,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -1590,11 +1593,10 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 }
 
 var tableResourceGroupsCols = []columnInfo{
-	{name: "GROUP_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "GROUP_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
-	{name: "RRU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
-	{name: "WRU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
-	// {name: "BURSTABLE", tp: mysql.TypeVarchar, size: 10},
+	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
+	{name: "RU_PER_SEC", tp: mysql.TypeLonglong, size: 21},
+	{name: "PRIORITY", tp: mysql.TypeVarchar, size: 6},
+	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1638,6 +1640,11 @@ const (
 	ForeignKeyType = "FOREIGN KEY"
 )
 
+const (
+	// TiFlashWrite is the TiFlash write node in disaggregated mode.
+	TiFlashWrite = "tiflash_write"
+)
+
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
 	ServerType     string
@@ -1647,6 +1654,7 @@ type ServerInfo struct {
 	GitHash        string
 	StartTimestamp int64
 	ServerID       uint64
+	EngineRole     string
 }
 
 func (s *ServerInfo) isLoopBackOrUnspecifiedAddr(addr string) bool {
@@ -1849,6 +1857,24 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+func isTiFlashStore(store *metapb.Store) bool {
+	for _, label := range store.Labels {
+		if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
+			return true
+		}
+	}
+	return false
+}
+
+func isTiFlashWriteNode(store *metapb.Store) bool {
+	for _, label := range store.Labels {
+		if label.GetKey() == placement.EngineRoleLabelKey && label.GetValue() == placement.EngineRoleLabelWrite {
+			return true
+		}
+	}
+	return false
+}
+
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	failpoint.Inject("mockStoreServerInfo", func(val failpoint.Value) {
@@ -1868,16 +1894,6 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			failpoint.Return(servers, nil)
 		}
 	})
-
-	isTiFlashStore := func(store *metapb.Store) bool {
-		isTiFlash := false
-		for _, label := range store.Labels {
-			if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
-				isTiFlash = true
-			}
-		}
-		return isTiFlash
-	}
 
 	store := ctx.GetStore()
 	// Get TiKV servers info.
@@ -1910,7 +1926,10 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
-
+		var engineRole string
+		if isTiFlashWriteNode(store) {
+			engineRole = placement.EngineRoleLabelWrite
+		}
 		servers = append(servers, ServerInfo{
 			ServerType:     tp,
 			Address:        store.Address,
@@ -1918,6 +1937,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			Version:        FormatStoreServerVersion(store.Version),
 			GitHash:        store.GitHash,
 			StartTimestamp: store.StartTimestamp,
+			EngineRole:     engineRole,
 		})
 	}
 	return servers, nil
@@ -2165,6 +2185,11 @@ func (it *infoschemaTable) Type() table.Type {
 	return it.tp
 }
 
+// GetPartitionedTable implements table.Table GetPartitionedTable interface.
+func (it *infoschemaTable) GetPartitionedTable() table.PartitionedTable {
+	return nil
+}
+
 // VirtualTable is a dummy table.Table implementation.
 type VirtualTable struct{}
 
@@ -2333,7 +2358,7 @@ func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string
 }
 
 func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
 		clusterSecurity := security.ClusterSecurity()
