@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "types_test_test",
+    timeout = "short",
+    srcs = [
+        "const_test.go",
+        "format_test.go",
+        "time_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//parser/mysql",
+        "//parser/terror",
+        "//session",
+        "//sessionctx/stmtctx",
+        "//testkit",
+        "//types",
+        "//util/mock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)

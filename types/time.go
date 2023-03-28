@@ -170,6 +170,9 @@ var (
 		"September", "October",
 		"November", "December",
 	}
+
+	// CheckTimestampTypeForTest export CheckTimestampType for test.
+	CheckTimestampTypeForTest = checkTimestampType
 )
 
 const (
