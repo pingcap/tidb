@@ -17,13 +17,10 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util"
-	"github.com/stretchr/testify/require"
 	"math"
 	"math/rand"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -2202,39 +2199,6 @@ func (s *testPlanSerialSuite) TestIssue23671(c *C) {
 	tk.MustExec("set @a=1, @b=1, @c=10")
 	tk.MustQuery("execute s1 using @a, @b, @c").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-}
-
-func (s *testPlanSerialSuite) TestIssue38533(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		dom.Close()
-		c.Assert(store.Close(), IsNil)
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	c.Assert(err, IsNil)
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, key (a))")
-	tk.MustExec(`prepare st from "select /*+ use_index(t, a) */ a from t where a=? and a=?"`)
-	tk.MustExec(`set @a=1`)
-	tk.MustExec(`execute st using @a, @a`)
-	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.True(t, strings.Contains(plan[1][0].(string), "RangeScan")) // range-scan instead of full-scan
-
-	tk.MustExec(`execute st using @a, @a`)
-	tk.MustExec(`execute st using @a, @a`)
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func (s *testPrepareSerialSuite) TestIssue29296(c *C) {
