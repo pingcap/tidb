@@ -140,11 +140,15 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		}
 	}
 
-	// We try to build the real statement of preparedStmt.
-	for i := range prepared.Params {
-		param := prepared.Params[i].(*driver.ParamMarkerExpr)
-		param.Datum.SetNull()
-		param.InExecute = false
+	// For prepared statements like `prepare st from 'select * from t where a<?'`,
+	// parameters are unknown here, so regard them all as NULL.
+	// For non-prepared statements, all parameters are already initialized at `ParameterizeAST`, so no need to set NULL.
+	if isPrepStmt {
+		for i := range prepared.Params {
+			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			param.Datum.SetNull()
+			param.InExecute = false
+		}
 	}
 
 	var p Plan
