@@ -1842,6 +1842,51 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 	dom.Close()
 }
 
+func TestTiDBUpgradeToVer140(t *testing.T) {
+	store, _ := createStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ver139 := version139
+	resetTo139 := func(s Session) {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMeta(txn)
+		err = m.FinishBootstrap(int64(ver139))
+		require.NoError(t, err)
+		mustExec(t, s, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver139))
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+
+		unsetStoreBootstrapped(store.UUID())
+		ver, err := getBootstrapVersion(s)
+		require.NoError(t, err)
+		require.Equal(t, int64(ver139), ver)
+	}
+
+	// drop column task_key and then upgrade
+	s := createSessionAndSetID(t, store)
+	mustExec(t, s, "alter table mysql.tidb_global_task drop column task_key")
+	resetTo139(s)
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err := getBootstrapVersion(s)
+	require.NoError(t, err)
+	require.Less(t, int64(ver139), ver)
+	dom.Close()
+
+	// upgrade with column task_key exists
+	s = createSessionAndSetID(t, store)
+	resetTo139(s)
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(s)
+	require.NoError(t, err)
+	require.Less(t, int64(ver139), ver)
+	dom.Close()
+}
+
 func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	ctx := context.Background()
 	store, _ := createStoreAndBootstrap(t)

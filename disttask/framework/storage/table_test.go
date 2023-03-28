@@ -48,13 +48,14 @@ func TestGlobalTaskTable(t *testing.T) {
 	gm, err := storage.GetGlobalTaskManager()
 	require.NoError(t, err)
 
-	id, err := gm.AddNewTask("test", 4, []byte("test"))
+	id, err := gm.AddNewTask("key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
 	task, err := gm.GetNewTask()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), task.ID)
+	require.Equal(t, "key1", task.Key)
 	require.Equal(t, "test", task.Type)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Equal(t, uint64(4), task.Concurrency)
@@ -82,6 +83,10 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, task5, 1)
 	require.Equal(t, task, task5[0])
+
+	// test cannot insert task with dup key
+	_, err = gm.AddNewTask("key1", "test2", 4, []byte("test2"))
+	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")
 }
 
 func TestSubTaskTable(t *testing.T) {

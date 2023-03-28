@@ -144,7 +144,7 @@ func TestSimple(t *testing.T) {
 	defer dsp.Stop()
 
 	dispatcher.RegisterTaskFlowHandle(taskTypeExample, NumberExampleHandle{})
-	taskID, err := gTaskMgr.AddNewTask(taskTypeExample, 0, nil)
+	taskID, err := gTaskMgr.AddNewTask("key1", taskTypeExample, 0, nil)
 	require.NoError(t, err)
 
 	// test DispatchTaskLoop

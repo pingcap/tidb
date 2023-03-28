@@ -553,6 +553,7 @@ const (
 	// CreateGlobalTask is a table about global task.
 	CreateGlobalTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
@@ -561,7 +562,8 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
-		key(state)
+		key(state),
+      	UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateLoadDataJobs is a table that LOAD DATA uses
@@ -850,11 +852,13 @@ const (
 	version138 = 138
 	// version 139 creates mysql.load_data_jobs table for LOAD DATA statement
 	version139 = 139
+	// version 140 add column task_key to mysql.tidb_global_task
+	version140 = 140
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version139
+var currentBootstrapVersion int64 = version140
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -982,6 +986,7 @@ var (
 		upgradeToVer137,
 		upgradeToVer138,
 		upgradeToVer139,
+		upgradeToVer140,
 	}
 )
 
@@ -2424,6 +2429,14 @@ func upgradeToVer139(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateLoadDataJobs)
+}
+
+func upgradeToVer140(s Session, ver int64) {
+	if ver >= version140 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `task_key` VARCHAR(256) NOT NULL AFTER `id`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD UNIQUE KEY task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
 func writeOOMAction(s Session) {

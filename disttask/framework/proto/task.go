@@ -53,6 +53,7 @@ const (
 // Task represents the task of distribute framework.
 type Task struct {
 	ID              int64
+	Key             string
 	Type            string
 	State           string
 	Step            int64
