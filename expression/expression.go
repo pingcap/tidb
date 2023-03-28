@@ -1429,8 +1429,6 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 		}
 	}
 }
-<<<<<<< HEAD
-=======
 
 // Args2Expressions4Test converts these values to an expression list.
 // This conversion is incomplete, so only use for test.
@@ -1461,4 +1459,3 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 	}
 	return exprs
 }
->>>>>>> 95f0dc547e9 (planner: support pushing down predicates to memory tables in prepared mode (#40262))

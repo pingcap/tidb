@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"sort"
 	"testing"
@@ -23,7 +24,6 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se session.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
@@ -1748,7 +1749,8 @@ func TestTikvRegionStatusExtractor(t *testing.T) {
 }
 
 func TestExtractorInPreparedStmt(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
 	var cases = []struct {
@@ -1803,6 +1805,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.tidb_hot_regions_history where update_time>=?",
 			userVars: []interface{}{"cast('2019-10-10 10:10:10' as datetime)"},
 			params: []interface{}{func() types.Time {
+				tk.Session().GetSessionVars().StmtCtx.TimeZone = time.Local
 				tt, err := types.ParseTimestamp(tk.Session().GetSessionVars().StmtCtx, "2019-10-10 10:10:10")
 				require.NoError(t, err)
 				return tt
@@ -1832,9 +1835,9 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		tk.MustExec(setStmt)
 		stmt, err := parser.ParseOneStmt(exec, "", "")
 		require.NoError(t, err)
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), stmt.(*ast.ExecuteStmt), dom.InfoSchema())
+		plan, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), stmt.(*ast.ExecuteStmt), dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		extractor := plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 
@@ -1842,16 +1845,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 	for _, ca := range cases {
 		id, _, _, err := tk.Session().PrepareStmt(ca.prepared)
 		require.NoError(t, err)
-		prepStmt, err := tk.Session().GetSessionVars().GetPreparedStmtByID(id)
-		require.NoError(t, err)
-		params := expression.Args2Expressions4Test(ca.params...)
 		execStmt := &ast.ExecuteStmt{
-			BinaryArgs: params,
-			PrepStmt:   prepStmt,
+			BinaryArgs: types.MakeDatums(ca.params...),
+			ExecID:     id,
 		}
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), execStmt, dom.InfoSchema())
+		plan, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), execStmt, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		extractor := plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 }
