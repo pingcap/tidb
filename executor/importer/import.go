@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -197,7 +196,7 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		// without FORMAT 'xxx' clause, default to DELIMITED DATA
 		format = LoadDataFormatDelimitedData
 	}
-	fullTableName := dbutil.TableName(plan.Table.Schema.L, plan.Table.Name.L)
+	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	c := &LoadDataController{
 		FileLocRef:         plan.FileLocRef,
 		Path:               plan.Path,
