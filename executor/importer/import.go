@@ -55,8 +55,9 @@ const (
 	LoadDataFormatParquet = "parquet"
 
 	// LogicalImportMode represents the import mode is SQL-like.
-	LogicalImportMode   = "logical"  // tidb backend
-	PhysicalImportMode  = "physical" // local backend
+	LogicalImportMode = "logical"
+	// PhysicalImportMode represents the import mode is KV-like.
+	PhysicalImportMode  = "physical"
 	unlimitedWriteSpeed = config.ByteSize(math.MaxInt64)
 	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
 	minWriteSpeed       = config.ByteSize(1 << 10)  // 1KiB/s
@@ -587,6 +588,7 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 	}
 }
 
+// InitDataFiles initializes the data store and load data files.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
@@ -663,6 +665,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	return nil
 }
 
+// GetLoadDataReaderInfos returns the LoadDataReaderInfo for each data file.
 func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 	result := make([]LoadDataReaderInfo, 0, len(e.dataFiles))
 	for i := range e.dataFiles {
@@ -681,6 +684,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 	return result
 }
 
+// GetParser returns a parser for the data file.
 func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo *LoadDataReaderInfo) (
 	parser mydump.Parser, err error) {
 	reader, err2 := dataFileInfo.Opener(ctx)
@@ -751,7 +755,8 @@ func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo *LoadDa
 	return parser, nil
 }
 
-func (e *LoadDataController) Import(ctx context.Context) (int64, error) {
+// PhysicalImport do physical import.
+func (e *LoadDataController) PhysicalImport(ctx context.Context) (int64, error) {
 	// todo: implement it
 	return 0, nil
 }

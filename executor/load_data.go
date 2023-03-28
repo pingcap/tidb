@@ -265,7 +265,7 @@ func (e *LoadDataWorker) loadRemote(ctx context.Context) (int64, error) {
 	}
 
 	if e.controller.ImportMode == importer.PhysicalImportMode {
-		return e.controller.Import(ctx)
+		return e.controller.PhysicalImport(ctx)
 	}
 
 	dataReaderInfos := e.controller.GetLoadDataReaderInfos()
