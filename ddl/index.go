@@ -1670,6 +1670,7 @@ type addIndexIngestWorker struct {
 	index            table.Index
 	writerCtx        *ingest.WriterContext
 	copReqSenderPool *copReqSenderPool
+	done             bool
 }
 
 func newAddIndexIngestWorker(t table.PhysicalTable, bfCtx *backfillCtx, jobID, eleID int64, eleTypeKey []byte) (*addIndexIngestWorker, error) {
@@ -1703,6 +1704,9 @@ func newAddIndexIngestWorker(t table.PhysicalTable, bfCtx *backfillCtx, jobID, e
 }
 
 func (w *addIndexIngestWorker) AddMetricInfo(count float64) {
+	if w.done {
+		return
+	}
 	w.metricCounter.Add(count)
 }
 
@@ -1756,31 +1760,36 @@ func (*addIndexIngestWorker) String() string {
 }
 
 // BackfillData will ingest index records through lightning engine.
-func (w *addIndexIngestWorker) BackfillData(handleRange reorgBackfillTask) (backfillTaskContext, error) {
-	var taskCtx backfillTaskContext
-	oprStartTime := time.Now()
-	defer func() {
-		logSlowOperations(time.Since(oprStartTime), "writeIndexKVsToLocal", 3000)
-	}()
-	copChunk, nextKey, taskDone, err := w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
-	if err != nil {
-		return taskCtx, err
+func (w *addIndexIngestWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error) {
+	taskCtx.nextKey = handleRange.startKey
+	var total int
+	for {
+		oprStartTime := time.Now()
+		copChunk, err := w.copReqSenderPool.fetchChunk()
+		if err != nil {
+			return taskCtx, err
+		}
+		if copChunk == nil {
+			// No more chunks.
+			break
+		}
+		copCtx := w.copReqSenderPool.copCtx
+		vars := w.sessCtx.GetSessionVars()
+		cnt, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, copChunk)
+		if err != nil {
+			w.copReqSenderPool.recycleChunk(copChunk)
+			return taskCtx, err
+		}
+		total += cnt
+		w.copReqSenderPool.recycleChunk(copChunk)
+		w.AddMetricInfo(float64(cnt))
+		logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
 	}
-	taskCtx.nextKey = nextKey
-	taskCtx.done = taskDone
-	if copChunk == nil {
-		return taskCtx, nil
-	}
-	defer w.copReqSenderPool.recycleChunk(copChunk)
-
-	copCtx := w.copReqSenderPool.copCtx
-	vars := w.sessCtx.GetSessionVars()
-	count, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, copChunk)
-	if err != nil {
-		return taskCtx, err
-	}
-	taskCtx.scanCount = count
-	taskCtx.addedCount = count
+	taskCtx.scanCount = total
+	taskCtx.addedCount = total
+	taskCtx.nextKey = handleRange.endKey
+	taskCtx.done = true
+	w.done = true
 	return taskCtx, nil
 }
 

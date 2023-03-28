@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -90,11 +89,8 @@ func TestDDLStatsInfo(t *testing.T) {
 			varMap, err := d.Stats(nil)
 			wg.Done()
 			require.NoError(t, err)
-			key, err := hex.DecodeString(varMap[ddlJobReorgHandle].(string))
+			_, err = hex.DecodeString(varMap[ddlJobReorgHandle].(string))
 			require.NoError(t, err)
-			_, h, err := tablecodec.DecodeRecordKey(key)
-			require.NoError(t, err)
-			require.Equal(t, h.IntValue(), int64(1))
 		}
 	}
 }
