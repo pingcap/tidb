@@ -564,8 +564,25 @@ const (
 		key(state)
 	);`
 
-	// CreateDefaultResourceGroup is the statement to create the default resource group
-	CreateDefaultResourceGroup = "CREATE RESOURCE GROUP IF NOT EXISTS `default` RU_PER_SEC=1000000 BURSTABLE;"
+	// CreateLoadDataJobs is a table that LOAD DATA uses
+	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
+       job_id bigint(64) NOT NULL AUTO_INCREMENT,
+       expected_status ENUM('running', 'paused', 'canceled') NOT NULL DEFAULT 'running',
+       create_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+       start_time TIMESTAMP(6) NULL DEFAULT NULL,
+       update_time TIMESTAMP(6) NULL DEFAULT NULL,
+       end_time TIMESTAMP(6) NULL DEFAULT NULL,
+       data_source TEXT NOT NULL,
+       table_schema VARCHAR(64) NOT NULL,
+       table_name VARCHAR(64) NOT NULL,
+       import_mode VARCHAR(64) NOT NULL,
+       create_user VARCHAR(32) NOT NULL,
+       progress TEXT DEFAULT NULL,
+       result_message TEXT DEFAULT NULL,
+       error_message TEXT DEFAULT NULL,
+       PRIMARY KEY (job_id),
+       KEY (create_time),
+       KEY (create_user));`
 )
 
 // bootstrap initiates system DB for a store.
@@ -829,11 +846,15 @@ const (
 	version136 = 136
 	// version137 introduces some reserved resource groups
 	version137 = 137
+	// version 138 set tidb_enable_null_aware_anti_join to true
+	version138 = 138
+	// version 139 creates mysql.load_data_jobs table for LOAD DATA statement
+	version139 = 139
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version137
+var currentBootstrapVersion int64 = version139
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -959,6 +980,8 @@ var (
 		upgradeToVer135,
 		upgradeToVer136,
 		upgradeToVer137,
+		upgradeToVer138,
+		upgradeToVer139,
 	}
 )
 
@@ -2385,10 +2408,22 @@ func upgradeToVer136(s Session, ver int64) {
 }
 
 func upgradeToVer137(s Session, ver int64) {
-	if ver >= version137 {
+	// NOOP, we don't depend on ddl to init the default group due to backward compatible issue.
+}
+
+// For users that upgrade TiDB from a version below 7.0, we want to enable tidb tidb_enable_null_aware_anti_join by default.
+func upgradeToVer138(s Session, ver int64) {
+	if ver >= version138 {
 		return
 	}
-	doReentrantDDL(s, CreateDefaultResourceGroup)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptimizerEnableNAAJ, variable.On)
+}
+
+func upgradeToVer139(s Session, ver int64) {
+	if ver >= version139 {
+		return
+	}
+	mustExecute(s, CreateLoadDataJobs)
 }
 
 func writeOOMAction(s Session) {
@@ -2489,7 +2524,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAdvisoryLocks)
 	// Create mdl view.
 	mustExecute(s, CreateMDLView)
-	//  Create plan_replayer_status table
+	// Create plan_replayer_status table
 	mustExecute(s, CreatePlanReplayerStatusTable)
 	// Create plan_replayer_task table
 	mustExecute(s, CreatePlanReplayerTaskTable)
@@ -2503,8 +2538,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLJobHistory)
 	// Create tidb_global_task table
 	mustExecute(s, CreateGlobalTask)
-	// Create default resource group
-	mustExecute(s, CreateDefaultResourceGroup)
+	// Create load_data_jobs
+	mustExecute(s, CreateLoadDataJobs)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

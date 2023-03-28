@@ -56,9 +56,6 @@ func createJob(t *testing.T, conn sqlexec.SQLExecutor, user string) (int64, *Job
 func TestHappyPath(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
-
 	ctx := context.Background()
 
 	// job is created
@@ -131,8 +128,6 @@ func TestHappyPath(t *testing.T) {
 func TestKeepAlive(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	// job is created
@@ -201,13 +196,14 @@ func TestKeepAlive(t *testing.T) {
 	expected.StatusMessage = ""
 	checkEqualIgnoreTimes(t, expected, info)
 
-	// Now the worker calls FailJob
+	// Now the worker calls FailJob, but the status should still be canceled,
+	// that's more friendly.
 
 	err = FailJob(ctx, tk.Session(), id, "failed to keepalive")
 	require.NoError(t, err)
 	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
-	expected.Status = JobFailed
+	expected.Status = JobCanceled
 	expected.StatusMessage = "failed to keepalive"
 	checkEqualIgnoreTimes(t, expected, info)
 }
@@ -215,8 +211,6 @@ func TestKeepAlive(t *testing.T) {
 func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	// job is created
@@ -264,11 +258,8 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	checkEqualIgnoreTimes(t, expected, info)
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedCanceled)
-	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
-	require.NoError(t, err)
-	checkEqualIgnoreTimes(t, expected, info)
+	err = CancelJob(ctx, tk.Session(), id, "user")
+	require.ErrorContains(t, err, "The current job status cannot perform the operation. need status running or paused, but got failed")
 
 	// add job of another user and test GetAllJobInfo
 
@@ -292,8 +283,6 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 func TestGetJobStatus(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	// job is created
@@ -341,8 +330,6 @@ func TestGetJobStatus(t *testing.T) {
 func TestCreateLoadDataJobRedact(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	_, err := CreateLoadDataJob(ctx, tk.Session(),

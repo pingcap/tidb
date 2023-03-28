@@ -75,7 +75,7 @@ func TestPreferRangeScan(t *testing.T) {
 		} else if i == 1 {
 			tk.MustExec("set session tidb_opt_prefer_range_scan=1")
 		}
-		tk.Session().GetSessionVars().PlanID = 0
+		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.MustExec(tt)
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
@@ -126,7 +126,7 @@ func TestNormalizedPlan(t *testing.T) {
 	planNormalizedSuiteData := GetPlanNormalizedSuiteData()
 	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
-		tk.Session().GetSessionVars().PlanID = 0
+		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.MustExec(tt)
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
@@ -174,7 +174,7 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	lastDigest := ""
 	for i, tt := range input {
-		tk.Session().GetSessionVars().PlanID = 0
+		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.MustExec(tt)
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)

@@ -318,9 +318,6 @@ type selectResult struct {
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
 	defer func() {
-		if enableTelemetry, telemetryErr := telemetry.IsTelemetryEnabled(r.ctx); telemetryErr != nil || !enableTelemetry {
-			return
-		}
 		if r.stats != nil {
 			// Ignore internal sql.
 			if !r.ctx.GetSessionVars().InRestrictedSQL && len(r.stats.copRespTime) > 0 {
@@ -520,7 +517,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 	if copStats.ScanDetail != nil {
 		readKeys := copStats.ScanDetail.ProcessedKeys
-		readTime := copStats.TimeDetail.KvReadWallTimeMs.Seconds()
+		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
 		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
 		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
 	}

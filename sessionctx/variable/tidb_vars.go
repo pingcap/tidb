@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
@@ -77,6 +77,9 @@ const (
 	// TiDBBCJThresholdCount is used to limit the count of small table for mpp broadcast join.
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	TiDBBCJThresholdCount = "tidb_broadcast_join_threshold_count"
+
+	// TiDBPreferBCJByExchangeDataSize indicates the method used to choose mpp broadcast join
+	TiDBPreferBCJByExchangeDataSize = "tidb_prefer_broadcast_join_by_exchange_data_size"
 
 	// TiDBOptWriteRowID is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
 	TiDBOptWriteRowID = "tidb_opt_write_row_id"
@@ -382,6 +385,16 @@ const (
 	// Default value is -1, means it will not be pushed down to tiflash.
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
 	TiDBMaxTiFlashThreads = "tidb_max_tiflash_threads"
+
+	// TiDBMaxBytesBeforeTiFlashExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalJoin = "tidb_max_bytes_before_tiflash_external_join"
+
+	// TiDBMaxBytesBeforeTiFlashExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalGroupBy = "tidb_max_bytes_before_tiflash_external_group_by"
+
+	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
+
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -829,8 +842,13 @@ const (
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
 
+	// TiDBOptEnableLateMaterialization indicates whether to enable late materialization
+	TiDBOptEnableLateMaterialization = "tidb_opt_enable_late_materialization"
 	// TiDBLoadBasedReplicaReadThreshold is the wait duration threshold to enable replica read automatically.
 	TiDBLoadBasedReplicaReadThreshold = "tidb_load_based_replica_read_threshold"
+
+	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
 )
 
 // TiDB vars that have only global scope
@@ -886,8 +904,8 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
-	// TiDBDDLEnableDistributeReorg indicates whether to enable the new Reorg framework.
-	TiDBDDLEnableDistributeReorg = "tidb_ddl_distribute_reorg"
+	// TiDBEnableDistTask indicates whether to enable the distributed execute background tasks(For example DDL, Import etc).
+	TiDBEnableDistTask = "tidb_enable_dist_task"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -1027,15 +1045,19 @@ const (
 	DefTiDBProjectionConcurrency                   = ConcurrencyUnset
 	DefBroadcastJoinThresholdSize                  = 100 * 1024 * 1024
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
+	DefPreferBCJByExchangeDataSize                 = true
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
 	DefTiDBEnableOuterJoinReorder                  = true
-	DefTiDBEnableNAAJ                              = false
+	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBHashExchangeWithNewCollation            = true
 	DefTiDBEnforceMPPExecution                     = false
 	DefTiFlashMaxThreads                           = -1
+	DefTiFlashMaxBytesBeforeExternalJoin           = -1
+	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
+	DefTiFlashMaxBytesBeforeExternalSort           = -1
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1
@@ -1152,7 +1174,7 @@ const (
 	DefTiDBPrepPlanCacheSize                       = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
-	DefTiDBDDLEnableDistributeReorg                = distributereorg.TiDBEnableDistributeReorg
+	DefTiDBEnableDistTask                          = disttask.TiDBEnableDistTask
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
@@ -1224,6 +1246,8 @@ const (
 	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                = true
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
+	DefTiDBOptEnableLateMaterialization              = false
+	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 )
 
 // Process global variables.
@@ -1265,7 +1289,7 @@ var (
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
-	DDLEnableDistributeReorg          = atomic.NewBool(DefTiDBDDLEnableDistributeReorg)
+	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
@@ -1332,9 +1356,9 @@ var (
 // Hooks functions for Cluster Resource Control.
 var (
 	// EnableGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
-	EnableGlobalResourceControlFunc func() = func() {}
+	EnableGlobalResourceControlFunc = func() {}
 	// DisableGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
-	DisableGlobalResourceControlFunc func() = func() {}
+	DisableGlobalResourceControlFunc = func() {}
 )
 
 func serverMemoryLimitDefaultValue() string {

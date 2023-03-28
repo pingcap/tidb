@@ -322,29 +322,24 @@ func (p *LogicalJoin) updateEQCond() {
 	// combination of <stu.name NAEQ exam.name> and <exam.stu_id EQ stu.id> for join key is little complicated for now.
 	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
 	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
-		for i := len(p.OtherConditions) - 1; i >= 0; i-- {
-			need2Remove := false
-			if eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {
-				// not a naaj operator, continue.
-				if !expression.IsEQCondFromIn(eqCond) {
-					continue
-				}
+		var otherCond expression.CNFExprs
+		for i := 0; i < len(p.OtherConditions); i++ {
+			eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction)
+			if ok && eqCond.FuncName.L == ast.EQ && expression.IsEQCondFromIn(eqCond) {
 				// here must be a EQCondFromIn.
 				lExpr, rExpr := eqCond.GetArgs()[0], eqCond.GetArgs()[1]
 				if expression.ExprFromSchema(lExpr, lChild.Schema()) && expression.ExprFromSchema(rExpr, rChild.Schema()) {
 					lNAKeys = append(lNAKeys, lExpr)
 					rNAKeys = append(rNAKeys, rExpr)
-					need2Remove = true
 				} else if expression.ExprFromSchema(lExpr, rChild.Schema()) && expression.ExprFromSchema(rExpr, lChild.Schema()) {
 					lNAKeys = append(lNAKeys, rExpr)
 					rNAKeys = append(rNAKeys, lExpr)
-					need2Remove = true
 				}
+				continue
 			}
-			if need2Remove {
-				p.OtherConditions = append(p.OtherConditions[:i], p.OtherConditions[i+1:]...)
-			}
+			otherCond = append(otherCond, p.OtherConditions[i])
 		}
+		p.OtherConditions = otherCond
 		// here is for cases like: select (a+1, b*3) not in (select a,b from t2) from t1.
 		adjustKeyForm(lNAKeys, rNAKeys, true)
 	}

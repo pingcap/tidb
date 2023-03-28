@@ -1180,7 +1180,7 @@ func getColsNDVLowerBoundFromHistColl(cols []*expression.Column, histColl *stati
 		orderedIdxCols := make([]int64, len(idxCols))
 		copy(orderedIdxCols, idxCols)
 		slices.Sort(orderedIdxCols)
-		if !slices.Equal(idxCols, colUIDs) {
+		if !slices.Equal(orderedIdxCols, colUIDs) {
 			continue
 		}
 		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil {
@@ -1304,16 +1304,18 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
 
+	// Note: due to a regression in JOB workload, we need to revert the logic below for now.
+	//
 	// Because we are estimating an average row count of the inner side corresponding to each row from the outer side,
 	// the estimated row count of the IndexScan should be no larger than (total row count / NDV of join key columns).
 	// We use it as an upper bound here.
 	rowCountUpperBound := -1.0
-	if ds.tableStats != nil {
-		joinKeyNDV := getColsNDVLowerBoundFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
-		if joinKeyNDV > 0 {
-			rowCountUpperBound = ds.tableStats.RowCount / float64(joinKeyNDV)
-		}
-	}
+	//if ds.tableStats != nil {
+	//	joinKeyNDV := getColsNDVLowerBoundFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
+	//	if joinKeyNDV > 0 {
+	//		rowCountUpperBound = ds.tableStats.RowCount / float64(joinKeyNDV)
+	//	}
+	//}
 
 	if rowCountUpperBound > 0 {
 		rowCount = math.Min(rowCount, rowCountUpperBound)
@@ -2076,22 +2078,115 @@ func checkChildFitBC(p Plan) bool {
 	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
+func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
+	s := p.statsInfo()
+	row := float64(s.Count()) * float64(mppStoreCnt-1)
+	if s.HistColl == nil {
+		return row, 0, false
+	}
+	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	size := avg * row
+	return row, size, true
+}
+
+func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, float64, bool) {
+	row1, size1, hasSize1 := calcBroadcastExchangeSize(p1, mppStoreCnt)
+	row2, size2, hasSize2 := calcBroadcastExchangeSize(p2, mppStoreCnt)
+
+	// broadcast exchange size:
+	//   Build: (mppStoreCnt - 1) * sizeof(BuildTable)
+	//   Probe: 0
+	// choose the child plan with the maximum approximate value as Probe
+
+	if hasSize1 && hasSize2 {
+		return math.Min(row1, row2), math.Min(size1, size2), true
+	}
+
+	return math.Min(row1, row2), 0, false
+}
+
+func calcHashExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
+	s := p.statsInfo()
+	row := float64(s.Count()) * float64(mppStoreCnt-1) / float64(mppStoreCnt)
+	if s.HistColl == nil {
+		return row, 0, false
+	}
+	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	sz := avg * row
+	return row, sz, true
+}
+
+func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, float64, bool) {
+	row1, size1, hasSize1 := calcHashExchangeSize(p1, mppStoreCnt)
+	row2, size2, hasSize2 := calcHashExchangeSize(p2, mppStoreCnt)
+
+	// hash exchange size:
+	//   Build: sizeof(BuildTable) * (mppStoreCnt - 1) / mppStoreCnt
+	//   Probe: sizeof(ProbeTable) * (mppStoreCnt - 1) / mppStoreCnt
+
+	if hasSize1 && hasSize2 {
+		return row1 + row2, size1 + size2, true
+	}
+	return row1 + row2, 0, false
+}
+
+func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
+	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
+	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
+	if hasSizeBC && hasSizeHash {
+		return szBC <= szHash
+	}
+	return rowBC <= rowHash
+}
+
+func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) bool {
+	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSize(p.children[childIndexToBC], mppStoreCnt)
+	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
+
+	if hasSizeBC && hasSizeHash {
+		return szBC <= szHash
+	}
+	return rowBC <= rowHash
+}
+
 // If we can use mpp broadcast join, that's our first choice.
-func (p *LogicalJoin) shouldUseMPPBCJ() bool {
+func (p *LogicalJoin) preferMppBCJ() bool {
 	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
-	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+
+	onlyCheckChild1 := p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin
+	onlyCheckChild0 := p.JoinType == RightOuterJoin
+
+	if p.ctx.GetSessionVars().PreferBCJByExchangeDataSize {
+		mppStoreCnt, err := p.ctx.GetMPPClient().GetMPPStoreCount()
+
+		// No need to exchange data if there is only ONE mpp store. But the behavior of optimizer is unexpected if use broadcast way forcibly, such as tpch q4.
+		// TODO: always use broadcast way to exchange data if there is only ONE mpp store.
+
+		if err == nil && mppStoreCnt > 0 {
+			if onlyCheckChild1 || onlyCheckChild0 {
+				if mppStoreCnt > 1 {
+					if onlyCheckChild1 {
+						return isJoinChildFitMPPBCJ(p, 1, mppStoreCnt)
+					} else if onlyCheckChild0 {
+						return isJoinChildFitMPPBCJ(p, 0, mppStoreCnt)
+					}
+				}
+				// If mppStoreCnt is ONE and only need to check one child plan, rollback to original way.
+				// Otherwise, the plan of tpch q4 may be unexpected.
+			} else {
+				return isJoinFitMPPBCJ(p, mppStoreCnt)
+			}
+		}
+	}
+
+	if onlyCheckChild1 {
 		return checkChildFitBC(p.children[1])
-	} else if p.JoinType == RightOuterJoin {
+	} else if onlyCheckChild0 {
 		return checkChildFitBC(p.children[0])
 	}
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
-}
-
-// canPushToCop checks if it can be pushed to some stores.
-func (p *LogicalJoin) canPushToCop(storeTp kv.StoreType) bool {
-	return len(p.NAEQConditions) == 0 && p.baseLogicalPlan.canPushToCop(storeTp)
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.
@@ -2135,7 +2230,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 				return bcastJoins, true, nil
 			}
 		}
-		if p.shouldUseMPPBCJ() {
+		if p.preferMppBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			joins = append(joins, mppJoins...)
 		} else {
@@ -2260,10 +2355,6 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 	lkeys, rkeys, _, _ := p.GetJoinKeys()
 	lNAkeys, rNAKeys := p.GetNAJoinKeys()
-	if len(lNAkeys) > 0 || len(rNAKeys) > 0 {
-		return nil
-	}
-	// todo: mpp na-keys.
 	// check match property
 	baseJoin := basePhysicalJoin{
 		JoinType:        p.JoinType,

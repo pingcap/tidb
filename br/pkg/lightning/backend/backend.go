@@ -22,7 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -145,19 +145,11 @@ type TargetInfoGetter interface {
 	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
 }
 
-// EncodingBuilder consists of operations to handle encoding backend row data formats from source.
-type EncodingBuilder interface {
-	// NewEncoder creates an encoder of a TiDB table.
-	NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error)
-	// MakeEmptyRows creates an empty collection of encoded rows.
-	MakeEmptyRows() kv.Rows
-}
-
 // AbstractBackend is the abstract interface behind Backend.
 // Implementations of this interface must be goroutine safe: you can share an
 // instance and execute any method anywhere.
 type AbstractBackend interface {
-	EncodingBuilder
+	encode.EncodingBuilder
 	TargetInfoGetter
 	// Close the connection to the backend.
 	Close()
@@ -206,11 +198,11 @@ type AbstractBackend interface {
 
 	// CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 	//  may be repeated with other keys in local data source.
-	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
+	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error)
 
 	// CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 	//  the data import by other lightning.
-	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
+	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error)
 
 	// ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 	// according to the required algorithm.
@@ -269,12 +261,12 @@ func (be Backend) Close() {
 	be.abstract.Close()
 }
 
-func (be Backend) MakeEmptyRows() kv.Rows {
+func (be Backend) MakeEmptyRows() encode.Rows {
 	return be.abstract.MakeEmptyRows()
 }
 
-func (be Backend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return be.abstract.NewEncoder(ctx, tbl, options)
+func (be Backend) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
+	return be.abstract.NewEncoder(ctx, config)
 }
 
 func (be Backend) ShouldPostProcess() bool {
@@ -388,11 +380,11 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 	}, nil
 }
 
-func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	return be.abstract.CollectLocalDuplicateRows(ctx, tbl, tableName, opts)
 }
 
-func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl, tableName, opts)
 }
 
@@ -429,7 +421,7 @@ func (engine *OpenedEngine) TotalMemoryConsume() int64 {
 }
 
 // WriteRows writes a collection of encoded rows into the engine.
-func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows kv.Rows) error {
+func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
 	return w.writer.AppendRows(ctx, w.tableName, columnNames, rows)
 }
 
@@ -519,7 +511,7 @@ type EngineWriter interface {
 		ctx context.Context,
 		tableName string,
 		columnNames []string,
-		rows kv.Rows,
+		rows encode.Rows,
 	) error
 	IsSynced() bool
 	Close(ctx context.Context) (ChunkFlushStatus, error)

@@ -27,13 +27,14 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
+	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -52,15 +53,18 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
 	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/prometheus/client_golang/prometheus"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -210,11 +214,13 @@ type Controller struct {
 	checkpointsWg sync.WaitGroup
 
 	closedEngineLimit *worker.Pool
-	store             storage.ExternalStorage
-	ownStore          bool
-	metaMgrBuilder    metaMgrBuilder
-	errorMgr          *errormanager.ErrorManager
-	taskMgr           taskMetaMgr
+	addIndexLimit     *worker.Pool
+
+	store          storage.ExternalStorage
+	ownStore       bool
+	metaMgrBuilder metaMgrBuilder
+	errorMgr       *errormanager.ErrorManager
+	taskMgr        taskMetaMgr
 
 	diskQuotaLock  sync.RWMutex
 	diskQuotaState atomic.Int32
@@ -350,7 +356,8 @@ func NewImportControllerWithPauser(
 			}
 		}
 
-		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName)
+		encodingBuilder := local.NewEncodingBuilder(ctx)
+		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName, encodingBuilder)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -423,6 +430,9 @@ func NewImportControllerWithPauser(
 		checkpointsDB:     cpdb,
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
+		// Currently, TiDB add index acceration doesn't support multiple tables simultaneously.
+		// So we use a single worker to ensure at most one table is adding index at the same time.
+		addIndexLimit: worker.NewPool(ctx, 1, "add-index"),
 
 		store:          p.DumpFileStorage,
 		ownStore:       p.OwnExtStorage,
@@ -821,12 +831,32 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 		log.FromContext(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
 	})
+	if err := rc.loadDesiredTableInfos(ctx); err != nil {
+		return err
+	}
 
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
 	go rc.listenCheckpointUpdates(log.FromContext(ctx))
 
 	// Estimate the number of chunks for progress reporting
 	return rc.estimateChunkCountIntoMetrics(ctx)
+}
+
+func (rc *Controller) loadDesiredTableInfos(ctx context.Context) error {
+	for _, dbInfo := range rc.dbInfos {
+		for _, tableInfo := range dbInfo.Tables {
+			cp, err := rc.checkpointsDB.Get(ctx, common.UniqueTable(dbInfo.Name, tableInfo.Name))
+			if err != nil {
+				return err
+			}
+			// If checkpoint is disabled, cp.TableInfo will be nil.
+			// In this case, we just use current tableInfo as desired tableInfo.
+			if cp.TableInfo != nil {
+				tableInfo.Desired = cp.TableInfo
+			}
+		}
+	}
+	return nil
 }
 
 // verifyCheckpoint check whether previous task checkpoint is compatible with task config
@@ -911,14 +941,10 @@ func verifyLocalFile(ctx context.Context, cpdb checkpoints.DB, dir string) error
 func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 	estimatedChunkCount := 0.0
 	estimatedEngineCnt := int64(0)
-	batchSize := rc.cfg.Mydumper.BatchSize
-	if batchSize <= 0 {
-		// if rows in source files are not sorted by primary key(if primary is number or cluster index enabled),
-		// the key range in each data engine may have overlap, thus a bigger engine size can somewhat alleviate it.
-		batchSize = config.DefaultBatchSize
-	}
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
+			batchSize := mydump.CalculateBatchSize(float64(rc.cfg.Mydumper.BatchSize),
+				tableMeta.IsRowOrdered, float64(tableMeta.TotalSize))
 			tableName := common.UniqueTable(dbMeta.Name, tableMeta.Name)
 			dbCp, err := rc.checkpointsDB.Get(ctx, tableName)
 			if err != nil {
@@ -1196,8 +1222,10 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					}
 					// log the current progress periodically, so OPS will know that we're still working
 					nanoseconds := float64(time.Since(start).Nanoseconds())
-					totalRestoreBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore))
-					restoredBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateRestored))
+					totalRestoreBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore))
+					restoredBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored))
+					totalRowsToRestore := metric.ReadAllCounters(metrics.RowsCounter.MetricVec, prometheus.Labels{"state": metric.StateTotalRestore})
+					restoredRows := metric.ReadAllCounters(metrics.RowsCounter.MetricVec, prometheus.Labels{"state": metric.StateRestored})
 					// the estimated chunk is not accurate(likely under estimated), but the actual count is not accurate
 					// before the last table start, so use the bigger of the two should be a workaround
 					estimated := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
@@ -1215,8 +1243,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						engineEstimated = enginePending
 					}
 					engineFinished := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues(metric.TableStateImported, metric.TableResultSuccess))
-					bytesWritten := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten))
-					bytesImported := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateImported))
+					bytesWritten := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten))
+					bytesImported := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateImported))
 
 					var state string
 					var remaining zap.Field
@@ -1247,10 +1275,20 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					// total progress.
 					restoreBytesField := zap.Skip()
 					importBytesField := zap.Skip()
+					restoreRowsField := zap.Skip()
 					remaining = zap.Skip()
 					totalPercent := 0.0
-					if restoredBytes > 0 {
-						restorePercent := math.Min(restoredBytes/totalRestoreBytes, 1.0)
+					if restoredBytes > 0 || restoredRows > 0 {
+						var restorePercent float64
+						if totalRowsToRestore > 0 {
+							restorePercent = math.Min(restoredRows/totalRowsToRestore, 1.0)
+							restoreRowsField = zap.String("restore-rows", fmt.Sprintf("%.0f/%.0f",
+								restoredRows, totalRowsToRestore))
+						} else {
+							restorePercent = math.Min(restoredBytes/totalRestoreBytes, 1.0)
+							restoreRowsField = zap.String("restore-rows", fmt.Sprintf("%.0f/%.0f(estimated)",
+								restoredRows, restoredRows/restorePercent))
+						}
 						metrics.ProgressGauge.WithLabelValues(metric.ProgressPhaseRestore).Set(restorePercent)
 						if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
 							var importPercent float64
@@ -1300,7 +1338,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						zap.String("tables", fmt.Sprintf("%.0f/%.0f%s", completedTables, totalTables, formatPercent(completedTables, totalTables))),
 						zap.String("chunks", fmt.Sprintf("%.0f/%.0f%s", finished, estimated, formatPercent(finished, estimated))),
 						zap.String("engines", fmt.Sprintf("%.f/%.f%s", engineFinished, engineEstimated, formatPercent(engineFinished, engineEstimated))),
-						restoreBytesField, importBytesField,
+						restoreBytesField, restoreRowsField, importBytesField,
 						encodeSpeedField,
 						zap.String("state", state),
 						remaining,
@@ -1510,6 +1548,19 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			return errors.Trace(err)
 		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
+
+		undo, err := rc.registerTaskToPD(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer undo()
+
+		// Drop all secondary indexes before restore.
+		if rc.cfg.TikvImporter.AddIndexBySQL {
+			if err := rc.dropAllIndexes(ctx); err != nil {
+				return err
+			}
+		}
 	}
 
 	type task struct {
@@ -1613,13 +1664,33 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			allTasks = append(allTasks, task{tr: tr, cp: cp})
 
 			if len(cp.Engines) == 0 {
-				for _, fi := range tableMeta.DataFiles {
+				for i, fi := range tableMeta.DataFiles {
 					totalDataSizeToRestore += fi.FileMeta.FileSize
+					if fi.FileMeta.Type == mydump.SourceTypeParquet {
+						numberRows, err := mydump.ReadParquetFileRowCountByFile(ctx, rc.store, fi.FileMeta)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						if m, ok := metric.FromContext(ctx); ok {
+							m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(numberRows))
+						}
+						fi.FileMeta.Rows = numberRows
+						tableMeta.DataFiles[i] = fi
+					}
 				}
 			} else {
 				for _, eng := range cp.Engines {
 					for _, chunk := range eng.Chunks {
-						totalDataSizeToRestore += chunk.UnfinishedSize()
+						// for parquet files filesize is more accurate, we can calculate correct unfinished bytes unless
+						//  we set up the reader, so we directly use filesize here
+						if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+							totalDataSizeToRestore += chunk.FileMeta.FileSize
+							if m, ok := metric.FromContext(ctx); ok {
+								m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(chunk.UnfinishedSize()))
+							}
+						} else {
+							totalDataSizeToRestore += chunk.UnfinishedSize()
+						}
 					}
 				}
 			}
@@ -1627,7 +1698,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	}
 
 	if m, ok := metric.FromContext(ctx); ok {
-		m.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore).Add(float64(totalDataSizeToRestore))
+		m.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(totalDataSizeToRestore))
 	}
 
 	for i := range allTasks {
@@ -1671,6 +1742,99 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		return restoreErr.Get()
 	}
 
+	return nil
+}
+
+func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ error) {
+	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	register := utils.NewTaskRegister(etcdCli, utils.RegisterLightning, fmt.Sprintf("lightning-%s", uuid.New()))
+
+	undo = func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := register.Close(closeCtx); err != nil {
+			log.L().Warn("failed to unregister task", zap.Error(err))
+		}
+		if err := etcdCli.Close(); err != nil {
+			log.L().Warn("failed to close etcd client", zap.Error(err))
+		}
+	}
+	if err := register.RegisterTask(ctx); err != nil {
+		undo()
+		return nil, errors.Trace(err)
+	}
+	return undo, nil
+}
+
+func (rc *Controller) dropAllIndexes(ctx context.Context) error {
+	for _, dbInfo := range rc.dbInfos {
+		for _, tblInfo := range dbInfo.Tables {
+			if err := rc.dropTableIndexes(ctx, tblInfo); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (rc *Controller) dropTableIndexes(ctx context.Context, tblInfo *checkpoints.TidbTableInfo) error {
+	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
+
+	var remainIndexes []*model.IndexInfo
+	cols := tblInfo.Core.Columns
+loop:
+	for _, idxInfo := range tblInfo.Core.Indices {
+		if idxInfo.State != model.StatePublic {
+			remainIndexes = append(remainIndexes, idxInfo)
+			continue
+		}
+		// Primary key is a cluster index.
+		if idxInfo.Primary && tblInfo.Core.HasClusteredIndex() {
+			remainIndexes = append(remainIndexes, idxInfo)
+			continue
+		}
+		// Skip index that contains auto-increment column.
+		// Because auto colum must be defined as a key.
+		for _, idxCol := range idxInfo.Columns {
+			flag := cols[idxCol.Offset].GetFlag()
+			if mysql.HasAutoIncrementFlag(flag) {
+				remainIndexes = append(remainIndexes, idxInfo)
+				continue loop
+			}
+		}
+
+		var sqlStr string
+		if idxInfo.Primary {
+			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
+		} else {
+			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, common.EscapeIdentifier(idxInfo.Name.O))
+		}
+
+		db := rc.tidbGlue.GetSQLExecutor()
+		logger.Info("drop index", zap.String("sql", sqlStr))
+		if err := db.ExecuteWithLog(ctx, sqlStr, "drop index", logger); err != nil {
+			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+				switch merr.Number {
+				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
+					remainIndexes = append(remainIndexes, idxInfo)
+					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
+					continue loop
+				}
+			}
+			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tableName)
+		}
+	}
+	if len(remainIndexes) < len(tblInfo.Core.Indices) {
+		// Must clone (*model.TableInfo) before modifying it, since it may be referenced in other place.
+		tblInfo.Core = tblInfo.Core.Clone()
+		tblInfo.Core.Indices = remainIndexes
+	}
 	return nil
 }
 
@@ -2088,7 +2252,7 @@ var (
 )
 
 type deliveredKVs struct {
-	kvs     kv.Row // if kvs is nil, this indicated we've got the last message.
+	kvs     encode.Row // if kvs is nil, this indicated we've got the last message.
 	columns []string
 	offset  int64
 	rowID   int64
@@ -2176,21 +2340,4 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 		extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVal))
 	}
 	return filteredColumns, extendValueDatums
-}
-
-func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) (
-	reader storage.ReadSeekCloser, err error) {
-	switch {
-	case fileMeta.Type == mydump.SourceTypeParquet:
-		reader, err = mydump.OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
-	case fileMeta.Compression != mydump.CompressionNone:
-		compressType, err2 := mydump.ToStorageCompressType(fileMeta.Compression)
-		if err2 != nil {
-			return nil, err2
-		}
-		reader, err = storage.WithCompression(store, compressType).Open(ctx, fileMeta.Path)
-	default:
-		reader, err = store.Open(ctx, fileMeta.Path)
-	}
-	return
 }

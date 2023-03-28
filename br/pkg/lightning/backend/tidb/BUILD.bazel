@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
@@ -37,6 +38,7 @@ go_test(
     deps = [
         ":tidb",
         "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
