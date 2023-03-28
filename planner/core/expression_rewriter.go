@@ -1504,9 +1504,14 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					} else {
 						continue
 					}
+<<<<<<< HEAD
 				} else if er.sctx.GetSessionVars().StmtCtx.SkipPlanCache {
 					// We should remove the mutable constant for correctness, because its value may be changed.
 					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
+=======
+					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", c.String()))
+					expression.RemoveMutableConst(er.sctx, args)
+>>>>>>> 465ab74532 (planner: skip the plan cache if non-int values are converted into int when optimization (#40686))
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
 				if isExceptional {
