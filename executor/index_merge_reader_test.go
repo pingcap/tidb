@@ -16,7 +16,6 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"math/rand"
 	"regexp"
 	"strconv"
@@ -24,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
