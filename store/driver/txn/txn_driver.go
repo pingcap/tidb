@@ -79,7 +79,6 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
-	txn.exitFairLockingIfInapplicable(ctx, keys)
 	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
 	if err != nil {
 		return txn.extractKeyErr(err)
@@ -89,7 +88,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 
 func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
-	txn.exitFairLockingIfInapplicable(ctx, keys)
 	err := txn.KVTxn.LockKeysFunc(ctx, lockCtx, fn, keys...)
 	if err != nil {
 		return txn.extractKeyErr(err)
@@ -355,18 +353,6 @@ func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
 
 func (txn *tikvTxn) UpdateMemBufferFlags(key []byte, flags ...kv.FlagsOp) {
 	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(flags)...)
-}
-
-func (txn *tikvTxn) exitFairLockingIfInapplicable(ctx context.Context, keys [][]byte) {
-	if len(keys) > 1 && txn.IsInAggressiveLockingMode() {
-		// Only allow fair locking if it only needs to lock one key. Considering that it's possible that a
-		// statement causes multiple calls to `LockKeys` (which means some keys may have been locked in fair
-		// locking mode), here we exit fair locking mode by calling DoneFairLocking instead of cancelling.
-		// Then the previously-locked keys during execution in this statement (if any) will be turned into the state
-		// as if they were locked in normal way.
-		// Note that the issue https://github.com/pingcap/tidb/issues/35682 also exists here.
-		txn.KVTxn.DoneAggressiveLocking(ctx)
-	}
 }
 
 func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {
