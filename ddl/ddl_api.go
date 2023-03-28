@@ -4063,13 +4063,6 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	if pi == nil {
 		return dbterror.ErrPartitionMgmtOnNonpartitioned
 	}
-	// TODO: Add support for HASH and KEY partitioning when ADD/COALESCE
-	// is supported
-	switch pi.Type {
-	case model.PartitionTypeRange, model.PartitionTypeList:
-	default:
-		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
-	}
 	newSpec := spec
 	// shortcut if only one partition
 	if len(pi.Definitions) != 1 {
@@ -4090,8 +4083,12 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 			clause := &ast.PartitionDefinitionClauseLessThan{Exprs: exprs}
 			defs[0].Clause = clause
 			newSpec.PartDefinitions = defs
+			// TODO: Add support for HASH and KEY partitioning when ADD/COALESCE
+			// is supported
 		default:
-			return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+			// Add support for LIST partitioning when DEFAULT List partition
+			// is supported
+			return errors.Trace(dbterror.ErrUnsupportedRemovePartition)
 		}
 	}
 	partNames := make([]model.CIStr, len(pi.Definitions))
