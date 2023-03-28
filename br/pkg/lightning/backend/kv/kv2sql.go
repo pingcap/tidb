@@ -29,7 +29,7 @@ import (
 
 type TableKVDecoder struct {
 	tbl table.Table
-	se  *session
+	se  *Session
 	// tableName is the unique table name in the form "`db`.`tbl`".
 	tableName string
 	genCols   []genCol
@@ -91,7 +91,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 		if err != nil {
 			return err
 		}
-		iter := index.GenIndexKVIter(t.se.vars.StmtCtx, indexValues, h, nil)
+		iter := index.GenIndexKVIter(t.se.Vars.StmtCtx, indexValues, h, nil)
 		for iter.Valid() {
 			indexKey, _, _, err := iter.Next(indexBuffer)
 			if err != nil {
@@ -115,7 +115,7 @@ func NewTableKVDecoder(
 	options *encode.SessionOptions,
 	logger log.Logger,
 ) (*TableKVDecoder, error) {
-	se := newSession(options, logger)
+	se := NewSession(options, logger)
 	cols := tbl.Cols()
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
 	recordCtx := tables.NewCommonAddRecordCtx(len(cols))

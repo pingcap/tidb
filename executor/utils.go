@@ -16,8 +16,6 @@ package executor
 
 import (
 	"strings"
-
-	"github.com/pingcap/errors"
 )
 
 // SetFromString constructs a slice of strings from a comma separated string.
@@ -93,21 +91,4 @@ func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) erro
 		b.retrieved = true
 	}
 	return nil
-}
-
-// TODO: add GetMsg() to errors package to replace this function.
-// see TestGetMsgFromBRError for more details.
-func getMsgFromBRError(err error) string {
-	if err == nil {
-		return ""
-	}
-	if berr, ok := err.(*errors.Error); ok {
-		return berr.GetMsg()
-	}
-	raw := err.Error()
-	berrMsg := errors.Cause(err).Error()
-	if len(raw) <= len(berrMsg)+len(": ") {
-		return raw
-	}
-	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }

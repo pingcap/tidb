@@ -21,6 +21,7 @@ import (
 type backendSuite struct {
 	controller  *gomock.Controller
 	mockBackend *mock.MockBackend
+	encBuilder  *mock.MockEncodingBuilder
 	backend     backend.Backend
 	ts          uint64
 }
@@ -32,6 +33,7 @@ func createBackendSuite(c gomock.TestReporter) *backendSuite {
 		controller:  controller,
 		mockBackend: mockBackend,
 		backend:     backend.MakeBackend(mockBackend),
+		encBuilder:  mock.NewMockEncodingBuilder(controller),
 		ts:          oracle.ComposeTS(time.Now().Unix()*1000, 0),
 	}
 }
@@ -316,8 +318,8 @@ func TestMakeEmptyRows(t *testing.T) {
 	defer s.tearDownTest()
 
 	rows := mock.NewMockRows(s.controller)
-	s.mockBackend.EXPECT().MakeEmptyRows().Return(rows)
-	require.Equal(t, rows, s.mockBackend.MakeEmptyRows())
+	s.encBuilder.EXPECT().MakeEmptyRows().Return(rows)
+	require.Equal(t, rows, s.encBuilder.MakeEmptyRows())
 }
 
 func TestNewEncoder(t *testing.T) {
@@ -328,9 +330,9 @@ func TestNewEncoder(t *testing.T) {
 	options := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeANSIQuotes, Timestamp: 1234567890},
 	}
-	s.mockBackend.EXPECT().NewEncoder(nil, options).Return(encoder, nil)
+	s.encBuilder.EXPECT().NewEncoder(nil, options).Return(encoder, nil)
 
-	realEncoder, err := s.mockBackend.NewEncoder(nil, options)
+	realEncoder, err := s.encBuilder.NewEncoder(nil, options)
 	require.Equal(t, realEncoder, encoder)
 	require.NoError(t, err)
 }

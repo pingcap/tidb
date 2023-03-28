@@ -42,10 +42,11 @@ import (
 )
 
 type mysqlSuite struct {
-	dbHandle *sql.DB
-	mockDB   sqlmock.Sqlmock
-	backend  backend.Backend
-	tbl      table.Table
+	dbHandle   *sql.DB
+	mockDB     sqlmock.Sqlmock
+	backend    backend.Backend
+	encBuilder encode.EncodingBuilder
+	tbl        table.Table
 }
 
 func createMysqlSuite(t *testing.T) *mysqlSuite {
@@ -65,7 +66,13 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
 	backend := tidb.NewTiDBBackend(context.Background(), db, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
-	return &mysqlSuite{dbHandle: db, mockDB: mock, backend: backend, tbl: tbl}
+	return &mysqlSuite{
+		dbHandle:   db,
+		mockDB:     mock,
+		backend:    backend,
+		encBuilder: tidb.NewEncodingBuilder(),
+		tbl:        tbl,
+	}
 }
 
 func (s *mysqlSuite) TearDownTest(t *testing.T) {
@@ -86,9 +93,9 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 	engine, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
-	dataRows := s.backend.MakeEmptyRows()
+	dataRows := s.encBuilder.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
-	indexRows := s.backend.MakeEmptyRows()
+	indexRows := s.encBuilder.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
 	cols := s.tbl.Cols()
@@ -100,7 +107,7 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 	// skip column a,c due to ignore-columns
 	perms[0] = -1
 	perms[2] = -1
-	encoder, err := s.backend.NewEncoder(context.Background(), &encode.EncodingConfig{
+	encoder, err := s.encBuilder.NewEncoder(context.Background(), &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{SQLMode: 0, Timestamp: 1234567890},
 		Table:          s.tbl,
 		Logger:         logger,
@@ -145,16 +152,17 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	ctx := context.Background()
 	logger := log.L()
 
+	encBuilder := tidb.NewEncodingBuilder()
 	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, config.IgnoreOnDup, errormanager.New(nil, config.NewConfig(), logger))
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
-	dataRows := ignoreBackend.MakeEmptyRows()
+	dataRows := encBuilder.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
-	indexRows := ignoreBackend.MakeEmptyRows()
+	indexRows := encBuilder.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := ignoreBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: logger})
+	encoder, err := encBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: logger})
 	require.NoError(t, err)
 	row, err := encoder.Encode([]types.Datum{
 		types.NewIntDatum(1),
@@ -170,7 +178,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	require.NoError(t, err)
 
 	// test encode rows with _tidb_rowid
-	encoder, err = ignoreBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: logger})
+	encoder, err = encBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: logger})
 	require.NoError(t, err)
 	rowWithID, err := encoder.Encode([]types.Datum{
 		types.NewIntDatum(1),
@@ -191,16 +199,17 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 	ctx := context.Background()
 	logger := log.L()
 
+	encBuilder := tidb.NewEncodingBuilder()
 	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), logger))
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
-	dataRows := ignoreBackend.MakeEmptyRows()
+	dataRows := encBuilder.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
-	indexRows := ignoreBackend.MakeEmptyRows()
+	indexRows := encBuilder.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := ignoreBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: logger})
+	encoder, err := encBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: logger})
 	require.NoError(t, err)
 	row, err := encoder.Encode([]types.Datum{
 		types.NewIntDatum(1),
@@ -236,9 +245,9 @@ func testStrictMode(t *testing.T) {
 
 	ctx := context.Background()
 
-	bk := tidb.NewTiDBBackend(ctx, s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
+	encBuilder := tidb.NewEncodingBuilder()
 	logger := log.L()
-	encoder, err := bk.NewEncoder(ctx, &encode.EncodingConfig{
+	encoder, err := encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables},
 		Table:          tbl,
 		Logger:         log.L(),
@@ -257,7 +266,7 @@ func testStrictMode(t *testing.T) {
 	require.Regexp(t, `incorrect utf8 value .* for column s0$`, err.Error())
 
 	// oepn a new encode because column count changed.
-	encoder, err = bk.NewEncoder(ctx, &encode.EncodingConfig{
+	encoder, err = encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables},
 		Table:          tbl,
 		Logger:         logger,
@@ -283,8 +292,8 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 			AddRow("t", "id", "int(10)", "", "auto_increment"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
-	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
+	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
+	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
 	ft := types.FieldType{}
 	ft.SetFlag(mysql.AutoIncrementFlag)
@@ -320,8 +329,8 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 			AddRow("test", "t", "id", int64(1)))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
-	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
+	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
+	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
 	ft := types.FieldType{}
 	ft.SetFlag(mysql.AutoIncrementFlag | mysql.UnsignedFlag)
@@ -357,8 +366,8 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 			AddRow("test", "t", "id", int64(1), "AUTO_INCREMENT"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
-	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
+	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
+	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
 	ft := types.FieldType{}
 	ft.SetFlag(mysql.AutoIncrementFlag)
@@ -394,8 +403,8 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 			AddRow("test", "t", "id", int64(1), "AUTO_RANDOM"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
-	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
+	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
+	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
 	ft := types.FieldType{}
 	ft.SetFlag(mysql.PriKeyFlag)
@@ -432,7 +441,8 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup,
 		errormanager.New(s.dbHandle, &config.Config{}, log.L()),
 	)
-	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
+	encBuilder := tidb.NewEncodingBuilder()
+	dataRows := encodeRowsTiDB(t, encBuilder, ignoreBackend, s.tbl)
 	ctx := context.Background()
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
@@ -499,7 +509,8 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 			},
 		}, log.L()),
 	)
-	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
+	encBuilder := tidb.NewEncodingBuilder()
+	dataRows := encodeRowsTiDB(t, encBuilder, ignoreBackend, s.tbl)
 	ctx := context.Background()
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
@@ -554,7 +565,8 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 			},
 		}, log.L()),
 	)
-	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
+	encBuilder := tidb.NewEncodingBuilder()
+	dataRows := encodeRowsTiDB(t, encBuilder, ignoreBackend, s.tbl)
 	ctx := context.Background()
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
@@ -567,10 +579,10 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 	require.Nil(t, st)
 }
 
-func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) encode.Rows {
-	dataRows := b.MakeEmptyRows()
+func encodeRowsTiDB(t *testing.T, encBuilder encode.EncodingBuilder, b backend.Backend, tbl table.Table) encode.Rows {
+	dataRows := encBuilder.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
-	indexRows := b.MakeEmptyRows()
+	indexRows := encBuilder.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
 	rowCases := []struct {
@@ -613,7 +625,7 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) encode.Row
 		},
 	}
 	for _, rc := range rowCases {
-		encoder, err := b.NewEncoder(context.Background(), &encode.EncodingConfig{
+		encoder, err := encBuilder.NewEncoder(context.Background(), &encode.EncodingConfig{
 			Path:   rc.path,
 			Table:  tbl,
 			Logger: log.L(),
@@ -628,7 +640,7 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) encode.Row
 	for i := 0; i < 15; i++ {
 		rawRow = append(rawRow, types.NewIntDatum(0))
 	}
-	encoder, err := b.NewEncoder(context.Background(), &encode.EncodingConfig{
+	encoder, err := encBuilder.NewEncoder(context.Background(), &encode.EncodingConfig{
 		Path:   "12.csv",
 		Table:  tbl,
 		Logger: log.L(),

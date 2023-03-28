@@ -386,13 +386,13 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
-	pdCtl     *pdutil.PdController
-	splitCli  split.SplitClient
-	tikvCli   *tikvclient.KVStore
-	tls       *common.TLS
-	pdAddr    string
-	g         glue.Glue
-	tikvCodec tikvclient.Codec
+	pdCtl            *pdutil.PdController
+	splitCli         split.SplitClient
+	tikvCli          *tikvclient.KVStore
+	tls              *common.TLS
+	pdAddr           string
+	regionSizeGetter TableRegionSizeGetter
+	tikvCodec        tikvclient.Codec
 
 	localStoreDir string
 
@@ -419,9 +419,6 @@ type local struct {
 	metrics      *metric.Metrics
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
-
-	encBuilder       encode.EncodingBuilder
-	targetInfoGetter backend.TargetInfoGetter
 
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
 	// To avoid this, we should check write stall before ingesting SSTs. Note that, we
@@ -453,11 +450,10 @@ func NewLocalBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	cfg *config.Config,
-	g glue.Glue,
+	regionSizeGetter TableRegionSizeGetter,
 	maxOpenFiles int,
 	errorMgr *errormanager.ErrorManager,
 	keyspaceName string,
-	encodingBuilder encode.EncodingBuilder,
 ) (backend.Backend, error) {
 	localFile := cfg.TikvImporter.SortedKVDir
 	rangeConcurrency := cfg.TikvImporter.RangeConcurrency
@@ -534,14 +530,14 @@ func NewLocalBackend(
 		LastAlloc = alloc
 	}
 	local := &local{
-		engines:   sync.Map{},
-		pdCtl:     pdCtl,
-		splitCli:  splitCli,
-		tikvCli:   tikvCli,
-		tls:       tls,
-		pdAddr:    cfg.TiDB.PdAddr,
-		g:         g,
-		tikvCodec: tikvCodec,
+		engines:          sync.Map{},
+		pdCtl:            pdCtl,
+		splitCli:         splitCli,
+		tikvCli:          tikvCli,
+		tls:              tls,
+		pdAddr:           cfg.TiDB.PdAddr,
+		regionSizeGetter: regionSizeGetter,
+		tikvCodec:        tikvCodec,
 
 		localStoreDir:     localFile,
 		workerConcurrency: rangeConcurrency * 2,
@@ -562,8 +558,6 @@ func NewLocalBackend(
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(alloc)),
 		writeLimiter:            writeLimiter,
 		logger:                  log.FromContext(ctx),
-		encBuilder:              encodingBuilder,
-		targetInfoGetter:        NewTargetInfoGetter(tls, g, cfg.TiDB.PdAddr),
 		shouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
 	}
 	if m, ok := metric.FromContext(ctx); ok {
@@ -1667,22 +1661,6 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	localEngine.TotalSize.Store(0)
 	localEngine.Length.Store(0)
 	return nil
-}
-
-func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
-	return local.targetInfoGetter.CheckRequirements(ctx, checkCtx)
-}
-
-func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return local.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
-}
-
-func (local *local) MakeEmptyRows() encode.Rows {
-	return local.encBuilder.MakeEmptyRows()
-}
-
-func (local *local) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	return local.encBuilder.NewEncoder(ctx, config)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {

@@ -20,6 +20,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/pingcap/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
@@ -33,13 +35,13 @@ import (
 func TestInitDefaultOptions(t *testing.T) {
 	e := LoadDataController{}
 	e.initDefaultOptions()
-	require.Equal(t, LogicalImportMode, e.importMode)
+	require.Equal(t, LogicalImportMode, e.ImportMode)
 	require.Equal(t, config.ByteSize(50<<30), e.diskQuota)
 	require.Equal(t, config.OpLevelRequired, e.checksum)
 	require.Equal(t, true, e.addIndex)
 	require.Equal(t, config.OpLevelOptional, e.analyze)
 	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt)
-	require.Equal(t, int64(1000), e.batchSize)
+	require.Equal(t, int64(1000), e.BatchSize)
 	require.Equal(t, unlimitedWriteSpeed, e.maxWriteSpeed)
 	require.Equal(t, false, e.splitFile)
 	require.Equal(t, int64(100), e.maxRecordedErrors)
@@ -158,13 +160,13 @@ func TestInitOptions(t *testing.T) {
 	require.NoError(t, err, sql)
 	err = e.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
 	require.NoError(t, err, sql)
-	require.Equal(t, physicalImportMode, e.importMode, sql)
+	require.Equal(t, PhysicalImportMode, e.ImportMode, sql)
 	require.Equal(t, config.ByteSize(100<<30), e.diskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, e.checksum, sql)
 	require.False(t, e.addIndex, sql)
 	require.Equal(t, config.OpLevelRequired, e.analyze, sql)
 	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt, sql)
-	require.Equal(t, int64(2000), e.batchSize, sql)
+	require.Equal(t, int64(2000), e.BatchSize, sql)
 	require.Equal(t, config.ByteSize(200<<20), e.maxWriteSpeed, sql)
 	require.True(t, e.splitFile, sql)
 	require.Equal(t, int64(123), e.maxRecordedErrors, sql)
@@ -181,4 +183,13 @@ func TestAdjustOptions(t *testing.T) {
 	require.Equal(t, minDiskQuota, e.diskQuota)
 	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt)
 	require.Equal(t, minWriteSpeed, e.maxWriteSpeed)
+}
+
+func TestGetMsgFromBRError(t *testing.T) {
+	var berr error = berrors.ErrStorageInvalidConfig
+	require.Equal(t, "[BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
+	require.Equal(t, "invalid external storage config", GetMsgFromBRError(berr))
+	berr = errors.Annotatef(berr, "some message about error reason")
+	require.Equal(t, "some message about error reason: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
+	require.Equal(t, "some message about error reason", GetMsgFromBRError(berr))
 }

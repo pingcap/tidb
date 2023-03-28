@@ -6,15 +6,26 @@ go_library(
     importpath = "github.com/pingcap/tidb/executor/importer",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
+        "//br/pkg/lightning/log",
+        "//br/pkg/lightning/mydump",
+        "//br/pkg/storage",
         "//parser/ast",
         "//parser/mysql",
+        "//parser/terror",
         "//planner/core",
         "//sessionctx",
         "//table",
         "//util/chunk",
         "//util/dbterror",
         "//util/dbterror/exeerrors",
+        "//util/intest",
+        "//util/logutil",
+        "//util/stringutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -25,6 +36,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     deps = [
+        "//br/pkg/errors",
         "//br/pkg/lightning/config",
         "//expression",
         "//parser",
@@ -32,6 +44,7 @@ go_test(
         "//planner/core",
         "//util/dbterror/exeerrors",
         "//util/mock",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )

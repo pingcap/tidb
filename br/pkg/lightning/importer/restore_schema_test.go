@@ -133,15 +133,16 @@ func (s *restoreSchemaSuite) SetupSuite() {
 //nolint:interfacer // change test case signature might cause Check failed to find this test case?
 func (s *restoreSchemaSuite) SetupTest() {
 	s.controller, s.ctx = gomock.WithContext(context.Background(), s.T())
+	mockTargetInfoGetter := mock.NewMockTargetInfoGetter(s.controller)
 	mockBackend := mock.NewMockBackend(s.controller)
-	mockBackend.EXPECT().
+	mockTargetInfoGetter.EXPECT().
 		FetchRemoteTableModels(gomock.Any(), gomock.Any()).
 		AnyTimes().
 		Return(s.tableInfos, nil)
 	mockBackend.EXPECT().Close()
 	theBackend := backend.MakeBackend(mockBackend)
 	s.rc.backend = theBackend
-	s.targetInfoGetter.backend = theBackend
+	s.targetInfoGetter.backend = mockTargetInfoGetter
 
 	mockDB, sqlMock, err := sqlmock.New()
 	require.NoError(s.T(), err)

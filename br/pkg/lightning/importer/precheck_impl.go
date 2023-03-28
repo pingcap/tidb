@@ -1269,7 +1269,7 @@ func checkFieldCompatibility(
 	values []types.Datum,
 	logger log.Logger,
 ) bool {
-	se := kv.NewSession(&encode.SessionOptions{
+	se := kv.NewSessionCtx(&encode.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	}, logger)
 	for i, col := range tbl.Columns {
