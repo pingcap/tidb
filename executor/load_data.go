@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -263,6 +264,7 @@ type LoadDataWorker struct {
 	controller *importer.LoadDataController
 
 	table           table.Table
+	charset         *string
 	row             []types.Datum
 	rows            [][]types.Datum
 	commitTaskQueue chan commitTask
@@ -342,6 +344,7 @@ func NewLoadDataWorker(
 		commitTaskQueue: make(chan commitTask, taskQueueSize),
 		InsertValues:    insertVal,
 		table:           tbl,
+		charset:         plan.Charset,
 		controller:      controller,
 		Ctx:             sctx,
 		restrictive:     restrictive,
@@ -586,6 +589,16 @@ func (e *LoadDataWorker) buildParser(
 ) (parser mydump.Parser, err error) {
 	switch e.controller.Format {
 	case importer.LoadDataFormatDelimitedData:
+		var charsetConvertor *mydump.CharsetConvertor
+		if e.charset != nil {
+			charsetConvertor, err = mydump.NewCharsetConvertor(*e.charset, string(utf8.RuneError))
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
 		// CSV-like
 		parser, err = mydump.NewCSVParser(
 			ctx,
@@ -594,8 +607,7 @@ func (e *LoadDataWorker) buildParser(
 			importer.LoadDataReadBlockSize,
 			nil,
 			false,
-			// TODO: support charset conversion
-			nil)
+			charsetConvertor)
 	case importer.LoadDataFormatSQLDump:
 		parser = mydump.NewChunkParser(
 			ctx,
