@@ -17,8 +17,19 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/akolb1/gometastore/hmsclient"
+	file2 "github.com/apache/arrow/go/v12/parquet/file"
+	"github.com/apache/arrow/go/v12/parquet/metadata"
+	"github.com/apache/arrow/go/v12/parquet/schema"
+	"github.com/colinmarc/hdfs/v2"
+	"github.com/colinmarc/hdfs/v2/hadoopconf"
+	"go.uber.org/zap"
+	"log"
 	"math"
 	"math/bits"
+	"net/url"
+	"os"
+	"os/user"
 	"sort"
 	"strconv"
 	"strings"
@@ -4459,6 +4470,185 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	return p, nil
 }
 
+const (
+	HiveMetastoreUris = "hive.metastore.uris"
+	DatabaseName      = "database"
+	TableName         = "table"
+)
+
+func getParquetFiles(client *hdfs.Client, path string) ([]string, error) {
+	var files []string
+	walkFunc := func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(info.Name(), ".parquet") {
+			files = append(files, path)
+		}
+		return nil
+	}
+	err := client.Walk(path, walkFunc)
+	return files, err
+}
+
+func getTableLocation(tbl *model.TableInfo) (tblLocation string, err error) {
+	hmsClient, err := getHmsClient(tbl.GetProperty(HiveMetastoreUris))
+	if err != nil || hmsClient == nil {
+		logutil.BgLogger().Error("get hmsClient failed")
+		return tblLocation, err
+	}
+	dbName := string(tbl.GetProperty(DatabaseName))
+	tableName := string(tbl.GetProperty(TableName))
+	table, err := hmsClient.GetTable(dbName, tableName)
+	if err != nil {
+		return tblLocation, err
+	}
+	return table.Sd.Location, nil
+}
+
+func readSchemaFromParquetFile(client *hdfs.Client, path string) (*metadata.FileMetaData, error) {
+	file, err := client.Open(path)
+	if err != nil {
+		logutil.BgLogger().Error("client open fail")
+		return nil, err
+	}
+	defer file.Close()
+	reader, err := file2.NewParquetReader(file)
+	if err != nil {
+		logutil.BgLogger().Error("file2.NewParquetReader fail")
+		return nil, err
+	}
+	defer reader.Close()
+	return reader.MetaData(), nil
+}
+
+func getHmsClient(hmsUri []byte) (hmsClient *hmsclient.MetastoreClient, err error) {
+	if hmsUri == nil {
+		return nil, nil
+	}
+	location, err := url.Parse(string(hmsUri))
+	if err != nil {
+		return nil, err
+	}
+	port, err := strconv.Atoi(location.Port())
+	if err != nil {
+		return nil, err
+	}
+	hmsClient, err = hmsclient.Open(location.Host, port)
+	if err != nil {
+		return nil, err
+	}
+	logutil.BgLogger().Error(fmt.Sprintf("hiveClient uri %s:%s", location.Host, port))
+	return
+
+}
+
+func newHDFSClient(address string) (client *hdfs.Client, err error) {
+	conf, err := hadoopconf.LoadFromEnvironment()
+	if err != nil {
+		return nil, err
+	}
+
+	options := hdfs.ClientOptionsFromConf(conf)
+	if address != "" {
+		options.Addresses = strings.Split(address, ",")
+	}
+
+	u, err := user.Current()
+	if err != nil {
+		return nil, err
+	}
+
+	options.User = u.Username
+	options.UseDatanodeHostname = true
+	return hdfs.NewClient(options)
+}
+
+func FetchColumnInfoFromExternalTable(tbl *model.TableInfo) (columns []*table.Column, parquetFileUris []string, err error) {
+	tableLocation, err := getTableLocation(tbl)
+	if err != nil {
+		logutil.BgLogger().Error("getTableLocation failed")
+		return nil, nil, err
+	}
+	logutil.BgLogger().Error("tableLocation", zap.String("tableLocation", tableLocation))
+	u, err := url.Parse(tableLocation)
+	if err != nil {
+		logutil.BgLogger().Error("url.Parse tableLocation failed")
+		return nil, nil, err
+	}
+	hdfsClient, err := newHDFSClient(u.Host)
+	if err != nil {
+		logutil.BgLogger().Error("newHDFSClient failed")
+		return nil, nil, err
+	}
+
+	parquetFiles, err := getParquetFiles(hdfsClient, u.Path)
+	if err != nil {
+		logutil.BgLogger().Error("getParquetFiles failed")
+		return nil, nil, err
+	}
+	if len(parquetFiles) == 0 {
+		logutil.BgLogger().Error("no parquet file found")
+		return nil, nil, errors.New("No Parquet files found")
+	}
+	for i, pf := range parquetFiles {
+		logutil.BgLogger().Error(fmt.Sprintf("parquetFile[%d]: %s", i, pf))
+	}
+
+	metaData, err := readSchemaFromParquetFile(hdfsClient, parquetFiles[0])
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, f := range parquetFiles {
+		parquetFileUris = append(parquetFileUris, u.Scheme+"://"+u.Host+f)
+	}
+	return parquetSchemaToColumnInfo(metaData.Schema), parquetFileUris, nil
+}
+
+type schemaToColumnInfo struct {
+	columnInfos []*model.ColumnInfo
+	idAllocator int64
+}
+
+func (s *schemaToColumnInfo) VisitPre(n schema.Node) bool {
+	if n.Type() == schema.Group {
+		return true
+	} else {
+		p := n.(*schema.PrimitiveNode)
+		columnInfo := &model.ColumnInfo{
+			ID:    s.idAllocator,
+			Name:  model.NewCIStr(p.Name()),
+			State: model.StatePublic,
+		}
+		switch strings.ToLower(p.PhysicalType().String()) {
+		case "byte_array":
+			columnInfo.FieldType = *types.NewFieldType(mysql.TypeVarchar)
+		case "int64":
+			columnInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+		case "int32":
+			columnInfo.FieldType = *types.NewFieldType(mysql.TypeLong)
+		case "double":
+			columnInfo.FieldType = *types.NewFieldType(mysql.TypeDouble)
+		}
+		s.idAllocator++
+		s.columnInfos = append(s.columnInfos, columnInfo)
+	}
+	return true
+}
+
+func (s *schemaToColumnInfo) VisitPost(n schema.Node) {
+	return
+}
+
+func parquetSchemaToColumnInfo(schema *schema.Schema) (tableColumns []*table.Column) {
+	columnInfoFetcher := &schemaToColumnInfo{}
+	schema.Root().Visit(columnInfoFetcher)
+	for _, info := range columnInfoFetcher.columnInfos {
+		tableColumns = append(tableColumns, &table.Column{ColumnInfo: info})
+	}
+	return tableColumns
+}
+
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()
@@ -4640,6 +4830,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	var columns []*table.Column
+	var parquetFileUris []string
 	if b.inUpdateStmt {
 		// create table t(a int, b int).
 		// Imagine that, There are 2 TiDB instances in the cluster, name A, B. We add a column `c` to table t in the TiDB cluster.
@@ -4652,9 +4843,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	} else if b.inDeleteStmt {
 		// DeletableCols returns all columns of the table in deletable states.
 		columns = tbl.DeletableCols()
+	} else if tableInfo.IsExternalTable() {
+		columns, parquetFileUris, err = FetchColumnInfoFromExternalTable(tableInfo)
 	} else {
 		columns = tbl.Cols()
 	}
+	if err != nil {
+		return nil, err
+	}
+
+	// FIXME: create column info here when the table is an external table
+
 	// extract the IndexMergeHint
 	var indexMergeHints []indexHintInfo
 	if hints := b.TableHints(); hints != nil {
@@ -4710,6 +4909,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		preferPartitions:    make(map[int][]model.CIStr),
 		is:                  b.is,
 		isForUpdateRead:     b.isForUpdateRead,
+		parquetFileUris:     parquetFileUris,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)

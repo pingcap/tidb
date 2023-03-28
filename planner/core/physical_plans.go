@@ -834,9 +834,10 @@ type PhysicalTableScan struct {
 
 	// required by cost model
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
-	tblCols     []*expression.Column
-	tblColHists *statistics.HistColl
-	prop        *property.PhysicalProperty
+	tblCols         []*expression.Column
+	tblColHists     *statistics.HistColl
+	prop            *property.PhysicalProperty
+	parquetFileUris []string
 }
 
 // Clone implements PhysicalPlan interface.

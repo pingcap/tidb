@@ -1236,6 +1236,7 @@ type DataSource struct {
 	// colsRequiringFullLen is the columns that must be fetched with full length.
 	// It is used to decide whether single scan is enough when reading from an index.
 	colsRequiringFullLen []*expression.Column
+	parquetFileUris      []string
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

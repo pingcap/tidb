@@ -695,6 +695,7 @@ import (
 	position              "POSITION"
 	predicate             "PREDICATE"
 	properties            "PROPERTIES"
+	external              "EXTERNAL"
 	primaryRegion         "PRIMARY_REGION"
 	recent                "RECENT"
 	replayer              "REPLAYER"
@@ -894,6 +895,7 @@ import (
 	BRIEStmt                   "BACKUP or RESTORE statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
+	CreateExternalTableStmt    "Create external table statement"
 	CreateViewStmt             "CREATE VIEW  statement"
 	CreateUserStmt             "CREATE User statement"
 	CreateRoleStmt             "CREATE Role statement"
@@ -1042,8 +1044,8 @@ import (
 	DatabaseOption                         "CREATE Database specification"
 	DatabaseOptionList                     "CREATE Database specification list"
 	DatabaseOptionListOpt                  "CREATE Database specification list opt"
-	CatalogProperty                        "CREATE Catalog property"
-	CatalogPropertiesList                  "CREATE Catalog properties list"
+	Property                               "CREATE Catalog property"
+	PropertiesList                         "CREATE Catalog properties list"
 	DistinctOpt                            "Explicit distinct option"
 	DefaultFalseDistinctOpt                "Distinct option which defaults to false"
 	DefaultTrueDistinctOpt                 "Distinct option which defaults to true"
@@ -1440,8 +1442,8 @@ import (
 	ColumnFormat                    "Column format"
 	DBName                          "Database Name"
 	CatalogName                     "Catalog Name"
-	CatalogPropertyName             "Catalog Property Name"
-	CatalogPropertyValue            "Catalog Property Value"
+	PropertyName                    "Property Name"
+	PropertyValue                   "Property Value"
 	PolicyName                      "Placement Policy Name"
 	ResourceGroupName               "Resource Group Name"
 	ExplainFormatType               "explain format type"
@@ -3918,38 +3920,38 @@ AlterDatabaseStmt:
 	}
 
 CreateCatalogStmt:
-	"CREATE" "CATALOG" IfNotExists CatalogName "PROPERTIES" '(' CatalogPropertiesList ')'
+	"CREATE" "CATALOG" IfNotExists CatalogName "PROPERTIES" '(' PropertiesList ')'
 	{
 		$$ = &ast.CreateCatalogStmt{
 			IfNotExists: $3.(bool),
 			Name:        model.NewCIStr($4),
-			Properties:  $7.([]*ast.CatalogProperty),
+			Properties:  $7.([]*ast.Property),
 		}
 	}
 
 CatalogName:
 	Identifier
 
-CatalogPropertiesList:
-	CatalogProperty
+PropertiesList:
+	Property
 	{
-		$$ = []*ast.CatalogProperty{$1.(*ast.CatalogProperty)}
+		$$ = []*ast.Property{$1.(*ast.Property)}
 	}
-|	CatalogPropertiesList ',' CatalogProperty
+|	PropertiesList ',' Property
 	{
-		$$ = append($1.([]*ast.CatalogProperty), $3.(*ast.CatalogProperty))
-	}
-
-CatalogProperty:
-	CatalogPropertyName "=" CatalogPropertyValue
-	{
-		$$ = &ast.CatalogProperty{Name: $1, Value: $3}
+		$$ = append($1.([]*ast.Property), $3.(*ast.Property))
 	}
 
-CatalogPropertyName:
+Property:
+	PropertyName "=" PropertyValue
+	{
+		$$ = &ast.Property{Name: $1, Value: $3}
+	}
+
+PropertyName:
 	stringLit
 
-CatalogPropertyValue:
+PropertyValue:
 	stringLit
 
 /*******************************************************************
@@ -4041,6 +4043,16 @@ DatabaseOptionList:
 |	DatabaseOptionList DatabaseOption
 	{
 		$$ = append($1.([]*ast.DatabaseOption), $2.(*ast.DatabaseOption))
+	}
+
+CreateExternalTableStmt:
+	"CREATE" "EXTERNAL" "TABLE" IfNotExists TableName "PROPERTIES" '(' PropertiesList ')'
+	{
+		$$ = &ast.CreateExternalTableStmt{
+			IfNotExists: $4.(bool),
+			Table:       $5.(*ast.TableName),
+			Properties:  $8.([]*ast.Property),
+		}
 	}
 
 /*******************************************************************
@@ -6462,6 +6474,7 @@ TiDBKeyword:
 |	"DRY"
 |	"RUN"
 |	"CATALOG"
+|	"EXTERNAL"
 
 NotKeywordToken:
 	"ADDDATE"
@@ -11397,6 +11410,7 @@ Statement:
 |	CreateDatabaseStmt
 |	CreateCatalogStmt
 |	CreateIndexStmt
+|	CreateExternalTableStmt
 |	CreateTableStmt
 |	CreateViewStmt
 |	CreateUserStmt

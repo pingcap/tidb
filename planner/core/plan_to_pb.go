@@ -278,9 +278,10 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	executorID := ""
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
-		if p.Table.Name.L == "stock_ticks_mor_ro" {
-			hdfsURI := getHDFSUriFromHudi()
-			tsExec.HdfsUri = append(tsExec.HdfsUri, []byte(hdfsURI))
+		if p.Table.IsExternalTable() {
+			for _, f := range p.parquetFileUris {
+				tsExec.HdfsUri = append(tsExec.HdfsUri, []byte(f))
+			}
 		}
 		telemetry.CurrentTiflashTableScanCount.Inc()
 		if *(tsExec.IsFastScan) {

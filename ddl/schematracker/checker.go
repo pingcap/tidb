@@ -166,6 +166,10 @@ func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.
 	}
 }
 
+func (d Checker) CreateExternalTable(sctx sessionctx.Context, stmt *ast.CreateExternalTableStmt) error {
+	return nil
+}
+
 func (d Checker) CreateCatalog(ctx sessionctx.Context, stmt *ast.CreateCatalogStmt) error {
 	return nil
 }

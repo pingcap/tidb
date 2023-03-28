@@ -90,6 +90,47 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
+func (d *ddl) CreateExternalTable(ctx sessionctx.Context, s *ast.CreateExternalTableStmt) error {
+	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tableCharset, tableCollate, err = ResolveCharsetCollation(
+		ast.CharsetOpt{Chs: tableCharset, Col: tableCollate},
+		ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tblInfo, err := BuildTableInfo(ctx, s.Table.Name, nil, nil, tableCharset, tableCollate)
+	if err != nil {
+		return err
+	}
+	tblInfo.IsExternalTbl = true
+	var properties []*model.Property
+	if s.Properties != nil {
+		for _, p := range s.Properties {
+			properties = append(properties, &model.Property{Name: p.Name, Value: p.Value})
+		}
+	}
+	tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tblInfo.Properties = properties
+
+	onExist := OnExistError
+	if s.IfNotExists {
+		onExist = OnExistIgnore
+	}
+
+	return d.CreateTableWithInfo(ctx, schema.Name, tblInfo, onExist)
+}
+
 func (d *ddl) CreateCatalog(ctx sessionctx.Context, stmt *ast.CreateCatalogStmt) error {
 	var createDBStmt ast.CreateDatabaseStmt
 	createDBStmt.Name = model.NewCatalogDBName(stmt.Name)
@@ -118,10 +159,10 @@ func GetDBInfoCore(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (_ *mod
 			return nil, 0, err
 		}
 	}
-	var catalogProperties []*model.CatalogProperty
+	var catalogProperties []*model.Property
 	if stmt.CatalogProperties != nil {
 		for _, p := range stmt.CatalogProperties {
-			catalogProperties = append(catalogProperties, &model.CatalogProperty{Name: p.Name, Value: p.Name})
+			catalogProperties = append(catalogProperties, &model.Property{Name: p.Name, Value: p.Name})
 		}
 	}
 

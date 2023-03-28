@@ -158,9 +158,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	if e.Table().Meta().Name.L == "stock_ticks_mor_ro" {
-		return nil
-	}
 	var err error
 	if e.corColInFilter {
 		if e.storeType == kv.TiFlash {

@@ -212,6 +212,9 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
 		buffer.WriteString(", stats:pseudo")
 	}
+	if p.StoreType == kv.TiFlash && p.parquetFileUris != nil {
+		buffer.WriteString(" , hdfs_uris:" + fmt.Sprintf("%v", p.parquetFileUris))
+	}
 	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		buffer.WriteString(", PartitionTableScan:true")
 	}

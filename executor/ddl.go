@@ -149,7 +149,9 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.CreateCatalogStmt:
-		err = e.executeCreateDatalog(x)
+		err = e.executeCreateCatalog(x)
+	case *ast.CreateExternalTableStmt:
+		err = e.executeCreateExternalTable(x)
 	case *ast.CreateDatabaseStmt:
 		err = e.executeCreateDatabase(x)
 	case *ast.FlashBackDatabaseStmt:
@@ -252,8 +254,13 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	return domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, s)
 }
 
-func (e *DDLExec) executeCreateDatalog(s *ast.CreateCatalogStmt) error {
+func (e *DDLExec) executeCreateCatalog(s *ast.CreateCatalogStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateCatalog(e.ctx, s)
+	return err
+}
+
+func (e *DDLExec) executeCreateExternalTable(s *ast.CreateExternalTableStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().CreateExternalTable(e.ctx, s)
 	return err
 }
 

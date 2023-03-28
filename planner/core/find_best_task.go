@@ -912,6 +912,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 
 	cntPlan = 0
 	for _, candidate := range candidates {
+		if ds.tableInfo.IsExternalTable() && candidate.path.StoreType != kv.TiFlash {
+			continue
+		}
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
 			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate, opt)
@@ -2340,6 +2343,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
 		prop:            prop,
+		parquetFileUris: ds.parquetFileUris,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))
 	copy(ts.filterCondition, path.TableFilters)

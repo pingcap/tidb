@@ -517,7 +517,18 @@ type TableInfo struct {
 
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
-	TTLInfo *TTLInfo `json:"ttl_info"`
+	TTLInfo    *TTLInfo `json:"ttl_info"`
+	IsExternalTbl bool `json:"is_external_tbl"`
+	Properties []*Property `json:"properties"`
+}
+
+func (t *TableInfo) GetProperty(propName string) (propValue []byte){
+	for _, p := range t.Properties {
+		if p.Name == propName {
+			return []byte(p.Value)
+		}
+	}
+	return nil
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
@@ -984,6 +995,10 @@ func (t *TableInfo) HasClusteredIndex() bool {
 // IsView checks if TableInfo is a view.
 func (t *TableInfo) IsView() bool {
 	return t.View != nil
+}
+
+func (t *TableInfo) IsExternalTable() bool {
+	return t.IsExternalTbl
 }
 
 // IsSequence checks if TableInfo is a sequence.
@@ -1603,14 +1618,14 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID                 int64             `json:"id"`      // Database ID
-	Name               CIStr             `json:"db_name"` // DB name.
-	Charset            string            `json:"charset"`
-	Collate            string            `json:"collate"`
-	Tables             []*TableInfo      `json:"-"` // Tables in the DB.
-	State              SchemaState       `json:"state"`
-	PlacementPolicyRef *PolicyRefInfo    `json:"policy_ref_info"`
-	CatalogProperties  []*CatalogProperty `json:"catalog_properties"`
+	ID                 int64          `json:"id"`      // Database ID
+	Name               CIStr          `json:"db_name"` // DB name.
+	Charset            string         `json:"charset"`
+	Collate            string         `json:"collate"`
+	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
+	State              SchemaState    `json:"state"`
+	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
+	CatalogProperties  []*Property    `json:"catalog_properties"`
 }
 
 // Clone clones DBInfo.
@@ -1689,8 +1704,8 @@ type TableItemID struct {
 	IsIndex bool
 }
 
-type CatalogProperty struct {
-	Name string `json:"name"`
+type Property struct {
+	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 

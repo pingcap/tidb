@@ -968,6 +968,19 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	sqlMode := ctx.GetSessionVars().SQLMode
 	tableName := stringutil.Escape(tableInfo.Name.O, sqlMode)
+	if tableInfo.IsExternalTbl {
+		fmt.Fprintf(buf, "CREATE EXTERNAL TABLE %s PROPERTIES(\n", tableName)
+		for i, p := range tableInfo.Properties {
+			fmt.Fprintf(buf, "    \"%s\" = \"%s\"", p.Name, p.Value)
+			if i == len(tableInfo.Properties)-1 {
+				fmt.Fprintf(buf, "\n")
+			} else {
+				fmt.Fprintf(buf, ",\n")
+			}
+		}
+		fmt.Fprintf(buf, ")")
+		return nil
+	}
 	switch tableInfo.TempTableType {
 	case model.TempTableGlobal:
 		fmt.Fprintf(buf, "CREATE GLOBAL TEMPORARY TABLE %s (\n", tableName)
@@ -976,6 +989,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	default:
 		fmt.Fprintf(buf, "CREATE TABLE %s (\n", tableName)
 	}
+
 	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
 	needAddComma := false

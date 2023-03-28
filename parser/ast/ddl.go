@@ -131,12 +131,59 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type CreateExternalTableStmt struct {
+	ddlNode
+
+	IfNotExists bool
+	Table       *TableName
+	Properties  []*Property
+}
+
+// Restore implements Node interface.
+func (n *CreateExternalTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE EXTERNAL TABLE ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while splicing CreateExternalTableStmt Table")
+	}
+	ctx.WriteKeyWord(" PROPERTIES ")
+	ctx.WritePlain(" (")
+	for i, prop := range n.Properties {
+		err := prop.Restore(ctx)
+		if err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing CreateCatalog Properties: [%v]", i)
+		}
+		if i != len(n.Properties)-1 {
+			ctx.WritePlain(",")
+		}
+	}
+	ctx.WritePlain(")")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateExternalTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n = newNode.(*CreateExternalTableStmt)
+	n.Table = node.(*TableName)
+	return v.Leave(n)
+}
+
 type CreateCatalogStmt struct {
 	ddlNode
 
 	IfNotExists bool
 	Name        model.CIStr
-	Properties  []*CatalogProperty
+	Properties  []*Property
 }
 
 // Restore implements Node interface.
@@ -151,7 +198,7 @@ func (n *CreateCatalogStmt) Restore(ctx *format.RestoreCtx) error {
 	for i, prop := range n.Properties {
 		err := prop.Restore(ctx)
 		if err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing CreateDatabaseStmt DatabaseOption: [%v]", i)
+			return errors.Annotatef(err, "An error occurred while splicing CreateCatalog Properties: [%v]", i)
 		}
 		if i != len(n.Properties)-1 {
 			ctx.WritePlain(",")
@@ -171,13 +218,13 @@ func (n *CreateCatalogStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-type CatalogProperty struct {
+type Property struct {
 	Name  string
 	Value string
 }
 
 // Restore implements Node interface.
-func (n *CatalogProperty) Restore(ctx *format.RestoreCtx) error {
+func (n *Property) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteString(n.Name)
 	ctx.WritePlain(" = ")
 	ctx.WriteString(n.Value)
@@ -200,7 +247,7 @@ type CreateDatabaseStmt struct {
 	IfNotExists       bool
 	Name              model.CIStr
 	Options           []*DatabaseOption
-	CatalogProperties []*CatalogProperty
+	CatalogProperties []*Property
 }
 
 // Restore implements Node interface.

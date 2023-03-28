@@ -63,6 +63,10 @@ func NewSchemaTracker(lowerCaseTableNames int) SchemaTracker {
 	}
 }
 
+func (d SchemaTracker) CreateExternalTable(sctx sessionctx.Context, stmt *ast.CreateExternalTableStmt) error {
+	return nil
+}
+
 func (d SchemaTracker) CreateCatalog(ctx sessionctx.Context, stmt *ast.CreateCatalogStmt) error {
 	return nil
 }

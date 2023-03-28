@@ -831,6 +831,7 @@ var tokenMap = map[string]int{
 	"REUSE":                    reuse,
 	"CATALOG":                  catalog,
 	"PROPERTIES":               properties,
+	"EXTERNAL":                 external,
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details.
