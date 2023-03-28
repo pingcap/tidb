@@ -28,32 +28,69 @@ type Progress struct {
 	// SimpleSeekerOnReadCloser on MySQL client connection which doesn't support
 	// it.
 	SourceFileSize int64
-	// LoadedFileSizeSetter is used by multiple workers to record the progress,
-	// its value is loaded into LoadedFileSize when String().
-	LoadedFileSizeSetter atomic.Int64 `json:"-"`
-	// LoadedRowCntSetter is used by multiple workers to record the progress,
-	// its value is loaded into LoadedRowCnt when String().
-	LoadedRowCntSetter atomic.Uint64 `json:"-"`
 	// LoadedFileSize is the size of the data that will be loaded in bytes. It's
 	// larger than the actual loaded data size, but due to the fact that reading
-	// is once a block and a block may generate multiple tasks that are
+	// is once-a-block and a block may generate multiple tasks that are
 	// concurrently executed, we can't know the actual loaded data size easily.
-	LoadedFileSize int64
+	LoadedFileSize atomicInt64JSONWrapper
 	// LoadedRowCnt is the number of rows that has been loaded.
-	LoadedRowCnt uint64
+	LoadedRowCnt atomicUint64JSONWrapper
+}
+
+type atomicInt64JSONWrapper struct {
+	*atomic.Int64
+}
+
+func (w *atomicInt64JSONWrapper) MarshalJSON() ([]byte, error) {
+	return json.Marshal(w.Load())
+}
+
+func (w *atomicInt64JSONWrapper) UnmarshalJSON(bs []byte) error {
+	var v int64
+	err := json.Unmarshal(bs, &v)
+	if err != nil {
+		return err
+	}
+	w.Int64 = atomic.NewInt64(v)
+	return nil
+}
+
+type atomicUint64JSONWrapper struct {
+	*atomic.Uint64
+}
+
+func (w *atomicUint64JSONWrapper) MarshalJSON() ([]byte, error) {
+	return json.Marshal(w.Load())
+}
+
+func (w *atomicUint64JSONWrapper) UnmarshalJSON(bs []byte) error {
+	var v uint64
+	err := json.Unmarshal(bs, &v)
+	if err != nil {
+		return err
+	}
+	w.Uint64 = atomic.NewUint64(v)
+	return nil
+}
+
+// NewProgress creates a new Progress.
+func NewProgress() *Progress {
+	return &Progress{
+		SourceFileSize: -1,
+		LoadedFileSize: atomicInt64JSONWrapper{atomic.NewInt64(0)},
+		LoadedRowCnt:   atomicUint64JSONWrapper{atomic.NewUint64(0)},
+	}
 }
 
 // String implements the fmt.Stringer interface.
 func (p *Progress) String() string {
-	p.LoadedFileSize = p.LoadedFileSizeSetter.Load()
-	p.LoadedRowCnt = p.LoadedRowCntSetter.Load()
 	bs, _ := json.Marshal(p)
 	return string(bs)
 }
 
 // ProgressFromJSON creates a Progress from a JSON string.
-func ProgressFromJSON(bs []byte) (Progress, error) {
+func ProgressFromJSON(bs []byte) (*Progress, error) {
 	var p Progress
 	err := json.Unmarshal(bs, &p)
-	return p, err
+	return &p, err
 }

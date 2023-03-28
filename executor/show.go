@@ -2172,7 +2172,7 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 			e.result.AppendNull(11)
 		} else {
 			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
-			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize)))
+			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize.Load())))
 		}
 		terr := new(terror.Error)
 		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))

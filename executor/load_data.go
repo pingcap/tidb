@@ -296,7 +296,7 @@ func NewLoadDataWorker(
 		killed:       &userSctx.GetSessionVars().Killed,
 	}
 	encode.resetBatch()
-	progress := &asyncloaddata.Progress{}
+	progress := asyncloaddata.NewProgress()
 	commit := &commitWorker{
 		InsertValues: commitCore,
 		controller:   controller,
@@ -874,8 +874,8 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 			if err = w.commitOneTask(ctx, task); err != nil {
 				return err
 			}
-			w.progress.LoadedRowCntSetter.Add(task.cnt)
-			w.progress.LoadedFileSizeSetter.Add(task.fileSize)
+			w.progress.LoadedRowCnt.Add(task.cnt)
+			w.progress.LoadedFileSize.Add(task.fileSize)
 			taskCnt++
 			logutil.Logger(ctx).Info("commit one task success",
 				zap.Duration("commit time usage", time.Since(start)),
@@ -975,7 +975,7 @@ func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum) error
 func (e *LoadDataWorker) mergeAndSetMessage() string {
 	encodeStmtCtx := e.encodeWorker.ctx.GetSessionVars().StmtCtx
 	numWarnings := encodeStmtCtx.WarningCount()
-	
+
 	commitStmtCtx := e.commitWorker.ctx.GetSessionVars().StmtCtx
 	numAffected := commitStmtCtx.AffectedRows()
 	numRecords := commitStmtCtx.RecordRows()
