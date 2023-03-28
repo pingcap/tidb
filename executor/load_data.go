@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -339,12 +340,23 @@ func NewLoadDataWorker(
 		sctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
 		sctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 	}
+	charset := plan.Charset
+	if charset == nil {
+		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
+		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
+			context.Background(), variable.CharsetDatabase)
+		if err2 != nil {
+			logutil.BgLogger().Error("LOAD DATA get charset failed", zap.Error(err2))
+		} else {
+			charset = &d
+		}
+	}
 	loadDataWorker := &LoadDataWorker{
 		row:             make([]types.Datum, 0, len(insertVal.insertColumns)),
 		commitTaskQueue: make(chan commitTask, taskQueueSize),
 		InsertValues:    insertVal,
 		table:           tbl,
-		charset:         plan.Charset,
+		charset:         charset,
 		controller:      controller,
 		Ctx:             sctx,
 		restrictive:     restrictive,

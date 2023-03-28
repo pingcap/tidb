@@ -338,4 +338,14 @@ func (s *mockGCSSuite) TestGBK() {
 		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
 		"2 丐丑丒专且丕世丗丘丙业丛东丝丞丢",
 	))
+
+	s.tk.MustExec("TRUNCATE TABLE load_charset.utf8mb4;")
+	s.tk.MustExec("SET SESSION character_set_database = 'gbk';")
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
+		INTO TABLE load_charset.utf8mb4;`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
+		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
+		"2 丐丑丒专且丕世丗丘丙业丛东丝丞丢",
+	))
 }
