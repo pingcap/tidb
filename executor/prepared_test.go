@@ -201,14 +201,16 @@ func TestIssue40224(t *testing.T) {
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows())
+	rs := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	require.True(t, strings.Contains(rs.Rows()[1][0].(string), "RangeScan")) // range-scan instead of full-scan
 
 	tk.MustExec("set @a=1, @b=2")
 	tk.MustExec("execute st using @a, @b")
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // cacheable for INT
 	tk.MustExec("execute st using @a, @b")
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows())
+	rs = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	require.True(t, strings.Contains(rs.Rows()[1][0].(string), "RangeScan")) // range-scan instead of full-scan
 }
 
 func TestIssue29850(t *testing.T) {
