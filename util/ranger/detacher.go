@@ -577,8 +577,8 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 				columnValues[i] = &valueInfo{mutable: true}
 			}
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
-				// TODO: optimize it more elaborately, e.g. return [2 3, 2 3] as accesses for 'where a = 2 and b = 3 and c >= ? and c <= ?'
-				return nil, conditions, nil, nil, false
+				// `a=@x and a=@y` --> `a=@x if @x==@y`
+				sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 			}
 		}
 	}
