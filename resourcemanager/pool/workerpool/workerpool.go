@@ -53,7 +53,8 @@ type Option[T any] interface {
 // OptionSkipRegister is an option to skip register the worker pool to resource manager.
 type OptionSkipRegister[T any] struct{}
 
-func (o OptionSkipRegister[T]) Apply(pool *WorkerPool[T]) {
+// Apply implements the Option interface.
+func (OptionSkipRegister[T]) Apply(pool *WorkerPool[T]) {
 	pool.skipRegister = true
 }
 
