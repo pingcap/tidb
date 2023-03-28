@@ -251,7 +251,7 @@ func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		return nil
 	}
 	// They are just common background task and not related to the oom.
-	if !h.messageFilter.Exist(entry.Message) {
+	if !h.messageFilter.Empty() && !h.messageFilter.Exist(entry.Message) {
 		return nil
 	}
 
