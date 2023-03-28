@@ -93,7 +93,7 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.7-0.20230317032622-884a634378d4
+	github.com/tikv/client-go/v2 v2.0.7-0.20230328084104-ea13e9700259
 	github.com/tikv/pd/client v0.0.0-20230324033443-79ec29cee8db
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
 	github.com/twmb/murmur3 v1.1.6
@@ -281,6 +281,5 @@ replace (
 	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/pingcap/tidb/parser => ./parser
-	github.com/tikv/client-go/v2 => github.com/MyonKeminta/client-go/v2 v2.0.0-20230328053309-a72cbf14e318
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
