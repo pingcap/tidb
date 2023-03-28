@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -53,6 +54,9 @@ func TestMemTracker4UpdateExec(t *testing.T) {
 	log.SetLevel(zap.InfoLevel)
 
 	oom.SetTracker("")
+	oom.ClearMessageFilter()
+	oom.AddMessageFilter("expensive_query during bootstrap phase")
+	oom.AddMessageFilter("schemaLeaseChecker is not set for this transaction")
 
 	tk.MustExec("insert into t_MemTracker4UpdateExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.GetTracker())
@@ -75,6 +79,9 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	log.SetLevel(zap.InfoLevel)
 
 	oom.SetTracker("")
+	oom.AddMessageFilter(
+		"schemaLeaseChecker is not set for this transaction",
+		"expensive_query during bootstrap phase")
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.GetTracker())
@@ -84,6 +91,8 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
 	oom.SetTracker("")
+	oom.ClearMessageFilter()
+	oom.AddMessageFilter("expensive_query during bootstrap phase")
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
@@ -93,6 +102,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
 	oom.SetTracker("")
+	oom.ClearMessageFilter()
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
 	require.Equal(t, "", oom.GetTracker())
@@ -102,6 +112,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
 	oom.SetTracker("")
+	oom.ClearMessageFilter()
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
 	require.Equal(t, "", oom.GetTracker())
@@ -114,6 +125,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	tk.Session().GetSessionVars().BatchInsert = true
 
 	oom.SetTracker("")
+	oom.ClearMessageFilter()
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
@@ -123,6 +135,8 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
 	oom.SetTracker("")
+	oom.ClearMessageFilter()
+	oom.AddMessageFilter("expensive_query during bootstrap phase")
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
@@ -146,6 +160,8 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
 
 	oom.SetTracker("")
+	oom.ClearMessageFilter()
+	oom.AddMessageFilter("expensive_query during bootstrap phase")
 
 	tk.MustExec("delete from MemTracker4DeleteExec1")
 	require.Equal(t, "", oom.GetTracker())
@@ -166,8 +182,9 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 	require.Equal(t, "", oom.GetTracker())
 	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1)")
 	tk.MustExec("insert into MemTracker4DeleteExec2 values(1,1,1)")
-
+	oom.ClearMessageFilter()
 	oom.SetTracker("")
+	oom.AddMessageFilter("memory exceeds quota, rateLimitAction delegate to fallback action")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/disableFixedRowCountHint", "return"))
 	defer func() {
@@ -184,15 +201,26 @@ var oom *oomCapture
 func registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
-	oom = &oomCapture{r.Core, "", syncutil.Mutex{}}
+	oom = &oomCapture{r.Core, "", syncutil.Mutex{}, set.NewStringSet()}
 	lg := zap.New(oom)
 	log.ReplaceGlobals(lg, r)
 }
 
 type oomCapture struct {
 	zapcore.Core
-	tracker string
-	mu      syncutil.Mutex
+	tracker       string
+	mu            syncutil.Mutex
+	messageFilter set.StringSet
+}
+
+func (h *oomCapture) AddMessageFilter(vals ...string) {
+	for _, val := range vals {
+		h.messageFilter.Insert(val)
+	}
+}
+
+func (h *oomCapture) ClearMessageFilter() {
+	h.messageFilter.Clear()
 }
 
 func (h *oomCapture) SetTracker(tracker string) {
@@ -223,8 +251,7 @@ func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		return nil
 	}
 	// They are just common background task and not related to the oom.
-	if entry.Message == "SetTiFlashGroupConfig" ||
-		entry.Message == "record table item load status failed due to not finding item" {
+	if !h.messageFilter.Exist(entry.Message) {
 		return nil
 	}
 
