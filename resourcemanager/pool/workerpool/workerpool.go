@@ -42,10 +42,25 @@ type WorkerPool[T any] struct {
 	createWorker func() Worker[T]
 	lastTuneTs   atomicutil.Time
 	mu           syncutil.RWMutex
+	skipRegister bool
+}
+
+// Option is the config option for WorkerPool.
+type Option[T any] interface {
+	Apply(pool *WorkerPool[T])
+}
+
+// OptionSkipRegister is an option to skip register the worker pool to resource manager.
+type OptionSkipRegister[T any] struct{}
+
+// Apply implements the Option interface.
+func (OptionSkipRegister[T]) Apply(pool *WorkerPool[T]) {
+	pool.skipRegister = true
 }
 
 // NewWorkerPool creates a new worker pool.
-func NewWorkerPool[T any](name string, component util.Component, numWorkers int, createWorker func() Worker[T]) (*WorkerPool[T], error) {
+func NewWorkerPool[T any](name string, component util.Component, numWorkers int,
+	createWorker func() Worker[T], opts ...Option[T]) (*WorkerPool[T], error) {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -58,9 +73,15 @@ func NewWorkerPool[T any](name string, component util.Component, numWorkers int,
 		createWorker: createWorker,
 	}
 
-	err := resourcemanager.InstanceResourceManager.Register(p, name, component)
-	if err != nil {
-		return nil, err
+	for _, opt := range opts {
+		opt.Apply(p)
+	}
+
+	if !p.skipRegister {
+		err := resourcemanager.InstanceResourceManager.Register(p, name, component)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Start default count of workers.
@@ -83,6 +104,9 @@ func (p *WorkerPool[T]) handleTaskWithRecover(w Worker[T], task T) {
 func (p *WorkerPool[T]) runAWorker() {
 	p.wg.Run(func() {
 		w := p.createWorker()
+		if w == nil {
+			return // Fail to create worker, quit.
+		}
 		for {
 			select {
 			case task := <-p.taskChan:
@@ -149,5 +173,7 @@ func (p *WorkerPool[T]) Name() string {
 func (p *WorkerPool[T]) ReleaseAndWait() {
 	close(p.quitChan)
 	p.wg.Wait()
-	resourcemanager.InstanceResourceManager.Unregister(p.Name())
+	if !p.skipRegister {
+		resourcemanager.InstanceResourceManager.Unregister(p.Name())
+	}
 }
