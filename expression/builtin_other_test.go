@@ -141,7 +141,7 @@ func TestGetVar(t *testing.T) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
-		types.DefaultParamTypeForValue(kv.val, tp)
+		types.InferParamTypeFromUnderlyingValue(kv.val, tp)
 		ctx.GetSessionVars().SetUserVarType(kv.key, tp)
 	}
 

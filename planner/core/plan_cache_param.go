@@ -136,7 +136,7 @@ func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
 	exprs := make([]expression.Expression, 0, len(params))
 	for _, p := range params {
 		tp := new(types.FieldType)
-		types.DefaultParamTypeForValue(p.Datum.GetValue(), tp)
+		types.InferParamTypeFromDatum(&p.Datum, tp)
 		exprs = append(exprs, &expression.Constant{
 			Value:   p.Datum,
 			RetType: tp,
