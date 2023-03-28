@@ -165,7 +165,7 @@ type LoadDataController struct {
 	sqlMode          mysql.SQLMode
 	importantSysVars map[string]string
 	dataStore        storage.ExternalStorage
-	dataFiles        []mydump.SourceFileMeta
+	dataFiles        []*mydump.SourceFileMeta
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -617,7 +617,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
 	}
 
-	dataFiles := []mydump.SourceFileMeta{}
+	dataFiles := []*mydump.SourceFileMeta{}
 	idx := strings.IndexByte(path, '*')
 	// simple path when the INFILE represent one file
 	if idx == -1 {
@@ -632,7 +632,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek in LOAD DATA")
 		}
-		dataFiles = append(dataFiles, mydump.SourceFileMeta{
+		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
 			Path:     path,
 			FileSize: size,
 		})
@@ -648,7 +648,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
-				dataFiles = append(dataFiles, mydump.SourceFileMeta{
+				dataFiles = append(dataFiles, &mydump.SourceFileMeta{
 					Path:     remotePath,
 					FileSize: size,
 				})
@@ -668,7 +668,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 	result := make([]LoadDataReaderInfo, 0, len(e.dataFiles))
 	for i := range e.dataFiles {
-		f := &e.dataFiles[i]
+		f := e.dataFiles[i]
 		result = append(result, LoadDataReaderInfo{
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 				fileReader, err2 := e.dataStore.Open(ctx, f.Path)
@@ -684,7 +684,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 }
 
 // GetParser returns a parser for the data file.
-func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo *LoadDataReaderInfo) (
+func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo LoadDataReaderInfo) (
 	parser mydump.Parser, err error) {
 	reader, err2 := dataFileInfo.Opener(ctx)
 	if err2 != nil {

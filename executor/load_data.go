@@ -404,7 +404,7 @@ func (e *LoadDataWorker) doLoad(
 	// processStream goroutine.
 	group.Go(func() error {
 		for _, info := range readerInfos {
-			dataParser, err2 := e.controller.GetParser(ctx, &info)
+			dataParser, err2 := e.controller.GetParser(ctx, info)
 			if err2 != nil {
 				return err2
 			}
