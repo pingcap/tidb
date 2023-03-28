@@ -862,12 +862,8 @@ func isRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	}
 
 	// All nodes should have the same type of engine
-	raftVersion, err := hex.DecodeString(row.GetString(3))
-	if err != nil {
-		// If mock store is used, we cannot decode the result, so just return false is ok.
-		return false, nil
-	}
-	return string(raftVersion) == raftKv2, nil
+	raftVersion := row.GetString(3)
+	return raftVersion == raftKv2, nil
 }
 
 // deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`
