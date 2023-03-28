@@ -1684,6 +1684,19 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheUnicode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`create table t1 (a varchar(10) character set latin1, b int)`)
+	tk.MustExec(`insert into t1 values ('a',1)`)
+	tk.MustQuery(`select concat(a, if(b>10, N'x', N'y')) from t1`).Check(testkit.Rows("ay")) // no error
+	tk.MustQuery(`select concat(a, if(b>10, N'x', N'y')) from t1`).Check(testkit.Rows("ay"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

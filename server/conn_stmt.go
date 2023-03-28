@@ -676,7 +676,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression,
 
 	for i := range params {
 		ft := new(types.FieldType)
-		types.DefaultParamTypeForValue(args[i].GetValue(), ft)
+		types.InferParamTypeFromUnderlyingValue(args[i].GetValue(), ft)
 		params[i] = &expression.Constant{Value: args[i], RetType: ft}
 	}
 	return

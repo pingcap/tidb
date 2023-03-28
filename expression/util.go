@@ -1002,7 +1002,7 @@ func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, ne
 	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
 	tp := types.NewFieldType(mysql.TypeUnspecified)
-	types.DefaultParamTypeForValue(v.GetValue(), tp)
+	types.InferParamTypeFromDatum(&v.Datum, tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
 	if useCache || isPointExec || needParam {
 		value.ParamMarker = &ParamMarker{
