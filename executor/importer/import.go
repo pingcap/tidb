@@ -141,6 +141,11 @@ type LoadDataController struct {
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
 	InsertColumns []*table.Column
+	// Data interpretation is restrictive if the SQL mode is restrictive and neither
+	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
+	// operation.
+	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
+	Restrictive bool
 
 	// used for DELIMITED DATA format
 	FieldNullDef         []string
@@ -196,6 +201,8 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		// without FORMAT 'xxx' clause, default to DELIMITED DATA
 		format = LoadDataFormatDelimitedData
 	}
+	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
+		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
 	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	c := &LoadDataController{
 		FileLocRef:         plan.FileLocRef,
@@ -208,6 +215,7 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		DBID:               plan.Table.DBInfo.ID,
 		Table:              tbl,
 		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
+		Restrictive:        restrictive,
 
 		logger:           log.L().With(zap.String("table", fullTableName)),
 		sqlMode:          sctx.GetSessionVars().SQLMode,
