@@ -150,6 +150,37 @@ func TestPreparedStmtWithHint(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&sm.killed))
 }
 
+func TestIssue38533(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key (a))")
+	tk.MustExec(`prepare st from "select /*+ use_index(t, a) */ a from t where a=? and a=?"`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a, @a`)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.True(t, strings.Contains(plan[1][0].(string), "RangeScan")) // range-scan instead of full-scan
+
+	tk.MustExec(`execute st using @a, @a`)
+	tk.MustExec(`execute st using @a, @a`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func TestIssue29850(t *testing.T) {
 	store, dom, err := newStoreWithBootstrap()
 	require.NoError(t, err)
