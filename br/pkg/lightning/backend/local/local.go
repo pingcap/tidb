@@ -1092,7 +1092,7 @@ func (local *local) generateJobInRanges(
 			int64(config.SplitRegionSize),
 			int64(config.SplitRegionKeys))
 	}
-	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
+	logger.Info("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
 	ret := make([]*regionJob, 0, len(jobRanges))
 
@@ -1122,7 +1122,7 @@ func (local *local) generateJobInRanges(
 		}
 
 		for _, region := range regions {
-			log.FromContext(ctx).Debug("get region",
+			log.FromContext(ctx).Info("get region",
 				zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey),
 				zap.Uint64("id", region.Region.GetId()),
@@ -1169,7 +1169,7 @@ func (local *local) startWorker(
 			now := time.Now()
 			if now.Before(job.waitUntil) {
 				duration := job.waitUntil.Sub(now)
-				log.FromContext(ctx).Debug("need to wait before processing this job",
+				log.FromContext(ctx).Info("need to wait before processing this job",
 					zap.Duration("wait", duration))
 				select {
 				case <-ctx.Done():
@@ -1210,6 +1210,10 @@ func (local *local) executeJob(
 	ctx context.Context,
 	job *regionJob,
 ) error {
+	logger := log.FromContext(ctx)
+	logger.Info("execute job", zap.Binary("startKey", job.keyRange.start),
+		zap.Binary("endKey", job.keyRange.end),
+		zap.Uint64("regionId", job.region.Region.Id))
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
 			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))

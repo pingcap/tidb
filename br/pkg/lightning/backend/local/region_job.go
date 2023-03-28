@@ -124,6 +124,12 @@ func (j *regionJob) writeToTiKV(
 	bufferPool *membuf.Pool,
 	writeLimiter StoreWriteLimiter,
 ) error {
+	logger := log.FromContext(ctx)
+	logger.Info("start to write to TiKV",
+		zap.Binary("startKey", j.keyRange.start),
+		zap.Binary("endKey", j.keyRange.end),
+		zap.Uint64("regionId", j.region.Region.Id),
+		zap.Stringer("stage", j.stage))
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -165,6 +171,9 @@ func (j *regionJob) writeToTiKV(
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.GetPeers()))
 	storeIDs := make([]uint64, 0, len(region.GetPeers()))
 	requests := make([]*sst.WriteRequest, 0, len(region.GetPeers()))
+	logger.Info("start to send meta request", zap.Binary("startKey", j.keyRange.start),
+		zap.Binary("endKey", j.keyRange.end),
+		zap.Uint64("regionId", j.region.Region.Id))
 	for _, peer := range region.GetPeers() {
 		cli, err := clientFactory.Create(ctx, peer.StoreId)
 		if err != nil {
@@ -185,6 +194,10 @@ func (j *regionJob) writeToTiKV(
 		if err = wstream.Send(req); err != nil {
 			return errors.Trace(err)
 		}
+		logger.Info("finish send meta request",
+			zap.Uint64("regionId", j.region.Region.Id),
+			zap.Uint64("peerId", peer.GetId()),
+		)
 		req.Chunk = &sst.WriteRequest_Batch{
 			Batch: &sst.WriteBatch{
 				CommitTs: j.engine.TS,
@@ -212,6 +225,8 @@ func (j *regionJob) writeToTiKV(
 	flushLimit := int64(writeLimiter.Limit() / 10)
 
 	flushKVs := func() error {
+		logger.Info("start to flush kvs", zap.Int("count", count),
+			zap.Int64("size", size), zap.Uint64("regionId", j.region.Region.Id))
 		for i := range clients {
 			if err := writeLimiter.WaitN(ctx, storeIDs[i], int(size)); err != nil {
 				return errors.Trace(err)
@@ -221,6 +236,7 @@ func (j *regionJob) writeToTiKV(
 			if err := clients[i].Send(requests[i]); err != nil {
 				return errors.Trace(err)
 			}
+			logger.Info("finish to flush kvs", zap.Int("i", i))
 		}
 		return nil
 	}
