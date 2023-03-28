@@ -140,8 +140,8 @@ func (sr *SchemasReplace) TidySchemaMaps() []*backuppb.PitrDBMap {
 		dbm := backuppb.PitrDBMap{
 			Name: dr.Name,
 			IdMap: &backuppb.IDMap{
-				UpstreamId:  dbID,
-				DowstreamId: dr.DbID,
+				UpstreamId:   dbID,
+				DownstreamId: dr.DbID,
 			},
 			Tables: make([]*backuppb.PitrTableMap, 0, len(dr.TableMap)),
 		}
@@ -150,16 +150,16 @@ func (sr *SchemasReplace) TidySchemaMaps() []*backuppb.PitrDBMap {
 			tm := backuppb.PitrTableMap{
 				Name: tr.Name,
 				IdMap: &backuppb.IDMap{
-					UpstreamId:  tblID,
-					DowstreamId: tr.TableID,
+					UpstreamId:   tblID,
+					DownstreamId: tr.TableID,
 				},
 				Partitions: make([]*backuppb.IDMap, 0, len(tr.PartitionMap)),
 			}
 
 			for upID, downID := range tr.PartitionMap {
 				pm := backuppb.IDMap{
-					UpstreamId:  upID,
-					DowstreamId: downID,
+					UpstreamId:   upID,
+					DownstreamId: downID,
 				}
 				tm.Partitions = append(tm.Partitions, &pm)
 			}
@@ -175,14 +175,14 @@ func FromSchemaMaps(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 	dbReplaces := make(map[UpstreamID]*DBReplace)
 
 	for _, db := range dbMaps {
-		dr := NewDBReplace(db.Name, db.IdMap.DowstreamId)
+		dr := NewDBReplace(db.Name, db.IdMap.DownstreamId)
 		dbReplaces[db.IdMap.UpstreamId] = dr
 
 		for _, tbl := range db.Tables {
-			tr := NewTableReplace(tbl.Name, tbl.IdMap.DowstreamId)
+			tr := NewTableReplace(tbl.Name, tbl.IdMap.DownstreamId)
 			dr.TableMap[tbl.IdMap.UpstreamId] = tr
 			for _, p := range tbl.Partitions {
-				tr.PartitionMap[p.UpstreamId] = p.DowstreamId
+				tr.PartitionMap[p.UpstreamId] = p.DownstreamId
 			}
 		}
 	}
