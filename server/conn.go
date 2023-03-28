@@ -1639,7 +1639,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
 		for !drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
-			if atomic.CompareAndSwapUint32(&loadDataWorker.Ctx.GetSessionVars().Killed, 1, 0) {
+			if atomic.CompareAndSwapUint32(&loadDataWorker.UserSctx.GetSessionVars().Killed, 1, 0) {
 				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
 				return exeerrors.ErrQueryInterrupted
 			}

@@ -942,7 +942,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	}
 
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
-	worker, err := NewLoadDataWorker(b.ctx, v, tbl, base.getSysSession, base.releaseSysSession)
+	worker, err := NewLoadDataWorker(b.ctx, v, tbl)
 	if err != nil {
 		b.err = err
 		return nil
@@ -950,9 +950,9 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 
 	return &LoadDataExec{
 		baseExecutor:   base,
+		loadDataWorker: worker,
 		FileLocRef:     v.FileLocRef,
 		OnDuplicate:    v.OnDuplicate,
-		loadDataWorker: worker,
 	}
 }
 
