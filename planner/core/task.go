@@ -1106,6 +1106,14 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 	if len(copTsk.idxMergePartPlans) > 0 && copTsk.idxMergeIsIntersection {
 		return nil, false
 	}
+	// TableScan doesn't need this quick path
+	if copTsk.indexPlanFinished {
+		return nil, false
+	}
+	// Single Index Scan doesn't need this quick path
+	if !copTsk.indexPlanFinished && copTsk.tablePlan == nil {
+		return nil, false
+	}
 	var (
 		selOnIdxScan                *PhysicalSelection
 		selOnTblScan                *PhysicalSelection
@@ -1244,56 +1252,6 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				return attachPlan2Task(rootLimit, rootTask), true
 			}
 		}
-	} else if copTsk.indexPlan == nil {
-		if tblScan.HandleCols == nil {
-			return nil, false
-		}
-
-		if tblScan.HandleCols.IsInt() {
-			pk := tblScan.HandleCols.GetCol(0)
-			if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx(), pk) {
-				return nil, false
-			}
-		} else {
-			idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblScan.Columns, tblScan.Schema().Columns, tables.FindPrimaryIndex(tblScan.Table))
-			matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, nil, colsProp)
-			if !matched {
-				return nil, false
-			}
-		}
-		tblScan.Desc = isDesc
-		// SplitRangesAcrossInt64Boundary needs the KeepOrder flag. See that func and the struct tableResultHandler for more details.
-		tblScan.KeepOrder = true
-		tblScan.ByItems = p.ByItems
-		childProfile := copTsk.plan().statsInfo()
-		newCount := p.Offset + p.Count
-		stats := deriveLimitStats(childProfile, float64(newCount))
-		pushedLimit := PhysicalLimit{
-			Count:       newCount,
-			PartitionBy: newPartitionBy,
-		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-		pushedLimit.SetSchema(copTsk.tablePlan.Schema())
-		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
-
-		// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalTableScan.
-		child := pushedLimit.Children()[0]
-		// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
-		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
-		// The Limit->Selection->TableScan case:
-		// adjust the row count of IndexScan according to the selectivity of the Selection.
-		if selSelectivity > 0 && selSelectivity < 1 {
-			scaledRowCount := child.Stats().RowCount / selSelectivity
-			tblScan.SetStats(tblScan.Stats().ScaleByExpectCnt(scaledRowCount))
-		}
-
-		rootTask := copTsk.convertToRootTask(p.ctx)
-		rootLimit := PhysicalLimit{
-			Count:       p.Count,
-			Offset:      p.Offset,
-			PartitionBy: newPartitionBy,
-		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-		rootLimit.SetSchema(rootTask.plan().Schema())
-		return attachPlan2Task(rootLimit, rootTask), true
 	} else {
 		return nil, false
 	}
