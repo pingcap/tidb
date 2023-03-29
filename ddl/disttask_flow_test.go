@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	metas, err := handler.ProcessNormalFlow(nil, gTask)
+	metas, err := handler.ProcessNormalFlow(context.Background(), nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepOne, gTask.Step)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
@@ -60,18 +61,18 @@ func TestBackfillFlowHandle(t *testing.T) {
 
 	// test partition table ProcessNormalFlow after step1 finished
 	gTask.State = proto.TaskStateRunning
-	metas, err = handler.ProcessNormalFlow(nil, gTask)
+	metas, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 
 	// test partition table ProcessErrFlow
-	errMeta, err := handler.ProcessErrFlow(nil, gTask, "mockErr")
+	errMeta, err := handler.ProcessErrFlow(context.Background(), nil, gTask, "mockErr")
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
 	// test merging index
 	gTask = createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitMergeType)
-	metas, err = handler.ProcessNormalFlow(nil, gTask)
+	metas, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepOne, gTask.Step)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
@@ -81,14 +82,14 @@ func TestBackfillFlowHandle(t *testing.T) {
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
 	}
 
-	errMeta, err = handler.ProcessErrFlow(nil, gTask, "mockErr")
+	errMeta, err = handler.ProcessErrFlow(context.Background(), nil, gTask, "mockErr")
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
 	// test normal table not supported yet
 	tk.MustExec("create table t1(id int primary key, v int)")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.FlowHandleLitBackfillType)
-	_, err = handler.ProcessNormalFlow(nil, gTask)
+	_, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
 	require.EqualError(t, err, "Non-partition table not supported yet")
 }
 
