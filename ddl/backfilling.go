@@ -706,7 +706,7 @@ var (
 	// TestCheckWorkerNumCh use for test adjust backfill worker.
 	TestCheckWorkerNumCh = make(chan *sync.WaitGroup)
 	// TestCheckWorkerNumber use for test adjust backfill worker.
-	TestCheckWorkerNumber = int32(1)
+	TestCheckWorkerNumber = int32(variable.DefTiDBDDLReorgWorkerCount)
 	// TestCheckReorgTimeout is used to mock timeout when reorg data.
 	TestCheckReorgTimeout = int32(0)
 )
@@ -805,13 +805,14 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	}
 	defer scheduler.close(true)
 
+	consumer := newResultConsumer(dc, reorgInfo, sessPool)
+	consumer.run(scheduler, startKey, &totalAddedCount)
+
 	err = scheduler.setupWorkers()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	consumer := newResultConsumer(dc, reorgInfo, sessPool)
-	consumer.run(scheduler, startKey, &totalAddedCount)
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
 		if err != nil {

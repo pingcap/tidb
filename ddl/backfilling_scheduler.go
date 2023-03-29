@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -265,20 +264,19 @@ type ingestBackfillScheduler struct {
 	copReqSenderPool *copReqSenderPool
 
 	writerPool  *workerpool.WorkerPool[idxRecResult]
-	writerMaxID atomic.Int64
+	writerMaxID int
 	poolErr     chan error
 	backendCtx  *ingest.BackendContext
 }
 
 func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo, tbl table.PhysicalTable) *ingestBackfillScheduler {
 	return &ingestBackfillScheduler{
-		ctx:         ctx,
-		reorgInfo:   info,
-		tbl:         tbl,
-		taskCh:      make(chan *reorgBackfillTask, backfillTaskChanSize),
-		resultCh:    make(chan *backfillResult, backfillTaskChanSize),
-		writerMaxID: atomic.Int64{},
-		poolErr:     make(chan error),
+		ctx:       ctx,
+		reorgInfo: info,
+		tbl:       tbl,
+		taskCh:    make(chan *reorgBackfillTask, backfillTaskChanSize),
+		resultCh:  make(chan *backfillResult, backfillTaskChanSize),
+		poolErr:   make(chan error),
 	}
 }
 
@@ -364,7 +362,6 @@ func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
-	writerID := int(b.writerMaxID.Load())
 	sessCtx, err := newSessCtx(reorgInfo)
 	if err != nil {
 		b.poolErr <- err
@@ -373,22 +370,28 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 	bcCtx := b.backendCtx
 	ei, err := bcCtx.EngMgr.Register(bcCtx, job.ID, b.reorgInfo.currElement.ID, job.SchemaName, job.TableName)
 	if err != nil {
-		b.poolErr <- err
-		return nil
-	}
-	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
-		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, writerID, b.copReqSenderPool, sessCtx)
-	if err != nil {
 		// Return an error only if it is the first worker.
-		if b.writerMaxID.Load() == 0 {
+		if b.writerMaxID == 0 {
 			b.poolErr <- err
 			return nil
 		}
 		logutil.BgLogger().Warn("[ddl-ingest] cannot create new writer", zap.Error(err),
 			zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
-	} else {
-		b.writerMaxID.Add(1)
+		return nil
 	}
+	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
+		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, b.writerMaxID, b.copReqSenderPool, sessCtx)
+	if err != nil {
+		// Return an error only if it is the first worker.
+		if b.writerMaxID == 0 {
+			b.poolErr <- err
+			return nil
+		}
+		logutil.BgLogger().Warn("[ddl-ingest] cannot create new writer", zap.Error(err),
+			zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
+		return nil
+	}
+	b.writerMaxID++
 	return worker
 }
 
