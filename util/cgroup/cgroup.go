@@ -174,6 +174,7 @@ func detectControlPath(cgroupFilePath string, controller string) (string, error)
 			unifiedPathIfFound = string(fields[2])
 		} else if f1 == controller {
 			var result []byte
+			// In some case, the cgroup path contains `:`. We need to join them back.
 			if len(fields) > 3 {
 				result = bytes.Join(fields[2:], []byte(":"))
 			} else {
