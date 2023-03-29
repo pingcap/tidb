@@ -178,52 +178,27 @@ func KvPairsFromRow(row encode.Row) []common.KvPair {
 // See comments in `(*TableRestore).initializeColumns` for the meaning of the
 // `columnPermutation` parameter.
 func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
-	cols := kvcodec.Table.Cols()
-
 	var value types.Datum
 	var err error
-	//nolint: prealloc
-	var record []types.Datum
 
-	if kvcodec.RecordCache != nil {
-		record = kvcodec.RecordCache
-	} else {
-		record = make([]types.Datum, 0, len(cols)+1)
-	}
-
-	meta := kvcodec.Table.Meta()
-	for i, col := range cols {
+	record := kvcodec.GetOrCreateRecord()
+	for i, col := range kvcodec.Columns {
 		var theDatum *types.Datum = nil
 		j := columnPermutation[i]
 		if j >= 0 && j < len(row) {
 			theDatum = &row[j]
 		}
-		value, err = kvcodec.GetActualDatum(rowID, i, theDatum)
+		value, err = kvcodec.ProcessColDatum(col, rowID, theDatum)
 		if err != nil {
 			return nil, kvcodec.LogKVConvertFailed(row, j, col.ToInfo(), err)
 		}
 
 		record = append(record, value)
-
-		if kvcodec.IsAutoRandomCol(col.ToInfo()) {
-			shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
-			// this allocator is the same as the allocator in table importer, i.e. PanickingAllocators. below too.
-			alloc := kvcodec.Table.Allocators(kvcodec.SessionCtx).Get(autoid.AutoRandomType)
-			if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		if IsAutoIncCol(col.ToInfo()) {
-			alloc := kvcodec.Table.Allocators(kvcodec.SessionCtx).Get(autoid.AutoIncrementType)
-			if err := alloc.Rebase(context.Background(), GetAutoRecordID(value, &col.FieldType), false); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
 	}
 
-	if common.TableHasAutoRowID(meta) {
+	if common.TableHasAutoRowID(kvcodec.Table.Meta()) {
 		rowValue := rowID
-		j := columnPermutation[len(cols)]
+		j := columnPermutation[len(kvcodec.Columns)]
 		if j >= 0 && j < len(row) {
 			value, err = table.CastValue(kvcodec.SessionCtx, row[j], ExtraHandleColumnInfo, false, false)
 			rowValue = value.GetInt64()
@@ -242,7 +217,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPerm
 	}
 
 	if len(kvcodec.GenCols) > 0 {
-		if errCol, err := kvcodec.EvalGeneratedColumns(record, cols); err != nil {
+		if errCol, err := kvcodec.EvalGeneratedColumns(record, kvcodec.Columns); err != nil {
 			return nil, kvcodec.LogEvalGenExprFailed(row, errCol, err)
 		}
 	}
@@ -265,8 +240,8 @@ func GetEncoderSe(encoder encode.Encoder) *Session {
 }
 
 // GetActualDatum export getActualDatum function.
-func GetActualDatum(encoder encode.Encoder, rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
-	return encoder.(*tableKVEncoder).GetActualDatum(70, 0, inputDatum)
+func GetActualDatum(encoder encode.Encoder, col *table.Column, rowID int64, inputDatum *types.Datum) (types.Datum, error) {
+	return encoder.(*tableKVEncoder).getActualDatum(col, rowID, inputDatum)
 }
 
 // get record value for auto-increment field

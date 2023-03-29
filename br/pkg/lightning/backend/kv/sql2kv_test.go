@@ -357,7 +357,7 @@ func TestEncodeDoubleAutoIncrement(t *testing.T) {
 	require.NoError(t, err)
 
 	strDatumForID := types.NewStringDatum("1")
-	actualDatum, err := lkv.GetActualDatum(encoder, 70, 0, &strDatumForID)
+	actualDatum, err := lkv.GetActualDatum(encoder, tbl.Cols()[0], 70, &strDatumForID)
 	require.NoError(t, err)
 	require.Equal(t, types.NewFloat64Datum(1.0), actualDatum)
 
@@ -426,11 +426,11 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		nullDatum.SetNull()
 
 		expectIDDatum := types.NewIntDatum(realRowID)
-		actualIDDatum, err := lkv.GetActualDatum(encoder, rowID, 0, nil)
+		actualIDDatum, err := lkv.GetActualDatum(encoder, tbl.Cols()[0], rowID, nil)
 		require.NoError(t, err)
 		require.Equal(t, expectIDDatum, actualIDDatum)
 
-		actualIDDatum, err = lkv.GetActualDatum(encoder, rowID, 0, &nullDatum)
+		actualIDDatum, err = lkv.GetActualDatum(encoder, tbl.Cols()[0], rowID, &nullDatum)
 		require.NoError(t, err)
 		require.Equal(t, expectIDDatum, actualIDDatum)
 
