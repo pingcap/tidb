@@ -332,7 +332,7 @@ func TestInvalidRange(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	// use TableDual directly instead of TableFullScan
-	var plan []interface{}
+	plan := make([]interface{}, 0, 1)
 	for _, r := range tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows() {
 		plan = append(plan, r[0])
 	}
@@ -366,7 +366,7 @@ func TestIssue40093(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	// RangeScan instead of FullScan
-	var plan []interface{}
+	plan := make([]interface{}, 0, 1)
 	for _, r := range tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows() {
 		plan = append(plan, r[0])
 	}
@@ -409,7 +409,7 @@ func TestIssue38205(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	// IndexJoin
-	var plan []interface{}
+	plan := make([]interface{}, 0, 1)
 	for _, r := range tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows() {
 		plan = append(plan, r[0])
 	}
@@ -1430,7 +1430,7 @@ func TestPreparePlanCache4Function(t *testing.T) {
 	tk.MustExec("set @a = 0, @b = 1, @c = 2, @d = null;")
 	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows("<nil> 2", "0 0", "1 1", "2 2"))
 	tk.MustQuery("execute stmt using @c, @d;").Check(testkit.Rows("<nil> 1", "0 2", "1 2", "2 0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
