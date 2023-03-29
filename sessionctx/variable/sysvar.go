@@ -2415,7 +2415,11 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableLateMaterialization, Value: BoolToOnOff(DefTiDBOptEnableLateMaterialization), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableLateMaterialization = TiDBOptOn(val)
+		enabled := TiDBOptOn(val)
+		if s.TiFlashFastScan && enabled {
+			return errors.New("Not support TiFlash late materialization when TiFlash fast scan is enabled")
+		}
+		s.EnableLateMaterialization = enabled
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBLoadBasedReplicaReadThreshold, Value: time.Duration(DefTiDBLoadBasedReplicaReadThreshold).String(), Type: TypeDuration, MaxValue: uint64(time.Hour), SetSession: func(s *SessionVars, val string) error {
