@@ -1684,6 +1684,71 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheAgg(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`set sql_mode=''`)
+	tk.MustExec("create table t (a int, b int)")
+
+	supported := []string{
+		"select count(*) from t",
+		"select max(b) from t group by a",
+		"select count(*), a from t group by a, b",
+		"select sum(b) from t group by a+1",
+		"select count(*) from t group by a+b",
+	}
+	unsupported := []string{
+		"select a, b, count(*) from t group by 1",              // group by position
+		"select a, b, count(*) from t group by 1, a",           // group by position
+		"select a, b, count(*) from t group by a having b < 1", // not support having-clause
+	}
+
+	for _, sql := range supported {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
+	for _, sql := range unsupported {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+}
+
+func TestNonPreparedPlanCacheOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec("create table t (a int, b int)")
+
+	supported := []string{
+		"select a from t order by a",
+		"select a from t order by a asc",
+		"select a from t order by a desc",
+		"select a from t order by a+1,b-2",
+		"select a from t order by a desc, b+2",
+		"select a from t order by a,b desc",
+	}
+	unsupported := []string{
+		"select a from t order by 1", // order by position
+		"select a from t order by a, 1",
+	}
+
+	for _, sql := range supported {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
+	for _, sql := range unsupported {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+}
+
 func TestNonPreparedPlanCacheUnicode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
