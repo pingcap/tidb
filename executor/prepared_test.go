@@ -184,6 +184,44 @@ func TestPreparedNullParam(t *testing.T) {
 	}
 }
 
+func TestIssue40224(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec("prepare st from 'select a from t where a in (?, ?)'")
+	tk.MustExec("set @a=1.0, @b=2.0")
+	tk.MustExec("execute st using @a, @b")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+		[][]interface{}{
+			{"IndexReader_6"},
+			{"└─IndexRangeScan_5"}, // range scan not full scan
+		})
+
+	tk.MustExec("set @a=1, @b=2")
+	tk.MustExec("execute st using @a, @b")
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // cacheable for INT
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+		[][]interface{}{
+			{"IndexReader_6"},
+			{"└─IndexRangeScan_5"}, // range scan not full scan
+		})
+}
+
 func TestIssue29850(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

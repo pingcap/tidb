@@ -892,7 +892,7 @@ var defaultConf = Config{
 	},
 	Experimental:               Experimental{},
 	EnableCollectExecutionInfo: true,
-	EnableTelemetry:            true,
+	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{

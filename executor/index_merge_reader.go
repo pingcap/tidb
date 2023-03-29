@@ -999,6 +999,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 			atomic.AddInt64(&w.stats.FetchRow, int64(time.Since(execStart)))
 			atomic.AddInt64(&w.stats.TableTaskNum, 1)
 		}
+		failpoint.Inject("testIndexMergePickAndExecTaskPanic", nil)
 		(*task).doneCh <- err
 	}
 }
