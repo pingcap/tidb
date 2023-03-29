@@ -1523,25 +1523,25 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where a+b=13",
 		"select * from t where mod(a, 3)=1",
 		"select * from t where d>now()",
+		"select distinct a from t1 where a > 1 and b < 2",          // distinct
+		"select count(*) from t1 where a > 1 and b < 2 group by a", // group by
+		"select * from t1 order by a",                              // order by
 	}
 
 	unsupported := []string{
 		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",               // hint
-		"select distinct a from t1 where a > 1 and b < 2",                                  // distinct
-		"select count(*) from t1 where a > 1 and b < 2 group by a",                         // group by
 		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
-		"select * from t1 limit 1",                                                         // limit
-		"select * from t1 order by a",                                                      // order by
-		"select * from t1, t2",                                                             // join
-		"select * from (select * from t1) t",                                               // sub-query
-		"insert into t1 values(1, 1)",                                                      // insert
-		"insert into t1(a, b) select a, b from t1",                                         // insert into select
-		"update t1 set a = 1 where b = 2",                                                  // update
-		"delete from t1 where b = 1",                                                       // delete
-		"select * from t1 for update",                                                      // lock
-		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
-		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
-		"select * from t where j < 1",                                                      // json
+		"select * from t1 limit 1",                                     // limit
+		"select * from t1, t2",                                         // join
+		"select * from (select * from t1) t",                           // sub-query
+		"insert into t1 values(1, 1)",                                  // insert
+		"insert into t1(a, b) select a, b from t1",                     // insert into select
+		"update t1 set a = 1 where b = 2",                              // update
+		"delete from t1 where b = 1",                                   // delete
+		"select * from t1 for update",                                  // lock
+		"select * from t1 where a in (select a from t)",                // uncorrelated sub-query
+		"select * from t1 where a in (select a from t where a > t1.a)", // correlated sub-query
+		"select * from t where j < 1",                                  // json
 		"select * from t where a > 1 and j < 1",
 		"select * from t where e < '1'", // enum
 		"select * from t where a > 1 and e < '1'",
@@ -1563,9 +1563,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	}
 
 	reasons := []string{
-		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
-		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
-		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
@@ -1681,6 +1678,71 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err) // not panic
+	}
+}
+
+func TestNonPreparedPlanCacheAgg(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`set sql_mode=''`)
+	tk.MustExec("create table t (a int, b int)")
+
+	supported := []string{
+		"select count(*) from t",
+		"select max(b) from t group by a",
+		"select count(*), a from t group by a, b",
+		"select sum(b) from t group by a+1",
+		"select count(*) from t group by a+b",
+	}
+	unsupported := []string{
+		"select a, b, count(*) from t group by 1",              // group by position
+		"select a, b, count(*) from t group by 1, a",           // group by position
+		"select a, b, count(*) from t group by a having b < 1", // not support having-clause
+	}
+
+	for _, sql := range supported {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
+	for _, sql := range unsupported {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+}
+
+func TestNonPreparedPlanCacheOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec("create table t (a int, b int)")
+
+	supported := []string{
+		"select a from t order by a",
+		"select a from t order by a asc",
+		"select a from t order by a desc",
+		"select a from t order by a+1,b-2",
+		"select a from t order by a desc, b+2",
+		"select a from t order by a,b desc",
+	}
+	unsupported := []string{
+		"select a from t order by 1", // order by position
+		"select a from t order by a, 1",
+	}
+
+	for _, sql := range supported {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
+	for _, sql := range unsupported {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	}
 }
 
