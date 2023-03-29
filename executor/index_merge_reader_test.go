@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestSingleTableRead(t *testing.T) {
@@ -936,4 +937,83 @@ func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
 	err = tk.QueryToErr(sql)
 	require.Contains(t, err.Error(), "testIndexMergePartialIndexWorkerCoprLeak")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak"))
+}
+
+type valueStruct struct {
+	a int
+	b int
+	c int
+}
+
+func getResult(values []*valueStruct, a int, b int, limit int, desc bool) []*valueStruct {
+	ret := make([]*valueStruct, 0)
+	for _, value := range values {
+		if value.a == a || value.b == b {
+			ret = append(ret, value)
+		}
+	}
+	slices.SortFunc(ret, func(a, b *valueStruct) bool {
+		if desc {
+			return a.c > b.c
+		}
+		return a.c < b.c
+	})
+	if len(ret) > limit {
+		return ret[:limit]
+	}
+	return ret
+}
+
+func TestOrderyByWithLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table thandle(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c))")
+	tk.MustExec("create table tpk(a int, b int, c int, d int auto_increment, primary key(d), index idx_ac(a, c), index idx_bc(b, c))")
+	tk.MustExec("create table tcommon(a int, b int, c int, d int auto_increment, primary key(d, c), index idx_ac(a, c), index idx_bc(b, c))")
+
+	valueSlice := make([]*valueStruct, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		a := rand.Intn(32)
+		b := rand.Intn(32)
+		c := rand.Intn(32)
+		tk.MustExec(fmt.Sprintf("insert into thandle values (%v, %v, %v)", a, b, c))
+		tk.MustExec(fmt.Sprintf("insert into tpk(a,b,c) values (%v, %v, %v)", a, b, c))
+		tk.MustExec(fmt.Sprintf("insert into tcommon(a,b,c) values (%v, %v, %v)", a, b, c))
+		valueSlice = append(valueSlice, &valueStruct{a, b, c})
+	}
+
+	tk.MustExec("analyze table thandle")
+	tk.MustExec("analyze table tpk")
+	tk.MustExec("analyze table tcommon")
+
+	for i := 0; i < 100; i++ {
+		a := rand.Intn(32)
+		b := rand.Intn(32)
+		limit := rand.Intn(10) + 1
+		queryHandle := fmt.Sprintf("select /*+ use_index_merge(thandle, idx_ac, idx_bc) */ * from thandle where a = %v or b = %v order by c limit %v", a, b, limit)
+		resHandle := tk.MustQuery(queryHandle).Rows()
+		require.True(t, tk.HasPlan(queryHandle, "IndexMerge"))
+
+		queryPK := fmt.Sprintf("select /*+ use_index_merge(tpk, idx_ac, idx_bc) */ * from tpk where a = %v or b = %v order by c limit %v", a, b, limit)
+		resPK := tk.MustQuery(queryPK).Rows()
+		require.True(t, tk.HasPlan(queryPK, "IndexMerge"))
+
+		queryCommon := fmt.Sprintf("select /*+ use_index_merge(tcommon, idx_ac, idx_bc) */ * from tcommon where a = %v or b = %v order by c limit %v", a, b, limit)
+		resCommon := tk.MustQuery(queryCommon).Rows()
+		require.True(t, tk.HasPlan(queryCommon, "IndexMerge"))
+
+		sliceRes := getResult(valueSlice, a, b, limit, false)
+
+		require.Equal(t, len(sliceRes), len(resHandle))
+		require.Equal(t, len(sliceRes), len(resPK))
+		require.Equal(t, len(sliceRes), len(resCommon))
+		for i := range sliceRes {
+			// Only check column `c`
+			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resHandle[i][2])
+			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resPK[i][2])
+			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resCommon[i][2])
+		}
+	}
 }

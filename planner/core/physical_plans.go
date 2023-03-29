@@ -555,6 +555,11 @@ type PhysicalIndexMergeReader struct {
 	// AccessMVIndex indicates whether this IndexMergeReader access a MVIndex.
 	AccessMVIndex bool
 
+	// PushedLimit is used to avoid unnecessary table scan tasks of IndexMergeReader.
+	PushedLimit *PushedDownLimit
+	// ByItems is used to support sorting the handles returned by partialPlans.
+	ByItems []*util.ByItems
+
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
@@ -566,6 +571,8 @@ type PhysicalIndexMergeReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+
+	KeepOrder bool
 }
 
 // GetAvgTableRowSize return the average row size of table plan.
