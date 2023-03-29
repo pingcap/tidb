@@ -586,7 +586,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryRangePartition, "TableReader")) // check if tableReader is used
 		require.True(t, tk.HasPlan(queryHashPartition, "TableReader"))
 		require.True(t, tk.HasPlan(queryListPartition, "TableReader"))
-		require.False(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is fully pushed
+		require.False(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is not pushed
 		require.False(t, tk.HasPlan(queryHashPartition, "Limit"))
 		require.False(t, tk.HasPlan(queryListPartition, "Limit"))
 		regularResult := tk.MustQuery(queryRegular).Rows()
@@ -603,9 +603,12 @@ func TestOrderByAndLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryRangePartition, "TableReader"))
 		require.True(t, tk.HasPlan(queryHashPartition, "TableReader"))
 		require.True(t, tk.HasPlan(queryListPartition, "TableReader"))
-		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is not pushed
+		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is pushed
+		require.False(t, tk.HasPlan(queryRangePartition, "TopN")) // and is fully pushed
 		require.True(t, tk.HasPlan(queryHashPartition, "Limit"))
+		require.False(t, tk.HasPlan(queryHashPartition, "TopN"))
 		require.True(t, tk.HasPlan(queryListPartition, "Limit"))
+		require.False(t, tk.HasPlan(queryListPartition, "TopN"))
 		regularResult = tk.MustQuery(queryRegular).Rows()
 		tk.MustQuery(queryRangePartition).Check(regularResult)
 		tk.MustQuery(queryHashPartition).Check(regularResult)

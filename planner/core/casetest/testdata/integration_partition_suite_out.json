@@ -1176,7 +1176,7 @@
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexReader 10.00 root partition:all index:Limit",
           "  └─Limit 10.00 cop[tikv]  offset:0, count:10",
-          "    └─IndexRangeScan 10.00 cop[tikv] table:trange, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo"
+          "    └─IndexRangeScan 10.00 cop[tikv] table:trange, index:ia(a) range:(10,+inf], keep order:true, stats:pseudo"
         ]
       },
       {
@@ -1185,7 +1185,7 @@
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexReader 10.00 root partition:all index:Limit",
           "  └─Limit 10.00 cop[tikv]  offset:0, count:10",
-          "    └─IndexRangeScan 10.00 cop[tikv] table:tlist, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo"
+          "    └─IndexRangeScan 10.00 cop[tikv] table:tlist, index:ia(a) range:(10,+inf], keep order:true, stats:pseudo"
         ]
       },
       {
@@ -1194,7 +1194,7 @@
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexReader 10.00 root partition:all index:Limit",
           "  └─Limit 10.00 cop[tikv]  offset:0, count:10",
-          "    └─IndexRangeScan 10.00 cop[tikv] table:thash, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo"
+          "    └─IndexRangeScan 10.00 cop[tikv] table:thash, index:ia(a) range:(10,+inf], keep order:true, stats:pseudo"
         ]
       },
       {
