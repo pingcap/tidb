@@ -57,7 +57,7 @@ func NewLitBackfillFlowHandle(getDDL func() DDL) dispatcher.TaskFlowHandle {
 }
 
 // ProcessNormalFlow processes the normal flow.
-func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.Handle, gTask *proto.Task) (metas [][]byte, err error) {
+func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State != proto.TaskStatePending {
 		// This flow has only one step, finish task when it is not pending
 		return nil, nil
@@ -108,7 +108,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 	return subTaskMetas, nil
 }
 
-func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Handle, _ *proto.Task, _ string) (meta []byte, err error) {
+func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back
 	return nil, nil
 }

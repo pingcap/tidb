@@ -75,7 +75,7 @@ func TestProcessNormalFlow(t *testing.T) {
 		Meta: bs,
 	}
 
-	mockDispatcherHandle.On("GetTaskAllInstances", mock.Anything, mock.Anything).Return([]string{"tidb1", "tidb2"}, nil).Once()
+	mockDispatcherHandle.On("GetAllSchedulerIDs", mock.Anything, mock.Anything).Return([]string{"tidb1", "tidb2"}, nil).Once()
 	subtaskMetas, err := flowHandle.ProcessNormalFlow(context.Background(), mockDispatcherHandle, task)
 	require.NoError(t, err)
 	require.Equal(t, task.Step, Import)

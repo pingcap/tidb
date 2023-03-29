@@ -29,7 +29,7 @@ import (
 type FlowHandle struct{}
 
 // ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
-func (*FlowHandle) ProcessNormalFlow(ctx context.Context, dispatch dispatcher.Handle, gTask *proto.Task) ([][]byte, error) {
+func (*FlowHandle) ProcessNormalFlow(ctx context.Context, dispatch dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -44,11 +44,11 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, dispatch dispatcher.Ha
 	default:
 	}
 
-	instances, err := dispatch.GetTaskAllInstances(ctx, gTask.ID)
+	schedulers, err := dispatch.GetAllSchedulerIDs(ctx, gTask.ID)
 	if err != nil {
 		return nil, err
 	}
-	subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta, len(instances))
+	subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta, len(schedulers))
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, dispatch dispatcher.Ha
 }
 
 // ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
-func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Handle, _ *proto.Task, errMsg string) ([]byte, error) {
+func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, errMsg string) ([]byte, error) {
 	logutil.BgLogger().Info("process error flow", zap.String("error message", errMsg))
 	return nil, nil
 }

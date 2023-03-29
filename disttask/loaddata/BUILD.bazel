@@ -22,6 +22,7 @@ go_library(
         "//util/intest",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//maps",
         "@org_uber_go_zap//:zap",
     ],
 )

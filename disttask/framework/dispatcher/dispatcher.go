@@ -44,16 +44,16 @@ const (
 type Dispatch interface {
 	// Start enables dispatching and monitoring mechanisms.
 	Start()
-	// GetTaskAllInstances gets handles the task's all available instances.
-	GetTaskAllInstances(ctx context.Context, gTaskID int64) ([]string, error)
+	// GetAllSchedulerIDs gets handles the task's all available instances.
+	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
 	// Stop stops the dispatcher.
 	Stop()
 }
 
-// Handle provides the interface for operations needed by task flow handles.
-type Handle interface {
-	// GetTaskAllInstances gets handles the task's all available instances.
-	GetTaskAllInstances(ctx context.Context, gTaskID int64) ([]string, error)
+// TaskHandle provides the interface for operations needed by task flow handles.
+type TaskHandle interface {
+	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
+	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
 }
 
 func (d *dispatcher) getRunningGlobalTasks() map[int64]*proto.Task {
@@ -259,7 +259,7 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 	}
 
 	// TODO: Consider using a new context.
-	instanceIDs, err := d.GetTaskAllInstances(d.ctx, gTask.ID)
+	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, gTask.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("get global task's all instances failed", zap.Error(err))
 		return err
@@ -384,7 +384,8 @@ func GetEligibleInstance(ctx context.Context) (string, error) {
 	return "", errors.New("not found instance")
 }
 
-func (d *dispatcher) GetTaskAllInstances(ctx context.Context, gTaskID int64) ([]string, error) {
+// GetAllSchedulerIDs gets all the scheduler IDs.
+func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error) {
 	if len(MockTiDBIDs) != 0 {
 		return MockTiDBIDs, nil
 	}

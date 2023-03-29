@@ -25,8 +25,8 @@ type MockHandle struct {
 	mock.Mock
 }
 
-// GetTaskAllInstances implements the Handle.GetTaskAllInstances interface.
-func (m *MockHandle) GetTaskAllInstances(ctx context.Context, gTaskID int64) ([]string, error) {
+// GetAllSchedulerIDs implements the Handle.GetAllSchedulerIDs interface.
+func (m *MockHandle) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error) {
 	args := m.Called(ctx, gTaskID)
 	if args.Error(1) != nil {
 		return nil, args.Error(1)
