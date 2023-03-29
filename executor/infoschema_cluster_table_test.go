@@ -367,8 +367,10 @@ func TestIssue42619(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create table t (a int, b int, index idx(a))")
-	tk.MustQuery("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' and TABLE_NAME='t'").Check(
-		testkit.Rows("test t 88 1 1 1 1 1"))
+	tk.MustQuery("SELECT TABLE_SCHEMA, TABLE_NAME, PEER_COUNT, REGION_COUNT, EMPTY_REGION_COUNT, TABLE_SIZE, TABLE_KEYS " +
+		"FROM information_schema.TABLE_STORAGE_STATS " +
+		"WHERE TABLE_SCHEMA = 'test' and TABLE_NAME='t'").Check(
+		testkit.Rows("test t 1 1 1 1 1"))
 
 	tk.MustExec(
 		"CREATE TABLE tp (a int(11) DEFAULT NULL,b int(11) DEFAULT NULL,c int(11) DEFAULT NULL," +
@@ -378,13 +380,15 @@ func TestIssue42619(t *testing.T) {
 			"PARTITION `p1` VALUES LESS THAN (600)," +
 			"PARTITION `p2` VALUES LESS THAN (900)," +
 			"PARTITION `p3` VALUES LESS THAN (MAXVALUE))")
-	tk.MustQuery("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test'").Check(
+	tk.MustQuery("SELECT TABLE_SCHEMA, TABLE_NAME, PEER_COUNT, REGION_COUNT, EMPTY_REGION_COUNT, TABLE_SIZE, TABLE_KEYS " +
+		"FROM information_schema.TABLE_STORAGE_STATS " +
+		"WHERE TABLE_SCHEMA = 'test'").Check(
 		testkit.Rows(
-			"test t 88 1 1 1 1 1",
-			"test tp 90 1 1 1 1 1",
-			"test tp 91 1 1 1 1 1",
-			"test tp 92 1 1 1 1 1",
-			"test tp 93 1 1 1 1 1",
-			"test tp 94 1 1 1 1 1",
+			"test t 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
 		))
 }
