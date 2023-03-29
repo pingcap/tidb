@@ -45,7 +45,7 @@ var (
 
 func init() {
 	StructSizeBackendCtx = int64(unsafe.Sizeof(BackendContext{}))
-	StructSizeEngineInfo = int64(unsafe.Sizeof(engineInfo{}))
+	StructSizeEngineInfo = int64(unsafe.Sizeof(EngineInfo{}))
 	StructSizeWriterCtx = int64(unsafe.Sizeof(WriterContext{}))
 }
 

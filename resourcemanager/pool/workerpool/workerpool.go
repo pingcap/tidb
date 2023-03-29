@@ -102,11 +102,11 @@ func (p *WorkerPool[T]) handleTaskWithRecover(w Worker[T], task T) {
 }
 
 func (p *WorkerPool[T]) runAWorker() {
+	w := p.createWorker()
+	if w == nil {
+		return // Fail to create worker, quit.
+	}
 	p.wg.Run(func() {
-		w := p.createWorker()
-		if w == nil {
-			return // Fail to create worker, quit.
-		}
 		for {
 			select {
 			case task := <-p.taskChan:
