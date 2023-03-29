@@ -1469,6 +1469,7 @@ func TestDefaultListPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database defaultPartition")
 	tk.MustExec("use defaultPartition")
+	tk.MustExec(`set @@session.tidb_enable_default_list_partition=ON`)
 
 	tk.MustExec(`create table t (a int, b varchar(255), unique key (a), key (b)) partition by list (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10))`)
 	tk.MustExec(`insert into t values (1, "1"), (2, "2"), (3,'3'), (null, "null"), (4, "4"), (11, "11")`)
