@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -168,6 +170,7 @@ type LoadDataController struct {
 
 	logger           *zap.Logger
 	sqlMode          mysql.SQLMode
+	charset          *string
 	importantSysVars map[string]string
 	dataStore        storage.ExternalStorage
 	dataFiles        []*mydump.SourceFileMeta
@@ -193,7 +196,9 @@ func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 }
 
 // NewLoadDataController create new controller.
-func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*LoadDataController, error) {
+func NewLoadDataController(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*LoadDataController, error) {
+	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
+	logger := log.L().With(zap.String("table", fullTableName))
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
@@ -201,9 +206,19 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		// without FORMAT 'xxx' clause, default to DELIMITED DATA
 		format = LoadDataFormatDelimitedData
 	}
-	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
+	charset := plan.Charset
+	if charset == nil {
+		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
+		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
+			context.Background(), variable.CharsetDatabase)
+		if err2 != nil {
+			logger.Error("LOAD DATA get charset failed", zap.Error(err2))
+		} else {
+			charset = &d
+		}
+	}
+	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	c := &LoadDataController{
 		FileLocRef:         plan.FileLocRef,
 		Path:               plan.Path,
@@ -217,14 +232,15 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
 		Restrictive:        restrictive,
 
-		logger:           log.L().With(zap.String("table", fullTableName)),
-		sqlMode:          sctx.GetSessionVars().SQLMode,
-		importantSysVars: getImportantSysVars(sctx),
+		logger:           logger,
+		sqlMode:          userSctx.GetSessionVars().SQLMode,
+		charset:          charset,
+		importantSysVars: getImportantSysVars(userSctx),
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
 	}
-	if err := c.initOptions(sctx, plan.Options); err != nil {
+	if err := c.initOptions(userSctx, plan.Options); err != nil {
 		return nil, err
 	}
 
@@ -707,7 +723,16 @@ func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo LoadDat
 	}()
 	switch e.Format {
 	case LoadDataFormatDelimitedData:
-		// CSV-like
+		var charsetConvertor *mydump.CharsetConvertor
+		if e.charset != nil {
+			charsetConvertor, err = mydump.NewCharsetConvertor(*e.charset, string(utf8.RuneError))
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
 		parser, err = mydump.NewCSVParser(
 			ctx,
 			e.GenerateCSVConfig(),
@@ -715,8 +740,7 @@ func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo LoadDat
 			LoadDataReadBlockSize,
 			nil,
 			false,
-			// TODO: support charset conversion
-			nil)
+			charsetConvertor)
 	case LoadDataFormatSQLDump:
 		parser = mydump.NewChunkParser(
 			ctx,
