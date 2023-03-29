@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/topsql"
@@ -158,6 +159,13 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
 	}
 
+	if useCursor {
+		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+		defer cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
+	} else {
+		// not using streaming ,can reuse chunk
+		cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
+	}
 	// skip iteration-count, always 1
 	pos += 4
 
@@ -200,7 +208,15 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
-	return cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+
+	sessVars := cc.ctx.GetSessionVars()
+	// expiredTaskID is the task ID of the previous statement. When executing a stmt,
+	// the StmtCtx will be reinit and the TaskID will change. We can compare the StmtCtx.TaskID
+	// with the previous one to determine whether StmtCtx has been inited for the current stmt.
+	expiredTaskID := sessVars.StmtCtx.TaskID
+	err = cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+	cc.onExtensionBinaryExecuteEnd(stmt, args, sessVars.StmtCtx.TaskID != expiredTaskID, err)
+	return err
 }
 
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}, args []expression.Expression, useCursor bool) (err error) {
@@ -208,7 +224,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
-		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
 		if txnErr != nil {
 			return txnErr
 		}
@@ -239,7 +255,8 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []expression.Expression, useCursor bool) (bool, error) {
-	prepStmt, err := (&cc.ctx).GetSessionVars().GetPreparedStmtByID(uint32(stmt.ID()))
+	vars := (&cc.ctx).GetSessionVars()
+	prepStmt, err := vars.GetPreparedStmtByID(uint32(stmt.ID()))
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
@@ -247,13 +264,28 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		BinaryArgs: args,
 		PrepStmt:   prepStmt,
 	}
+
+	// For the combination of `ComPrepare` and `ComExecute`, the statement name is stored in the client side, and the
+	// TiDB only has the ID, so don't try to construct an `EXECUTE SOMETHING`. Use the original prepared statement here
+	// instead.
+	sql := ""
+	planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt)
+	if ok {
+		sql = planCacheStmt.StmtText
+	}
+	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
+		if useCursor {
+			vars.SetStatusFlag(mysql.ServerStatusCursorExists, false)
+		}
 		return false, cc.writeOK(ctx)
 	}
+	// since there are multiple implementations of ResultSet (the rs might be wrapped), we have to unwrap the rs before
+	// casting it to *tidbResultSet.
 	if result, ok := rs.(*tidbResultSet); ok {
 		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
 			result.preparedStmt = planCacheStmt
@@ -266,6 +298,31 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if useCursor {
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
+		// fetch all results of the resultSet, and stored them locally, so that the future `FETCH` command can read
+		// the rows directly to avoid running executor and accessing shared params/variables in the session
+		// NOTE: chunk should not be allocated from the connection allocator, which will reset after executing this command
+		// but the rows are still needed in the following FETCH command.
+		//
+		// TODO: trace the memory used here
+		chk := rs.NewChunk(nil)
+		var rows []chunk.Row
+		for {
+			if err = rs.Next(ctx, chk); err != nil {
+				return false, err
+			}
+			rowCount := chk.NumRows()
+			if rowCount == 0 {
+				break
+			}
+			// filling fetchedRows with chunk
+			for i := 0; i < rowCount; i++ {
+				row := chk.GetRow(i)
+				rows = append(rows, row)
+			}
+			chk = chunk.Renew(chk, vars.MaxChunkSize)
+		}
+		rs.StoreFetchedRows(rows)
+
 		stmt.StoreResultSet(rs)
 		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
 			return false, err
@@ -273,15 +330,26 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		if cl, ok := rs.(fetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
-		// explicitly flush columnInfo to client.
-		err = cc.writeEOF(ctx, cc.ctx.Status()|mysql.ServerStatusCursorExists)
+
+		// as the `Next` of `ResultSet` will never be called, all rows have been cached inside it. We could close this
+		// `ResultSet`.
+		err = rs.Close()
 		if err != nil {
 			return false, err
 		}
+
+		stmt.SetCursorActive(true)
+
+		// explicitly flush columnInfo to client.
+		err = cc.writeEOF(ctx, cc.ctx.Status())
+		if err != nil {
+			return false, err
+		}
+
 		return false, cc.flush(ctx)
 	}
 	defer terror.Call(rs.Close)
-	retryable, err := cc.writeResultset(ctx, rs, true, cc.ctx.Status(), 0)
+	retryable, err := cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), 0)
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
@@ -295,6 +363,9 @@ const (
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	cc.ctx.GetSessionVars().StartTime = time.Now()
+	cc.ctx.GetSessionVars().ClearAlloc(nil, false)
+	cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	defer cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {
@@ -323,10 +394,19 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	_, err = cc.writeResultset(ctx, rs, true, cc.ctx.Status()|mysql.ServerStatusCursorExists, int(fetchSize))
+	sendingEOF := false
+	// if the `fetchedRows` are empty before writing result, we could say the `FETCH` command will send EOF
+	if len(rs.GetFetchedRows()) == 0 {
+		sendingEOF = true
+	}
+	_, err = cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
+	if sendingEOF {
+		stmt.SetCursorActive(false)
+	}
+
 	return nil
 }
 
@@ -596,7 +676,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression,
 
 	for i := range params {
 		ft := new(types.FieldType)
-		types.DefaultParamTypeForValue(args[i].GetValue(), ft)
+		types.InferParamTypeFromUnderlyingValue(args[i].GetValue(), ft)
 		params[i] = &expression.Constant{Value: args[i], RetType: ft}
 	}
 	return
@@ -664,6 +744,7 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	if stmt != nil {
 		return stmt.Close()
 	}
+
 	return
 }
 

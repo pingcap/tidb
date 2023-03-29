@@ -300,6 +300,7 @@ deprecate-integer-display-length = false
 enable-enum-length-limit = true
 
 [instance]
+tidb_memory_usage_alarm_ratio = 0.7
 
 # The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
 max_connections = 0
@@ -413,6 +414,9 @@ metrics-interval = 15
 # Record statements qps by database name if it is enabled.
 record-db-qps = false
 
+# Record database name label if it is enabled.
+record-db-label = false
+
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
@@ -421,10 +425,10 @@ max-procs = 0
 server-memory-quota = 0
 
 # The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
-# and less than or equal to 1. The default value is 0.8.
+# and less than or equal to 1. The default value is 0.7.
 # If this configuration is set to 0 or 1, it'll disable the alarm.
 # <snip>
-memory-usage-alarm-ratio = 0.8
+memory-usage-alarm-ratio = 0.7
 
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
@@ -646,7 +650,7 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
-		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, log.enable-slow-log, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.feedback-probability, performance.force-priority, performance.memory-usage-alarm-ratio, performance.query-feedback-limit, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
+		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, instance.tidb_memory_usage_alarm_ratio, log.enable-slow-log, log.expensive-threshold, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.feedback-probability, performance.force-priority, performance.memory-usage-alarm-ratio, performance.query-feedback-limit, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
 	}
 
 	for _, test := range configTest {
@@ -729,10 +733,14 @@ enable-enum-length-limit = false
 stores-refresh-interval = 30
 enable-forwarding = true
 enable-global-kill = true
+tidb-max-reuse-chunk = 10
+tidb-max-reuse-column = 20
+tidb-enable-exit-check = false
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
 enable-load-fmsketch = true
+plan-replayer-dump-worker-concurrency = 1
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -797,6 +805,8 @@ max_connections = 200
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
+	require.Equal(t, uint32(10), conf.TiDBMaxReuseChunk)
+	require.Equal(t, uint32(20), conf.TiDBMaxReuseColumn)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)
@@ -853,7 +863,7 @@ history-size=100`)
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.EnableTelemetry)
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 enable-table-lock = true
@@ -861,15 +871,15 @@ enable-table-lock = true
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.EnableTelemetry)
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
-enable-telemetry = false
+enable-telemetry = true
 `)
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.False(t, conf.EnableTelemetry)
+	require.True(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 [security]
@@ -1282,4 +1292,36 @@ func TestStatsLoadLimit(t *testing.T) {
 	checkQueueSizeValid(DefStatsLoadQueueSizeLimit-1, false)
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit, true)
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
+}
+
+func TestGetGlobalKeyspaceName(t *testing.T) {
+	conf := NewConfig()
+	require.Empty(t, conf.KeyspaceName)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.KeyspaceName = "test"
+	})
+
+	require.Equal(t, "test", GetGlobalKeyspaceName())
+
+	UpdateGlobal(func(conf *Config) {
+		conf.KeyspaceName = ""
+	})
+}
+
+func TestAutoScalerConfig(t *testing.T) {
+	conf := NewConfig()
+	require.False(t, conf.UseAutoScaler)
+
+	conf = GetGlobalConfig()
+	require.False(t, conf.UseAutoScaler)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.UseAutoScaler = true
+	})
+	require.True(t, GetGlobalConfig().UseAutoScaler)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.UseAutoScaler = false
+	})
 }

@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 create database collation_agg_func;
 use collation_agg_func;
 create table t(id int, value varchar(20) charset utf8mb4 collate utf8mb4_general_ci, value1 varchar(20) charset utf8mb4 collate utf8mb4_bin);
@@ -206,9 +207,9 @@ select min(b) from tt;
 min(b)
 a
 desc format='brief' select min(b collate utf8mb4_bin) from tt;
-Error 1235: This version of TiDB doesn't yet support 'use collate clause for enum or set'
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 select min(b collate utf8mb4_bin) from tt;
-Error 1235: This version of TiDB doesn't yet support 'use collate clause for enum or set'
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 desc format='brief' select max(b) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(Column#8)->Column#6
@@ -219,9 +220,9 @@ select max(b) from tt;
 max(b)
 c
 desc format='brief' select max(b collate utf8mb4_bin) from tt;
-Error 1235: This version of TiDB doesn't yet support 'use collate clause for enum or set'
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 select max(b collate utf8mb4_bin) from tt;
-Error 1235: This version of TiDB doesn't yet support 'use collate clause for enum or set'
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 desc format='brief' select min(c) from tt;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:min(collation_agg_func.tt.c)->Column#6
@@ -231,9 +232,9 @@ select min(c) from tt;
 min(c)
 a
 desc format='brief' select min(c collate utf8mb4_bin) from tt;
-Error 1235: This version of TiDB doesn't yet support 'use collate clause for enum or set'
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 select min(c collate utf8mb4_bin) from tt;
-Error 1235: This version of TiDB doesn't yet support 'use collate clause for enum or set'
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 desc format='brief' select max(c) from tt;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:max(collation_agg_func.tt.c)->Column#6
@@ -243,9 +244,9 @@ select max(c) from tt;
 max(c)
 c
 desc format='brief' select max(c collate utf8mb4_bin) from tt;
-Error 1235: This version of TiDB doesn't yet support 'use collate clause for enum or set'
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 select max(c collate utf8mb4_bin) from tt;
-Error 1235: This version of TiDB doesn't yet support 'use collate clause for enum or set'
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 desc format='brief' select min(d) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.d)->Column#6

@@ -52,6 +52,18 @@ func NewZero() *Constant {
 	}
 }
 
+// NewUInt64Const stands for constant of a given number.
+func NewUInt64Const(num int) *Constant {
+	retT := types.NewFieldType(mysql.TypeLonglong)
+	retT.AddFlag(mysql.UnsignedFlag) // shrink range to avoid integral promotion
+	retT.SetFlen(mysql.MaxIntWidth)
+	retT.SetDecimal(0)
+	return &Constant{
+		Value:   types.NewDatum(num),
+		RetType: retT,
+	}
+}
+
 // NewNull stands for null constant.
 func NewNull() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)
@@ -120,7 +132,7 @@ func (c *Constant) GetType() *types.FieldType {
 		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
 		tp := types.NewFieldType(mysql.TypeUnspecified)
 		dt := c.ParamMarker.GetUserVar()
-		types.DefaultParamTypeForValue(dt.GetValue(), tp)
+		types.InferParamTypeFromDatum(&dt, tp)
 		return tp
 	}
 	return c.RetType
@@ -464,6 +476,9 @@ func (c *Constant) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyConstantSize + c.RetType.MemoryUsage() + c.Value.MemUsage() + int64(cap(c.hashcode))
+	sum = emptyConstantSize + c.Value.MemUsage() + int64(cap(c.hashcode))
+	if c.RetType != nil {
+		sum += c.RetType.MemoryUsage()
+	}
 	return
 }

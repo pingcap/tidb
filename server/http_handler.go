@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	ttlcient "github.com/pingcap/tidb/ttl/client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -72,21 +73,34 @@ import (
 )
 
 const (
-	pDBName     = "db"
-	pHexKey     = "hexKey"
-	pIndexName  = "index"
-	pHandle     = "handle"
-	pRegionID   = "regionID"
-	pStartTS    = "startTS"
-	pTableName  = "table"
-	pTableID    = "tableID"
-	pColumnID   = "colID"
-	pColumnTp   = "colTp"
-	pColumnFlag = "colFlag"
-	pColumnLen  = "colLen"
-	pRowBin     = "rowBin"
-	pSnapshot   = "snapshot"
-	pFileName   = "filename"
+	pDBName             = "db"
+	pHexKey             = "hexKey"
+	pIndexName          = "index"
+	pHandle             = "handle"
+	pRegionID           = "regionID"
+	pStartTS            = "startTS"
+	pTableName          = "table"
+	pTableID            = "tableID"
+	pColumnID           = "colID"
+	pColumnTp           = "colTp"
+	pColumnFlag         = "colFlag"
+	pColumnLen          = "colLen"
+	pRowBin             = "rowBin"
+	pSnapshot           = "snapshot"
+	pFileName           = "filename"
+	pDumpPartitionStats = "dumpPartitionStats"
+	pBegin              = "begin"
+	pEnd                = "end"
+)
+
+// For extract task handler
+const (
+	pType   = "type"
+	pIsDump = "isDump"
+
+	// For extract plan task handler
+	pIsSkipStats   = "isSkipStats"
+	pIsHistoryView = "isHistoryView"
 )
 
 // For query string
@@ -205,7 +219,7 @@ func (t *tikvHandlerTool) getHandle(tb table.PhysicalTable, params map[string]st
 	return handle, nil
 }
 
-func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) (*helper.MvccKV, error) {
+func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) ([]*helper.MvccKV, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
@@ -226,7 +240,18 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, err
 	}
-	return &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}, err
+	idxData := &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}
+	tablecodec.IndexKey2TempIndexKey(encodedKey)
+	data, err = t.GetMvccByEncodedKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	regionID, err = t.getRegionIDByKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	tempIdxData := &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}
+	return append([]*helper.MvccKV{}, idxData, tempIdxData), err
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
@@ -658,9 +683,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch asyncCommit {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -680,9 +705,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch onePC {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -747,9 +772,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch mutationChecker {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableMutationChecker, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableMutationChecker, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -799,14 +824,22 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case "reset":
 		binloginfo.ResetSkippedCommitterCounter()
 	case "nowait":
-		binloginfo.DisableSkipBinlogFlag()
+		err := binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	case "status":
 	default:
 		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
 		if sec <= 0 || err != nil {
 			sec = 1800
 		}
-		binloginfo.DisableSkipBinlogFlag()
+		err = binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		timeout := time.Duration(sec) * time.Second
 		err = binloginfo.WaitBinlogRecover(timeout)
 		if err != nil {
@@ -971,9 +1004,12 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 	}
 	if available {
-		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
+		var tableInfo model.TableInfo
+		tableInfo.ID = status.ID
+		err = infosync.DeleteTiFlashTableSyncProgress(&tableInfo)
 	} else {
-		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
+		progress := float64(status.FlashRegionCount) / float64(status.RegionCount)
+		err = infosync.UpdateTiFlashProgressCache(status.ID, progress)
 	}
 	if err != nil {
 		writeError(w, err)
@@ -1200,7 +1236,13 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeData(w, data.Meta())
 			return
 		}
-		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		// The tid maybe a partition ID of the partition-table.
+		tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
+		if tbl == nil {
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+			return
+		}
+		writeData(w, tbl.Meta())
 		return
 	}
 
@@ -2189,4 +2231,39 @@ func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	writeData(w, config.GetGlobalConfig().Labels)
+}
+
+// ttlJobTriggerHandler is used to trigger a TTL job manually
+type ttlJobTriggerHandler struct {
+	store kv.Storage
+}
+
+// ServeHTTP handles request of triger a ttl job
+func (h ttlJobTriggerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	params := mux.Vars(req)
+	dbName := strings.ToLower(params["db"])
+	tableName := strings.ToLower(params["table"])
+
+	ctx := req.Context()
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		log.Error("failed to get session domain", zap.Error(err))
+		writeError(w, err)
+		return
+	}
+
+	cli := dom.TTLJobManager().GetCommandCli()
+	resp, err := ttlcient.TriggerNewTTLJob(ctx, cli, dbName, tableName)
+	if err != nil {
+		log.Error("failed to trigger new TTL job", zap.Error(err))
+		writeError(w, err)
+		return
+	}
+	writeData(w, resp)
+	logutil.Logger(ctx).Info("trigger TTL job manually successfully", zap.String("dbName", dbName), zap.String("tableName", tableName), zap.Any("response", resp))
 }

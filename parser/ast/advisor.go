@@ -14,6 +14,7 @@
 package ast
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/format"
 )
 
@@ -45,7 +46,11 @@ func (n *IndexAdviseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.MaxIndexNum != nil {
 		n.MaxIndexNum.Restore(ctx)
 	}
-	n.LinesInfo.Restore(ctx)
+	if n.LinesInfo != nil {
+		if err := n.LinesInfo.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore IndexAdviseStmt.LinesInfo")
+		}
+	}
 	return nil
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -73,6 +74,19 @@ var (
 type tableScanAndPartitionInfo struct {
 	tableScan     *PhysicalTableScan
 	partitionInfo PartitionInfo
+}
+
+// MemoryUsage return the memory usage of tableScanAndPartitionInfo
+func (t *tableScanAndPartitionInfo) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum += t.partitionInfo.MemoryUsage()
+	if t.tableScan != nil {
+		sum += t.tableScan.MemoryUsage()
+	}
+	return
 }
 
 // ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
@@ -196,12 +210,9 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 	if p.tablePlan != nil {
 		sum += p.tablePlan.MemoryUsage()
 	}
-
-	for _, plan := range p.TablePlans {
-		sum += plan.MemoryUsage()
-	}
-	for _, pInfos := range p.PartitionInfos {
-		sum += pInfos.tableScan.MemoryUsage() + pInfos.partitionInfo.MemoryUsage()
+	// since TablePlans is the flats of tablePlan, so we don't count it
+	for _, pInfo := range p.PartitionInfos {
+		sum += pInfo.MemoryUsage()
 	}
 	return
 }
@@ -317,7 +328,7 @@ func (p *PhysicalIndexReader) Clone() (PhysicalPlan, error) {
 	if cloned.IndexPlans, err = clonePhysicalPlan(p.IndexPlans); err != nil {
 		return nil, err
 	}
-	cloned.OutputColumns = cloneCols(p.OutputColumns)
+	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
 	return cloned, err
 }
 
@@ -527,12 +538,7 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 		sum += p.PushedLimit.MemoryUsage()
 	}
 
-	for _, plan := range p.IndexPlans {
-		sum += plan.MemoryUsage()
-	}
-	for _, plan := range p.TablePlans {
-		sum += plan.MemoryUsage()
-	}
+	// since IndexPlans and TablePlans are the flats of indexPlan and tablePlan, so we don't count it
 	for _, col := range p.CommonHandleCols {
 		sum += col.MemoryUsage()
 	}
@@ -542,6 +548,12 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
+
+	// IsIntersectionType means whether it's intersection type or union type.
+	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
+	IsIntersectionType bool
+	// AccessMVIndex indicates whether this IndexMergeReader access a MVIndex.
+	AccessMVIndex bool
 
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
@@ -658,6 +670,9 @@ type PhysicalIndexScan struct {
 	isPartition bool
 	Desc        bool
 	KeepOrder   bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
+
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
@@ -668,7 +683,12 @@ type PhysicalIndexScan struct {
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblColHists   *statistics.HistColl
 	pkIsHandleCol *expression.Column
-	prop          *property.PhysicalProperty
+
+	// constColsByCond records the constant part of the index columns caused by the access conds.
+	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
+	constColsByCond []bool
+
+	prop *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
@@ -680,18 +700,18 @@ func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.physicalSchemaProducer = *base
-	cloned.AccessCondition = cloneExprs(p.AccessCondition)
+	cloned.AccessCondition = util.CloneExprs(p.AccessCondition)
 	if p.Table != nil {
 		cloned.Table = p.Table.Clone()
 	}
 	if p.Index != nil {
 		cloned.Index = p.Index.Clone()
 	}
-	cloned.IdxCols = cloneCols(p.IdxCols)
+	cloned.IdxCols = util.CloneCols(p.IdxCols)
 	cloned.IdxColLens = make([]int, len(p.IdxColLens))
 	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.Ranges = cloneRanges(p.Ranges)
-	cloned.Columns = cloneColInfos(p.Columns)
+	cloned.Ranges = util.CloneRanges(p.Ranges)
+	cloned.Columns = util.CloneColInfos(p.Columns)
 	if p.dataSourceSchema != nil {
 		cloned.dataSourceSchema = p.dataSourceSchema.Clone()
 	}
@@ -719,7 +739,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPhysicalIndexScanSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IdxColLens))*size.SizeOfInt +
-		p.DBName.MemoryUsage() + int64(len(p.rangeInfo))
+		p.DBName.MemoryUsage() + int64(len(p.rangeInfo)) + int64(len(p.Columns))*model.EmptyColumnInfoSize
 	if p.TableAsName != nil {
 		sum += p.TableAsName.MemoryUsage()
 	}
@@ -729,6 +749,9 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	if p.prop != nil {
 		sum += p.prop.MemoryUsage()
 	}
+	if p.dataSourceSchema != nil {
+		sum += p.dataSourceSchema.MemoryUsage()
+	}
 	// slice memory usage
 	for _, cond := range p.AccessCondition {
 		sum += cond.MemoryUsage()
@@ -737,7 +760,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 		sum += col.MemoryUsage()
 	}
 	for _, rang := range p.Ranges {
-		sum += rang.MemoryUsage()
+		sum += rang.MemUsage()
 	}
 	for iid, expr := range p.GenExprs {
 		sum += int64(unsafe.Sizeof(iid)) + expr.MemoryUsage()
@@ -756,6 +779,17 @@ type PhysicalMemTable struct {
 	QueryTimeRange QueryTimeRange
 }
 
+// MemoryUsage return the memory usage of PhysicalMemTable
+func (p *PhysicalMemTable) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.DBName.MemoryUsage() + size.SizeOfPointer + size.SizeOfSlice +
+		int64(cap(p.Columns))*size.SizeOfPointer + size.SizeOfInterface + p.QueryTimeRange.MemoryUsage()
+	return
+}
+
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	physicalSchemaProducer
@@ -763,6 +797,10 @@ type PhysicalTableScan struct {
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
+	// lateMaterializationFilterCondition is used to record the filter conditions
+	// that are pushed down to table scan from selection by late materialization.
+	// TODO: remove this field after we support pushing down selection to coprocessor.
+	lateMaterializationFilterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
@@ -777,7 +815,7 @@ type PhysicalTableScan struct {
 
 	physicalTableID int64
 
-	rangeDecidedBy []*expression.Column
+	rangeInfo string
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx  []int
@@ -794,6 +832,8 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
 
 	isChildOfIndexLookUp bool
 
@@ -817,18 +857,18 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	clonedScan.physicalSchemaProducer = *prod
-	clonedScan.AccessCondition = cloneExprs(ts.AccessCondition)
-	clonedScan.filterCondition = cloneExprs(ts.filterCondition)
+	clonedScan.AccessCondition = util.CloneExprs(ts.AccessCondition)
+	clonedScan.filterCondition = util.CloneExprs(ts.filterCondition)
 	if ts.Table != nil {
 		clonedScan.Table = ts.Table.Clone()
 	}
-	clonedScan.Columns = cloneColInfos(ts.Columns)
-	clonedScan.Ranges = cloneRanges(ts.Ranges)
+	clonedScan.Columns = util.CloneColInfos(ts.Columns)
+	clonedScan.Ranges = util.CloneRanges(ts.Ranges)
 	clonedScan.TableAsName = ts.TableAsName
 	if ts.Hist != nil {
 		clonedScan.Hist = ts.Hist.Copy()
 	}
-	clonedScan.rangeDecidedBy = cloneCols(ts.rangeDecidedBy)
+	clonedScan.rangeInfo = ts.rangeInfo
 	return clonedScan, nil
 }
 
@@ -864,7 +904,8 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 			}
 			access = append(access, newCond)
 		}
-		res, err := ranger.DetachCondAndBuildRangeForIndex(ts.SCtx(), access, idxCols, idxColLens)
+		// All of access conditions must be used to build ranges, so we don't limit range memory usage.
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ts.SCtx(), access, idxCols, idxColLens, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -872,6 +913,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	} else {
 		var err error
 		pkTP := ts.Table.GetPkColInfo().FieldType
+		// All of access conditions must be used to build ranges, so we don't limit range memory usage.
 		ts.Ranges, _, _, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP, 0)
 		if err != nil {
 			return nil, err
@@ -928,7 +970,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPhysicalTableScanSize + ts.physicalSchemaProducer.MemoryUsage() + ts.DBName.MemoryUsage() +
-		int64(cap(ts.HandleIdx))*size.SizeOfInt + ts.PartitionInfo.MemoryUsage()
+		int64(cap(ts.HandleIdx))*size.SizeOfInt + ts.PartitionInfo.MemoryUsage() + int64(len(ts.rangeInfo))
 	if ts.TableAsName != nil {
 		sum += ts.TableAsName.MemoryUsage()
 	}
@@ -946,10 +988,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 		sum += cond.MemoryUsage()
 	}
 	for _, rang := range ts.Ranges {
-		sum += rang.MemoryUsage()
-	}
-	for _, col := range ts.rangeDecidedBy {
-		sum += col.MemoryUsage()
+		sum += rang.MemUsage()
 	}
 	for _, col := range ts.tblCols {
 		sum += col.MemoryUsage()
@@ -975,7 +1014,7 @@ func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.basePhysicalPlan = *base
-	cloned.Exprs = cloneExprs(p.Exprs)
+	cloned.Exprs = util.CloneExprs(p.Exprs)
 	return cloned, err
 }
 
@@ -1005,9 +1044,15 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 type PhysicalTopN struct {
 	basePhysicalPlan
 
-	ByItems []*util.ByItems
-	Offset  uint64
-	Count   uint64
+	ByItems     []*util.ByItems
+	PartitionBy []property.SortItem
+	Offset      uint64
+	Count       uint64
+}
+
+// GetPartitionBy returns partition by fields
+func (lt *PhysicalTopN) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1023,6 +1068,10 @@ func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
 	for _, it := range lt.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
 	}
+	cloned.PartitionBy = make([]property.SortItem, 0, len(lt.PartitionBy))
+	for _, it := range lt.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
+	}
 	return cloned, nil
 }
 
@@ -1033,6 +1082,22 @@ func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
 	}
 	return corCols
+}
+
+// MemoryUsage return the memory usage of PhysicalTopN
+func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
+	if lt == nil {
+		return
+	}
+
+	sum = lt.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
+	for _, byItem := range lt.ByItems {
+		sum += byItem.MemoryUsage()
+	}
+	for _, item := range lt.PartitionBy {
+		sum += item.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalApply represents apply plan, only used for subquery.
@@ -1072,6 +1137,20 @@ func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalApply
+func (la *PhysicalApply) MemoryUsage() (sum int64) {
+	if la == nil {
+		return
+	}
+
+	sum = la.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice +
+		int64(cap(la.OuterSchema))*size.SizeOfPointer
+	for _, corrCol := range la.OuterSchema {
+		sum += corrCol.MemoryUsage()
+	}
+	return
+}
+
 type basePhysicalJoin struct {
 	physicalSchemaProducer
 
@@ -1097,6 +1176,10 @@ type basePhysicalJoin struct {
 	RightNAJoinKeys []*expression.Column
 }
 
+func (p *basePhysicalJoin) getInnerChildIdx() int {
+	return p.InnerChildIdx
+}
+
 func (p *basePhysicalJoin) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalJoin, error) {
 	cloned := new(basePhysicalJoin)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(newSelf)
@@ -1105,16 +1188,16 @@ func (p *basePhysicalJoin) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalJoi
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.JoinType = p.JoinType
-	cloned.LeftConditions = cloneExprs(p.LeftConditions)
-	cloned.RightConditions = cloneExprs(p.RightConditions)
-	cloned.OtherConditions = cloneExprs(p.OtherConditions)
+	cloned.LeftConditions = util.CloneExprs(p.LeftConditions)
+	cloned.RightConditions = util.CloneExprs(p.RightConditions)
+	cloned.OtherConditions = util.CloneExprs(p.OtherConditions)
 	cloned.InnerChildIdx = p.InnerChildIdx
-	cloned.OuterJoinKeys = cloneCols(p.OuterJoinKeys)
-	cloned.InnerJoinKeys = cloneCols(p.InnerJoinKeys)
-	cloned.LeftJoinKeys = cloneCols(p.LeftJoinKeys)
-	cloned.RightJoinKeys = cloneCols(p.RightJoinKeys)
-	cloned.LeftNAJoinKeys = cloneCols(p.LeftNAJoinKeys)
-	cloned.RightNAJoinKeys = cloneCols(p.RightNAJoinKeys)
+	cloned.OuterJoinKeys = util.CloneCols(p.OuterJoinKeys)
+	cloned.InnerJoinKeys = util.CloneCols(p.InnerJoinKeys)
+	cloned.LeftJoinKeys = util.CloneCols(p.LeftJoinKeys)
+	cloned.RightJoinKeys = util.CloneCols(p.RightJoinKeys)
+	cloned.LeftNAJoinKeys = util.CloneCols(p.LeftNAJoinKeys)
+	cloned.RightNAJoinKeys = util.CloneCols(p.RightNAJoinKeys)
 	for _, d := range p.DefaultValues {
 		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
 	}
@@ -1134,6 +1217,52 @@ func (p *basePhysicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColum
 		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
 	}
 	return corCols
+}
+
+const emptyBasePhysicalJoinSize = int64(unsafe.Sizeof(basePhysicalJoin{}))
+
+// MemoryUsage return the memory usage of basePhysicalJoin
+func (p *basePhysicalJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyBasePhysicalJoinSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IsNullEQ))*size.SizeOfBool +
+		int64(cap(p.LeftConditions)+cap(p.RightConditions)+cap(p.OtherConditions))*size.SizeOfInterface +
+		int64(cap(p.OuterJoinKeys)+cap(p.InnerJoinKeys)+cap(p.LeftJoinKeys)+cap(p.RightNAJoinKeys)+cap(p.LeftNAJoinKeys)+
+			cap(p.RightNAJoinKeys))*size.SizeOfPointer + int64(cap(p.DefaultValues))*types.EmptyDatumSize
+
+	for _, cond := range p.LeftConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range p.RightConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range p.OtherConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, col := range p.LeftJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.RightJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.InnerJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.OuterJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, datum := range p.DefaultValues {
+		sum += datum.MemUsage()
+	}
+	for _, col := range p.LeftNAJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.RightNAJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalHashJoin represents hash join implementation of LogicalJoin.
@@ -1193,6 +1322,23 @@ func (p *PhysicalHashJoin) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalHashJoin
+func (p *PhysicalHashJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfUint + size.SizeOfSlice + size.SizeOfBool*2 + size.SizeOfUint8
+
+	for _, expr := range p.EqualConditions {
+		sum += expr.MemoryUsage()
+	}
+	for _, expr := range p.NAEqualConditions {
+		sum += expr.MemoryUsage()
+	}
+	return
+}
+
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
 func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
 	leftJoinKeys, rightJoinKeys, isNullEQ, _ := p.GetJoinKeys()
@@ -1247,6 +1393,30 @@ type PhysicalIndexJoin struct {
 	InnerHashKeys []*expression.Column
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexJoin
+func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
+		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
+	if p.innerTask != nil {
+		sum += p.innerTask.MemoryUsage()
+	}
+	if p.CompareFilters != nil {
+		sum += p.CompareFilters.MemoryUsage()
+	}
+
+	for _, col := range p.OuterHashKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.InnerHashKeys {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.
 type PhysicalIndexMergeJoin struct {
 	PhysicalIndexJoin
@@ -1264,12 +1434,32 @@ type PhysicalIndexMergeJoin struct {
 	Desc bool
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexMergeJoin
+func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.KeyOff2KeyOffOrderByIdx))*size.SizeOfInt +
+		int64(cap(p.CompareFuncs)+cap(p.OuterCompareFuncs))*size.SizeOfFunc + size.SizeOfBool*2
+	return
+}
+
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
 	PhysicalIndexJoin
 	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
 	KeepOuterOrder bool
+}
+
+// MemoryUsage return the memory usage of PhysicalIndexHashJoin
+func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfBool
 }
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
@@ -1279,6 +1469,16 @@ type PhysicalMergeJoin struct {
 	CompareFuncs []expression.CompareFunc
 	// Desc means whether inner child keep desc order.
 	Desc bool
+}
+
+// MemoryUsage return the memory usage of PhysicalMergeJoin
+func (p *PhysicalMergeJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfSlice + int64(cap(p.CompareFuncs))*size.SizeOfFunc + size.SizeOfBool
+	return
 }
 
 // PhysicalExchangeReceiver accepts connection and receives data passively.
@@ -1305,7 +1505,74 @@ func (p *PhysicalExchangeReceiver) GetExchangeSender() *PhysicalExchangeSender {
 	return p.children[0].(*PhysicalExchangeSender)
 }
 
-// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
+// MemoryUsage return the memory usage of PhysicalExchangeReceiver
+func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(p.Tasks)+cap(p.frags))*size.SizeOfPointer
+	for _, frag := range p.frags {
+		sum += frag.MemoryUsage()
+	}
+	return
+}
+
+// PhysicalExpand is used to expand underlying data sources to feed different grouping sets.
+type PhysicalExpand struct {
+	// data after repeat-OP will generate a new grouping-ID column to indicate what grouping set is it for.
+	physicalSchemaProducer
+
+	// generated grouping ID column itself.
+	GroupingIDCol *expression.Column
+
+	// GroupingSets is used to define what kind of group layout should the underlying data follow.
+	// For simple case: select count(distinct a), count(distinct b) from t; the grouping expressions are [a] and [b].
+	GroupingSets expression.GroupingSets
+}
+
+// Init only assigns type and context.
+func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalExpand {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
+	p.stats = stats
+	return &p
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalExpand) Clone() (PhysicalPlan, error) {
+	np := new(PhysicalExpand)
+	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.basePhysicalPlan = *base
+	// clone ID cols.
+	np.GroupingIDCol = p.GroupingIDCol.Clone().(*expression.Column)
+
+	// clone grouping expressions.
+	clonedGroupingSets := make([]expression.GroupingSet, 0, len(p.GroupingSets))
+	for _, one := range p.GroupingSets {
+		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
+	}
+	np.GroupingSets = p.GroupingSets
+	return np, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalExpand
+func (p *PhysicalExpand) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfSlice + int64(cap(p.GroupingSets))*size.SizeOfPointer
+	for _, gs := range p.GroupingSets {
+		sum += gs.MemoryUsage()
+	}
+	sum += p.GroupingIDCol.MemoryUsage()
+	return
+}
+
+// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing.
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
 
@@ -1313,10 +1580,11 @@ type PhysicalExchangeSender struct {
 	ExchangeType tipb.ExchangeType
 	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
-	Tasks []*kv.MPPTask
+	Tasks           []*kv.MPPTask
+	CompressionMode kv.ExchangeCompressionMode
 }
 
-// Clone implment PhysicalPlan interface.
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np := new(PhysicalExchangeSender)
 	base, err := p.basePhysicalPlan.cloneWithSelf(np)
@@ -1326,7 +1594,22 @@ func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np.basePhysicalPlan = *base
 	np.ExchangeType = p.ExchangeType
 	np.HashCols = p.HashCols
+	np.CompressionMode = p.CompressionMode
 	return np, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalExchangeSender
+func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice*3 + size.SizeOfInt32 +
+		int64(cap(p.TargetTasks)+cap(p.HashCols)+cap(p.Tasks))*size.SizeOfPointer
+	for _, hCol := range p.HashCols {
+		sum += hCol.MemoryUsage()
+	}
+	return
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1352,12 +1635,41 @@ type PhysicalLock struct {
 	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
+// MemoryUsage return the memory usage of PhysicalLock
+func (pl *PhysicalLock) MemoryUsage() (sum int64) {
+	if pl == nil {
+		return
+	}
+
+	sum = pl.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer + size.SizeOfMap*2
+	if pl.Lock != nil {
+		sum += int64(unsafe.Sizeof(ast.SelectLockInfo{}))
+	}
+
+	for _, vals := range pl.TblID2Handle {
+		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(vals))*size.SizeOfInterface
+		for _, val := range vals {
+			sum += val.MemoryUsage()
+		}
+	}
+	for _, val := range pl.TblID2PhysTblIDCol {
+		sum += size.SizeOfInt64 + size.SizeOfPointer + val.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalLimit is the physical operator of Limit.
 type PhysicalLimit struct {
 	physicalSchemaProducer
 
-	Offset uint64
-	Count  uint64
+	PartitionBy []property.SortItem
+	Offset      uint64
+	Count       uint64
+}
+
+// GetPartitionBy returns partition by fields
+func (p *PhysicalLimit) GetPartitionBy() []property.SortItem {
+	return p.PartitionBy
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1367,6 +1679,10 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
+	}
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
 	}
 	cloned.physicalSchemaProducer = *base
 	return cloned, nil
@@ -1398,6 +1714,15 @@ func (p *PhysicalUnionAll) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	return cloned, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalUnionAll
+func (p *PhysicalUnionAll) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfBool
 }
 
 // AggMppRunMode defines the running mode of aggregation in MPP
@@ -1444,7 +1769,7 @@ func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg,
 	for _, aggDesc := range p.AggFuncs {
 		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
 	}
-	cloned.GroupByItems = cloneExprs(p.GroupByItems)
+	cloned.GroupByItems = util.CloneExprs(p.GroupByItems)
 	return cloned, nil
 }
 
@@ -1519,6 +1844,10 @@ type PhysicalHashAgg struct {
 	basePhysicalAgg
 }
 
+func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
+	return &p.basePhysicalAgg
+}
+
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalHashAgg)
@@ -1551,6 +1880,10 @@ func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, pr
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
 	basePhysicalAgg
+}
+
+func (p *PhysicalStreamAgg) getPointer() *basePhysicalAgg {
+	return &p.basePhysicalAgg
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1671,7 +2004,10 @@ func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + p.HandleCols.MemoryUsage()
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice
+	if p.HandleCols != nil {
+		sum += p.HandleCols.MemoryUsage()
+	}
 	for _, cond := range p.Conditions {
 		sum += cond.MemoryUsage()
 	}
@@ -1711,7 +2047,7 @@ func (p *PhysicalSelection) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.basePhysicalPlan = *base
-	cloned.Conditions = cloneExprs(p.Conditions)
+	cloned.Conditions = util.CloneExprs(p.Conditions)
 	return cloned, nil
 }
 
@@ -1753,6 +2089,15 @@ func (p *PhysicalMaxOneRow) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalMaxOneRow
+func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.basePhysicalPlan.MemoryUsage()
+}
+
 // PhysicalTableDual is the physical operator of dual.
 type PhysicalTableDual struct {
 	physicalSchemaProducer
@@ -1772,6 +2117,19 @@ func (p *PhysicalTableDual) OutputNames() types.NameSlice {
 // SetOutputNames sets the outputting name by the given slice.
 func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
 	p.names = names
+}
+
+// MemoryUsage return the memory usage of PhysicalTableDual
+func (p *PhysicalTableDual) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt + size.SizeOfSlice + int64(cap(p.names))*size.SizeOfPointer
+	for _, name := range p.names {
+		sum += name.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalWindow is the physical operator of window function.
@@ -1838,6 +2196,27 @@ func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalWindow
+func (p *PhysicalWindow) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.WindowFuncDescs))*size.SizeOfPointer +
+		size.SizeOfUint8
+
+	for _, windowFunc := range p.WindowFuncDescs {
+		sum += windowFunc.MemoryUsage()
+	}
+	for _, item := range p.PartitionBy {
+		sum += item.MemoryUsage()
+	}
+	for _, item := range p.OrderBy {
+		sum += item.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalShuffle represents a shuffle plan.
 // `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
 //
@@ -1860,6 +2239,30 @@ type PhysicalShuffle struct {
 	ByItemArrays [][]expression.Expression
 }
 
+// MemoryUsage return the memory usage of PhysicalShuffle
+func (p *PhysicalShuffle) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfInt*2 + size.SizeOfSlice*(3+int64(cap(p.ByItemArrays))) +
+		int64(cap(p.Tails)+cap(p.DataSources))*size.SizeOfInterface
+
+	for _, plan := range p.Tails {
+		sum += plan.MemoryUsage()
+	}
+	for _, plan := range p.DataSources {
+		sum += plan.MemoryUsage()
+	}
+	for _, exprs := range p.ByItemArrays {
+		sum += int64(cap(exprs)) * size.SizeOfInterface
+		for _, expr := range exprs {
+			sum += expr.MemoryUsage()
+		}
+	}
+	return
+}
+
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
 type PartitionSplitterType int
 
@@ -1879,6 +2282,19 @@ type PhysicalShuffleReceiverStub struct {
 	Receiver unsafe.Pointer
 	// DataSource is the PhysicalPlan of the Receiver.
 	DataSource PhysicalPlan
+}
+
+// MemoryUsage return the memory usage of PhysicalShuffleReceiverStub
+func (p *PhysicalShuffleReceiverStub) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfPointer + size.SizeOfInterface
+	if p.DataSource != nil {
+		sum += p.DataSource.MemoryUsage()
+	}
+	return
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
@@ -1913,11 +2329,29 @@ type PhysicalShow struct {
 	Extractor ShowPredicateExtractor
 }
 
+// MemoryUsage return the memory usage of PhysicalShow
+func (p *PhysicalShow) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.ShowContents.MemoryUsage() + size.SizeOfInterface
+	return
+}
+
 // PhysicalShowDDLJobs is for showing DDL job list.
 type PhysicalShowDDLJobs struct {
 	physicalSchemaProducer
 
 	JobNumber int64
+}
+
+// MemoryUsage return the memory usage of PhysicalShowDDLJobs
+func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt64
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
@@ -1957,6 +2391,22 @@ type TableSampleInfo struct {
 	Partitions []table.PartitionedTable
 }
 
+// MemoryUsage return the memory usage of TableSampleInfo
+func (t *TableSampleInfo) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer*2 + size.SizeOfSlice + int64(cap(t.Partitions))*size.SizeOfInterface
+	if t.AstNode != nil {
+		sum += int64(unsafe.Sizeof(ast.TableSample{}))
+	}
+	if t.FullSchema != nil {
+		sum += t.FullSchema.MemoryUsage()
+	}
+	return
+}
+
 // NewTableSampleInfo creates a new TableSampleInfo.
 func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
 	if node == nil {
@@ -1977,6 +2427,7 @@ type PhysicalCTE struct {
 	RecurPlan PhysicalPlan
 	CTE       *CTEClass
 	cteAsName model.CIStr
+	cteName   model.CIStr
 }
 
 // PhysicalCTETable is for CTE table.
@@ -2015,9 +2466,37 @@ func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 	})
 }
 
+// MemoryUsage return the memory usage of PhysicalCTE
+func (p *PhysicalCTE) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.SeedPlan != nil {
+		sum += p.SeedPlan.MemoryUsage()
+	}
+	if p.RecurPlan != nil {
+		sum += p.RecurPlan.MemoryUsage()
+	}
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
+}
+
 // ExplainInfo overrides the ExplainInfo
 func (p *PhysicalCTETable) ExplainInfo() string {
 	return "Scan on CTE_" + strconv.Itoa(p.IDForStorage)
+}
+
+// MemoryUsage return the memory usage of PhysicalCTETable
+func (p *PhysicalCTETable) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt
 }
 
 // CTEDefinition is CTE definition for explain.
@@ -2042,6 +2521,25 @@ func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
+}
+
+// MemoryUsage return the memory usage of CTEDefinition
+func (p *CTEDefinition) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.SeedPlan != nil {
+		sum += p.SeedPlan.MemoryUsage()
+	}
+	if p.RecurPlan != nil {
+		sum += p.RecurPlan.MemoryUsage()
+	}
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
 }
 
 func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {

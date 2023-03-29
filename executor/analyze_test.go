@@ -17,6 +17,7 @@ package executor_test
 import (
 	"fmt"
 	"io/ioutil"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -337,4 +338,103 @@ func TestAnalyzePartitionTableForFloat(t *testing.T) {
 		tk.MustExec(sql)
 	}
 	tk.MustExec("analyze table t1")
+}
+
+func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int) partition by hash(id) partitions 4")
+	testcases := []struct {
+		concurrency string
+	}{
+		{
+			concurrency: "1",
+		},
+		{
+			concurrency: "2",
+		},
+		{
+			concurrency: "3",
+		},
+		{
+			concurrency: "4",
+		},
+		{
+			concurrency: "5",
+		},
+	}
+	// assert empty table
+	for _, tc := range testcases {
+		concurrency := tc.concurrency
+		fmt.Println("testcase ", concurrency)
+		tk.MustExec(fmt.Sprintf("set @@tidb_merge_partition_stats_concurrency=%v", concurrency))
+		tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
+		tk.MustExec(fmt.Sprintf("set @@tidb_analyze_partition_concurrency=%v", concurrency))
+		tk.MustQuery("select @@tidb_analyze_partition_concurrency").Check(testkit.Rows(concurrency))
+
+		tk.MustExec("analyze table t")
+		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'")
+	}
+
+	for i := 1; i <= 500; i++ {
+		for j := 1; j <= 20; j++ {
+			tk.MustExec(fmt.Sprintf("insert into t (id) values (%v)", j))
+		}
+	}
+	var expected [][]interface{}
+	for i := 1; i <= 20; i++ {
+		expected = append(expected, []interface{}{
+			strconv.FormatInt(int64(i), 10), "500",
+		})
+	}
+	testcases = []struct {
+		concurrency string
+	}{
+		{
+			concurrency: "1",
+		},
+		{
+			concurrency: "2",
+		},
+		{
+			concurrency: "3",
+		},
+		{
+			concurrency: "4",
+		},
+		{
+			concurrency: "5",
+		},
+	}
+	for _, tc := range testcases {
+		concurrency := tc.concurrency
+		fmt.Println("testcase ", concurrency)
+		tk.MustExec(fmt.Sprintf("set @@tidb_merge_partition_stats_concurrency=%v", concurrency))
+		tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
+		tk.MustExec("analyze table t")
+		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'").CheckAt([]int{5, 6}, expected)
+	}
+}
+
+func TestMergeGlobalStatsWithUnAnalyzedPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_partition_prune_mode=dynamic;")
+	tk.MustExec("CREATE TABLE `t` (   `id` int(11) DEFAULT NULL,   `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL ) PARTITION BY RANGE (`id`) (PARTITION `p0` VALUES LESS THAN (3),  PARTITION `p1` VALUES LESS THAN (7),  PARTITION `p2` VALUES LESS THAN (11));")
+	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(4,4,4,4),(5,5,5,5),(6,6,6,6),(8,8,8,8),(9,9,9,9);")
+	tk.MustExec("create index idxa on t (a);")
+	tk.MustExec("create index idxb on t (b);")
+	tk.MustExec("create index idxc on t (c);")
+	tk.MustExec("analyze table t partition p0 index idxa;")
+	tk.MustExec("analyze table t partition p1 index idxb;")
+	tk.MustExec("analyze table t partition p2 index idxc;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p2"))
+	tk.MustExec("analyze table t partition p0;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0"))
 }

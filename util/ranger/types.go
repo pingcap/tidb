@@ -33,7 +33,7 @@ import (
 // It's mainly designed for plan-cache, since some ranges in a cached plan have to be rebuild when reusing.
 type MutableRanges interface {
 	// Range returns the underlying range values.
-	Range() []*Range
+	Range() Ranges
 	// Rebuild rebuilds the underlying ranges again.
 	Rebuild() error
 }
@@ -42,7 +42,7 @@ type MutableRanges interface {
 type Ranges []*Range
 
 // Range returns the range array.
-func (rs Ranges) Range() []*Range {
+func (rs Ranges) Range() Ranges {
 	return rs
 }
 
@@ -53,10 +53,10 @@ func (Ranges) Rebuild() error {
 
 // MemUsage gets the memory usage of ranges.
 func (rs Ranges) MemUsage() (sum int64) {
-	if len(rs) == 0 {
-		return
+	for _, ran := range rs {
+		sum += ran.MemUsage()
 	}
-	return rs[0].MemUsage() * int64(len(rs))
+	return
 }
 
 // Range represents a range generated in physical plan building phase.
@@ -75,6 +75,9 @@ func (ran *Range) Width() int {
 
 // Clone clones a Range.
 func (ran *Range) Clone() *Range {
+	if ran == nil {
+		return nil
+	}
 	newRange := &Range{
 		LowVal:      make([]types.Datum, 0, len(ran.LowVal)),
 		HighVal:     make([]types.Datum, 0, len(ran.HighVal)),
@@ -231,12 +234,12 @@ const EmptyRangeSize = int64(unsafe.Sizeof(Range{}))
 // MemUsage gets the memory usage of range.
 func (ran *Range) MemUsage() (sum int64) {
 	// 16 is the size of Collator interface.
-	sum = EmptyRangeSize + int64(cap(ran.LowVal))*types.EmptyDatumSize + int64(cap(ran.HighVal))*types.EmptyDatumSize + int64(cap(ran.Collators))*16
+	sum = EmptyRangeSize + int64(len(ran.Collators))*16
 	for _, val := range ran.LowVal {
-		sum += val.MemUsage() - types.EmptyDatumSize
+		sum += val.MemUsage()
 	}
 	for _, val := range ran.HighVal {
-		sum += val.MemUsage() - types.EmptyDatumSize
+		sum += val.MemUsage()
 	}
 	// We ignore size of collator currently.
 	return sum
@@ -272,22 +275,4 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 		return fmt.Sprintf("\"%v\"", d.GetValue())
 	}
 	return fmt.Sprintf("%v", d.GetValue())
-}
-
-const emptyRangeSize = int64(unsafe.Sizeof(Range{}))
-
-// MemoryUsage return the memory usage of Range
-func (ran *Range) MemoryUsage() (sum int64) {
-	if ran == nil {
-		return
-	}
-
-	sum = emptyRangeSize
-	for _, low := range ran.LowVal {
-		sum += low.MemUsage()
-	}
-	for _, high := range ran.HighVal {
-		sum += high.MemUsage()
-	}
-	return
 }

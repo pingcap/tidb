@@ -69,17 +69,27 @@ func WithCtx(ctx context.Context) CreateIdxOptFunc {
 	}
 }
 
+// IndexIter is index kvs iter.
+type IndexIter interface {
+	Next(kb []byte) ([]byte, []byte, bool, error)
+	Valid() bool
+}
+
 // Index is the interface for index data on KV store.
 type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
+	// TableMeta returns TableInfo
+	TableMeta() *model.TableInfo
 	// Create supports insert into statement.
 	Create(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
 	// Delete supports delete from statement.
 	Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
+	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.
+	GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) IndexIter
 	// Exist supports check index exists or not.
 	Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
-	// GenIndexKey generates an index key.
+	// GenIndexKey generates an index key. If the index is a multi-valued index, use GenIndexKVIter instead.
 	GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
 	// GenIndexValue generates an index value.
 	GenIndexValue(sc *stmtctx.StatementContext, distinct bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum) ([]byte, error)

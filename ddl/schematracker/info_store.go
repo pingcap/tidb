@@ -88,6 +88,15 @@ func (i *InfoStore) TableByName(schema, table model.CIStr) (*model.TableInfo, er
 	return tbl, nil
 }
 
+// TableClonedByName is like TableByName, plus it will clone the TableInfo.
+func (i *InfoStore) TableClonedByName(schema, table model.CIStr) (*model.TableInfo, error) {
+	tbl, err := i.TableByName(schema, table)
+	if err != nil {
+		return nil, err
+	}
+	return tbl.Clone(), nil
+}
+
 // PutTable puts a TableInfo, it will overwrite the old one. If the schema doesn't exist, it will return ErrDatabaseNotExists.
 func (i *InfoStore) PutTable(schemaName model.CIStr, tblInfo *model.TableInfo) error {
 	schemaKey := i.ciStr2Key(schemaName)

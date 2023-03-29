@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	driver "github.com/pingcap/tidb/store/driver/txn"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -158,6 +159,9 @@ func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *ca
 
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
+	if e.runtimeStats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
@@ -190,7 +194,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.index++
 	}
 
-	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema.Columns, e.columns, e.ctx, req)
 	if err != nil {
 		return err
 	}
@@ -222,7 +226,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				continue
 			}
 
-			physID, err := getPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos].GetInt64())
+			physID, err := getPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos])
 			if err != nil {
 				continue
 			}
@@ -353,7 +357,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			tID = e.physIDs[i]
 		} else {
 			if handle.IsInt() {
-				tID, err = getPhysID(e.tblInfo, e.partExpr, handle.IntValue())
+				d := types.NewIntDatum(handle.IntValue())
+				tID, err = getPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}
@@ -362,7 +367,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				if err1 != nil {
 					return err1
 				}
-				tID, err = getPhysID(e.tblInfo, e.partExpr, d.GetInt64())
+				tID, err = getPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}
@@ -388,23 +393,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		// Change the unique index LOCK into PUT record.
-		if len(indexKeys) > 0 {
-			if !e.txn.Valid() {
-				return kv.ErrInvalidTxn
-			}
-			membuf := e.txn.GetMemBuffer()
-			for _, idxKey := range indexKeys {
-				handleVal := handleVals[string(idxKey)]
-				if len(handleVal) == 0 {
-					continue
-				}
-				err = membuf.Set(idxKey, handleVal)
-				if err != nil {
-					return err
-				}
-			}
-		}
 	}
 	// Fetch all values.
 	values, err = batchGetter.BatchGet(ctx, keys)
@@ -416,7 +404,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if e.lock && rc {
 		existKeys = make([]kv.Key, 0, 2*len(values))
 	}
-	changeLockToPutIdxKeys := make([]kv.Key, 0, len(indexKeys))
 	e.values = make([][]byte, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
@@ -451,7 +438,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			// lock primary key for clustered index table is redundant
 			if len(indexKeys) != 0 {
 				existKeys = append(existKeys, indexKeys[i])
-				changeLockToPutIdxKeys = append(changeLockToPutIdxKeys, indexKeys[i])
 			}
 		}
 	}
@@ -460,22 +446,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		err = LockKeys(ctx, e.ctx, e.waitTime, existKeys...)
 		if err != nil {
 			return err
-		}
-		if len(changeLockToPutIdxKeys) > 0 {
-			if !e.txn.Valid() {
-				return kv.ErrInvalidTxn
-			}
-			for _, idxKey := range changeLockToPutIdxKeys {
-				membuf := e.txn.GetMemBuffer()
-				handleVal := handleVals[string(idxKey)]
-				if len(handleVal) == 0 {
-					return kv.ErrNotExist
-				}
-				err = membuf.Set(idxKey, handleVal)
-				if err != nil {
-					return err
-				}
-			}
 		}
 	}
 	e.handles = handles
@@ -523,7 +493,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
-func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, intVal int64) (int64, error) {
+func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d types.Datum) (int64, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID, nil
@@ -535,7 +505,17 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 
 	switch pi.Type {
 	case model.PartitionTypeHash:
+		intVal := d.GetInt64()
 		partIdx := mathutil.Abs(intVal % int64(pi.Num))
+		return pi.Definitions[partIdx].ID, nil
+	case model.PartitionTypeKey:
+		if len(pi.Columns) > 1 {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
+		partIdx, err := partitionExpr.LocateKeyPartitionWithSPC(pi, []types.Datum{d})
+		if err != nil {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
 		return pi.Definitions[partIdx].ID, nil
 	case model.PartitionTypeRange:
 		// we've check the type assertions in func TryFastPlan
@@ -546,6 +526,7 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 		unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
 		ranges := partitionExpr.ForRangePruning
 		length := len(ranges.LessThan)
+		intVal := d.GetInt64()
 		partIdx := sort.Search(length, func(i int) bool {
 			return ranges.Compare(i, intVal, unsigned) > 0
 		})
@@ -554,6 +535,7 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 		}
 	case model.PartitionTypeList:
 		isNull := false // we've guaranteed this in the build process of either TryFastPlan or buildBatchPointGet
+		intVal := d.GetInt64()
 		partIdx := partitionExpr.ForListPruning.LocatePartition(intVal, isNull)
 		if partIdx >= 0 {
 			return pi.Definitions[partIdx].ID, nil

@@ -9,13 +9,14 @@ import (
 )
 
 const (
-	flagBackoffTime      = "backoff-time"
-	flagTickInterval     = "tick-interval"
-	flagFullScanDiffTick = "full-scan-tick"
-	flagAdvancingByCache = "advancing-by-cache"
+	flagBackoffTime         = "backoff-time"
+	flagTickInterval        = "tick-interval"
+	flagFullScanDiffTick    = "full-scan-tick"
+	flagAdvancingByCache    = "advancing-by-cache"
+	flagTryAdvanceThreshold = "try-advance-threshold"
 
 	DefaultConsistencyCheckTick = 5
-	DefaultTryAdvanceThreshold  = 108 * time.Second
+	DefaultTryAdvanceThreshold  = 4 * time.Minute
 	DefaultBackOffTime          = 5 * time.Second
 	DefaultTickInterval         = 12 * time.Second
 	DefaultFullScanTick         = 4
@@ -31,27 +32,21 @@ type Config struct {
 	BackoffTime time.Duration `toml:"backoff-time" json:"backoff-time"`
 	// The gap between calculating checkpoints.
 	TickDuration time.Duration `toml:"tick-interval" json:"tick-interval"`
-	// The backoff time of full scan.
-	FullScanTick int `toml:"full-scan-tick" json:"full-scan-tick"`
-
-	// Whether enable the optimization -- use a cached heap to advancing the global checkpoint.
-	// This may reduce the gap of checkpoint but may cost more CPU.
-	AdvancingByCache bool `toml:"advancing-by-cache" json:"advancing-by-cache"`
+	// The threshold for polling TiKV for checkpoint of some range.
+	TryAdvanceThreshold time.Duration `toml:"try-advance-threshold" json:"try-advance-threshold"`
 }
 
 func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
 	f.Duration(flagBackoffTime, DefaultBackOffTime, "The gap between two retries.")
 	f.Duration(flagTickInterval, DefaultTickInterval, "From how long we trigger the tick (advancing the checkpoint).")
-	f.Bool(flagAdvancingByCache, DefaultAdvanceByCache, "Whether enable the optimization -- use a cached heap to advancing the global checkpoint.")
-	f.Int(flagFullScanDiffTick, DefaultFullScanTick, "The backoff of full scan.")
+	f.Duration(flagTryAdvanceThreshold, DefaultTryAdvanceThreshold, "If the checkpoint lag is greater than how long, we would try to poll TiKV for checkpoints.")
 }
 
 func Default() Config {
 	return Config{
-		BackoffTime:      DefaultBackOffTime,
-		TickDuration:     DefaultTickInterval,
-		FullScanTick:     DefaultFullScanTick,
-		AdvancingByCache: DefaultAdvanceByCache,
+		BackoffTime:         DefaultBackOffTime,
+		TickDuration:        DefaultTickInterval,
+		TryAdvanceThreshold: DefaultTryAdvanceThreshold,
 	}
 }
 
@@ -65,13 +60,34 @@ func (conf *Config) GetFromFlags(f *pflag.FlagSet) error {
 	if err != nil {
 		return err
 	}
-	conf.FullScanTick, err = f.GetInt(flagFullScanDiffTick)
-	if err != nil {
-		return err
-	}
-	conf.AdvancingByCache, err = f.GetBool(flagAdvancingByCache)
+	conf.TryAdvanceThreshold, err = f.GetDuration(flagTryAdvanceThreshold)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// GetDefaultStartPollThreshold returns the threshold of begin polling the checkpoint
+// in the normal condition (the subscribe manager is available.)
+func (conf Config) GetDefaultStartPollThreshold() time.Duration {
+	return conf.TryAdvanceThreshold
+}
+
+// GetSubscriberErrorStartPollThreshold returns the threshold of begin polling the checkpoint
+// when the subscriber meets error.
+func (conf Config) GetSubscriberErrorStartPollThreshold() time.Duration {
+	// 0.45x of the origin threshold.
+	// The origin threshold is 0.8x the target RPO,
+	// and the default flush interval is about 0.5x the target RPO.
+	// So the relationship between the RPO and the threshold is:
+	// When subscription is all available, it is 1.7x of the flush interval (which allow us to save in abnormal condition).
+	// When some of subscriptions are not available, it is 0.75x of the flush interval.
+	// NOTE: can we make subscription better and give up the poll model?
+	return conf.TryAdvanceThreshold * 9 / 20
+}
+
+// TickTimeout returns the max duration for each tick.
+func (conf Config) TickTimeout() time.Duration {
+	// If a tick blocks longer than the interval of ticking, we may need to break it and retry.
+	return conf.TickDuration
 }

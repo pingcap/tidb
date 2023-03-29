@@ -266,13 +266,13 @@ func NewClusterCollector(ctx context.Context, srv LogBackupService) *clusterColl
 	}
 }
 
-// setOnSuccessHook sets the hook when getting checkpoint of some region.
-func (c *clusterCollector) setOnSuccessHook(hook onSuccessHook) {
+// SetOnSuccessHook sets the hook when getting checkpoint of some region.
+func (c *clusterCollector) SetOnSuccessHook(hook onSuccessHook) {
 	c.onSuccess = hook
 }
 
-// collectRegion adds a region to the collector.
-func (c *clusterCollector) collectRegion(r RegionWithLeader) error {
+// CollectRegion adds a region to the collector.
+func (c *clusterCollector) CollectRegion(r RegionWithLeader) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.masterCtx.Err() != nil {

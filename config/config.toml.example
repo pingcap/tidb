@@ -97,7 +97,7 @@ skip-register-to-dashboard = false
 # When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
 # If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
 # See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
-enable-telemetry = true
+enable-telemetry = false
 
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
@@ -113,6 +113,24 @@ enable-enum-length-limit = true
 # enable-global-kill is used to control global kill feature. When it is enabled, connection ID is globally unique and KILL
 # command can be forwarded to the right TiDB instance to execute.
 enable-global-kill = true
+
+# disaggregated-tiflash indicates whether TiDB is in disaggregated tiflash mode, if true, MPP will runs on tiflash_compute nodes.
+disaggregated-tiflash = false
+
+# autoscaler-type indicates which type of AutoScaler will be used. Possible values are: mock, aws, gcp.
+# Only meaningful when disaggregated-tiflash is true.
+autoscaler-type = "aws"
+
+# autoscaler-addr is the host of AutoScaler, Only meaningful when disaggregated-tiflash is true.
+# Only meaningful when disaggregated-tiflash is true.
+autoscaler-addr = "tiflash-autoscale-lb.tiflash-autoscale.svc.cluster.local:8081"
+
+# autoscaler-cluster-id is the unique id for each TiDB cluster, which will used by AutoScaler.
+# Only meaningful when disaggregated-tiflash is true.
+autoscaler-cluster-id = ""
+
+# use-autoscaler indicates whether use AutoScaler or PD for tiflash_compute nodes, only meaningful when disaggregated-tiflash is true.
+use-autoscaler = false
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -130,8 +148,8 @@ format = "text"
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
 
-# Queries with internal result greater than this value will be logged.
-expensive-threshold = 10000
+# Make tidb panic if the write log operation hang for 15s
+# timeout = 15
 
 # File logging.
 [log.file]
@@ -206,6 +224,9 @@ metrics-interval = 15
 
 # Record statements qps by database name if it is enabled.
 record-db-qps = false
+
+# Record database name label if it is enabled.
+record-db-label = false
 
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
@@ -435,14 +456,6 @@ tidb_expensive_query_time_threshold = 60
 # Force the priority of all statements in a specified priority.
 # The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
 tidb_force_priority = "NO_PRIORITY"
-
-# The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
-# and less than or equal to 1. The default value is 0.8.
-# If this configuration is set to 0 or 1, it'll disable the alarm.
-# Otherwise, related information will be recorded in the directory `tmp-storage-path/record`.
-# Note: If the configuration `server-memory-quota` is set and larger than 0, the alarm threshold will be
-# `tidb_memory_usage_alarm_ratio * server-memory-quota`; otherwise, it'll be `tidb_memory_usage_alarm_ratio * system memory size`.
-tidb_memory_usage_alarm_ratio = 0.8
 
 # check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
 tidb_check_mb4_value_in_utf8 = true

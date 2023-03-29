@@ -128,6 +128,11 @@ func (p *mockPhysicalPlan4Test) attach2Task(tasks ...task) task {
 	return t
 }
 
+// MemoryUsage of mockPhysicalPlan4Test is only for testing
+func (p *mockPhysicalPlan4Test) MemoryUsage() (sum int64) {
+	return
+}
+
 func TestCostOverflow(t *testing.T) {
 	ctx := MockContext()
 	// Plan Tree: mockPlan -> mockDataSource

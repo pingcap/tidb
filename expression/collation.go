@@ -15,6 +15,8 @@
 package expression
 
 import (
+	goatomic "sync/atomic"
+
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -24,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/atomic"
 )
 
 // ExprCollation is a struct that store the collation related information.
@@ -36,7 +39,7 @@ type ExprCollation struct {
 
 type collationInfo struct {
 	coer       Coercibility
-	coerInit   bool
+	coerInit   atomic.Bool
 	repertoire Repertoire
 
 	charset   string
@@ -44,17 +47,17 @@ type collationInfo struct {
 }
 
 func (c *collationInfo) HasCoercibility() bool {
-	return c.coerInit
+	return c.coerInit.Load()
 }
 
 func (c *collationInfo) Coercibility() Coercibility {
-	return c.coer
+	return Coercibility(goatomic.LoadInt32((*int32)(&c.coer)))
 }
 
 // SetCoercibility implements CollationInfo SetCoercibility interface.
 func (c *collationInfo) SetCoercibility(val Coercibility) {
-	c.coer = val
-	c.coerInit = true
+	goatomic.StoreInt32((*int32)(&c.coer), int32(val))
+	c.coerInit.Store(true)
 }
 
 func (c *collationInfo) Repertoire() Repertoire {
@@ -99,7 +102,7 @@ type CollationInfo interface {
 
 // Coercibility values are used to check whether the collation of one item can be coerced to
 // the collation of other. See https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
-type Coercibility int
+type Coercibility int32
 
 const (
 	// CoercibilityExplicit is derived from an explicit COLLATE clause.
@@ -223,7 +226,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[1], args[2])
 	case ast.Ifnull:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
-	case ast.Like:
+	case ast.Like, ast.Ilike:
 		ec, err = CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args[0], args[1])
 		if err != nil {
 			return nil, err
@@ -271,7 +274,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 			}
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, fieldArgs...)
 		}
-	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
+	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion, ast.CurrentResourceGroup:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
 	case ast.Format, ast.Space, ast.ToBase64, ast.UUID, ast.Hex, ast.MD5, ast.SHA, ast.SHA2, ast.SM3:
@@ -294,14 +297,6 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		}
 	}
 	return ec, nil
-}
-
-// DeriveCollationFromExprs derives collation information from these expressions.
-// Deprecated, use CheckAndDeriveCollationFromExprs instead.
-// TODO: remove this function after the all usage is replaced by CheckAndDeriveCollationFromExprs
-func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
-	collation := inferCollation(exprs...)
-	return collation.Charset, collation.Collation
 }
 
 // CheckAndDeriveCollationFromExprs derives collation information from these expressions, return error if derives collation error.

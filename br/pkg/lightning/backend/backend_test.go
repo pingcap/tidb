@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/stretchr/testify/require"
@@ -21,6 +21,7 @@ import (
 type backendSuite struct {
 	controller  *gomock.Controller
 	mockBackend *mock.MockBackend
+	encBuilder  *mock.MockEncodingBuilder
 	backend     backend.Backend
 	ts          uint64
 }
@@ -32,6 +33,7 @@ func createBackendSuite(c gomock.TestReporter) *backendSuite {
 		controller:  controller,
 		mockBackend: mockBackend,
 		backend:     backend.MakeBackend(mockBackend),
+		encBuilder:  mock.NewMockEncodingBuilder(controller),
 		ts:          oracle.ComposeTS(time.Now().Unix()*1000, 0),
 	}
 }
@@ -50,7 +52,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 		OpenEngine(ctx, &backend.EngineConfig{}, engineUUID).
 		Return(nil)
 	closeCall := s.mockBackend.EXPECT().
-		CloseEngine(ctx, nil, engineUUID).
+		CloseEngine(ctx, &backend.EngineConfig{}, engineUUID).
 		Return(nil).
 		After(openCall)
 	importCall := s.mockBackend.EXPECT().
@@ -64,7 +66,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 
 	engine, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
 	require.NoError(t, err)
-	closedEngine, err := engine.Close(ctx, nil)
+	closedEngine, err := engine.Close(ctx)
 	require.NoError(t, err)
 	err = closedEngine.Import(ctx, 1, 1)
 	require.NoError(t, err)
@@ -108,7 +110,7 @@ func TestUnsafeCloseEngineWithUUID(t *testing.T) {
 		Return(nil).
 		After(closeCall)
 
-	closedEngine, err := s.backend.UnsafeCloseEngineWithUUID(ctx, nil, "some_tag", engineUUID)
+	closedEngine, err := s.backend.UnsafeCloseEngineWithUUID(ctx, nil, "some_tag", engineUUID, 0)
 	require.NoError(t, err)
 	err = closedEngine.Cleanup(ctx)
 	require.NoError(t, err)
@@ -316,8 +318,8 @@ func TestMakeEmptyRows(t *testing.T) {
 	defer s.tearDownTest()
 
 	rows := mock.NewMockRows(s.controller)
-	s.mockBackend.EXPECT().MakeEmptyRows().Return(rows)
-	require.Equal(t, rows, s.mockBackend.MakeEmptyRows())
+	s.encBuilder.EXPECT().MakeEmptyRows().Return(rows)
+	require.Equal(t, rows, s.encBuilder.MakeEmptyRows())
 }
 
 func TestNewEncoder(t *testing.T) {
@@ -325,10 +327,12 @@ func TestNewEncoder(t *testing.T) {
 	defer s.tearDownTest()
 
 	encoder := mock.NewMockEncoder(s.controller)
-	options := &kv.SessionOptions{SQLMode: mysql.ModeANSIQuotes, Timestamp: 1234567890}
-	s.mockBackend.EXPECT().NewEncoder(nil, nil, options).Return(encoder, nil)
+	options := &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeANSIQuotes, Timestamp: 1234567890},
+	}
+	s.encBuilder.EXPECT().NewEncoder(nil, options).Return(encoder, nil)
 
-	realEncoder, err := s.mockBackend.NewEncoder(nil, nil, options)
+	realEncoder, err := s.encBuilder.NewEncoder(nil, options)
 	require.Equal(t, realEncoder, encoder)
 	require.NoError(t, err)
 }

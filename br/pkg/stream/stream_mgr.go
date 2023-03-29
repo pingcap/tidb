@@ -312,7 +312,6 @@ func FastUnmarshalMetaData(
 		}
 		readPath := path
 		pool.ApplyOnErrorGroup(eg, func() error {
-			log.Info("fast read meta file from storage", zap.String("path", readPath))
 			b, err := s.ReadFile(ectx, readPath)
 			if err != nil {
 				log.Error("failed to read file", zap.String("file", readPath))

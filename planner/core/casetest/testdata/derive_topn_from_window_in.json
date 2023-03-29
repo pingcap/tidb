@@ -1,0 +1,56 @@
+[
+  {
+    "name": "TestPushDerivedTopnNegative",
+    "cases":[
+      "select * from (select rank() over () as rank_order from t) DT where rank_order <= 3 -- rank not supported in pattern yet",
+      "select * from (select b, row_number() over () as rownumber from t) DT where rownumber <= 3 and b > 5 -- pattern is not applicable with complex filter on top of window",
+      "select * from (select b, row_number() over () as rownumber from t) DT where rownumber > 3  -- pattern is not applicable with filter is not < or <=",
+      "select * from (select a,b, row_number() over () as rownumber from t) DT where  a > b  -- pattern is not applicable with filter is not < or <=",
+      "select * from (select a,b, row_number() over () as rownumber from t) DT where  a <= 3 -- pattern is not applicable with filter is not on row number",
+      "select * from (select a,b, row_number() over () as rownumber from t) DT where 3 >= rownumber  -- pattern is not applicable with filter is not < or <=",
+      "select * from (select a,b, row_number() over () as rownumber from t) DT where rownumber <= -4   -- pattern is not applicable with filter constant negative",
+      "select * from (select row_number() over () as rownumber from t) DT where rownumber <= 3 and rownumber >= 2 -- pattern is not applicable with complex filter",
+      "select row_number() over (partition by a) from t -- pattern missing filter on row number",
+      "select * from (select row_number() over () as rownumber1, row_number() over (partition by a) as rownumber2 from t) DT where rownumber1 <= 3 -- pattern not applicable with multiple window functions",
+      "select * from (select row_number() over (partition by a) as rownumber from t) DT where rownumber <= 3 -- pattern is not applicable with partition by not prefix of PK",
+      "select * from (select row_number() over (partition by a) as rownumber from tt) DT where rownumber <= 3 -- pattern is not applicable with no clustered index on table",
+      "select * from (select row_number() over (partition by a) as rownumber from ti) DT where rownumber <= 3 -- pattern is not applicable. ti clustered on 'c' and partition by 'a'",
+      "select * from (select a, row_number() over (partition by c) as rownumber from ti) DT where rownumber <= 1 -- pattern is applicable. ti clustered on 'c' and partition by 'c' - not supported yet",
+      "with agg_t as (select count(*) cnt, a from t group by a) select * from (select row_number() over () as rownumber from agg_t) DT where rownumber <= 3 -- pattern on non-data source",
+      "select * from (select row_number() over (partition by a+1) as rownumber from td) DT where rownumber <= 1 -- pattern is not applicable with expression in partition by"
+    ]
+  },
+  {
+    "name": "TestPushDerivedTopnFlash",
+    "cases":[
+      "select * from (select row_number() over (order by b) as rownumber from t) DT where rownumber <= 1 -- applicable with no partition by",
+      "select * from (select row_number() over (partition by b) as rownumber from t) DT where rownumber <= 1 -- applicable with partition by but no push down to tiflash",
+      "select * from (select row_number() over (partition by b order by a) as rownumber from t) DT where rownumber <= 1 -- applicable with partition by and order by but no push down to tiflash",
+      "select * from (select row_number() over (partition by a) as rownumber from t) DT where rownumber <= 3 -- pattern is not applicable with partition by not prefix of PK"
+    ]
+  },
+  {
+    "name": "TestPushDerivedTopnFlagOff",
+    "cases":[
+      "select * from (select a,b, row_number() over (order by a) as rownumber from t) DT where rownumber <= 3.5  -- pattern is applicable but flag is turned off and rule not applied.",
+      "select * from (select row_number() over (order by a) as rownumber from t) DT where rownumber <= 3 -- pattern is applicable but flag is turned off and rule not applied."
+    ]
+  },
+  {
+    "name": "TestPushDerivedTopnPositive",
+    "cases":[
+      "select * from (select a,b, row_number() over (order by a) as rownumber from t) DT where rownumber <= 3.5  -- pattern is applicable with N rounded down to an integer. No partition by",
+      "select * from (select row_number() over (order by a) as rownumber from t) DT where rownumber <= 3 -- pattern is applicable. No partition by",
+      "select * from (select row_number() over (order by a) as rownumber from t) DT where rownumber < 3 -- pattern is applicable. No partition by",
+      "select * from (select row_number() over(rows between 1 preceding and 1 following) as rownumber from t) DT where rownumber <= 3 -- pattern is applicable. No partition by",
+      "select * from (select a,row_number() over (order by a desc) as rownumber,b from t) DT where rownumber <= 3 -- pattern is applicable. Order by desc. No partition by",
+      "select count(*) from (select * from (select a,row_number() over (order by b) as rownumber,b from t) DT1 where rownumber <= 1) DT2  -- pattern is applicable. Window has column a + row_number",
+      "select * from (select row_number() over (partition by b) as rownumber from t) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key",
+      "select * from (select row_number() over (partition by b order by a) as rownumber from t) DT where rownumber <= 1 -- pattern is applicable with order by, partition by prefix",
+      "select * from (select row_number() over (partition by b) as rownumber from t where a >= 2) DT where rownumber <= 3 order by rownumber  -- pattern is applicable with partition by prefix and filter on data source",
+      "select * from (select row_number() over () as rownumber from tt) DT where rownumber <= 3 -- pattern is applicable with no partition on a non-clustered table",
+      "select * from (select *, row_number() over (partition by primary_key, secondary_key order by c_timestamp) as rownum from customer where primary_key = 0x002 and secondary_key >= 0x001 and c_timestamp >= 1661883508511000000) as nested where rownum <= 10 order by secondary_key desc;",
+      "select * from (select row_number() over (partition by b) as rownumber from td) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key"
+    ]
+  }
+]

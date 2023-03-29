@@ -539,16 +539,16 @@ partition by range (a)
 
 func decodeKeyMvcc(closer io.ReadCloser, t *testing.T, valid bool) {
 	decoder := json.NewDecoder(closer)
-	var data helper.MvccKV
+	var data []helper.MvccKV
 	err := decoder.Decode(&data)
 	require.NoError(t, err)
 	if valid {
-		require.NotNil(t, data.Value.Info)
-		require.Greater(t, len(data.Value.Info.Writes), 0)
+		require.NotNil(t, data[0].Value.Info)
+		require.Greater(t, len(data[0].Value.Info.Writes), 0)
 	} else {
-		require.Nil(t, data.Value.Info.Lock)
-		require.Nil(t, data.Value.Info.Writes)
-		require.Nil(t, data.Value.Info.Values)
+		require.Nil(t, data[0].Value.Info.Lock)
+		require.Nil(t, data[0].Value.Info.Writes)
+		require.Nil(t, data[0].Value.Info.Values)
 	}
 }
 
@@ -948,6 +948,15 @@ func TestGetSchema(t *testing.T) {
 	require.Equal(t, "t1", dbtbl.TableInfo.Name.L)
 	require.Equal(t, "test", dbtbl.DBInfo.Name.L)
 	require.Equal(t, ti, dbtbl.TableInfo)
+
+	resp, err = ts.fetchStatus(fmt.Sprintf("/schema?table_id=%v", ti.GetPartitionInfo().Definitions[0].ID))
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "t1", ti.Name.L)
+	require.Equal(t, ti, ti)
 }
 
 func TestAllHistory(t *testing.T) {

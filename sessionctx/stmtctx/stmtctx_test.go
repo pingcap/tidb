@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/atomic"
 )
 
 func TestCopTasksDetails(t *testing.T) {
@@ -36,12 +37,14 @@ func TestCopTasksDetails(t *testing.T) {
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
-			CalleeAddress: fmt.Sprintf("%v", i+1),
-			BackoffSleep:  make(map[string]time.Duration),
-			BackoffTimes:  make(map[string]int),
-			TimeDetail: util.TimeDetail{
-				ProcessTime: time.Second * time.Duration(i+1),
-				WaitTime:    time.Millisecond * time.Duration(i+1),
+			DetailsNeedP90: execdetails.DetailsNeedP90{
+				CalleeAddress: fmt.Sprintf("%v", i+1),
+				BackoffSleep:  make(map[string]time.Duration),
+				BackoffTimes:  make(map[string]int),
+				TimeDetail: util.TimeDetail{
+					ProcessTime: time.Second * time.Duration(i+1),
+					WaitTime:    time.Millisecond * time.Duration(i+1),
+				},
 			},
 		}
 		for _, backoff := range backoffs {
@@ -81,14 +84,14 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		{&stmtctx.StatementContext{InUpdateStmt: true}, 16},
 		{&stmtctx.StatementContext{InDeleteStmt: true}, 16},
 		{&stmtctx.StatementContext{InSelectStmt: true}, 32},
-		{&stmtctx.StatementContext{IgnoreTruncate: true}, 1},
+		{&stmtctx.StatementContext{IgnoreTruncate: *atomic.NewBool(true)}, 1},
 		{&stmtctx.StatementContext{TruncateAsWarning: true}, 2},
 		{&stmtctx.StatementContext{OverflowAsWarning: true}, 64},
 		{&stmtctx.StatementContext{IgnoreZeroInDate: true}, 128},
 		{&stmtctx.StatementContext{DividedByZeroAsWarning: true}, 256},
 		{&stmtctx.StatementContext{InLoadDataStmt: true}, 1024},
 		{&stmtctx.StatementContext{InSelectStmt: true, TruncateAsWarning: true}, 34},
-		{&stmtctx.StatementContext{DividedByZeroAsWarning: true, IgnoreTruncate: true}, 257},
+		{&stmtctx.StatementContext{DividedByZeroAsWarning: true, IgnoreTruncate: *atomic.NewBool(true)}, 257},
 		{&stmtctx.StatementContext{InUpdateStmt: true, IgnoreZeroInDate: true, InLoadDataStmt: true}, 1168},
 	}
 	for _, tt := range testCases {

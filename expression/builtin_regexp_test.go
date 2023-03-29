@@ -226,8 +226,9 @@ func TestRegexpLike(t *testing.T) {
 		{"..", "b", 0, nil},
 		{".ab", "aab", 1, nil},
 		{".*", "abcd", 1, nil},
-		{"(", "", 0, ErrRegexp},
-		{"(*", "", 0, ErrRegexp}, // index 10
+		{"", "a", 0, ErrRegexp}, // issue 37988
+		{"(", "", 0, ErrRegexp}, // index 10
+		{"(*", "", 0, ErrRegexp},
 		{"[a", "", 0, ErrRegexp},
 		{"\\", "", 0, ErrRegexp},
 	}
@@ -368,6 +369,7 @@ func TestRegexpSubstr(t *testing.T) {
 		{"abc", nil, nil, nil, nil},
 		{nil, "bc", nil, nil, nil},
 		{nil, nil, nil, nil, nil},
+		{"a", "", nil, nil, ErrRegexp}, // issue 37988
 	}
 
 	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
@@ -623,6 +625,7 @@ func TestRegexpInStr(t *testing.T) {
 		{"abc", nil, nil, nil, nil},
 		{nil, "bc", nil, nil, nil},
 		{nil, nil, nil, nil, nil},
+		{"a", "", nil, nil, ErrRegexp}, // issue 37988
 	}
 
 	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
@@ -935,6 +938,7 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc", nil, nil, nil, nil, nil},
 		{nil, "bc", nil, nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil},
+		{"a", "", "a", nil, nil, ErrRegexp}, // issue 37988
 	}
 
 	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {

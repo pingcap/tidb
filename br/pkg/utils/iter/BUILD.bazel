@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "iter",
+    srcs = [
+        "combinator_types.go",
+        "combinators.go",
+        "iter.go",
+        "source.go",
+        "source_types.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/utils/iter",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/utils",
+        "@org_golang_x_exp//constraints",
+        "@org_golang_x_sync//errgroup",
+    ],
+)
+
+go_test(
+    name = "iter_test",
+    timeout = "short",
+    srcs = ["combinator_test.go"],
+    flaky = True,
+    race = "on",
+    deps = [
+        ":iter",
+        "@com_github_stretchr_testify//require",
+    ],
+)

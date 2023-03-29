@@ -15,6 +15,8 @@
 package ddl
 
 import (
+	"encoding/hex"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
@@ -79,7 +81,7 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	m[ddlJobSchemaID] = job.SchemaID
 	m[ddlJobTableID] = job.TableID
 	m[ddlJobSnapshotVer] = job.SnapshotVer
-	m[ddlJobReorgHandle] = tryDecodeToHandleString(ddlInfo.ReorgHandle)
+	m[ddlJobReorgHandle] = hex.EncodeToString(ddlInfo.ReorgHandle)
 	m[ddlJobArgs] = job.Args
 	return m, nil
 }

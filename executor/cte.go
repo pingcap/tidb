@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/cteutil"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 )
@@ -112,7 +113,11 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		return err
 	}
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.diskTracker = disk.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
@@ -222,7 +227,6 @@ func (e *CTEExec) Close() (err error) {
 			return err
 		}
 	}
-
 	return e.baseExecutor.Close()
 }
 
@@ -234,7 +238,7 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 		if e.limitDone(e.iterInTbl) {
 			break
 		}
-		chk := newFirstChunk(e.seedExec)
+		chk := tryNewCacheChunk(e.seedExec)
 		if err = Next(ctx, e.seedExec, chk); err != nil {
 			return err
 		}
@@ -265,7 +269,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 	}
 
 	if e.curIter > e.ctx.GetSessionVars().CTEMaxRecursionDepth {
-		return ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
+		return exeerrors.ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
 	}
 
 	if e.limitDone(e.resTbl) {
@@ -273,7 +277,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 	}
 
 	for {
-		chk := newFirstChunk(e.recursiveExec)
+		chk := tryNewCacheChunk(e.recursiveExec)
 		if err = Next(ctx, e.recursiveExec, chk); err != nil {
 			return err
 		}
@@ -291,7 +295,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 			e.curIter++
 			e.iterInTbl.SetIter(e.curIter)
 			if e.curIter > e.ctx.GetSessionVars().CTEMaxRecursionDepth {
-				return ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
+				return exeerrors.ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
 			}
 			// Make sure iterInTbl is setup before Close/Open,
 			// because some executors will read iterInTbl in Open() (like IndexLookupJoin).
@@ -438,7 +442,7 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
 			}
 		})
-		ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+		ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	return actionSpill
 }

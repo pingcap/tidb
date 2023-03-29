@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -86,14 +86,16 @@ func TestDDLStatementsBackFill(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	needReorg := false
-	dom.DDL().SetHook(&ddl.TestDDLCallback{
+	callback := &callback.TestDDLCallback{
 		Do: dom,
-		OnJobUpdatedExported: func(job *model.Job) {
-			if job.SchemaState == model.StateWriteReorganization {
-				needReorg = true
-			}
-		},
-	})
+	}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if job.SchemaState == model.StateWriteReorganization {
+			needReorg = true
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	dom.DDL().SetHook(callback)
 	tk.MustExec("create table t (a int, b char(65));")
 	tk.MustExec("insert into t values (1, '123');")
 	testCases := []struct {

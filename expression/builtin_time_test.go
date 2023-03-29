@@ -15,8 +15,10 @@
 package expression
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1485,10 +1487,10 @@ func TestStrToDate(t *testing.T) {
 func TestFromDays(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 	tests := []struct {
 		day    int64
@@ -1766,7 +1768,7 @@ func TestTimestampDiff(t *testing.T) {
 		require.Equal(t, test.expect, d.GetInt64())
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	sc.IgnoreZeroInDate = true
 	resetStmtContext(ctx)
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
@@ -2504,7 +2506,7 @@ func TestTimestampAdd(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		unit     string
-		interval int64
+		interval float64
 		date     interface{}
 		expect   string
 	}{
@@ -2512,11 +2514,22 @@ func TestTimestampAdd(t *testing.T) {
 		{"WEEK", 1, "2003-01-02 23:59:59", "2003-01-09 23:59:59"},
 		{"MICROSECOND", 1, 950501, "1995-05-01 00:00:00.000001"},
 		{"DAY", 28768, 0, ""},
+		{"QUARTER", 3, "1995-05-01", "1996-02-01 00:00:00"},
+		{"SECOND", 1.1, "1995-05-01", "1995-05-01 00:00:01.100000"},
+		{"SECOND", -1, "1995-05-01", "1995-04-30 23:59:59"},
+		{"SECOND", -1.1, "1995-05-01", "1995-04-30 23:59:58.900000"},
+		{"SECOND", 9.9999e-6, "1995-05-01", "1995-05-01 00:00:00.000009"},
+		{"SECOND", 9.9999e-7, "1995-05-01", "1995-05-01 00:00:00"},
+		{"SECOND", -9.9999e-6, "1995-05-01", "1995-04-30 23:59:59.999991"},
+		{"SECOND", -9.9999e-7, "1995-05-01", "1995-05-01 00:00:00"},
+		{"MINUTE", 1.5, "1995-05-01 00:00:00", "1995-05-01 00:02:00"},
+		{"MINUTE", 1.5, "1995-05-01 00:00:00.000000", "1995-05-01 00:02:00"},
+		{"MICROSECOND", -100, "1995-05-01 00:00:00.0001", "1995-05-01 00:00:00"},
 	}
 
 	fc := funcs[ast.TimestampAdd]
 	for _, test := range tests {
-		dat := []types.Datum{types.NewStringDatum(test.unit), types.NewIntDatum(test.interval), types.NewDatum(test.date)}
+		dat := []types.Datum{types.NewStringDatum(test.unit), types.NewFloat64Datum(test.interval), types.NewDatum(test.date)}
 		f, err := fc.getFunction(ctx, datumsToConstants(dat))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -2648,10 +2661,10 @@ func TestTimeToSec(t *testing.T) {
 func TestSecToTime(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 
 	fc := funcs[ast.SecToTime]
@@ -3100,4 +3113,18 @@ func TestGetIntervalFromDecimal(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, test.expect, interval)
 	}
+}
+
+func TestCurrentTso(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.TiDBCurrentTso]
+	f, err := fc.getFunction(mock.NewContext(), datumsToConstants(nil))
+	require.NoError(t, err)
+	resetStmtContext(ctx)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	n := v.GetInt64()
+	tso, _ := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
+	itso, _ := strconv.ParseInt(tso, 10, 64)
+	require.Equal(t, itso, n, v.Kind())
 }

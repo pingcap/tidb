@@ -90,6 +90,11 @@ func IsTypeNumeric(tp byte) bool {
 	return false
 }
 
+// IsTypeBit returns a boolean indicating whether the tp is bit type.
+func IsTypeBit(ft *FieldType) bool {
+	return ft.GetType() == mysql.TypeBit
+}
+
 // IsTemporalWithDate returns a boolean indicating
 // whether the tp is time type with date.
 func IsTemporalWithDate(tp byte) bool {
@@ -126,6 +131,11 @@ func NeedRestoredData(ft *FieldType) bool {
 // whether the field type is a string type.
 func IsString(tp byte) bool {
 	return IsTypeChar(tp) || IsTypeBlob(tp) || IsTypeVarchar(tp) || IsTypeUnspecified(tp)
+}
+
+// IsStringKind returns a boolean indicating whether the tp is a string type.
+func IsStringKind(kind byte) bool {
+	return kind == KindString || kind == KindBytes
 }
 
 var kind2Str = map[byte]string{

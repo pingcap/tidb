@@ -82,7 +82,7 @@ func NewQueryFeedback(physicalID int64, hist *Histogram, expected int64, desc bo
 		Expected:   expected,
 		desc:       desc,
 	}
-	rs.Valid.Store(true)
+	rs.Valid.Store(FeedbackProbability.Load() > 0)
 	return rs
 }
 

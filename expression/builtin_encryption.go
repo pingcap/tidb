@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -73,6 +74,7 @@ var (
 	_ builtinFunc = &builtinSHA2Sig{}
 	_ builtinFunc = &builtinUncompressSig{}
 	_ builtinFunc = &builtinUncompressedLengthSig{}
+	_ builtinFunc = &builtinValidatePasswordStrengthSig{}
 )
 
 // aesModeAttr indicates that the key length and iv attribute for specific block_encryption_mode.
@@ -728,7 +730,6 @@ func (c *sm3FunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(40)
 	sig := &builtinSM3Sig{bf}
-	//sig.setPbCode(tipb.ScalarFuncSig_SM3) // TODO
 	return sig, nil
 }
 
@@ -1010,5 +1011,66 @@ type validatePasswordStrengthFunctionClass struct {
 }
 
 func (c *validatePasswordStrengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "VALIDATE_PASSWORD_STRENGTH")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(21)
+	sig := &builtinValidatePasswordStrengthSig{bf}
+	return sig, nil
+}
+
+type builtinValidatePasswordStrengthSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
+	newSig := &builtinValidatePasswordStrengthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals VALIDATE_PASSWORD_STRENGTH(str).
+// See https://dev.mysql.com/doc/refman/8.0/en/encryption-functions.html#function_validate-password-strength
+func (b *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool, error) {
+	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, true, err
+	} else if len([]rune(str)) < 4 {
+		return 0, false, nil
+	}
+	if validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
+		return 0, true, err
+	} else if !variable.TiDBOptOn(validation) {
+		return 0, false, nil
+	}
+	return b.validateStr(str, &globalVars)
+}
+
+func (b *builtinValidatePasswordStrengthSig) validateStr(str string, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
+	if warn, err := pwdValidator.ValidateUserNameInPassword(str, b.ctx.GetSessionVars()); err != nil {
+		return 0, true, err
+	} else if len(warn) > 0 {
+		return 0, false, nil
+	}
+	if warn, err := pwdValidator.ValidatePasswordLowPolicy(str, globalVars); err != nil {
+		return 0, true, err
+	} else if len(warn) > 0 {
+		return 25, false, nil
+	}
+	if warn, err := pwdValidator.ValidatePasswordMediumPolicy(str, globalVars); err != nil {
+		return 0, true, err
+	} else if len(warn) > 0 {
+		return 50, false, nil
+	}
+	if ok, err := pwdValidator.ValidateDictionaryPassword(str, globalVars); err != nil {
+		return 0, true, err
+	} else if !ok {
+		return 75, false, nil
+	}
+	return 100, false, nil
 }

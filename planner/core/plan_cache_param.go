@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -54,8 +55,8 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
 	case *driver.ValueExpr:
 		pr.params = append(pr.params, n)
-		// offset is used as order in general plan cache.
-		param := ast.NewParamMarkerExpr(len(pr.params) - 1)
+		param := ast.NewParamMarkerExpr(len(pr.params) - 1)      // offset is used as order in non-prepared plan cache.
+		param.(*driver.ParamMarkerExpr).Datum = *n.Datum.Clone() // init the ParamMakerExpr's Datum
 		return param, true
 	}
 	return in, false
@@ -70,7 +71,7 @@ func (pr *paramReplacer) Reset() { pr.params = nil }
 // ParameterizeAST parameterizes this StmtNode.
 // e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23].
 // NOTICE: this function may modify the input stmt.
-func ParameterizeAST(sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
+func ParameterizeAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
 	pr := paramReplacerPool.Get().(*paramReplacer)
 	pCtx := paramCtxPool.Get().(*format.RestoreCtx)
 	defer func() {
@@ -81,7 +82,7 @@ func ParameterizeAST(sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL strin
 	}()
 	stmt.Accept(pr)
 	if err := stmt.Restore(pCtx); err != nil {
-		err = RestoreASTWithParams(sctx, stmt, pr.params)
+		err = RestoreASTWithParams(ctx, sctx, stmt, pr.params) // keep the stmt unchanged if err
 		return "", nil, err
 	}
 	paramSQL, params = pCtx.In.(*strings.Builder).String(), pr.params
@@ -100,7 +101,7 @@ func (pr *paramRestorer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			pr.err = errors.New("failed to restore ast.Node")
 			return nil, true
 		}
-		// offset is used as order in general plan cache.
+		// offset is used as order in non-prepared plan cache.
 		return pr.params[n.Offset], true
 	}
 	if pr.err != nil {
@@ -119,7 +120,7 @@ func (pr *paramRestorer) Reset() {
 
 // RestoreASTWithParams restore this parameterized AST with specific parameters.
 // e.g. `select * from t where a<? and b<?`, [10, 23] --> `select * from t where a<10 and b<23`.
-func RestoreASTWithParams(_ sessionctx.Context, stmt ast.StmtNode, params []*driver.ValueExpr) error {
+func RestoreASTWithParams(ctx context.Context, _ sessionctx.Context, stmt ast.StmtNode, params []*driver.ValueExpr) error {
 	pr := paramRestorerPool.Get().(*paramRestorer)
 	defer func() {
 		pr.Reset()
@@ -135,7 +136,7 @@ func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
 	exprs := make([]expression.Expression, 0, len(params))
 	for _, p := range params {
 		tp := new(types.FieldType)
-		types.DefaultParamTypeForValue(p.Datum.GetValue(), tp)
+		types.InferParamTypeFromDatum(&p.Datum, tp)
 		exprs = append(exprs, &expression.Constant{
 			Value:   p.Datum,
 			RetType: tp,

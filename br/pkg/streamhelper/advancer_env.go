@@ -9,16 +9,22 @@ import (
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/engine"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
 
+const (
+	logBackupServiceID    = "log-backup-coordinator"
+	logBackupSafePointTTL = 24 * time.Hour
+)
+
 // Env is the interface required by the advancer.
 type Env interface {
 	// The region scanner provides the region information.
-	RegionScanner
+	TiKVClusterMeta
 	// LogBackupService connects to the TiKV, so we can collect the region checkpoints.
 	LogBackupService
 	// StreamMeta connects to the metadata service (normally PD).
@@ -29,6 +35,13 @@ type Env interface {
 // to adapt the requirement of `RegionScan`.
 type PDRegionScanner struct {
 	pd.Client
+}
+
+// Updates the service GC safe point for the cluster.
+// Returns the minimal service GC safe point across all services.
+// If the arguments is `0`, this would remove the service safe point.
+func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
+	return c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
 }
 
 // RegionScan gets a list of regions, starts from the region that contains key.
@@ -46,6 +59,23 @@ func (c PDRegionScanner) RegionScan(ctx context.Context, key []byte, endKey []by
 		})
 	}
 	return rls, nil
+}
+
+func (c PDRegionScanner) Stores(ctx context.Context) ([]Store, error) {
+	res, err := c.Client.GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return nil, err
+	}
+	r := make([]Store, 0, len(res))
+	for _, re := range res {
+		if !engine.IsTiFlash(re) {
+			r = append(r, Store{
+				BootAt: uint64(re.StartTimestamp),
+				ID:     re.GetId(),
+			})
+		}
+	}
+	return r, nil
 }
 
 // clusterEnv is the environment for running in the real cluster.

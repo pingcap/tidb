@@ -13,7 +13,6 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
@@ -77,12 +76,44 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
+		// Default value of `pitrSupportBatchKVFiles` should be `false`.
+		build.ReleaseVersion = "v6.5.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.2.0`}}
+		}
+		require.Equal(t, CheckPITRSupportBatchKVFiles(), false)
+	}
+
+	{
 		build.ReleaseVersion = "v6.2.0"
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: `v6.2.0`}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
 		require.NoError(t, err)
+		require.Equal(t, CheckPITRSupportBatchKVFiles(), false)
+	}
+
+	{
+		pitrSupportBatchKVFiles = true
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.4.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.NoError(t, err)
+		require.Equal(t, CheckPITRSupportBatchKVFiles(), false)
+	}
+
+	{
+		pitrSupportBatchKVFiles = true
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.5.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.NoError(t, err)
+		require.Equal(t, CheckPITRSupportBatchKVFiles(), true)
 	}
 
 	{
@@ -205,6 +236,29 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.NoError(t, err)
+		require.Error(t, CheckCheckpointSupport())
+	}
+
+	{
+		build.ReleaseVersion = "v6.0.0-rc.2"
+		mock.getAllStores = func() []*metapb.Store {
+			// TiKV v6.0.0-rc.1 with BR v6.0.0-rc.2 is ok
+			return []*metapb.Store{{Version: "v6.0.0-rc.1"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.NoError(t, err)
+		require.Error(t, CheckCheckpointSupport())
+	}
+
+	{
+		build.ReleaseVersion = "v6.5.0-rc.2"
+		mock.getAllStores = func() []*metapb.Store {
+			// TiKV v6.5.0-rc.1 with BR v6.5.0-rc.2 is ok
+			return []*metapb.Store{{Version: "v6.5.0-rc.1"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.NoError(t, err)
+		require.NoError(t, CheckCheckpointSupport())
 	}
 
 	{
@@ -266,50 +320,40 @@ func TestCheckClusterVersion(t *testing.T) {
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v6.4.0"}}
 		}
-		originVal := variable.EnableConcurrentDDL.Load()
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
 		require.NoError(t, err)
-		require.Equal(t, originVal, variable.EnableConcurrentDDL.Load())
 	}
 
 	{
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v6.2.0"}}
 		}
-		originVal := variable.EnableConcurrentDDL.Load()
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
 		require.NoError(t, err)
-		require.Equal(t, originVal, variable.EnableConcurrentDDL.Load())
 	}
 
 	{
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v6.2.0-alpha"}}
 		}
-		originVal := variable.EnableConcurrentDDL.Load()
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
 		require.NoError(t, err)
-		require.Equal(t, originVal, variable.EnableConcurrentDDL.Load())
 	}
 
 	{
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v6.1.0"}}
 		}
-		variable.EnableConcurrentDDL.Store(true)
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
-		require.NoError(t, err)
-		require.False(t, variable.EnableConcurrentDDL.Load())
+		require.Error(t, err)
 	}
 
 	{
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v5.4.0"}}
 		}
-		variable.EnableConcurrentDDL.Store(true)
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
-		require.NoError(t, err)
-		require.False(t, variable.EnableConcurrentDDL.Load())
+		require.Error(t, err)
 	}
 }
 

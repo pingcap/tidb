@@ -146,7 +146,7 @@ func (*mockDelRange) addDelRangeJob(_ context.Context, _ *model.Job) error {
 }
 
 // removeFromGCDeleteRange implements delRangeManager interface.
-func (*mockDelRange) removeFromGCDeleteRange(_ context.Context, _ int64, _ []int64) error {
+func (*mockDelRange) removeFromGCDeleteRange(_ context.Context, _ int64) error {
 	return nil
 }
 

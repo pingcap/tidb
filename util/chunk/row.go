@@ -115,10 +115,14 @@ func (r Row) GetJSON(colIdx int) types.BinaryJSON {
 // Keep in mind that GetDatumRow has a reference to r.c, which is a chunk,
 // this function works only if the underlying chunk is valid or unchanged.
 func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
-	datumRow := make([]types.Datum, 0, r.c.NumCols())
-	for colIdx := 0; colIdx < r.c.NumCols(); colIdx++ {
-		datum := r.GetDatum(colIdx, fields[colIdx])
-		datumRow = append(datumRow, datum)
+	datumRow := make([]types.Datum, r.c.NumCols())
+	return r.GetDatumRowWithBuffer(fields, datumRow)
+}
+
+// GetDatumRowWithBuffer gets datum using the buffer datumRow.
+func (r Row) GetDatumRowWithBuffer(fields []*types.FieldType, datumRow []types.Datum) []types.Datum {
+	for colIdx := 0; colIdx < len(datumRow); colIdx++ {
+		r.GetDatumWithBuffer(colIdx, fields[colIdx], &datumRow[colIdx])
 	}
 	return datumRow
 }
@@ -126,6 +130,12 @@ func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
 // GetDatum implements the chunk.Row interface.
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
+	r.GetDatumWithBuffer(colIdx, tp, &d)
+	return d
+}
+
+// GetDatumWithBuffer gets datum using the buffer d.
+func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) types.Datum {
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if !r.IsNull(colIdx) {
@@ -192,7 +202,10 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 			d.SetMysqlJSON(r.GetJSON(colIdx))
 		}
 	}
-	return d
+	if r.IsNull(colIdx) {
+		d.SetNull()
+	}
+	return *d
 }
 
 // GetRaw returns the underlying raw bytes with the colIdx.

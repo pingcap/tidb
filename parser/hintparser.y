@@ -85,6 +85,8 @@ import (
 	hintAggToCop              "AGG_TO_COP"
 	hintIgnorePlanCache       "IGNORE_PLAN_CACHE"
 	hintHashAgg               "HASH_AGG"
+	hintMpp1PhaseAgg          "MPP_1PHASE_AGG"
+	hintMpp2PhaseAgg          "MPP_2PHASE_AGG"
 	hintIgnoreIndex           "IGNORE_INDEX"
 	hintInlHashJoin           "INL_HASH_JOIN"
 	hintInlJoin               "INL_JOIN"
@@ -96,10 +98,13 @@ import (
 	hintReadFromStorage       "READ_FROM_STORAGE"
 	hintSMJoin                "MERGE_JOIN"
 	hintBCJoin                "BROADCAST_JOIN"
+	hintShuffleJoin           "SHUFFLE_JOIN"
 	hintStreamAgg             "STREAM_AGG"
 	hintSwapJoinInputs        "SWAP_JOIN_INPUTS"
 	hintUseIndexMerge         "USE_INDEX_MERGE"
 	hintUseIndex              "USE_INDEX"
+	hintOrderIndex            "ORDER_INDEX"
+	hintNoOrderIndex          "NO_ORDER_INDEX"
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
@@ -159,6 +164,7 @@ import (
 	HintIndexList           "table name with index list in optimizer hint"
 	IndexNameList           "index list in optimizer hint"
 	IndexNameListOpt        "optional index list in optimizer hint"
+	ViewNameList            "view name list in optimizer hint"
 	SubqueryStrategies      "subquery strategies"
 	SubqueryStrategiesOpt   "optional subquery strategies"
 	HintTrueOrFalse         "true or false in optimizer hint"
@@ -166,6 +172,7 @@ import (
 
 %type	<table>
 	HintTable "Table in optimizer hint"
+	ViewName  "View name in optimizer hint"
 
 %type	<modelIdents>
 	PartitionList    "partition name list in optimizer hint"
@@ -272,14 +279,24 @@ TableOptimizerHintOpt:
 	}
 |	"RESOURCE_GROUP" '(' Identifier ')'
 	{
-		parser.warnUnsupportedHint($1)
-		$$ = nil
+		$$ = &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
+			HintData: $3,
+		}
 	}
 |	"QB_NAME" '(' Identifier ')'
 	{
 		$$ = &ast.TableOptimizerHint{
 			HintName: model.NewCIStr($1),
 			QBName:   model.NewCIStr($3),
+		}
+	}
+|	"QB_NAME" '(' Identifier ',' ViewNameList ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
+			QBName:   model.NewCIStr($3),
+			Tables:   $5.Tables,
 		}
 	}
 |	"MEMORY_QUOTA" '(' QueryBlockOpt hintIntLit UnitOfBytes ')'
@@ -444,6 +461,35 @@ HintTable:
 		}
 	}
 
+ViewNameList:
+	ViewNameList '.' ViewName
+	{
+		h := $1
+		h.Tables = append(h.Tables, $3)
+		$$ = h
+	}
+|	ViewName
+	{
+		$$ = &ast.TableOptimizerHint{
+			Tables: []ast.HintTable{$1},
+		}
+	}
+
+ViewName:
+	Identifier QueryBlockOpt
+	{
+		$$ = ast.HintTable{
+			TableName: model.NewCIStr($1),
+			QBName:    model.NewCIStr($2),
+		}
+	}
+|	QueryBlockOpt
+	{
+		$$ = ast.HintTable{
+			QBName: model.NewCIStr($1),
+		}
+	}
+
 /**
  * HintIndexList:
  *
@@ -538,6 +584,7 @@ UnsupportedTableLevelOptimizerHintName:
 SupportedTableLevelOptimizerHintName:
 	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
+|	"SHUFFLE_JOIN"
 |	"INL_JOIN"
 |	"MERGE"
 |	"INL_HASH_JOIN"
@@ -564,6 +611,8 @@ SupportedIndexLevelOptimizerHintName:
 |	"IGNORE_INDEX"
 |	"USE_INDEX_MERGE"
 |	"FORCE_INDEX"
+|	"ORDER_INDEX"
+|	"NO_ORDER_INDEX"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -582,6 +631,8 @@ BooleanHintName:
 NullaryHintName:
 	"USE_PLAN_CACHE"
 |	"HASH_AGG"
+|	"MPP_1PHASE_AGG"
+|	"MPP_2PHASE_AGG"
 |	"STREAM_AGG"
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"
@@ -636,6 +687,8 @@ Identifier:
 |	"LIMIT_TO_COP"
 |	"IGNORE_PLAN_CACHE"
 |	"HASH_AGG"
+|	"MPP_1PHASE_AGG"
+|	"MPP_2PHASE_AGG"
 |	"IGNORE_INDEX"
 |	"INL_HASH_JOIN"
 |	"INL_JOIN"
@@ -647,10 +700,13 @@ Identifier:
 |	"READ_FROM_STORAGE"
 |	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
+|	"SHUFFLE_JOIN"
 |	"STREAM_AGG"
 |	"SWAP_JOIN_INPUTS"
 |	"USE_INDEX_MERGE"
 |	"USE_INDEX"
+|	"ORDER_INDEX"
+|	"NO_ORDER_INDEX"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"

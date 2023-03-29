@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "handletest_test",
+    timeout = "short",
+    srcs = [
+        "handle_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    shard_count = 50,
+    deps = [
+        "//config",
+        "//domain",
+        "//parser/model",
+        "//session",
+        "//sessionctx/variable",
+        "//statistics",
+        "//statistics/handle",
+        "//statistics/handle/internal",
+        "//testkit",
+        "//testkit/testsetup",
+        "//types",
+        "//util/collate",
+        "//util/israce",
+        "//util/mock",
+        "//util/ranger",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

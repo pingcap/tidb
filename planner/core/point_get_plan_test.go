@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testdata"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
@@ -175,6 +174,7 @@ func TestGetExtraColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`CREATE TABLE t (
 	  a int(11) DEFAULT NULL,
 	  b int(11) DEFAULT NULL,
@@ -328,43 +328,12 @@ func TestPointGetId(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)
 		// Test explain format = 'brief' result is useless, plan id will be reset when running `explain`.
 		require.Equal(t, 1, p.ID())
-	}
-}
-
-func TestCBOPointGet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	tk.MustExec("create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c))")
-	tk.MustExec("insert into t values('1',4,4,1), ('2',3,3,2), ('3',2,2,3), ('4',1,1,4)")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-	pointGetPlanData := core.GetPointGetPlanData()
-	pointGetPlanData.LoadTestCases(t, &input, &output)
-	require.Equal(t, len(input), len(output))
-	for i, sql := range input {
-		plan := tk.MustQuery("explain format = 'brief' " + sql)
-		res := tk.MustQuery(sql)
-		testdata.OnRecord(func() {
-			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-			output[i].Res = testdata.ConvertRowsToStrings(res.Rows())
-		})
-		plan.Check(testkit.Rows(output[i].Plan...))
-		res.Check(testkit.Rows(output[i].Res...))
 	}
 }
 
@@ -840,46 +809,6 @@ func TestBatchPointGetWithInvisibleIndex(t *testing.T) {
 	))
 }
 
-func TestCBOShouldNotUsePointGet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("drop tables if exists t1, t2, t3, t4, t5")
-	tk.MustExec("create table t1(id varchar(20) primary key)")
-	tk.MustExec("create table t2(id varchar(20), unique(id))")
-	tk.MustExec("create table t3(id varchar(20), d varchar(20), unique(id, d))")
-	tk.MustExec("create table t4(id int, d varchar(20), c varchar(20), unique(id, d))")
-	tk.MustExec("create table t5(id bit(64) primary key)")
-	tk.MustExec("insert into t1 values('asdf'), ('1asdf')")
-	tk.MustExec("insert into t2 values('asdf'), ('1asdf')")
-	tk.MustExec("insert into t3 values('asdf', 't'), ('1asdf', 't')")
-	tk.MustExec("insert into t4 values(1, 'b', 'asdf'), (1, 'c', 'jkl'), (1, 'd', '1jkl')")
-	tk.MustExec("insert into t5 values(48)")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-
-	pointGetPlanData := core.GetPointGetPlanData()
-	pointGetPlanData.LoadTestCases(t, &input, &output)
-	require.Equal(t, len(input), len(output))
-	for i, sql := range input {
-		plan := tk.MustQuery("explain format = 'brief' " + sql)
-		res := tk.MustQuery(sql)
-		testdata.OnRecord(func() {
-			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-			output[i].Res = testdata.ConvertRowsToStrings(res.Rows())
-		})
-		plan.Check(testkit.Rows(output[i].Plan...))
-		res.Check(testkit.Rows(output[i].Res...))
-	}
-}
-
 func TestPointGetWithIndexHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -959,7 +888,7 @@ func TestIssue26638(t *testing.T) {
 	tk.MustQuery("execute stmt1 using @c;").Check(testkit.Rows())
 	tk.MustQuery("execute stmt2 using @c, @d;").Check(testkit.Rows())
 	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("create table t2(a float, b float, c float, primary key(a, b, c));")
+	tk.MustExec("create table t2(a float, b float, c float, primary key(a, b, c) nonclustered);")
 	tk.MustExec("insert into t2 values(-1, 0, 1), (-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (0, 1, 2);")
 	tk.MustQuery("explain format='brief' select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37));").Check(testkit.Rows("TableDual 0.00 root  rows:0"))
 	tk.MustQuery("select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (-1, 0, 1));").Check(testkit.Rows("-1 0 1"))
@@ -976,7 +905,7 @@ func TestIssue23511(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`));")
+	tk.MustExec("CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`) NONCLUSTERED);")
 	tk.MustExec("CREATE TABLE `t2`  (`COL1` bit(11) NOT NULL);")
 	tk.MustExec("insert into t1 values(b'00000111001'), (b'00000000000');")
 	tk.MustExec("insert into t2 values(b'00000111001');")

@@ -48,9 +48,11 @@ type Callback interface {
 	// OnChanged is called after a ddl statement is finished.
 	OnChanged(err error) error
 	// OnSchemaStateChanged is called after a schema state is changed.
-	OnSchemaStateChanged()
+	OnSchemaStateChanged(schemaVer int64)
 	// OnJobRunBefore is called before running job.
 	OnJobRunBefore(job *model.Job)
+	// OnJobRunAfter is called after running job.
+	OnJobRunAfter(job *model.Job)
 	// OnJobUpdated is called after the running job is updated.
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
@@ -71,12 +73,17 @@ func (*BaseCallback) OnChanged(err error) error {
 }
 
 // OnSchemaStateChanged implements Callback interface.
-func (*BaseCallback) OnSchemaStateChanged() {
+func (*BaseCallback) OnSchemaStateChanged(schemaVer int64) {
 	// Nothing to do.
 }
 
 // OnJobRunBefore implements Callback.OnJobRunBefore interface.
 func (*BaseCallback) OnJobRunBefore(_ *model.Job) {
+	// Nothing to do.
+}
+
+// OnJobRunAfter implements Callback.OnJobRunAfter interface.
+func (*BaseCallback) OnJobRunAfter(_ *model.Job) {
 	// Nothing to do.
 }
 
@@ -129,7 +136,7 @@ func (c *DefaultCallback) OnChanged(err error) error {
 }
 
 // OnSchemaStateChanged overrides the ddl Callback interface.
-func (c *DefaultCallback) OnSchemaStateChanged() {
+func (c *DefaultCallback) OnSchemaStateChanged(schemaVer int64) {
 	err := c.do.Reload()
 	if err != nil {
 		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
@@ -166,7 +173,7 @@ func (c *ctcCallback) OnChanged(err error) error {
 }
 
 // OnSchemaStateChanged overrides the ddl Callback interface.
-func (c *ctcCallback) OnSchemaStateChanged() {
+func (c *ctcCallback) OnSchemaStateChanged(retVer int64) {
 	err := c.do.Reload()
 	if err != nil {
 		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))

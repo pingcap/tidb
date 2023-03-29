@@ -4,6 +4,8 @@ package task
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -26,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -45,6 +49,9 @@ const (
 	flagRemoveSchedulers = "remove-schedulers"
 	flagIgnoreStats      = "ignore-stats"
 	flagUseBackupMetaV2  = "use-backupmeta-v2"
+	flagUseCheckpoint    = "use-checkpoint"
+	flagKeyspaceName     = "keyspace-name"
+	flagReplicaReadLabel = "replica-read-label"
 
 	flagGCTTL = "gcttl"
 
@@ -70,21 +77,23 @@ type CompressionConfig struct {
 type BackupConfig struct {
 	Config
 
-	TimeAgo          time.Duration `json:"time-ago" toml:"time-ago"`
-	BackupTS         uint64        `json:"backup-ts" toml:"backup-ts"`
-	LastBackupTS     uint64        `json:"last-backup-ts" toml:"last-backup-ts"`
-	GCTTL            int64         `json:"gc-ttl" toml:"gc-ttl"`
-	RemoveSchedulers bool          `json:"remove-schedulers" toml:"remove-schedulers"`
-	IgnoreStats      bool          `json:"ignore-stats" toml:"ignore-stats"`
-	UseBackupMetaV2  bool          `json:"use-backupmeta-v2"`
+	TimeAgo          time.Duration     `json:"time-ago" toml:"time-ago"`
+	BackupTS         uint64            `json:"backup-ts" toml:"backup-ts"`
+	LastBackupTS     uint64            `json:"last-backup-ts" toml:"last-backup-ts"`
+	GCTTL            int64             `json:"gc-ttl" toml:"gc-ttl"`
+	RemoveSchedulers bool              `json:"remove-schedulers" toml:"remove-schedulers"`
+	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
+	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
+	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
+	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	CompressionConfig
 
 	// for ebs-based backup
 	FullBackupType      FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
-	VolumeFile          string         `json:"volume-file"`
-	SkipAWS             bool           `json:"skip-aws"`
-	CloudAPIConcurrency uint           `json:"cloud-api-concurrency"`
-	ProgressFile        string         `json:"progress-file"`
+	VolumeFile          string         `json:"volume-file" toml:"volume-file"`
+	SkipAWS             bool           `json:"skip-aws" toml:"skip-aws"`
+	CloudAPIConcurrency uint           `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
+	ProgressFile        string         `json:"progress-file" toml:"progress-file"`
 }
 
 // DefineBackupFlags defines common flags for the backup command.
@@ -103,6 +112,10 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	flags.Int32(flagCompressionLevel, 0, "compression level used for sst file compression")
 
+	flags.Uint32(flagConcurrency, 4, "The size of a BR thread pool that executes tasks, "+
+		"One task represents one table range (or one index range) according to the backup schemas. If there is one table with one index."+
+		"there will be two tasks to back up this table. This value should increase if you need to back up lots of tables or indices.")
+
 	flags.Bool(flagRemoveSchedulers, false,
 		"disable the balance, shuffle and region-merge schedulers in PD to speed up backup")
 	// This flag can impact the online cluster, so hide it in case of abuse.
@@ -118,6 +131,8 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(flagUseBackupMetaV2, false,
 		"use backup meta v2 to store meta info")
+
+	flags.String(flagKeyspaceName, "", "keyspace name for backup")
 	// This flag will change the structure of backupmeta.
 	// we must make sure the old three version of br can parse the v2 meta to keep compatibility.
 	// so this flag should set to false for three version by default.
@@ -126,6 +141,11 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	// but will generate v1 meta due to this flag is false. the behaviour is as same as v4.0.15, v4.0.16.
 	// finally v4.0.17 will set this flag to true, and generate v2 meta.
 	_ = flags.MarkHidden(flagUseBackupMetaV2)
+
+	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
+	_ = flags.MarkHidden(flagUseCheckpoint)
+
+	flags.String(flagReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -150,11 +170,33 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.LastBackupTS > 0 {
+		// TODO: compatible with incremental backup
+		cfg.UseCheckpoint = false
+		log.Info("since incremental backup is used, turn off checkpoint mode")
+	}
+	if cfg.UseBackupMetaV2 {
+		// TODO: compatible with backup meta v2, maybe just clean the meta files
+		cfg.UseCheckpoint = false
+		log.Info("since backup meta v2 is used, turn off checkpoint mode")
+	}
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	cfg.GCTTL = gcTTL
+	cfg.Concurrency, err = flags.GetUint32(flagConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	compressionCfg, err := parseCompressionFlags(flags)
 	if err != nil {
@@ -173,7 +215,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
+	cfg.KeyspaceName, err = flags.GetString(flagKeyspaceName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -204,6 +246,11 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	cfg.ReplicaReadLabel, err = parseReplicaReadLabelFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -269,6 +316,23 @@ func (cfg *BackupConfig) Adjust() {
 	}
 }
 
+// a rough hash for checkpoint checker
+func (cfg *BackupConfig) Hash() ([]byte, error) {
+	config := &BackupConfig{
+		LastBackupTS:  cfg.LastBackupTS,
+		IgnoreStats:   cfg.IgnoreStats,
+		UseCheckpoint: cfg.UseCheckpoint,
+		Config:        cfg.Config,
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	hash := sha256.Sum256(data)
+
+	return hash[:], nil
+}
+
 func isFullBackup(cmdName string) bool {
 	return cmdName == FullBackupCmd
 }
@@ -276,6 +340,9 @@ func isFullBackup(cmdName string) bool {
 // RunBackup starts a backup task inside the current goroutine.
 func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig) error {
 	cfg.Adjust()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = cfg.KeyspaceName
+	})
 
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -291,6 +358,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// if use noop as external storage, turn off the checkpoint mode
+	if u.GetNoop() != nil {
+		log.Info("since noop external storage is used, turn off checkpoint mode")
+		cfg.UseCheckpoint = false
+	}
 	skipStats := cfg.IgnoreStats
 	// For backup, Domain is not needed if user ignores stats.
 	// Domain loads all table info into memory. By skipping Domain, we save
@@ -301,6 +373,14 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+	// after version check, check the cluster whether support checkpoint mode
+	if cfg.UseCheckpoint {
+		err = version.CheckCheckpointSupport()
+		if err != nil {
+			log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
+			cfg.UseCheckpoint = false
+		}
+	}
 	var statsHandle *handle.Handle
 	if !skipStats {
 		statsHandle = mgr.GetDomain().StatsHandle()
@@ -308,33 +388,50 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	var newCollationEnable string
 	err = g.UseOneShotSession(mgr.GetStorage(), !needDomain, func(se glue.Session) error {
-		newCollationEnable, err = se.GetGlobalVariable(tidbNewCollationEnabled)
+		newCollationEnable, err = se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		log.Info("get new_collations_enabled_on_first_bootstrap config from system table",
-			zap.String(tidbNewCollationEnabled, newCollationEnable))
+			zap.String(utils.GetTidbNewCollationEnabled(), newCollationEnable))
 		return nil
 	})
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	client, err := backup.NewBackupClient(ctx, mgr)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	client := backup.NewBackupClient(ctx, mgr)
+
+	// set cipher only for checkpoint
+	client.SetCipher(&cfg.CipherInfo)
+
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
 		CheckS3ObjectLockOptions: true,
 	}
-	if err = client.SetStorage(ctx, u, &opts); err != nil {
+	if err = client.SetStorageAndCheckNotInUse(ctx, u, &opts); err != nil {
+		return errors.Trace(err)
+	}
+	// if checkpoint mode is unused at this time but there is checkpoint meta,
+	// CheckCheckpoint will stop backing up
+	cfgHash, err := cfg.Hash()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = client.CheckCheckpoint(cfgHash)
+	if err != nil {
 		return errors.Trace(err)
 	}
 	err = client.SetLockFile(ctx)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// if use checkpoint and gcTTL is the default value
+	// update gcttl to checkpoint's default gc ttl
+	if cfg.UseCheckpoint && cfg.GCTTL == utils.DefaultBRGCSafePointTTL {
+		cfg.GCTTL = utils.DefaultCheckpointGCSafePointTTL
+		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", cfg.GCTTL))
 	}
 	client.SetGCTTL(cfg.GCTTL)
 
@@ -343,23 +440,44 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 	g.Record("BackupTS", backupTS)
+	safePointID := client.GetSafePointID()
 	sp := utils.BRServiceSafePoint{
 		BackupTS: backupTS,
 		TTL:      client.GetGCTTL(),
-		ID:       utils.MakeSafePointID(),
+		ID:       safePointID,
 	}
+
 	// use lastBackupTS as safePoint if exists
-	if cfg.LastBackupTS > 0 {
+	isIncrementalBackup := cfg.LastBackupTS > 0
+	if isIncrementalBackup {
 		sp.BackupTS = cfg.LastBackupTS
 	}
 
 	log.Info("current backup safePoint job", zap.Object("safePoint", sp))
-	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
+	gcSafePointKeeperRemovable := false
+	defer func() {
+		// don't reset the gc-safe-point if checkpoint mode is used and backup is not finished
+		if cfg.UseCheckpoint && !gcSafePointKeeperRemovable {
+			log.Info("skip removing gc-safepoint keeper for next retry", zap.String("gc-id", sp.ID))
+			return
+		}
+		log.Info("start to remove gc-safepoint keeper")
+		// close the gc safe point keeper at first
+		gcSafePointKeeperCancel()
+		// set the ttl to 0 to remove the gc-safe-point
+		sp.TTL = 0
+		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
+			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+				zap.Error(err),
+			)
+		}
+		log.Info("finish removing gc-safepoint keeper")
+	}()
+	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	isIncrementalBackup := cfg.LastBackupTS > 0
 
 	if cfg.RemoveSchedulers {
 		log.Debug("removing some PD schedulers")
@@ -388,6 +506,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		CompressionType:  cfg.CompressionType,
 		CompressionLevel: cfg.CompressionLevel,
 		CipherInfo:       &cfg.CipherInfo,
+		ReplicaRead:      len(cfg.ReplicaReadLabel) != 0,
 	}
 	brVersion := g.GetVersion()
 	clusterVersion, err := mgr.GetClusterVersion(ctx)
@@ -395,9 +514,14 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	ranges, schemas, policies, err := backup.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
+	ranges, schemas, policies, err := client.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Add keyspace prefix to BackupRequest
+	for i := range ranges {
+		start, end := ranges[i].StartKey, ranges[i].EndKey
+		ranges[i].StartKey, ranges[i].EndKey = mgr.GetStorage().GetCodec().EncodeRange(start, end)
 	}
 
 	// Metafile size should be less than 64MB.
@@ -412,6 +536,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		m.ClusterVersion = clusterVersion
 		m.BrVersion = brVersion
 		m.NewCollationsEnabled = newCollationEnable
+		m.ApiVersion = mgr.GetStorage().GetCodec().GetAPIVersion()
 	})
 
 	log.Info("get placement policies", zap.Int("count", len(policies)))
@@ -422,7 +547,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// nothing to backup
-	if ranges == nil || len(ranges) <= 0 {
+	if len(ranges) == 0 {
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
@@ -503,8 +628,20 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			})
 		}
 	}
+
+	if cfg.UseCheckpoint {
+		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, ranges, safePointID, progressCallBack); err != nil {
+			return errors.Trace(err)
+		}
+		defer func() {
+			if !gcSafePointKeeperRemovable {
+				log.Info("wait for flush checkpoint...")
+				client.WaitForFinishCheckpoint(ctx)
+			}
+		}()
+	}
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), metawriter, progressCallBack)
+	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -532,7 +669,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
 
 	err = schemas.BackupSchemas(
-		ctx, metawriter, mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
+		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -541,6 +678,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Since backupmeta is flushed on the external storage,
+	// we can remove the gc safepoint keeper
+	gcSafePointKeeperRemovable = true
 
 	// Checksum has finished, close checksum progress.
 	updateCh.Close()
@@ -594,7 +734,7 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
 		}
 	}
-	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -618,4 +758,19 @@ func parseCompressionType(s string) (backuppb.CompressionType, error) {
 		return backuppb.CompressionType_UNKNOWN, errors.Annotatef(berrors.ErrInvalidArgument, "invalid compression type '%s'", s)
 	}
 	return ct, nil
+}
+
+func parseReplicaReadLabelFlag(flags *pflag.FlagSet) (map[string]string, error) {
+	replicaReadLabelStr, err := flags.GetString(flagReplicaReadLabel)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if replicaReadLabelStr == "" {
+		return nil, nil
+	}
+	kv := strings.Split(replicaReadLabelStr, ":")
+	if len(kv) != 2 {
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "invalid replica read label '%s'", replicaReadLabelStr)
+	}
+	return map[string]string{kv[0]: kv[1]}, nil
 }

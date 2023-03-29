@@ -136,6 +136,7 @@ func (c *RowContainer) SpillToDisk() {
 		defer c.actionSpill.setStatus(spilledYet)
 	}
 	var err error
+	memory.QueryForceDisk.Add(1)
 	n := c.m.records.inMemory.NumChunks()
 	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
@@ -411,9 +412,6 @@ func (a *SpillDiskAction) Reset() {
 	a.once = sync.Once{}
 }
 
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (*SpillDiskAction) SetLogHook(_ func(uint64)) {}
-
 // GetPriority get the priority of the Action.
 func (*SpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
@@ -446,6 +444,10 @@ type SortedRowContainer struct {
 
 	actionSpill *SortAndSpillDiskAction
 	memTracker  *memory.Tracker
+
+	// Sort is a time-consuming operation, we need to set a checkpoint to detect
+	// the outside signal periodically.
+	timesOfRowCompare uint
 }
 
 // NewSortedRowContainer creates a new SortedRowContainer in memory.
@@ -470,21 +472,37 @@ func (c *SortedRowContainer) Close() error {
 func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 	for i, colIdx := range c.keyColumns {
 		cmpFunc := c.keyCmpFuncs[i]
-		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-		if c.ByItemsDesc[i] {
-			cmp = -cmp
-		}
-		if cmp < 0 {
-			return true
-		} else if cmp > 0 {
-			return false
+		if cmpFunc != nil {
+			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+			if c.ByItemsDesc[i] {
+				cmp = -cmp
+			}
+			if cmp < 0 {
+				return true
+			} else if cmp > 0 {
+				return false
+			}
 		}
 	}
 	return false
 }
 
+// SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
+const SignalCheckpointForSort uint = 10240
+
 // keyColumnsLess is the less function for key columns.
 func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
+	if c.timesOfRowCompare >= SignalCheckpointForSort {
+		// Trigger Consume for checking the NeedKill signal
+		c.memTracker.Consume(1)
+		c.timesOfRowCompare = 0
+	}
+	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+		if val.(bool) {
+			c.timesOfRowCompare += 1024
+		}
+	})
+	c.timesOfRowCompare++
 	rowI := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[i])
 	rowJ := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[j])
 	return c.lessRow(rowI, rowJ)
@@ -606,9 +624,6 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 		fallback.Action(t)
 	}
 }
-
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (*SortAndSpillDiskAction) SetLogHook(_ func(uint64)) {}
 
 // WaitForTest waits all goroutine have gone.
 func (a *SortAndSpillDiskAction) WaitForTest() {

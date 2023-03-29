@@ -47,6 +47,8 @@ type ParquetParser struct {
 	curIndex    int
 	lastRow     Row
 	logger      log.Logger
+
+	readSeekCloser ReadSeekCloser
 }
 
 // readerWrapper is a used for implement `source.ParquetFile`
@@ -144,9 +146,9 @@ func OpenParquetReader(
 	}, nil
 }
 
-// ReadParquetFileRowCount reads the parquet file row count.
+// readParquetFileRowCount reads the parquet file row count.
 // It is a special func to fetch parquet file row count fast.
-func ReadParquetFileRowCount(
+func readParquetFileRowCount(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	r storage.ReadSeekCloser,
@@ -170,6 +172,23 @@ func ReadParquetFileRowCount(
 		return 0, err
 	}
 	return numRows, nil
+}
+
+// ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
+func ReadParquetFileRowCountByFile(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	fileMeta SourceFileMeta,
+) (int64, error) {
+	r, err := store.Open(ctx, fileMeta.Path)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	numberRows, err := readParquetFileRowCount(ctx, store, r, fileMeta.Path)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return numberRows, nil
 }
 
 // NewParquetParser generates a parquet parser.
@@ -216,10 +235,11 @@ func NewParquetParser(
 	}
 
 	return &ParquetParser{
-		Reader:      reader,
-		columns:     columns,
-		columnMetas: columnMetas,
-		logger:      log.FromContext(ctx),
+		Reader:         reader,
+		columns:        columns,
+		columnMetas:    columnMetas,
+		logger:         log.FromContext(ctx),
+		readSeekCloser: wrapper,
 	}, nil
 }
 
@@ -351,6 +371,12 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	return nil
 }
 
+// ScannedPos implements the Parser interface.
+// For parquet it's parquet file's reader current position.
+func (pp *ParquetParser) ScannedPos() (int64, error) {
+	return pp.readSeekCloser.Seek(0, io.SeekCurrent)
+}
+
 // Close closes the parquet file of the parser.
 // It implements the Parser interface.
 func (pp *ParquetParser) Close() error {
@@ -458,7 +484,7 @@ func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
 		ts = ts.UTC()
 		v = ts.Format(utcTimeLayout)
 	}
-	d.SetString(v, "")
+	d.SetString(v, "utf8mb4_bin")
 }
 
 func binaryToDecimalStr(rawBytes []byte, scale int) string {
@@ -515,20 +541,20 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
 		}
 		val := fmt.Sprintf("%0*d", minLen, v)
 		dotIndex := len(val) - int(*meta.Scale)
-		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "")
+		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "utf8mb4_bin")
 	case logicalType.DATE != nil:
 		dateStr := time.Unix(v*86400, 0).Format("2006-01-02")
-		d.SetString(dateStr, "")
+		d.SetString(dateStr, "utf8mb4_bin")
 	case logicalType.TIMESTAMP != nil:
 		// convert all timestamp types (datetime/timestamp) to string
 		timeStr := formatTime(v, logicalType.TIMESTAMP.Unit, timeLayout,
 			utcTimeLayout, logicalType.TIMESTAMP.IsAdjustedToUTC)
-		d.SetString(timeStr, "")
+		d.SetString(timeStr, "utf8mb4_bin")
 	case logicalType.TIME != nil:
 		// convert all timestamp types (datetime/timestamp) to string
 		timeStr := formatTime(v, logicalType.TIME.Unit, "15:04:05.999999", "15:04:05.999999Z",
 			logicalType.TIME.IsAdjustedToUTC)
-		d.SetString(timeStr, "")
+		d.SetString(timeStr, "utf8mb4_bin")
 	default:
 		d.SetInt64(v)
 	}
@@ -577,6 +603,12 @@ func (*ParquetParser) SetColumns(_ []string) {
 // It implements the Parser interface.
 func (pp *ParquetParser) SetLogger(l log.Logger) {
 	pp.logger = l
+}
+
+// SetRowID sets the rowID in a parquet file when we start a compressed file.
+// It implements the Parser interface.
+func (pp *ParquetParser) SetRowID(rowID int64) {
+	pp.lastRow.RowID = rowID
 }
 
 func jdToTime(jd int32, nsec int64) time.Time {

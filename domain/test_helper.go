@@ -26,7 +26,7 @@ import (
 
 // MockInfoCacheAndLoadInfoSchema only used in unit tests.
 func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
-	do.infoCache = infoschema.NewCache(16)
+	do.infoCache.Reset(16)
 	do.infoCache.Insert(is, 0)
 }
 

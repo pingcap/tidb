@@ -24,19 +24,21 @@ import (
 	"sync"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
+
+const maxAvailableBufSize int = 20
 
 // invalidIterator is a trimmed down Iterator type which is invalid.
 type invalidIterator struct {
@@ -52,55 +54,75 @@ func (*invalidIterator) Valid() bool {
 func (*invalidIterator) Close() {
 }
 
-type bytesBuf struct {
+// BytesBuf bytes buffer.
+type BytesBuf struct {
 	buf []byte
 	idx int
 	cap int
 }
 
-func (b *bytesBuf) add(v []byte) []byte {
+func (b *BytesBuf) add(v []byte) []byte {
 	start := b.idx
 	copy(b.buf[start:], v)
 	b.idx += len(v)
 	return b.buf[start:b.idx:b.idx]
 }
 
-func newBytesBuf(size int) *bytesBuf {
-	return &bytesBuf{
+func newBytesBuf(size int) *BytesBuf {
+	return &BytesBuf{
 		buf: manual.New(size),
 		cap: size,
 	}
 }
 
-func (b *bytesBuf) destroy() {
+func (b *BytesBuf) destroy() {
 	if b != nil {
 		manual.Free(b.buf)
 		b.buf = nil
 	}
 }
 
-type kvMemBuf struct {
+// MemBuf used to store the data in memory.
+type MemBuf struct {
 	sync.Mutex
 	kv.MemBuffer
-	buf           *bytesBuf
-	availableBufs []*bytesBuf
+	buf           *BytesBuf
+	availableBufs []*BytesBuf
 	kvPairs       *KvPairs
 	size          int
 }
 
-func (mb *kvMemBuf) Recycle(buf *bytesBuf) {
+func (mb *MemBuf) Recycle(buf *BytesBuf) {
 	buf.idx = 0
 	buf.cap = len(buf.buf)
 	mb.Lock()
+	if len(mb.availableBufs) >= maxAvailableBufSize {
+		// too many byte buffers, evict one byte buffer and continue
+		evictedByteBuf := mb.availableBufs[0]
+		evictedByteBuf.destroy()
+		mb.availableBufs = mb.availableBufs[1:]
+	}
 	mb.availableBufs = append(mb.availableBufs, buf)
 	mb.Unlock()
 }
 
-func (mb *kvMemBuf) AllocateBuf(size int) {
+func (mb *MemBuf) AllocateBuf(size int) {
 	mb.Lock()
 	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
-	if len(mb.availableBufs) > 0 && mb.availableBufs[0].cap >= size {
-		mb.buf = mb.availableBufs[0]
+	var (
+		existingBuf    *BytesBuf
+		existingBufIdx int
+	)
+	for i, buf := range mb.availableBufs {
+		if buf.cap >= size {
+			existingBuf = buf
+			existingBufIdx = i
+			break
+		}
+	}
+	if existingBuf != nil {
+		mb.buf = existingBuf
+		mb.availableBufs[existingBufIdx] = mb.availableBufs[0]
 		mb.availableBufs = mb.availableBufs[1:]
 	} else {
 		mb.buf = newBytesBuf(size)
@@ -108,16 +130,16 @@ func (mb *kvMemBuf) AllocateBuf(size int) {
 	mb.Unlock()
 }
 
-func (mb *kvMemBuf) Set(k kv.Key, v []byte) error {
+func (mb *MemBuf) Set(k kv.Key, v []byte) error {
 	kvPairs := mb.kvPairs
 	size := len(k) + len(v)
 	if mb.buf == nil || mb.buf.cap-mb.buf.idx < size {
 		if mb.buf != nil {
-			kvPairs.bytesBuf = mb.buf
+			kvPairs.BytesBuf = mb.buf
 		}
 		mb.AllocateBuf(size)
 	}
-	kvPairs.pairs = append(kvPairs.pairs, common.KvPair{
+	kvPairs.Pairs = append(kvPairs.Pairs, common.KvPair{
 		Key: mb.buf.add(k),
 		Val: mb.buf.add(v),
 	})
@@ -125,28 +147,28 @@ func (mb *kvMemBuf) Set(k kv.Key, v []byte) error {
 	return nil
 }
 
-func (mb *kvMemBuf) SetWithFlags(k kv.Key, v []byte, ops ...kv.FlagsOp) error {
+func (mb *MemBuf) SetWithFlags(k kv.Key, v []byte, ops ...kv.FlagsOp) error {
 	return mb.Set(k, v)
 }
 
-func (mb *kvMemBuf) Delete(k kv.Key) error {
+func (mb *MemBuf) Delete(k kv.Key) error {
 	return errors.New("unsupported operation")
 }
 
 // Release publish all modifications in the latest staging buffer to upper level.
-func (mb *kvMemBuf) Release(h kv.StagingHandle) {
+func (mb *MemBuf) Release(h kv.StagingHandle) {
 }
 
-func (mb *kvMemBuf) Staging() kv.StagingHandle {
+func (mb *MemBuf) Staging() kv.StagingHandle {
 	return 0
 }
 
-// Cleanup cleanup the resources referenced by the StagingHandle.
+// Cleanup the resources referenced by the StagingHandle.
 // If the changes are not published by `Release`, they will be discarded.
-func (mb *kvMemBuf) Cleanup(h kv.StagingHandle) {}
+func (mb *MemBuf) Cleanup(h kv.StagingHandle) {}
 
 // Size returns sum of keys and values length.
-func (mb *kvMemBuf) Size() int {
+func (mb *MemBuf) Size() int {
 	return mb.size
 }
 
@@ -156,11 +178,11 @@ func (t *transaction) Len() int {
 }
 
 type kvUnionStore struct {
-	kvMemBuf
+	MemBuf
 }
 
 func (s *kvUnionStore) GetMemBuffer() kv.MemBuffer {
-	return &s.kvMemBuf
+	return &s.MemBuf
 }
 
 func (s *kvUnionStore) GetIndexName(tableID, indexID int64) string {
@@ -181,7 +203,7 @@ type transaction struct {
 }
 
 func (t *transaction) GetMemBuffer() kv.MemBuffer {
-	return &t.kvUnionStore.kvMemBuf
+	return &t.kvUnionStore.MemBuf
 }
 
 func (t *transaction) Discard() {
@@ -208,7 +230,7 @@ func (t *transaction) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 
 // Set implements the kv.Mutator interface
 func (t *transaction) Set(k kv.Key, v []byte) error {
-	return t.kvMemBuf.Set(k, v)
+	return t.MemBuf.Set(k, v)
 }
 
 // GetTableInfo implements the kv.Transaction interface.
@@ -225,36 +247,28 @@ func (t *transaction) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
 	return nil
 }
 
-// session is a trimmed down Session type which only wraps our own trimmed-down
+// Session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.
-type session struct {
+type Session struct {
 	sessionctx.Context
 	txn  transaction
-	vars *variable.SessionVars
+	Vars *variable.SessionVars
 	// currently, we only set `CommonAddRecordCtx`
 	values map[fmt.Stringer]interface{}
 }
 
-// SessionOptions is the initial configuration of the session.
-type SessionOptions struct {
-	SQLMode   mysql.SQLMode
-	Timestamp int64
-	SysVars   map[string]string
-	// a seed used for tableKvEncoder's auto random bits value
-	AutoRandomSeed int64
-	// IndexID is used by the DuplicateManager. Only the key range with the specified index ID is scanned.
-	IndexID int64
+// NewSessionCtx creates a new trimmed down Session matching the options.
+func NewSessionCtx(options *encode.SessionOptions, logger log.Logger) sessionctx.Context {
+	return NewSession(options, logger)
 }
 
-// NewSession creates a new trimmed down Session matching the options.
-func NewSession(options *SessionOptions, logger log.Logger) sessionctx.Context {
-	return newSession(options, logger)
-}
-
-func newSession(options *SessionOptions, logger log.Logger) *session {
+func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
+	s := &Session{
+		values: make(map[fmt.Stringer]interface{}, 1),
+	}
 	sqlMode := options.SQLMode
-	vars := variable.NewSessionVars()
+	vars := variable.NewSessionVars(s)
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BatchCheck = true
@@ -289,71 +303,68 @@ func newSession(options *SessionOptions, logger log.Logger) *session {
 			log.ShortError(err))
 	}
 	vars.TxnCtx = nil
-	s := &session{
-		vars:   vars,
-		values: make(map[fmt.Stringer]interface{}, 1),
-	}
+	s.Vars = vars
 	s.txn.kvPairs = &KvPairs{}
 
 	return s
 }
 
-func (se *session) takeKvPairs() *KvPairs {
-	memBuf := &se.txn.kvMemBuf
+func (se *Session) TakeKvPairs() *KvPairs {
+	memBuf := &se.txn.MemBuf
 	pairs := memBuf.kvPairs
-	if pairs.bytesBuf != nil {
-		pairs.memBuf = memBuf
+	if pairs.BytesBuf != nil {
+		pairs.MemBuf = memBuf
 	}
-	memBuf.kvPairs = &KvPairs{pairs: make([]common.KvPair, 0, len(pairs.pairs))}
+	memBuf.kvPairs = &KvPairs{Pairs: make([]common.KvPair, 0, len(pairs.Pairs))}
 	memBuf.size = 0
 	return pairs
 }
 
 // Txn implements the sessionctx.Context interface
-func (se *session) Txn(active bool) (kv.Transaction, error) {
+func (se *Session) Txn(active bool) (kv.Transaction, error) {
 	return &se.txn, nil
 }
 
 // GetSessionVars implements the sessionctx.Context interface
-func (se *session) GetSessionVars() *variable.SessionVars {
-	return se.vars
+func (se *Session) GetSessionVars() *variable.SessionVars {
+	return se.Vars
 }
 
 // SetValue saves a value associated with this context for key.
-func (se *session) SetValue(key fmt.Stringer, value interface{}) {
+func (se *Session) SetValue(key fmt.Stringer, value interface{}) {
 	se.values[key] = value
 }
 
 // Value returns the value associated with this context for key.
-func (se *session) Value(key fmt.Stringer) interface{} {
+func (se *Session) Value(key fmt.Stringer) interface{} {
 	return se.values[key]
 }
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface
-func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle) {}
+func (se *Session) StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle) {}
 
 // GetInfoSchema implements the sessionctx.Context interface.
-func (se *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (se *Session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return nil
 }
 
 // GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
 // Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
-func (se *session) GetBuiltinFunctionUsage() map[string]uint32 {
+func (se *Session) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
 
 // BuiltinFunctionUsageInc implements the sessionctx.Context interface.
-func (se *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+func (se *Session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
 }
 
 // GetStmtStats implements the sessionctx.Context interface.
-func (se *session) GetStmtStats() *stmtstats.StatementStats {
+func (se *Session) GetStmtStats() *stmtstats.StatementStats {
 	return nil
 }
 
-func (se *session) Close() {
-	memBuf := &se.txn.kvMemBuf
+func (se *Session) Close() {
+	memBuf := &se.txn.MemBuf
 	if memBuf.buf != nil {
 		memBuf.buf.destroy()
 		memBuf.buf = nil

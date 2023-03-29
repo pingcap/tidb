@@ -34,6 +34,7 @@ type panickingAllocator struct {
 func NewPanickingAllocators(base int64) autoid.Allocators {
 	sharedBase := &base
 	return autoid.NewAllocators(
+		false,
 		&panickingAllocator{base: sharedBase, ty: autoid.RowIDAllocType},
 		&panickingAllocator{base: sharedBase, ty: autoid.AutoIncrementType},
 		&panickingAllocator{base: sharedBase, ty: autoid.AutoRandomType},

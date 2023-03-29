@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
@@ -55,7 +56,7 @@ type delRangeManager interface {
 	addDelRangeJob(ctx context.Context, job *model.Job) error
 	// removeFromGCDeleteRange removes the deleting table job from gc_delete_range table by jobID and tableID.
 	// It's use for recover the table that was mistakenly deleted.
-	removeFromGCDeleteRange(ctx context.Context, jobID int64, tableID []int64) error
+	removeFromGCDeleteRange(ctx context.Context, jobID int64) error
 	start()
 	clear()
 }
@@ -125,13 +126,13 @@ func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, sctx sessionc
 }
 
 // removeFromGCDeleteRange implements delRangeManager interface.
-func (dr *delRange) removeFromGCDeleteRange(ctx context.Context, jobID int64, tableIDs []int64) error {
+func (dr *delRange) removeFromGCDeleteRange(ctx context.Context, jobID int64) error {
 	sctx, err := dr.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer dr.sessPool.put(sctx)
-	err = util.RemoveMultiFromGCDeleteRange(ctx, sctx, jobID, tableIDs)
+	err = util.RemoveMultiFromGCDeleteRange(ctx, sctx, jobID)
 	return errors.Trace(err)
 }
 
@@ -237,7 +238,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 			return errors.Trace(err)
 		}
 		if finish {
-			if err := util.CompleteDeleteRange(sctx, r); err != nil {
+			if err := util.CompleteDeleteRange(sctx, r, true); err != nil {
 				logutil.BgLogger().Error("[ddl] delRange emulator complete task failed", zap.Error(err))
 				return errors.Trace(err)
 			}
@@ -266,7 +267,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 
-	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job))
+	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job.Type))
 	s := sctx.(sqlexec.SQLExecutor)
 	switch job.Type {
 	case model.ActionDropSchema:
@@ -301,15 +302,23 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 					return errors.Trace(err)
 				}
 			}
-			return nil
+			// logical table may contain global index regions, so delete the logical table range.
+			startKey = tablecodec.EncodeTablePrefix(tableID)
+			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+			elemID := ea.allocForPhysicalID(tableID)
+			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
 		}
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		elemID := ea.allocForPhysicalID(tableID)
 		return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionReorganizePartition:
 		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
+		// partInfo is not used, but is set in ReorgPartition.
+		// Better to have an additional argument in job.DecodeArgs since it is ignored,
+		// instead of having one to few, which will remove the data from the job arguments...
+		var partInfo model.PartitionInfo
+		if err := job.DecodeArgs(&physicalTableIDs, &partInfo); err != nil {
 			return errors.Trace(err)
 		}
 		for _, physicalTableID := range physicalTableIDs {
@@ -360,7 +369,14 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		if err := job.DecodeArgs(&indexName, &ifExists, &indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
+
+		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
 		if len(partitionIDs) > 0 {
+			failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
+				if val.(bool) {
+					panic("drop global index must not delete partition index range")
+				}
+			})
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)

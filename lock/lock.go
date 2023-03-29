@@ -41,7 +41,7 @@ func NewChecker(ctx sessionctx.Context, is infoschema.InfoSchema) *Checker {
 
 // CheckTableLock uses to check table lock.
 func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType, alterWriteable bool) error {
-	if db == "" && table == "" {
+	if db == "" && table == "" || privilege == mysql.LockTablesPriv {
 		return nil
 	}
 	// System DB and memory DB are not support table lock.

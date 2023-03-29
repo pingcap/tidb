@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -52,8 +53,6 @@ type PrepareExec struct {
 	ParamCount int
 	Fields     []*ast.ResultField
 	Stmt       interface{}
-
-	IsGeneralStmt bool
 
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
 	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
@@ -108,7 +107,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
-		return ErrPrepareMulti
+		return exeerrors.ErrPrepareMulti
 	}
 	stmt0 := stmts[0]
 	if e.needReset {
@@ -117,7 +116,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 	}
-	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.ctx, stmt0)
+	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.ctx, true, stmt0.Text(), stmt0)
 	if err != nil {
 		return err
 	}
@@ -126,8 +125,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		topsql.AttachAndRegisterSQLInfo(ctx, stmt.NormalizedSQL, stmt.SQLDigest, vars.InRestrictedSQL)
 	}
 
-	e.ctx.GetSessionVars().PlanID = 0
-	e.ctx.GetSessionVars().PlanColumnID = 0
+	e.ctx.GetSessionVars().PlanID.Store(0)
+	e.ctx.GetSessionVars().PlanColumnID.Store(0)
 	e.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	// In MySQL prepare protocol, the server need to tell the client how many column the prepared statement would return when executing it.
 	// For a query with on result, e.g. an insert statement, there will be no result, so 'e.Fields' is not set.
@@ -135,19 +134,15 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !isNoResultPlan(p) {
 		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
 	}
-	if e.ID == 0 && !e.IsGeneralStmt {
+	if e.ID == 0 {
 		e.ID = vars.GetNextPreparedStmtID()
 	}
-	if e.name != "" && !e.IsGeneralStmt {
+	if e.name != "" {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
 	e.ParamCount = paramCnt
 	e.Stmt = stmt
-	if e.IsGeneralStmt {
-		vars.AddGeneralPlanCacheStmt(e.sqlText, stmt)
-		return nil
-	}
 	return vars.AddPreparedStmt(e.ID, stmt)
 }
 
@@ -211,7 +206,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.ctx.GetSessionVars().EnablePreparedPlanCache {
 		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.ctx, preparedObj)
 		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
-			0, bindSQL)
+			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 		if err != nil {
 			return err
 		}

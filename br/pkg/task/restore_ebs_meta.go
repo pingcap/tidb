@@ -36,8 +36,7 @@ import (
 )
 
 const (
-	flagMetaPhase        = "meta-phase"
-	flagDataPhase        = "data-phase"
+	flagPrepare          = "prepare"
 	flagOutputMetaFile   = "output-file"
 	flagVolumeType       = "volume-type"
 	flagVolumeIOPS       = "volume-iops"
@@ -46,8 +45,8 @@ const (
 
 // DefineRestoreSnapshotFlags defines common flags for the backup command.
 func DefineRestoreSnapshotFlags(command *cobra.Command) {
-	command.Flags().Bool(flagMetaPhase, false, "restore meta phase for snapshot based restore")
-	command.Flags().Bool(flagDataPhase, false, "restore data phase for snapshot based restore")
+	command.Flags().String(flagFullBackupType, string(FullBackupTypeKV), "full backup type")
+	command.Flags().Bool(flagPrepare, false, "prepare for snapshot based restore")
 	command.Flags().String(flagOutputMetaFile, "output.json", "the file path of output meta file")
 	command.Flags().Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
 	command.Flags().Uint(flagCloudAPIConcurrency, defaultCloudAPIConcurrency, "concurrency of calling cloud api")
@@ -56,8 +55,8 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
 
-	_ = command.Flags().MarkHidden(flagMetaPhase)
-	_ = command.Flags().MarkHidden(flagDataPhase)
+	_ = command.Flags().MarkHidden(flagFullBackupType)
+	_ = command.Flags().MarkHidden(flagPrepare)
 	_ = command.Flags().MarkHidden(flagOutputMetaFile)
 	_ = command.Flags().MarkHidden(flagSkipAWS)
 	_ = command.Flags().MarkHidden(flagCloudAPIConcurrency)

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -48,7 +49,7 @@ func TestColumnAdd(t *testing.T) {
 	tk.MustExec("insert t values (1, 2);")
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 
 	ct := testNewContext(store)
 	// set up hook
@@ -60,7 +61,7 @@ func TestColumnAdd(t *testing.T) {
 	)
 	first := true
 	var jobID int64
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		jobID = job.ID
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
@@ -80,6 +81,7 @@ func TestColumnAdd(t *testing.T) {
 			require.NoError(t, checkAddPublic(ct, writeOnlyTable, publicTable))
 		}
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t add column c3 int default 3")
 	tb := publicTable
@@ -93,7 +95,7 @@ func TestColumnAdd(t *testing.T) {
 			dropCol = tbl.VisibleCols()[2]
 		}
 	}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		if job.NotStarted() {
 			return
 		}
@@ -105,6 +107,7 @@ func TestColumnAdd(t *testing.T) {
 			}
 		}
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
 	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t drop column c3")
 	v = getSchemaVer(t, tk.Session())
@@ -113,7 +116,7 @@ func TestColumnAdd(t *testing.T) {
 
 	// Add column not default.
 	first = true
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc3 := func(job *model.Job) {
 		jobID = job.ID
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
@@ -133,6 +136,7 @@ func TestColumnAdd(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc3)
 	d.SetHook(tc)
 	tk.MustExec("alter table t add column c3 int")
 	testCheckJobDone(t, store, jobID, true)
@@ -146,7 +150,7 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 	tk.MustExec("create table t (a bigint primary key clustered AUTO_RANDOM(5));")
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 
 	var errCount int32 = 3
 	var genAutoRandErr error
@@ -433,4 +437,37 @@ func testNewContext(store kv.Storage) sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = store
 	return ctx
+}
+
+func TestIssue40150(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t40150 (a int) PARTITION BY HASH (a) PARTITIONS 2")
+	tk.MustContainErrMsg(`alter table t40150 rename column a to c`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+}
+
+func TestIssue40135(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t40135 ( a tinyint DEFAULT NULL, b varchar(32) DEFAULT 'md') PARTITION BY HASH (a) PARTITIONS 2")
+	one := true
+	hook := &callback.TestDDLCallback{Do: dom}
+	var checkErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if one {
+			one = false
+			_, checkErr = tk1.Exec("alter table t40135 change column a aNew SMALLINT NULL DEFAULT '-14996'")
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t40135 modify column a MEDIUMINT NULL DEFAULT '6243108' FIRST")
+
+	require.ErrorContains(t, checkErr, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }

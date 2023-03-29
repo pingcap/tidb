@@ -83,10 +83,14 @@ func (extractHelper) extractColInConsExpr(extractCols map[int64]*types.FieldName
 	results := make([]types.Datum, 0, len(args[1:]))
 	for _, arg := range args[1:] {
 		constant, ok := arg.(*expression.Constant)
-		if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
+		if !ok || constant.DeferredExpr != nil {
 			return "", nil
 		}
-		results = append(results, constant.Value)
+		v := constant.Value
+		if constant.ParamMarker != nil {
+			v = constant.ParamMarker.GetUserVar()
+		}
+		results = append(results, v)
 	}
 	return name.ColName.L, results
 }
@@ -117,10 +121,14 @@ func (extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.Fie
 	// SELECT * FROM t1 WHERE c='rhs'
 	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
-	if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
+	if !ok || constant.DeferredExpr != nil {
 		return "", nil
 	}
-	return name.ColName.L, []types.Datum{constant.Value}
+	v := constant.Value
+	if constant.ParamMarker != nil {
+		v = constant.ParamMarker.GetUserVar()
+	}
+	return name.ColName.L, []types.Datum{v}
 }
 
 // extract the OR expression, e.g:
@@ -202,6 +210,7 @@ func (helper extractHelper) extractCol(
 	for _, expr := range predicates {
 		fn, ok := expr.(*expression.ScalarFunction)
 		if !ok {
+			remained = append(remained, expr)
 			continue
 		}
 		var colName string
@@ -325,14 +334,14 @@ func (helper extractHelper) extractLikePattern(
 	var colName string
 	var datums []types.Datum
 	switch fn.FuncName.L {
-	case ast.EQ, ast.Like, ast.Regexp, ast.RegexpLike:
+	case ast.EQ, ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 		colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 	}
 	if colName == extractColName {
 		switch fn.FuncName.L {
 		case ast.EQ:
 			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
-		case ast.Like:
+		case ast.Like, ast.Ilike:
 			if needLike2Regexp {
 				return true, stringutil.CompileLike2Regexp(datums[0].GetString())
 			}
@@ -347,7 +356,7 @@ func (helper extractHelper) extractLikePattern(
 	}
 }
 
-func (helper extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
+func (extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
 	extractCols := make(map[int64]*types.FieldName)
 	for i, name := range names {
 		if name.ColName.L == colName {
@@ -361,7 +370,7 @@ func (helper extractHelper) findColumn(schema *expression.Schema, names []*types
 // For the expression that push down to the coprocessor, the function name is different with normal compare function,
 // Then getTimeFunctionName will do a sample function name convert.
 // Currently, this is used to support query `CLUSTER_SLOW_QUERY` at any time.
-func (helper extractHelper) getTimeFunctionName(fn *expression.ScalarFunction) string {
+func (extractHelper) getTimeFunctionName(fn *expression.ScalarFunction) string {
 	switch fn.Function.PbCode() {
 	case tipb.ScalarFuncSig_GTTime:
 		return ast.GT
@@ -382,7 +391,7 @@ func (helper extractHelper) getTimeFunctionName(fn *expression.ScalarFunction) s
 // For the expression that push down to the coprocessor, the function name is different with normal compare function,
 // Then getStringFunctionName will do a sample function name convert.
 // Currently, this is used to support query `CLUSTER_STMT_SUMMARY` at any string.
-func (helper extractHelper) getStringFunctionName(fn *expression.ScalarFunction) string {
+func (extractHelper) getStringFunctionName(fn *expression.ScalarFunction) string {
 	switch fn.Function.PbCode() {
 	case tipb.ScalarFuncSig_GTString:
 		return ast.GT
@@ -491,7 +500,7 @@ func (helper extractHelper) extractTimeRange(
 	return
 }
 
-func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
+func (extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
 	quantiles := make([]float64, 0, len(quantileSet))
 	for k := range quantileSet {
 		v, err := strconv.ParseFloat(k, 64)
@@ -505,7 +514,7 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 	return quantiles
 }
 
-func (helper extractHelper) parseUint64(uint64Set set.StringSet) []uint64 {
+func (extractHelper) parseUint64(uint64Set set.StringSet) []uint64 {
 	uint64s := make([]uint64, 0, len(uint64Set))
 	for k := range uint64Set {
 		v, err := strconv.ParseUint(k, 10, 64)
@@ -546,7 +555,7 @@ func (helper extractHelper) extractCols(
 	return remained, skipRequest, cols
 }
 
-func (helper extractHelper) convertToTime(t int64) time.Time {
+func (extractHelper) convertToTime(t int64) time.Time {
 	if t == 0 || t == math.MaxInt64 {
 		return time.Now()
 	}
@@ -998,6 +1007,7 @@ func (e *MetricSummaryTableExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
+	//nolint: ineffassign
 	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false)
 	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	e.SkipRequest = quantileSkip || metricsNameSkip
@@ -1006,7 +1016,7 @@ func (e *MetricSummaryTableExtractor) Extract(
 	return remained
 }
 
-func (e *MetricSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) string {
+func (*MetricSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	return ""
 }
 
@@ -1233,7 +1243,7 @@ func (e *SlowQueryExtractor) decodeBytesToTime(bs []byte) (int64, error) {
 	return 0, nil
 }
 
-func (e *SlowQueryExtractor) decodeToTime(handle kv.Handle) (int64, error) {
+func (*SlowQueryExtractor) decodeToTime(handle kv.Handle) (int64, error) {
 	tp := types.NewFieldType(mysql.TypeDatetime)
 	col := rowcodec.ColInfo{ID: 0, Ft: tp}
 	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
@@ -1393,39 +1403,100 @@ type StatementsSummaryExtractor struct {
 	// Digests represents digest applied to, and we should apply all digest if there is no digest specified.
 	// e.g: SELECT * FROM STATEMENTS_SUMMARY WHERE digest='8019af26debae8aa7642c501dbc43212417b3fb14e6aec779f709976b7e521be'
 	Digests set.StringSet
-	// Enable is true means the executor should use digest to locate statement summary.
-	// Enable is false, means the executor should keep the behavior compatible with before.
-	Enable bool
+
+	// Coarse time range predicate extracted from the where clause as:
+	// SELECT ... WHERE summary_begin_time <= endTime AND summary_end_time >= startTime
+	//
+	// N.B. it's only used by v2, so we should keep predicates not changed when extracting time range, or it will
+	// affect the correctness with v1.
+	CoarseTimeRange *TimeRange
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *StatementsSummaryExtractor) Extract(
-	_ sessionctx.Context,
+	sctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `digest` column
 	remained, skip, digests := e.extractCol(schema, names, predicates, "digest", false)
-	e.SkipRequest = skip
-	if e.SkipRequest {
+	if skip {
+		e.SkipRequest = true
 		return nil
 	}
-	if digests.Count() > 0 {
-		e.Enable = true
+	if !digests.Empty() {
 		e.Digests = digests
 	}
+
+	tr := e.findCoarseTimeRange(sctx, schema, names, remained)
+	if tr == nil {
+		return remained
+	}
+
+	if tr.StartTime.After(tr.EndTime) {
+		e.SkipRequest = true
+		return nil
+	}
+	e.CoarseTimeRange = tr
 	return remained
 }
 
-func (e *StatementsSummaryExtractor) explainInfo(_ *PhysicalMemTable) string {
+func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
-	if !e.Enable {
-		return ""
+	buf := bytes.NewBuffer(nil)
+	if !e.Digests.Empty() {
+		buf.WriteString(fmt.Sprintf("digests: [%s], ", extractStringFromStringSet(e.Digests)))
 	}
-	return fmt.Sprintf("digests: [%s]", extractStringFromStringSet(e.Digests))
+	if e.CoarseTimeRange != nil && p.ctx.GetSessionVars() != nil && p.ctx.GetSessionVars().StmtCtx != nil {
+		stmtCtx := p.ctx.GetSessionVars().StmtCtx
+		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone)
+		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone)
+		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
+		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
+		buf.WriteString(fmt.Sprintf("start_time:%v, end_time:%v, ", startTimeStr, endTimeStr))
+	}
+	// remove the last ", " in the message info
+	s := buf.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+func (e *StatementsSummaryExtractor) findCoarseTimeRange(
+	sctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) *TimeRange {
+	tz := sctx.GetSessionVars().StmtCtx.TimeZone
+	_, _, endTime := e.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
+	_, startTime, _ := e.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
+	return e.buildTimeRange(startTime, endTime)
+}
+
+func (e *StatementsSummaryExtractor) buildTimeRange(start, end int64) *TimeRange {
+	const defaultStatementsDuration = time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return nil
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultStatementsDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultStatementsDuration)
+	}
+	return &TimeRange{StartTime: startTime, EndTime: endTime}
 }
 
 // TikvRegionPeersExtractor is used to extract some predicates of cluster table.

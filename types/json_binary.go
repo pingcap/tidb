@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -275,7 +277,8 @@ func (bj BinaryJSON) GetElemCount() int {
 	return int(jsonEndian.Uint32(bj.Value))
 }
 
-func (bj BinaryJSON) arrayGetElem(idx int) BinaryJSON {
+// ArrayGetElem gets the element of the index `idx`.
+func (bj BinaryJSON) ArrayGetElem(idx int) BinaryJSON {
 	return bj.valEntryGet(headerSize + idx*valEntrySize)
 }
 
@@ -355,7 +358,7 @@ func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 			buf = append(buf, ", "...)
 		}
 		var err error
-		buf, err = bj.arrayGetElem(i).marshalTo(buf)
+		buf, err = bj.ArrayGetElem(i).marshalTo(buf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -527,6 +530,8 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 
 // HashValue converts certain JSON values for aggregate comparisons.
 // For example int64(3) == float64(3.0)
+// Other than the numeric condition, this function has to construct a bidirectional map between hash value
+// and the original representation
 func (bj BinaryJSON) HashValue(buf []byte) []byte {
 	switch bj.TypeCode {
 	case JSONTypeCodeInt64:
@@ -534,25 +539,65 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 		// In the future, it will be better to convert to a DECIMAL value instead
 		// See: https://github.com/pingcap/tidb/issues/9988
 		if bj.GetInt64() == int64(float64(bj.GetInt64())) {
+			buf = append(buf, JSONTypeCodeFloat64)
 			buf = appendBinaryFloat64(buf, float64(bj.GetInt64()))
 		} else {
+			buf = append(buf, bj.TypeCode)
+			buf = append(buf, bj.Value...)
+		}
+	case JSONTypeCodeUint64:
+		if bj.GetUint64() == uint64(float64(bj.GetUint64())) {
+			buf = append(buf, JSONTypeCodeFloat64)
+			buf = appendBinaryFloat64(buf, float64(bj.GetUint64()))
+		} else {
+			buf = append(buf, bj.TypeCode)
 			buf = append(buf, bj.Value...)
 		}
 	case JSONTypeCodeArray:
+		// this hash value is bidirectional, because you can get the element one-by-one
+		// and you know the end of it, as the elemCount is also appended here
+		buf = append(buf, bj.TypeCode)
 		elemCount := int(jsonEndian.Uint32(bj.Value))
+		buf = append(buf, bj.Value[0:dataSizeOff]...)
 		for i := 0; i < elemCount; i++ {
-			buf = bj.arrayGetElem(i).HashValue(buf)
+			buf = bj.ArrayGetElem(i).HashValue(buf)
 		}
 	case JSONTypeCodeObject:
+		// this hash value is bidirectional, because you can get the key using the json
+		// string format, and get the value accordingly.
+		buf = append(buf, bj.TypeCode)
 		elemCount := int(jsonEndian.Uint32(bj.Value))
+		buf = append(buf, bj.Value[0:dataSizeOff]...)
 		for i := 0; i < elemCount; i++ {
-			buf = append(buf, bj.objectGetKey(i)...)
+			keyJSON := CreateBinaryJSON(string(bj.objectGetKey(i)))
+			buf = append(buf, keyJSON.Value...)
 			buf = bj.objectGetVal(i).HashValue(buf)
 		}
 	default:
+		buf = append(buf, bj.TypeCode)
 		buf = append(buf, bj.Value...)
 	}
 	return buf
+}
+
+// GetValue return the primitive value of the JSON.
+func (bj BinaryJSON) GetValue() any {
+	switch bj.TypeCode {
+	case JSONTypeCodeInt64:
+		return bj.GetInt64()
+	case JSONTypeCodeUint64:
+		return bj.GetUint64()
+	case JSONTypeCodeDuration:
+		return bj.GetDuration()
+	case JSONTypeCodeFloat64:
+		return bj.GetFloat64()
+	case JSONTypeCodeString:
+		return bj.GetString()
+	case JSONTypeCodeDate, JSONTypeCodeDatetime:
+		return bj.GetTime()
+	}
+	logutil.BgLogger().Error("unreachable JSON type", zap.Any("type", bj.TypeCode))
+	return nil
 }
 
 // CreateBinaryJSON creates a BinaryJSON from interface.

@@ -71,7 +71,7 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
 	require.Equal(t, 1, ret.GetDecimal())
-	require.Equal(t, 6, ret.GetFlen())
+	require.Equal(t, 5, ret.GetFlen())
 
 	b.SetFlen(65)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)

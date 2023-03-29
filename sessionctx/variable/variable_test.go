@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"runtime"
@@ -90,7 +91,7 @@ func TestRegistrationOfNewSysVar(t *testing.T) {
 	sysVar := GetSysVar("mynewsysvar")
 	require.NotNil(t, sysVar)
 
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	// It is a boolean, try to set it to a bogus value
 	_, err := sysVar.Validate(vars, "ABCD", ScopeSession)
@@ -114,7 +115,7 @@ func TestRegistrationOfNewSysVar(t *testing.T) {
 
 func TestIntValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeInt, MinValue: 10, MaxValue: 300, AllowAutoValue: true}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "oN", ScopeSession)
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
@@ -139,7 +140,7 @@ func TestIntValidation(t *testing.T) {
 
 func TestUintValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeUnsigned, MinValue: 10, MaxValue: 300, AllowAutoValue: true}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "oN", ScopeSession)
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
@@ -174,7 +175,7 @@ func TestUintValidation(t *testing.T) {
 
 func TestEnumValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "randomstring", ScopeSession)
 	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of 'randomstring'", err.Error())
@@ -199,7 +200,7 @@ func TestEnumValidation(t *testing.T) {
 
 func TestDurationValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Second), MaxValue: uint64(time.Hour)}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "1hr", ScopeSession)
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
@@ -215,7 +216,7 @@ func TestDurationValidation(t *testing.T) {
 
 func TestFloatValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "10m0s", Type: TypeFloat, MinValue: 2, MaxValue: 7}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "stringval", ScopeSession)
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
@@ -234,7 +235,7 @@ func TestFloatValidation(t *testing.T) {
 
 func TestBoolValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: Off, Type: TypeBool}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "0.000", ScopeSession)
 	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '0.000'", err.Error())
@@ -270,6 +271,22 @@ func TestBoolValidation(t *testing.T) {
 	val, err = sv.Validate(vars, "0", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, Off, val)
+}
+
+func TestTimeValidation(t *testing.T) {
+	sv := SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: "23:59 +0000", Type: TypeTime}
+	vars := NewSessionVars(nil)
+
+	val, err := sv.Validate(vars, "23:59 +0000", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "23:59 +0000", val)
+
+	val, err = sv.Validate(vars, "3:00 +0000", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "03:00 +0000", val)
+
+	_, err = sv.Validate(vars, "0.000", ScopeSession)
+	require.Error(t, err)
 }
 
 func TestGetNativeValType(t *testing.T) {
@@ -311,7 +328,7 @@ func TestSynonyms(t *testing.T) {
 	sysVar := GetSysVar(TxnIsolation)
 	require.NotNil(t, sysVar)
 
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	// It does not permit SERIALIZABLE by default.
 	_, err := sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
@@ -342,7 +359,7 @@ func TestDeprecation(t *testing.T) {
 	sysVar := GetSysVar(TiDBIndexLookupConcurrency)
 	require.NotNil(t, sysVar)
 
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sysVar.Validate(vars, "123", ScopeSession)
 	require.NoError(t, err)
@@ -382,6 +399,9 @@ func TestScope(t *testing.T) {
 	require.False(t, sv.HasGlobalScope())
 	require.True(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.Error(t, sv.validateScope(ScopeGlobal))
 }
 
 func TestBuiltInCase(t *testing.T) {
@@ -411,21 +431,25 @@ func TestIsNoop(t *testing.T) {
 // the default itself must validate without error provided the scope and read-only is correct.
 // The default values should also be normalized for consistency.
 func TestDefaultValuesAreSettable(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	for _, sv := range GetSysVars() {
 		if sv.HasSessionScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeSession)
-			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
+			require.Equal(t, val, sv.Value)
 		}
 
 		if sv.HasGlobalScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeGlobal)
-			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
+			require.Equal(t, val, sv.Value)
 		}
 	}
+}
+
+func TestLimitBetweenVariable(t *testing.T) {
+	require.Less(t, DefTiDBGOGCTunerThreshold+0.05, DefTiDBServerMemoryLimitGCTrigger)
 }
 
 // TestSysVarNameIsLowerCase tests that no new sysvars are added with uppercase characters.
@@ -515,11 +539,38 @@ func TestSkipInitIsUsed(t *testing.T) {
 	}
 }
 
+func TestScopeToString(t *testing.T) {
+	require.Equal(t, "GLOBAL", ScopeGlobal.String())
+	require.Equal(t, "SESSION", ScopeSession.String())
+	require.Equal(t, "INSTANCE", ScopeInstance.String())
+	require.Equal(t, "NONE", ScopeNone.String())
+	tmp := ScopeSession + ScopeGlobal
+	require.Equal(t, "SESSION,GLOBAL", tmp.String())
+	// this is not currently possible, but might be in future.
+	// *but* global + instance is not possible. these are mutually exclusive by design.
+	tmp = ScopeSession + ScopeInstance
+	require.Equal(t, "SESSION,INSTANCE", tmp.String())
+}
+
 func TestValidateWithRelaxedValidation(t *testing.T) {
 	sv := GetSysVar(SecureAuth)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	val := sv.ValidateWithRelaxedValidation(vars, "1", ScopeGlobal)
 	require.Equal(t, "ON", val)
+
+	// Relaxed validation catches the error and squashes it.
+	// The incorrect value is returned as-is.
+	// I am not sure this is the correct behavior, we might need to
+	// change it to return the default instead in future.
+	sv = GetSysVar(DefaultAuthPlugin)
+	val = sv.ValidateWithRelaxedValidation(vars, "RandomText", ScopeGlobal)
+	require.Equal(t, "RandomText", val)
+
+	// Validation func fails, the error is also caught and squashed.
+	// The incorrect value is returned as-is.
+	sv = GetSysVar(InitConnect)
+	val = sv.ValidateWithRelaxedValidation(vars, "RandomText - should be valid SQL", ScopeGlobal)
+	require.Equal(t, "RandomText - should be valid SQL", val)
 }
 
 func TestInstanceConfigHasMatchingSysvar(t *testing.T) {
@@ -560,10 +611,10 @@ func TestInstanceScope(t *testing.T) {
 
 	count := len(GetSysVars())
 	sv := SysVar{Scope: ScopeInstance, Name: "newinstancesysvar", Value: On, Type: TypeBool,
-		SetGlobal: func(s *SessionVars, val string) error {
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return fmt.Errorf("set should fail")
 		},
-		GetGlobal: func(s *SessionVars) (string, error) {
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return "", fmt.Errorf("get should fail")
 		},
 	}
@@ -574,7 +625,7 @@ func TestInstanceScope(t *testing.T) {
 	sysVar := GetSysVar("newinstancesysvar")
 	require.NotNil(t, sysVar)
 
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	// It is a boolean, try to set it to a bogus value
 	_, err := sysVar.Validate(vars, "ABCD", ScopeInstance)
@@ -588,7 +639,7 @@ func TestInstanceScope(t *testing.T) {
 	require.Equal(t, "OFF", normalizedVal)
 	require.NoError(t, err)
 
-	err = sysVar.SetGlobalFromHook(vars, "OFF", true) // default is on
+	err = sysVar.SetGlobalFromHook(context.Background(), vars, "OFF", true) // default is on
 	require.Equal(t, "set should fail", err.Error())
 
 	// Test unregistration restores previous count
@@ -597,11 +648,17 @@ func TestInstanceScope(t *testing.T) {
 }
 
 func TestSetSysVar(t *testing.T) {
-	val := GetSysVar(SystemTimeZone).Value
+	vars := NewSessionVars(nil)
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	originalVal := GetSysVar(SystemTimeZone).Value
 	SetSysVar(SystemTimeZone, "America/New_York")
 	require.Equal(t, "America/New_York", GetSysVar(SystemTimeZone).Value)
-	SetSysVar(SystemTimeZone, val) // restore
-	require.Equal(t, val, GetSysVar(SystemTimeZone).Value)
+	// Test alternative Get
+	val, err := GetSysVar(SystemTimeZone).GetGlobalFromHook(context.Background(), vars)
+	require.Nil(t, err)
+	require.Equal(t, "America/New_York", val)
+	SetSysVar(SystemTimeZone, originalVal) // restore
+	require.Equal(t, originalVal, GetSysVar(SystemTimeZone).Value)
 }
 
 func TestSkipSysvarCache(t *testing.T) {
@@ -611,4 +668,22 @@ func TestSkipSysvarCache(t *testing.T) {
 	require.True(t, GetSysVar(TiDBGCConcurrency).SkipSysvarCache())
 	require.True(t, GetSysVar(TiDBGCScanLockMode).SkipSysvarCache())
 	require.False(t, GetSysVar(TiDBEnableAsyncCommit).SkipSysvarCache())
+}
+
+func TestTimeValidationWithTimezone(t *testing.T) {
+	sv := SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: "23:59 +0000", Type: TypeTime}
+	vars := NewSessionVars(nil)
+
+	// In timezone UTC
+	vars.TimeZone = time.UTC
+	val, err := sv.Validate(vars, "23:59", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "23:59 +0000", val)
+
+	// In timezone Asia/Shanghai
+	vars.TimeZone, err = time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	val, err = sv.Validate(vars, "23:59", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "23:59 +0800", val)
 }

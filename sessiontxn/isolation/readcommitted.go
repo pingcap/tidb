@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	isolation_metrics "github.com/pingcap/tidb/sessiontxn/isolation/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
@@ -47,7 +49,7 @@ func (s *stmtState) prepareStmt(useStartTS bool) error {
 
 // PessimisticRCTxnContextProvider provides txn context for isolation level read-committed
 type PessimisticRCTxnContextProvider struct {
-	baseTxnContextProvider
+	basePessimisticTxnContextProvider
 	stmtState
 	latestOracleTS uint64
 	// latestOracleTSValid shows whether we have already fetched a ts from pd and whether the ts we fetched is still valid.
@@ -59,15 +61,17 @@ type PessimisticRCTxnContextProvider struct {
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
 func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRCTxnContextProvider {
 	provider := &PessimisticRCTxnContextProvider{
-		baseTxnContextProvider: baseTxnContextProvider{
-			sctx:                  sctx,
-			causalConsistencyOnly: causalConsistencyOnly,
-			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
-				txnCtx.IsPessimistic = true
-				txnCtx.Isolation = ast.ReadCommitted
-			},
-			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
-				txn.SetOption(kv.Pessimistic, true)
+		basePessimisticTxnContextProvider: basePessimisticTxnContextProvider{
+			baseTxnContextProvider: baseTxnContextProvider{
+				sctx:                  sctx,
+				causalConsistencyOnly: causalConsistencyOnly,
+				onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
+					txnCtx.IsPessimistic = true
+					txnCtx.Isolation = ast.ReadCommitted
+				},
+				onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+					txn.SetOption(kv.Pessimistic, true)
+				},
 			},
 		},
 	}
@@ -84,7 +88,7 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
-	if err := p.baseTxnContextProvider.OnStmtStart(ctx, node); err != nil {
+	if err := p.basePessimisticTxnContextProvider.OnStmtStart(ctx, node); err != nil {
 		return err
 	}
 
@@ -101,30 +105,35 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 // NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
 func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() && sessionVars.InTxn() &&
-		!sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
+	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() &&
+		sessionVars.InTxn() && !sessionVars.RetryInfo.Retrying &&
+		plannercore.IsReadOnly(node, sessionVars) {
 		return true
 	}
 	return false
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
-func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(ctx context.Context, point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
 	case sessiontxn.StmtErrAfterQuery:
 		return p.handleAfterQueryError(err)
 	case sessiontxn.StmtErrAfterPessimisticLock:
-		return p.handleAfterPessimisticLockError(err)
+		return p.handleAfterPessimisticLockError(ctx, err)
 	default:
-		return p.baseTxnContextProvider.OnStmtErrorForNextAction(point, err)
+		return p.basePessimisticTxnContextProvider.OnStmtErrorForNextAction(ctx, point, err)
 	}
 }
 
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
+	if err := p.basePessimisticTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
+	failpoint.Inject("CallOnStmtRetry", func() {
+		sessiontxn.OnStmtRetryCountInc(p.sctx)
+	})
+	p.latestOracleTSValid = false
 	p.checkTSInWriteStmt = false
 	return p.prepareStmt(false)
 }
@@ -176,9 +185,11 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	}
 
 	p.prepareStmtTS()
+	start := time.Now()
 	if ts, err = p.stmtTSFuture.Wait(); err != nil {
 		return 0, err
 	}
+	p.sctx.GetSessionVars().DurationWaitTS += time.Since(start)
 
 	txn.SetOption(kv.SnapshotTS, ts)
 	p.stmtTS = ts
@@ -193,15 +204,14 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 		return sessiontxn.NoIdea()
 	}
 
-	p.latestOracleTSValid = false
+	isolation_metrics.RcReadCheckTSWriteConfilictCounter.Inc()
 
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
 	return sessiontxn.RetryReady()
 }
 
-func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
-	p.latestOracleTSValid = false
+func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx context.Context, lockErr error) (sessiontxn.StmtErrorAction, error) {
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
@@ -211,15 +221,29 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
 		retryable = true
+
+		// In fair locking mode, when statement retry happens, `retryFairLockingIfNeeded` should be
+		// called to make its state ready for retrying. But single-statement deadlock is an exception. We need to exit
+		// fair locking in single-statement-deadlock case, otherwise the lock this statement has acquired won't be
+		// released after retrying, so it still blocks another transaction and the deadlock won't be resolved.
+		if err := p.cancelFairLockingIfNeeded(ctx); err != nil {
+			return sessiontxn.ErrorAction(err)
+		}
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
 		logutil.Logger(p.ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
 			zap.String("err", lockErr.Error()))
 		retryable = true
+		if p.checkTSInWriteStmt {
+			isolation_metrics.RcWriteCheckTSWriteConfilictCounter.Inc()
+		}
 	}
 
 	if retryable {
+		if err := p.basePessimisticTxnContextProvider.retryFairLockingIfNeeded(ctx); err != nil {
+			return sessiontxn.ErrorAction(err)
+		}
 		return sessiontxn.RetryReady()
 	}
 	return sessiontxn.ErrorAction(lockErr)
@@ -305,7 +329,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 
 // GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
-	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
+	snapshot, err := p.basePessimisticTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +341,7 @@ func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.S
 
 // GetSnapshotWithStmtReadTS gets snapshot with read ts
 func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
-	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
+	snapshot, err := p.basePessimisticTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
 	if err != nil {
 		return nil, err
 	}

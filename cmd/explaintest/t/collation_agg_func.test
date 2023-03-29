@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 # These tests test the aggregate function's behavior according to collation.
 # The result of min/max of enum/set is wrong, please fix them soon.
 

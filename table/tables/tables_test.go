@@ -333,7 +333,7 @@ func TestUnsignedPK(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, len(row))
 	require.Equal(t, types.KindUint64, row[0].Kind())
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
@@ -378,18 +378,18 @@ func TestTableFromMeta(t *testing.T) {
 
 	// For test coverage
 	tbInfo.Columns[0].GeneratedExprString = "a"
-	_, err = tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.NoError(t, err)
 
 	tbInfo.Columns[0].GeneratedExprString = "test"
-	_, err = tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Error(t, err)
 	tbInfo.Columns[0].State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Nil(t, tb)
 	require.Error(t, err)
 	tbInfo.State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Nil(t, tb)
 	require.Error(t, err)
 
@@ -639,7 +639,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, len(records), i)
 
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
@@ -656,7 +656,7 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into ttt(k,c) values(1, 'tidb')")
 	tk.MustExec("insert into ttt(k,c) values(2, 'tidb')")
 	_, err := tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	// no auto-commit
@@ -664,13 +664,13 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	tk.MustExec("set @@tidb_constraint_check_in_place = 0")
 	tk.MustExec("begin")
 	_, err = tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
 	tk.MustExec("begin")
 	_, err = tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	// This test check that with @@tidb_constraint_check_in_place = 0, although there is not KV request for the unique index, the pessimistic lock should still be written.

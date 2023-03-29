@@ -5,18 +5,16 @@ package glue
 import (
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"go.uber.org/zap"
 	"golang.org/x/term"
 )
+
+const defaultTerminalWidth = 80
 
 // ConsoleOperations are some operations based on ConsoleGlue.
 type ConsoleOperations struct {
@@ -35,7 +33,7 @@ type ExtraField func() [2]string
 func WithTimeCost() ExtraField {
 	start := time.Now()
 	return func() [2]string {
-		return [2]string{"take", time.Since(start).String()}
+		return [2]string{"take", time.Since(start).Round(time.Millisecond).String()}
 	}
 }
 
@@ -43,6 +41,24 @@ func WithTimeCost() ExtraField {
 func WithConstExtraField(key string, value interface{}) ExtraField {
 	return func() [2]string {
 		return [2]string{key, fmt.Sprint(value)}
+	}
+}
+
+// WithCallbackExtraField adds an extra field with the callback.
+func WithCallbackExtraField(key string, value func() string) ExtraField {
+	return func() [2]string {
+		return [2]string{key, value()}
+	}
+}
+
+func printFinalMessage(extraFields []ExtraField) func() string {
+	return func() string {
+		fields := make([]string, 0, len(extraFields))
+		for _, fieldFunc := range extraFields {
+			field := fieldFunc()
+			fields = append(fields, fmt.Sprintf("%s = %s", field[0], color.New(color.Bold).Sprint(field[1])))
+		}
+		return fmt.Sprintf("%s { %s }", color.HiGreenString("DONE"), strings.Join(fields, ", "))
 	}
 }
 
@@ -56,7 +72,7 @@ func (ops ConsoleOperations) ShowTask(message string, extraFields ...ExtraField)
 			field := fieldFunc()
 			fields = append(fields, fmt.Sprintf("%s = %s", field[0], color.New(color.Bold).Sprint(field[1])))
 		}
-		ops.Printf("%s; %s\n", color.HiGreenString("DONE"), strings.Join(fields, ", "))
+		ops.Printf("%s { %s }\n", color.HiGreenString("DONE"), strings.Join(fields, ", "))
 	}
 }
 
@@ -90,26 +106,50 @@ func (ops ConsoleOperations) PromptBool(p string) bool {
 	}
 }
 
-func (ops *ConsoleOperations) CreateTable() *Table {
+func (ops ConsoleOperations) IsInteractive() bool {
+	f, ok := ops.In().(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
+}
+
+func (ops ConsoleOperations) Scanln(args ...interface{}) (int, error) {
+	return fmt.Fscanln(ops.In(), args...)
+}
+
+func (ops ConsoleOperations) GetWidth() int {
+	f, ok := ops.In().(*os.File)
+	if !ok {
+		return defaultTerminalWidth
+	}
+	w, _, err := term.GetSize(int(f.Fd()))
+	if err != nil {
+		return defaultTerminalWidth
+	}
+	return w
+}
+
+func (ops ConsoleOperations) CreateTable() *Table {
 	return &Table{
 		console: ops,
 	}
 }
 
 func (ops ConsoleOperations) Print(args ...interface{}) {
-	fmt.Fprint(ops, args...)
+	_, _ = fmt.Fprint(ops.Out(), args...)
 }
 
 func (ops ConsoleOperations) Println(args ...interface{}) {
-	fmt.Fprintln(ops, args...)
+	_, _ = fmt.Fprintln(ops.Out(), args...)
 }
 
 func (ops ConsoleOperations) Printf(format string, args ...interface{}) {
-	fmt.Fprintf(ops, format, args...)
+	_, _ = fmt.Fprintf(ops.Out(), format, args...)
 }
 
 type Table struct {
-	console *ConsoleOperations
+	console ConsoleOperations
 	items   [][2]string
 }
 
@@ -161,31 +201,25 @@ func (t *Table) Print() {
 
 // ConsoleGlue is the glue between BR and some type of console,
 // which is the port for interact with the user.
+// Generally, this is a abstraction of an UNIX terminal.
 type ConsoleGlue interface {
-	io.Writer
-
-	// IsInteractive checks whether the shell supports input.
-	IsInteractive() bool
-	Scanln(args ...interface{}) (int, error)
-	GetWidth() int
+	// Out returns the output port of the console.
+	Out() io.Writer
+	// In returns the input of the console.
+	// Usually is should be an *os.File.
+	In() io.Reader
 }
 
+// NoOPConsoleGlue is the glue for "embedded" BR, say, BRIE via SQL.
+// This Glue simply drop all console operations.
 type NoOPConsoleGlue struct{}
 
-func (NoOPConsoleGlue) Write(bs []byte) (int, error) {
-	return len(bs), nil
+func (NoOPConsoleGlue) In() io.Reader {
+	return strings.NewReader("")
 }
 
-func (NoOPConsoleGlue) IsInteractive() bool {
-	return false
-}
-
-func (NoOPConsoleGlue) Scanln(args ...interface{}) (int, error) {
-	return 0, nil
-}
-
-func (NoOPConsoleGlue) GetWidth() int {
-	return math.MaxUint32
+func (NoOPConsoleGlue) Out() io.Writer {
+	return io.Discard
 }
 
 func GetConsole(g Glue) ConsoleOperations {
@@ -195,30 +229,16 @@ func GetConsole(g Glue) ConsoleOperations {
 	return ConsoleOperations{ConsoleGlue: NoOPConsoleGlue{}}
 }
 
+// StdIOGlue is the console glue for CLI applications, like the BR CLI.
 type StdIOGlue struct{}
 
-func (s StdIOGlue) Write(p []byte) (n int, err error) {
-	return os.Stdout.Write(p)
+func (s StdIOGlue) Out() io.Writer {
+	return os.Stdout
 }
 
-// IsInteractive checks whether the shell supports input.
-func (s StdIOGlue) IsInteractive() bool {
+func (s StdIOGlue) In() io.Reader {
 	// should we detach whether we are in a interactive tty here?
-	return term.IsTerminal(int(os.Stdin.Fd()))
-}
-
-func (s StdIOGlue) Scanln(args ...interface{}) (int, error) {
-	return fmt.Scanln(args...)
-}
-
-func (s StdIOGlue) GetWidth() int {
-	width, _, err := term.GetSize(int(os.Stdin.Fd()))
-	if err != nil {
-		log.Warn("failed to get terminal size, using infinity", logutil.ShortError(err), zap.Int("fd", int(os.Stdin.Fd())))
-		return math.MaxUint32
-	}
-	log.Debug("terminal width got.", zap.Int("width", width))
-	return width
+	return os.Stdin
 }
 
 // PrettyString is a string with ANSI escape sequence which would change its color.
