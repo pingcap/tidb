@@ -881,21 +881,21 @@ func (e *LoadDataWorker) mergeAndSetMessage() string {
 
 		warns := make([]stmtctx.SQLWarn, numWarnings)
 		n := 0
-		lastInsertId := uint64(0)
+		lastInsertID := uint64(0)
 		for _, w := range e.encodeWorkers {
 			n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
-			if w.lastInsertID > lastInsertId {
-				lastInsertId = w.lastInsertID
+			if w.lastInsertID > lastInsertID {
+				lastInsertID = w.lastInsertID
 			}
 		}
 		for _, w := range e.commitWorkers {
 			n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
-			if w.lastInsertID > lastInsertId {
-				lastInsertId = w.lastInsertID
+			if w.lastInsertID > lastInsertID {
+				lastInsertID = w.lastInsertID
 			}
 		}
 		userStmtCtx.SetWarnings(warns)
-		userStmtCtx.LastInsertID = lastInsertId
+		userStmtCtx.LastInsertID = lastInsertID
 	}
 	return msg
 }
