@@ -300,7 +300,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		return errors.Trace(err)
 	}
 	b.writerPool = writerPool
-	b.copReqSenderPool.resultsCh = writerPool
+	b.copReqSenderPool.chunkSender = writerPool
 	b.copReqSenderPool.adjustSize(readerCnt)
 	return nil
 }

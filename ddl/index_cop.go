@@ -59,14 +59,14 @@ func copReadChunkPoolSize() int {
 	return 10 * int(variable.GetDDLReorgWorkerCounter())
 }
 
-// resultChan is used to receive the result of coprocessor request.
-type resultChan interface {
+// chunkSender is used to receive the result of coprocessor request.
+type chunkSender interface {
 	AddTask(idxRecResult)
 }
 
 type copReqSenderPool struct {
-	tasksCh   chan *reorgBackfillTask
-	resultsCh resultChan
+	tasksCh     chan *reorgBackfillTask
+	chunkSender chunkSender
 
 	ctx    context.Context
 	copCtx *copContext
@@ -91,7 +91,7 @@ func (c *copReqSender) run() {
 	defer p.wg.Done()
 	var curTaskID int
 	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
-		p.resultsCh.AddTask(idxRecResult{id: curTaskID, err: dbterror.ErrReorgPanic})
+		p.chunkSender.AddTask(idxRecResult{id: curTaskID, err: dbterror.ErrReorgPanic})
 	}, false)
 	for {
 		if util.HasCancelled(c.ctx) {
@@ -106,12 +106,12 @@ func (c *copReqSender) run() {
 			zap.Int("id", task.id), zap.String("task", task.String()))
 		ver, err := p.store.CurrentVersion(kv.GlobalTxnScope)
 		if err != nil {
-			p.resultsCh.AddTask(idxRecResult{id: task.id, err: err})
+			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
 			return
 		}
 		rs, err := p.copCtx.buildTableScan(p.ctx, ver.Ver, task.startKey, task.excludedEndKey())
 		if err != nil {
-			p.resultsCh.AddTask(idxRecResult{id: task.id, err: err})
+			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
 			return
 		}
 		failpoint.Inject("MockCopSenderPanic", func(val failpoint.Value) {
@@ -124,12 +124,12 @@ func (c *copReqSender) run() {
 			srcChk := p.getChunk()
 			done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk)
 			if err != nil {
-				p.resultsCh.AddTask(idxRecResult{id: task.id, err: err})
+				p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
 				p.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return
 			}
-			p.resultsCh.AddTask(idxRecResult{id: task.id, chunk: srcChk, done: done})
+			p.chunkSender.AddTask(idxRecResult{id: task.id, chunk: srcChk, done: done})
 		}
 		terror.Call(rs.Close)
 	}
