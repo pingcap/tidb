@@ -480,6 +480,7 @@ func (e *LoadDataWorker) doLoad(
 		case readerInfoCh <- readerInfos[i]:
 		}
 	}
+	close(readerInfoCh)
 
 	err = group.Wait()
 	msg = e.mergeAndSetMessage()
