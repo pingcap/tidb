@@ -4248,7 +4248,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tiflash_coprocessor_request_handle_seconds_sum[1m])) by (type) /sum(rate(tiflash_coprocessor_request_handle_seconds_count[1m])) by (type)",
+              "expr": "sum(rate(tiflash_coprocessor_request_handle_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type) /sum(rate(tiflash_coprocessor_request_handle_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
@@ -4588,7 +4588,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tiflash_raft_wait_index_duration_seconds_sum[1m]))/sum(rate(tiflash_raft_wait_index_duration_seconds_count[1m]))",
+              "expr": "sum(rate(tiflash_raft_wait_index_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m]))/sum(rate(tiflash_raft_wait_index_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m]))",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
@@ -4725,7 +4725,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tiflash_raft_read_index_duration_seconds_sum[1m]))/sum(rate(tiflash_raft_read_index_duration_seconds_count[1m]))",
+              "expr": "sum(rate(tiflash_raft_read_index_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m]))/sum(rate(tiflash_raft_read_index_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m]))",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
