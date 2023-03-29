@@ -42,7 +42,7 @@ type backfillScheduler interface {
 	setupWorkers() error
 	close(force bool)
 
-	sendTask(task *reorgBackfillTask) error
+	sendTask(task *reorgBackfillTask)
 	drainTasks()
 	receiveResult() (*backfillResult, bool)
 
@@ -108,9 +108,8 @@ func (b *txnBackfillScheduler) setupWorkers() error {
 	return b.adjustWorkerSize()
 }
 
-func (b *txnBackfillScheduler) sendTask(task *reorgBackfillTask) error {
+func (b *txnBackfillScheduler) sendTask(task *reorgBackfillTask) {
 	b.taskCh <- task
-	return nil
 }
 
 func (b *txnBackfillScheduler) drainTasks() {
@@ -293,17 +292,17 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		return errors.Trace(err)
 	}
 	b.copReqSenderPool = copReqSenderPool
-	_, writerCnt := b.expectedWorkerSize()
+	readerCnt, writerCnt := b.expectedWorkerSize()
 	skipReg := workerpool.OptionSkipRegister[idxRecResult]{}
 	writerPool, err := workerpool.NewWorkerPool[idxRecResult]("ingest_writer",
 		poolutil.DDL, writerCnt, b.createWorker, skipReg)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b.reorgInfo.d.setDDLLabelForTopSQL(job.ID, job.Query)
 	b.writerPool = writerPool
 	b.copReqSenderPool.resultsCh = writerPool
-	return b.adjustWorkerSize()
+	b.copReqSenderPool.adjustSize(readerCnt)
+	return nil
 }
 
 func (b *ingestBackfillScheduler) close(force bool) {
@@ -324,13 +323,8 @@ func (b *ingestBackfillScheduler) close(force bool) {
 	b.closed = true
 }
 
-func (b *ingestBackfillScheduler) sendTask(task *reorgBackfillTask) error {
-	select {
-	case b.taskCh <- task:
-		return nil
-	case err := <-b.poolErr:
-		return err
-	}
+func (b *ingestBackfillScheduler) sendTask(task *reorgBackfillTask) {
+	b.taskCh <- task
 }
 
 func (b *ingestBackfillScheduler) drainTasks() {
@@ -343,8 +337,8 @@ func (b *ingestBackfillScheduler) receiveResult() (*backfillResult, bool) {
 	select {
 	case err := <-b.poolErr:
 		return &backfillResult{err: err}, true
-	case rs, err := <-b.resultCh:
-		return rs, err
+	case rs, ok := <-b.resultCh:
+		return rs, ok
 	}
 }
 
@@ -462,6 +456,7 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		return
 	}
 	result.scanCount = count
+	result.addedCount = count
 	result.nextKey = nextKey
 	w.metricCounter.Add(float64(count))
 	if ResultCounterForTest != nil && result.err == nil {

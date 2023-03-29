@@ -596,6 +596,8 @@ func handleOneResult(result *backfillResult, scheduler backfillScheduler, consum
 		return result.err
 	}
 	*totalAddedCount += int64(result.addedCount)
+	reorgCtx := consumer.dc.getReorgCtx(reorgInfo.Job.ID)
+	reorgCtx.setRowCount(*totalAddedCount)
 	keeper.updateNextKey(result.taskID, result.nextKey)
 	if taskSeq%(scheduler.currentWorkerSize()*4) == 0 {
 		err := consumer.dc.isReorgRunnable(reorgInfo.ID, false)
@@ -687,10 +689,7 @@ func sendTasks(scheduler backfillScheduler, consumer *resultConsumer, t table.Ph
 		if consumer.shouldAbort() {
 			return nil, nil
 		}
-		err := scheduler.sendTask(task)
-		if err != nil {
-			return nil, err
-		}
+		scheduler.sendTask(task)
 	}
 
 	if len(batchTasks) < len(kvRanges) {
@@ -847,9 +846,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		}
 	}
 	scheduler.close(false)
-	rs := consumer.getResult()
-	job.SetRowCount(totalAddedCount)
-	return rs
+	return consumer.getResult()
 }
 
 func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
