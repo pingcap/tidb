@@ -496,14 +496,10 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		ck := verify.MakeKVChecksum(totalBytes, totalKvs, totalChecksum)
 		baseTotalChecksum = &ck
 	}
-<<<<<<< HEAD
+
 	log.L().Info("check table checksum", zap.String("table", m.tr.tableName),
-		zap.Bool("checksum", needChecksum), zap.String("new_status", newStatus.String()))
-=======
-	log.FromContext(ctx).Info("check table checksum", zap.String("table", m.tr.tableName),
 		zap.Bool("otherHasDupe", otherHasDupe), zap.Bool("needRemoteDupe", needRemoteDupe),
 		zap.String("new_status", newStatus.String()))
->>>>>>> 7255868dae0 (lightning: do resolve conflict job when other lightning has local dupes (#41157))
 	return
 }
 
