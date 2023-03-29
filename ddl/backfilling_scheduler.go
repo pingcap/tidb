@@ -87,7 +87,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessio
 func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
 	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
-	decodeColMap, err := makeupDecodeColMap(sessCtx, info.dbInfo.Name, tbl)
+	decColMap, err := makeupDecodeColMap(sessCtx, info.dbInfo.Name, tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *ses
 		sessPool:     sessPool,
 		tp:           tp,
 		tbl:          tbl,
-		decodeColMap: decodeColMap,
+		decodeColMap: decColMap,
 		jobCtx:       jobCtx,
 		workers:      make([]*backfillWorker, 0, variable.GetDDLReorgWorkerCounter()),
 		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
@@ -243,17 +243,6 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
 }
 
-func canSkipError(jobID int64, workerCnt int, err error) bool {
-	if workerCnt > 0 {
-		// The error can be skipped because the rest workers can handle the tasks.
-		return true
-	}
-	logutil.BgLogger().Warn("[ddl] create add index backfill worker failed",
-		zap.Int("current worker count", workerCnt),
-		zap.Int64("job ID", jobID), zap.Error(err))
-	return false
-}
-
 func (b *txnBackfillScheduler) close(force bool) {
 	if b.closed {
 		return
@@ -280,11 +269,10 @@ type ingestBackfillScheduler struct {
 
 	copReqSenderPool *copReqSenderPool
 
-	writerPool   *workerpool.WorkerPool[idxRecResult]
-	writerMaxID  atomic.Int64
-	writerChkCnt atomic.Int64
-	poolErr      chan error
-	engineInfo   *ingest.EngineInfo
+	writerPool  *workerpool.WorkerPool[idxRecResult]
+	writerMaxID atomic.Int64
+	poolErr     chan error
+	engineInfo  *ingest.EngineInfo
 }
 
 func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo, tbl table.PhysicalTable) *ingestBackfillScheduler {
@@ -303,7 +291,8 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	job := b.reorgInfo.Job
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 	if !ok {
-		return errors.Trace(errors.New(ingest.LitErrGetBackendFail))
+		logutil.BgLogger().Error(ingest.LitErrGetBackendFail, zap.Int64("job ID", job.ID))
+		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	ei, err := bc.EngMgr.Register(bc, job.ID, b.reorgInfo.currElement.ID, job.SchemaName, job.TableName)
 	if err != nil {
