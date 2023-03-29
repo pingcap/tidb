@@ -446,10 +446,10 @@ func (w *backfillWorker) runTask(task *reorgBackfillTask) (result *backfillResul
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	logutil.BgLogger().Info("[ddl] backfill worker start", zap.Stringer("worker", w))
 	var curTaskID int
+	defer w.wg.Done()
 	defer util.Recover(metrics.LabelDDL, "backfillWorker.run", func() {
 		w.resultCh <- &backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic}
 	}, false)
-	defer w.wg.Done()
 	for {
 		if util.HasCancelled(w.ctx) {
 			logutil.BgLogger().Info("[ddl] backfill worker exit on context done", zap.Stringer("worker", w))
