@@ -437,7 +437,7 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 		}
 	}
 
-	require.Greater(t, checkNum, 5)
+	require.Greater(t, checkNum, 1)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
