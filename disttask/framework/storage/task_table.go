@@ -213,6 +213,22 @@ func (stm *GlobalTaskManager) GetTaskByID(taskID int64) (task *proto.Task, err e
 	return row2GlobeTask(rs[0]), nil
 }
 
+// GetTaskByKey gets the task by the task key
+func (stm *GlobalTaskManager) GetTaskByKey(key string) (task *proto.Task, err error) {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	rs, err := execSQL(stm.ctx, stm.se, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where task_key = %?", key)
+	if err != nil {
+		return task, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	return row2GlobeTask(rs[0]), nil
+}
+
 // SubTaskManager is the manager of subtask.
 type SubTaskManager struct {
 	ctx context.Context
