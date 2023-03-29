@@ -55,8 +55,8 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
 	case *driver.ValueExpr:
 		pr.params = append(pr.params, n)
-		// offset is used as order in non-prepared plan cache.
-		param := ast.NewParamMarkerExpr(len(pr.params) - 1)
+		param := ast.NewParamMarkerExpr(len(pr.params) - 1)      // offset is used as order in non-prepared plan cache.
+		param.(*driver.ParamMarkerExpr).Datum = *n.Datum.Clone() // init the ParamMakerExpr's Datum
 		return param, true
 	}
 	return in, false
@@ -136,7 +136,7 @@ func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
 	exprs := make([]expression.Expression, 0, len(params))
 	for _, p := range params {
 		tp := new(types.FieldType)
-		types.DefaultParamTypeForValue(p.Datum.GetValue(), tp)
+		types.InferParamTypeFromDatum(&p.Datum, tp)
 		exprs = append(exprs, &expression.Constant{
 			Value:   p.Datum,
 			RetType: tp,

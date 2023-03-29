@@ -17,6 +17,7 @@ go_library(
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
 
@@ -27,12 +28,14 @@ go_test(
         "detach_test.go",
         "main_test.go",
         "operate_test.go",
+        "progress_test.go",
         "show_test.go",
         "util_test.go",
     ],
     embed = [":asyncloaddata"],
     flaky = True,
     race = "on",
+    shard_count = 6,
     deps = [
         "//br/pkg/lightning/config",
         "//executor/importer",

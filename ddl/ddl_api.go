@@ -4049,6 +4049,9 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
+	if err == nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+	}
 	return errors.Trace(err)
 }
 
@@ -5039,10 +5042,12 @@ func GetModifiableColumnJob(
 			}
 			pAst := at.Specs[0].Partition
 			sv := sctx.GetSessionVars().StmtCtx
-			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate
-			sv.TruncateAsWarning, sv.IgnoreTruncate = false, false
+			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate.Load()
+			sv.TruncateAsWarning = false
+			sv.IgnoreTruncate.Store(false)
 			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo)
-			sv.TruncateAsWarning, sv.IgnoreTruncate = oldTruncAsWarn, oldIgnoreTrunc
+			sv.TruncateAsWarning = oldTruncAsWarn
+			sv.IgnoreTruncate.Store(oldIgnoreTrunc)
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}

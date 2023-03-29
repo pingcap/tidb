@@ -69,7 +69,7 @@ func TestGetInstance(t *testing.T) {
 	instanceID, err := dispatcher.GetEligibleInstance(ctx)
 	require.Lenf(t, instanceID, 0, "instanceID:%d", instanceID)
 	require.EqualError(t, err, "not found instance")
-	instanceIDs, err := dsp.GetTaskAllInstances(ctx, 1)
+	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, 1)
 	require.Lenf(t, instanceIDs, 0, "instanceID:%d", instanceID)
 	require.NoError(t, err)
 
@@ -91,7 +91,7 @@ func TestGetInstance(t *testing.T) {
 	if instanceID != uuids[0] && instanceID != uuids[1] {
 		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
 	}
-	instanceIDs, err = dsp.GetTaskAllInstances(ctx, 1)
+	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, 1)
 	require.Lenf(t, instanceIDs, 0, "instanceID:%d", instanceID)
 	require.NoError(t, err)
 
@@ -105,7 +105,7 @@ func TestGetInstance(t *testing.T) {
 	}
 	err = subTaskMgr.AddNewTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
-	instanceIDs, err = dsp.GetTaskAllInstances(ctx, gTaskID)
+	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
 	require.Equal(t, []string{uuids[1]}, instanceIDs)
 	// server ids: uuid0, uuid1
@@ -117,7 +117,7 @@ func TestGetInstance(t *testing.T) {
 	}
 	err = subTaskMgr.AddNewTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
-	instanceIDs, err = dsp.GetTaskAllInstances(ctx, gTaskID)
+	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(uuids))
 	require.ElementsMatch(t, instanceIDs, uuids)
@@ -161,7 +161,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
-		taskID, err := gTaskMgr.AddNewTask(taskTypeExample, 0, nil)
+		taskID, err := gTaskMgr.AddNewTask(fmt.Sprintf("%d", i), taskTypeExample, 0, nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
@@ -177,7 +177,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		require.Equal(t, subtasks, int64(subtaskCnt))
 	}
 	// test parallelism control
-	taskID, err := gTaskMgr.AddNewTask(taskTypeExample, 0, nil)
+	taskID, err := gTaskMgr.AddNewTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
 	require.NoError(t, err)
 	checkGetRunningGTaskCnt()
 	// Clean the task.
@@ -251,7 +251,7 @@ const taskTypeExample = "task_example"
 type NumberExampleHandle struct {
 }
 
-func (n NumberExampleHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *proto.Task) (metas [][]byte, err error) {
+func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepInit
 	}
@@ -271,7 +271,7 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *pro
 	return metas, nil
 }
 
-func (n NumberExampleHandle) ProcessErrFlow(_ dispatcher.Dispatch, _ *proto.Task, _ string) (meta []byte, err error) {
+func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
 }

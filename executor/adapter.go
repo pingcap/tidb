@@ -144,7 +144,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return
 		}
 		err = errors.Errorf("%v", r)
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog()), zap.Stack("stack"))
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 
 	err = a.stmt.next(ctx, a.executor, req)
@@ -459,7 +459,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog()), zap.Stack("stack"))
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
@@ -552,19 +552,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
-
-	failpoint.Inject("mockDelayInnerSessionExecute", func() {
-		var curTxnStartTS uint64
-		if cmd != mysql.ComSleep || sctx.GetSessionVars().InTxn() {
-			curTxnStartTS = sctx.GetSessionVars().TxnCtx.StartTS
-		}
-		if sctx.GetSessionVars().SnapshotTS != 0 {
-			curTxnStartTS = sctx.GetSessionVars().SnapshotTS
-		}
-		logutil.BgLogger().Info("Enable mockDelayInnerSessionExecute when execute statement",
-			zap.Uint64("startTS", curTxnStartTS))
-		time.Sleep(200 * time.Millisecond)
-	})
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
@@ -1366,7 +1353,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), metrics.LblError).Inc()
 		}
 	}
-	sessVars.PrevStmt = FormatSQL(a.GetTextToLog())
+	sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))
 
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
@@ -1457,7 +1444,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && !force {
 		return
 	}
-	sql := FormatSQL(a.GetTextToLog())
+	sql := FormatSQL(a.GetTextToLog(true))
 	_, digest := stmtCtx.SQLDigest()
 
 	var indexNames string
@@ -1811,7 +1798,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	sql := a.GetTextToLog()
+	sql := a.GetTextToLog(false)
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -1885,11 +1872,15 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 }
 
 // GetTextToLog return the query text to log.
-func (a *ExecStmt) GetTextToLog() string {
+func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	var sql string
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.EnableRedactLog {
-		sql, _ = sessVars.StmtCtx.SQLDigest()
+		if keepHint {
+			sql = parser.NormalizeKeepHint(sessVars.StmtCtx.OriginalSQL)
+		} else {
+			sql, _ = sessVars.StmtCtx.SQLDigest()
+		}
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {

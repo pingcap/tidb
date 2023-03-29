@@ -125,7 +125,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		topsql.AttachAndRegisterSQLInfo(ctx, stmt.NormalizedSQL, stmt.SQLDigest, vars.InRestrictedSQL)
 	}
 
-	e.ctx.GetSessionVars().PlanID = 0
+	e.ctx.GetSessionVars().PlanID.Store(0)
 	e.ctx.GetSessionVars().PlanColumnID.Store(0)
 	e.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	// In MySQL prepare protocol, the server need to tell the client how many column the prepared statement would return when executing it.
@@ -206,7 +206,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.ctx.GetSessionVars().EnablePreparedPlanCache {
 		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.ctx, preparedObj)
 		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
-			0, bindSQL)
+			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 		if err != nil {
 			return err
 		}
