@@ -1342,10 +1342,16 @@ func (do *Domain) initDistTaskLoop(ctx context.Context) error {
 		return err
 	}
 
+	storage.SetGlobalTaskManager(gm)
+	storage.SetSubTaskManager(sm)
 	do.wg.Run(func() {
+		defer func() {
+			storage.SetGlobalTaskManager(nil)
+			storage.SetSubTaskManager(nil)
+			se1.Close()
+			se2.Close()
+		}()
 		do.distTaskFrameworkLoop(ctx, gm, sm, schedulerManager)
-		se1.Close()
-		se2.Close()
 	}, "distTaskFrameworkLoop")
 	return nil
 }
