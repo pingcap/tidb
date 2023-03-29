@@ -19,6 +19,7 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func (s *mockGCSSuite) TestLoadCSV() {
@@ -348,4 +349,9 @@ func (s *mockGCSSuite) TestGBK() {
 		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
 		"2 丐丑丒专且丕世丗丘丙业丛东丝丞丢",
 	))
+
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
+		INTO TABLE load_charset.utf8mb4 CHARACTER SET unknown`, gcsEndpoint)
+	err := s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "Unknown character set: 'unknown'")
 }
