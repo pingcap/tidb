@@ -367,7 +367,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 
 	// range partition table
-	tk.MustExec(`create table trange(a int, b int, index idx_a(a)) partition by range(a) (
+	tk.MustExec(`create table trange(a int, b int, index idx_a(a), index idx_b(b)) partition by range(a) (
 		partition p0 values less than(300),
 		partition p1 values less than (500),
 		partition p2 values less than(1100));`)
@@ -376,7 +376,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	tk.MustExec("create table thash(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
 
 	// regular table
-	tk.MustExec("create table tregular(a int, b int, index idx_a(a))")
+	tk.MustExec("create table tregular(a int, b int, index idx_a(a), index idx_b(b))")
 
 	// range partition table with int pk
 	tk.MustExec(`create table trange_intpk(a int primary key, b int) partition by range(a) (
@@ -437,7 +437,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		partition p2 values in (%s),
 		partition p3 values in (%s)
 	)`, listVals1, listVals2, listVals3))
-	tk.MustExec(fmt.Sprintf(`create table tlist(a int, b int, index idx_a(a)) partition by list(a)(
+	tk.MustExec(fmt.Sprintf(`create table tlist(a int, b int, index idx_a(a), index idx_b(b)) partition by list(a)(
 		partition p1 values in (%s),
 		partition p2 values in (%s),
 		partition p3 values in (%s)
@@ -546,6 +546,32 @@ func TestOrderByAndLimit(t *testing.T) {
 		queryHashPartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v", x, x+1, maxEle, y)
 		queryListPartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from tlist use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v", x, x+1, maxEle, y)
 		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v;", x, x+1, maxEle, y)
+		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "Limit"))
+		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "IndexLookUp"))
+		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "Limit"))
+		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "IndexLookUp"))
+		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "Limit"))
+		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "IndexLookUp"))
+		require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
+		require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
+		require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
+		tk.MustQuery(queryRangePartitionWithLimitHint).Sort().Check(regularResult)
+		tk.MustQuery(queryHashPartitionWithLimitHint).Sort().Check(regularResult)
+		tk.MustQuery(queryListPartitionWithLimitHint).Sort().Check(regularResult)
+	}
+
+	// test indexLookUp with order property pushed down.
+	for i := 0; i < 100; i++ {
+		// explain select * from t where b > {y}  use index(idx_b) order by b limit {x}; // check if IndexLookUp is used
+		// select * from t where b > {y} use index(idx_b) order by b limit {x}; // it can return the correct result
+		x := rand.Intn(1999)
+		y := rand.Intn(2000) + 1
+		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(b), 2000) from (select * from tregular use index(idx_b) where b > %v order by b limit %v) t", x, y)).Rows()[0][0]
+		queryRangePartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from trange use index(idx_b) where b > %v and b < greatest(%v+1, %v) order by b limit %v", x, x+1, maxEle, y)
+		queryHashPartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash use index(idx_b) where b > %v and b < greatest(%v+1, %v) order by b limit %v", x, x+1, maxEle, y)
+		queryListPartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from tlist use index(idx_b) where b > %v and b < greatest(%v+1, %v) order by b limit %v", x, x+1, maxEle, y)
+		queryRegular := fmt.Sprintf("select * from tregular use index(idx_b) where b > %v and b < greatest(%v+1, %v) order by b limit %v;", x, x+1, maxEle, y)
 		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "Limit"))
 		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "IndexLookUp"))
 		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "Limit"))

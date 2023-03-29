@@ -3797,17 +3797,15 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tbl, err
 }
 
-func buildIndexReq(ctx sessionctx.Context, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
+func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := constructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
+	schemaLen := len(columns)
 	indexReq.OutputOffsets = []uint32{}
 	for i := 0; i < handleLen; i++ {
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen+i))
-	}
-	if len(indexReq.OutputOffsets) == 0 {
-		indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
 	}
 
 	if len(plans[0].(*plannercore.PhysicalIndexScan).ByItems) != 0 {
@@ -3819,14 +3817,19 @@ func buildIndexReq(ctx sessionctx.Context, schemaLen, handleLen int, plans []pla
 			if !ok {
 				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
 			}
-			for _, c1 := range tblInfo.Columns {
-				if c1.ID == c.ID {
-					offset = append(offset, uint32(c1.Offset))
+			column := model.FindColumnInfoByID(tblInfo.Columns, c.ID)
+			for i, idxColumn := range columns {
+				if idxColumn.Name.L == column.Name.L {
+					offset = append(offset, uint32(i))
 					break
 				}
 			}
 		}
 		indexReq.OutputOffsets = append(offset, indexReq.OutputOffsets...)
+	}
+
+	if len(indexReq.OutputOffsets) == 0 {
+		indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
 	}
 	return indexReq, err
 }
@@ -3844,7 +3847,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		handleLen++
 	}
 
-	indexReq, err := buildIndexReq(b.ctx, len(is.Index.Columns), handleLen, v.IndexPlans)
+	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -4018,7 +4021,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, err = buildIndexReq(b.ctx, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
+			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 		} else {
