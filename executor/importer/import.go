@@ -105,6 +105,8 @@ var (
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 )
 
+// GetKVStore returns a kv.Storage.
+// kv encoder of physical mode needs it.
 var GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
 
 // FieldMapping indicates the relationship between input field and table column or user variable
