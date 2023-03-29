@@ -688,11 +688,12 @@ func (tr *TableRestore) postProcess(
 		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
 		var err error
-		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
+		if tblInfo.ContainsAutoRandomBits() {
+			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
 			var maxAutoRandom, autoRandomTotalBits uint64
 			autoRandomTotalBits = 64
 			autoRandomBits := tblInfo.AutoRandomBits // range from (0, 15]
-			if !tblInfo.IsAutoRandomBitColUnsigned() {
+			if !mysql.HasUnsignedFlag(ft.GetFlag()) {
 				// if auto_random is signed, leave one extra bit
 				autoRandomTotalBits = 63
 			}
