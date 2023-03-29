@@ -93,7 +93,7 @@ func TestFrameworkStartUp(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	gm := storage.NewGlobalTaskManager(context.TODO(), tk.Session())
-	taskID, err := gm.AddNewTask("type1", 8, nil)
+	taskID, err := gm.AddNewTask("key1", "type1", 8, nil)
 	require.NoError(t, err)
 	start := time.Now()
 
