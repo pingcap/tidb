@@ -435,10 +435,6 @@ func isAutoIncCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasAutoIncrementFlag(colInfo.GetFlag())
 }
 
-func isPKCol(colInfo *model.ColumnInfo) bool {
-	return mysql.HasPriKeyFlag(colInfo.GetFlag())
-}
-
 func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
 	var (
 		value types.Datum
