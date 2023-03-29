@@ -1052,15 +1052,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	needPushDown := len(cols) > 0
-<<<<<<< HEAD
-	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
-=======
-	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDownToTiKV(copTask) {
-		newTask, changed := p.pushTopNDownToDynamicPartition(copTask)
-		if changed {
-			return newTask
-		}
->>>>>>> d2d91b5d969 (planner: add more checks when pushing TopN down (#41370))
+	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1072,12 +1064,8 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
-<<<<<<< HEAD
 		copTask.addCost(pushedDownTopN.GetCost(inputCount, false))
-	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDown(kv.TiFlash) {
-=======
 	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
->>>>>>> d2d91b5d969 (planner: add more checks when pushing TopN down (#41370))
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
 		mppTask.addCost(pushedDownTopN.GetCost(mppTask.p.StatsCount(), false))
 		pushedDownTopN.SetCost(mppTask.cst)
