@@ -36,6 +36,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -248,7 +249,7 @@ type encodingBuilder struct {
 }
 
 // NewEncodingBuilder creates an KVEncodingBuilder with local backend implementation.
-func NewEncodingBuilder(ctx context.Context) backend.EncodingBuilder {
+func NewEncodingBuilder(ctx context.Context) encode.EncodingBuilder {
 	result := new(encodingBuilder)
 	if m, ok := metric.FromContext(ctx); ok {
 		result.metrics = m
@@ -258,13 +259,13 @@ func NewEncodingBuilder(ctx context.Context) backend.EncodingBuilder {
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return kv.NewTableKVEncoder(tbl, options, b.metrics, log.FromContext(ctx))
+func (b *encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
+	return kv.NewTableKVEncoder(config, b.metrics)
 }
 
 // MakeEmptyRows creates an empty KV rows.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) MakeEmptyRows() kv.Rows {
+func (b *encodingBuilder) MakeEmptyRows() encode.Rows {
 	return kv.MakeRowsFromKvPairs(nil)
 }
 
@@ -385,13 +386,13 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
-	pdCtl     *pdutil.PdController
-	splitCli  split.SplitClient
-	tikvCli   *tikvclient.KVStore
-	tls       *common.TLS
-	pdAddr    string
-	g         glue.Glue
-	tikvCodec tikvclient.Codec
+	pdCtl            *pdutil.PdController
+	splitCli         split.SplitClient
+	tikvCli          *tikvclient.KVStore
+	tls              *common.TLS
+	pdAddr           string
+	regionSizeGetter TableRegionSizeGetter
+	tikvCodec        tikvclient.Codec
 
 	localStoreDir string
 
@@ -418,9 +419,6 @@ type local struct {
 	metrics      *metric.Metrics
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
-
-	encBuilder       backend.EncodingBuilder
-	targetInfoGetter backend.TargetInfoGetter
 
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
 	// To avoid this, we should check write stall before ingesting SSTs. Note that, we
@@ -452,7 +450,7 @@ func NewLocalBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	cfg *config.Config,
-	g glue.Glue,
+	regionSizeGetter TableRegionSizeGetter,
 	maxOpenFiles int,
 	errorMgr *errormanager.ErrorManager,
 	keyspaceName string,
@@ -532,14 +530,14 @@ func NewLocalBackend(
 		LastAlloc = alloc
 	}
 	local := &local{
-		engines:   sync.Map{},
-		pdCtl:     pdCtl,
-		splitCli:  splitCli,
-		tikvCli:   tikvCli,
-		tls:       tls,
-		pdAddr:    cfg.TiDB.PdAddr,
-		g:         g,
-		tikvCodec: tikvCodec,
+		engines:          sync.Map{},
+		pdCtl:            pdCtl,
+		splitCli:         splitCli,
+		tikvCli:          tikvCli,
+		tls:              tls,
+		pdAddr:           cfg.TiDB.PdAddr,
+		regionSizeGetter: regionSizeGetter,
+		tikvCodec:        tikvCodec,
 
 		localStoreDir:     localFile,
 		workerConcurrency: rangeConcurrency * 2,
@@ -560,8 +558,6 @@ func NewLocalBackend(
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(alloc)),
 		writeLimiter:            writeLimiter,
 		logger:                  log.FromContext(ctx),
-		encBuilder:              NewEncodingBuilder(ctx),
-		targetInfoGetter:        NewTargetInfoGetter(tls, g, cfg.TiDB.PdAddr),
 		shouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
 	}
 	if m, ok := metric.FromContext(ctx); ok {
@@ -978,7 +974,12 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 	return ranges
 }
 
-func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
+func (local *local) readAndSplitIntoRange(
+	ctx context.Context,
+	engine *Engine,
+	sizeLimit int64,
+	keysLimit int64,
+) ([]Range, error) {
 	firstKey, lastKey, err := engine.getFirstAndLastKey(nil, nil)
 	if err != nil {
 		return nil, err
@@ -992,20 +993,19 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	engineFileTotalSize := engine.TotalSize.Load()
 	engineFileLength := engine.Length.Load()
 
-	// <= 96MB no need to split into range
-	if engineFileTotalSize <= regionSplitSize && engineFileLength <= regionSplitKeys {
+	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
 		ranges := []Range{{start: firstKey, end: endKey}}
 		return ranges, nil
 	}
 
 	logger := log.FromContext(ctx).With(zap.Stringer("engine", engine.UUID))
-	sizeProps, err := getSizeProperties(logger, engine.db, local.keyAdapter)
+	sizeProps, err := getSizePropertiesFn(logger, engine.db, local.keyAdapter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
-		regionSplitSize, regionSplitKeys)
+		sizeLimit, keysLimit)
 
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
@@ -1028,29 +1028,30 @@ func (local *local) prepareAndGenerateUnfinishedJob(
 	lfLength := lf.Length.Load()
 	unfinishedRanges := lf.unfinishedRanges(initialSplitRanges)
 	log.FromContext(ctx).Info("import engine unfinished ranges", zap.Int("count", len(unfinishedRanges)))
+	if len(unfinishedRanges) == 0 {
+		return nil, nil
+	}
 
-	if len(unfinishedRanges) > 0 {
-		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
-		// the table when table is created.
-		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
-		var err error
-		// split region by given ranges
-		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
-			needSplit = true
-		})
-		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
-			if err == nil || common.IsContextCanceledError(err) {
-				break
-			}
+	// if all the kv can fit in one region, skip split regions. TiDB will split one region for
+	// the table when table is created.
+	needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
+	var err error
+	// split region by given ranges
+	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+		needSplit = true
+	})
+	for i := 0; i < maxRetryTimes; i++ {
+		err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
+		if err == nil || common.IsContextCanceledError(err) {
+			break
+		}
 
-			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
-				log.ShortError(err), zap.Int("retry", i))
-		}
-		if err != nil {
-			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
-			return nil, err
-		}
+		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+			log.ShortError(err), zap.Int("retry", i))
+	}
+	if err != nil {
+		log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
+		return nil, err
 	}
 
 	return local.generateJobInRanges(
@@ -1066,14 +1067,30 @@ func (local *local) prepareAndGenerateUnfinishedJob(
 func (local *local) generateJobInRanges(
 	ctx context.Context,
 	engine *Engine,
-	ranges []Range,
+	jobRanges []Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
-	log.FromContext(ctx).Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
+	logger := log.FromContext(ctx)
 
-	ret := make([]*regionJob, 0, len(ranges))
+	// when use dynamic region feature, the region may be very big, we need
+	// to split to smaller ranges to increase the concurrency.
+	if regionSplitSize > 2*int64(config.SplitRegionSize) {
+		sizeProps, err := getSizePropertiesFn(logger, engine.db, local.keyAdapter)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 
-	for _, r := range ranges {
+		jobRanges = splitRangeBySizeProps(
+			Range{start: jobRanges[0].start, end: jobRanges[len(jobRanges)-1].end},
+			sizeProps,
+			int64(config.SplitRegionSize),
+			int64(config.SplitRegionKeys))
+	}
+	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
+
+	ret := make([]*regionJob, 0, len(jobRanges))
+
+	for _, r := range jobRanges {
 		start, end := r.start, r.end
 		pairStart, pairEnd, err := engine.getFirstAndLastKey(start, end)
 		if err != nil {
@@ -1279,22 +1296,22 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
 
-	// split sorted file into range by 96MB size per file
-	ranges, err := local.readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
+	// split sorted file into range about regionSplitSize per file
+	regionRanges, err := local.readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
 	if err != nil {
 		return err
 	}
 
-	if len(ranges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
+	if len(regionRanges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
 		var startKey, endKey []byte
-		if len(ranges[0].start) > 0 {
-			startKey = codec.EncodeBytes(nil, ranges[0].start)
+		if len(regionRanges[0].start) > 0 {
+			startKey = codec.EncodeBytes(nil, regionRanges[0].start)
 		}
-		if len(ranges[len(ranges)-1].end) > 0 {
-			endKey = codec.EncodeBytes(nil, ranges[len(ranges)-1].end)
+		if len(regionRanges[len(regionRanges)-1].end) > 0 {
+			endKey = codec.EncodeBytes(nil, regionRanges[len(regionRanges)-1].end)
 		}
 		done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
 		if err != nil {
@@ -1307,7 +1324,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	}
 
 	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
-		zap.Int("ranges", len(ranges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
+		zap.Int("region ranges", len(regionRanges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
@@ -1382,7 +1399,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			ctx,
 			engineUUID,
 			lf,
-			ranges,
+			regionRanges,
 			regionSplitSize,
 			regionSplitKeys,
 		)
@@ -1433,7 +1450,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return workGroup.Wait()
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1451,7 +1468,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	return atomicHasDupe.Load(), nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1485,7 +1502,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}
 
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
-	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &kv.SessionOptions{
+	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	}, log.FromContext(ctx))
 	if err != nil {
@@ -1644,22 +1661,6 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	localEngine.TotalSize.Store(0)
 	localEngine.Length.Store(0)
 	return nil
-}
-
-func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
-	return local.targetInfoGetter.CheckRequirements(ctx, checkCtx)
-}
-
-func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return local.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
-}
-
-func (local *local) MakeEmptyRows() kv.Rows {
-	return local.encBuilder.MakeEmptyRows()
-}
-
-func (local *local) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return local.encBuilder.NewEncoder(ctx, tbl, options)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {

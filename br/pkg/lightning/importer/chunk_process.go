@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -60,7 +60,7 @@ func newChunkProcessor(
 ) (*chunkProcessor, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := openReader(ctx, chunk.FileMeta, store)
+	reader, err := mydump.OpenReader(ctx, chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -145,13 +145,23 @@ func (cr *chunkProcessor) process(
 	dataEngine, indexEngine *backend.LocalEngineWriter,
 	rc *Controller,
 ) error {
+	logger := t.logger.With(
+		zap.Int32("engineNumber", engineID),
+		zap.Int("fileIndex", cr.index),
+		zap.Stringer("path", &cr.chunk.Key),
+	)
 	// Create the encoder.
-	kvEncoder, err := rc.backend.NewEncoder(ctx, t.encTable, &kv.SessionOptions{
-		SQLMode:   rc.cfg.TiDB.SQLMode,
-		Timestamp: cr.chunk.Timestamp,
-		SysVars:   rc.sysVars,
-		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
-		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
+	kvEncoder, err := rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   rc.cfg.TiDB.SQLMode,
+			Timestamp: cr.chunk.Timestamp,
+			SysVars:   rc.sysVars,
+			// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
+			AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
+		},
+		Path:   cr.chunk.Key.Path,
+		Table:  t.encTable,
+		Logger: logger,
 	})
 	if err != nil {
 		return err
@@ -170,13 +180,9 @@ func (cr *chunkProcessor) process(
 		}
 	}()
 
-	logTask := t.logger.With(
-		zap.Int32("engineNumber", engineID),
-		zap.Int("fileIndex", cr.index),
-		zap.Stringer("path", &cr.chunk.Key),
-	).Begin(zap.InfoLevel, "restore file")
+	logTask := logger.Begin(zap.InfoLevel, "restore file")
 
-	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc)
+	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logger, kvEncoder, deliverCompleteCh, rc)
 	var deliverErr error
 	select {
 	case deliverResult, ok := <-deliverCompleteCh:
@@ -204,7 +210,7 @@ func (cr *chunkProcessor) encodeLoop(
 	kvsCh chan<- []deliveredKVs,
 	t *TableImporter,
 	logger log.Logger,
-	kvEncoder kv.Encoder,
+	kvEncoder encode.Encoder,
 	deliverCompleteCh <-chan deliverResult,
 	rc *Controller,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
@@ -315,7 +321,7 @@ func (cr *chunkProcessor) encodeLoop(
 			lastRow := cr.parser.LastRow()
 			lastRow.Row = append(lastRow.Row, extendVals...)
 			// sql -> kv
-			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
+			kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 
 			hasIgnoredEncodeErr := false
@@ -394,8 +400,8 @@ func (cr *chunkProcessor) deliverLoop(
 		zap.String("task", "deliver"),
 	)
 	// Fetch enough KV pairs from the source.
-	dataKVs := rc.backend.MakeEmptyRows()
-	indexKVs := rc.backend.MakeEmptyRows()
+	dataKVs := rc.encBuilder.MakeEmptyRows()
+	indexKVs := rc.encBuilder.MakeEmptyRows()
 
 	dataSynced := true
 	hasMoreKVs := true

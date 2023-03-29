@@ -12,6 +12,7 @@ go_library(
     name = "ddl",
     srcs = [
         "backfilling.go",
+        "backfilling_scheduler.go",
         "callback.go",
         "cluster.go",
         "column.go",
@@ -111,7 +112,6 @@ go_library(
         "//util/domainutil",
         "//util/filter",
         "//util/gcutil",
-        "//util/generic",
         "//util/gpool",
         "//util/gpool/spmc",
         "//util/hack",
