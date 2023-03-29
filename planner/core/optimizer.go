@@ -555,7 +555,7 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) er
 //   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
 func tryEnableLateMaterialization(sctx sessionctx.Context, plan PhysicalPlan) {
 	// check if EnableLateMaterialization is set
-	if sctx.GetSessionVars().EnableLateMaterialization {
+	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
 		predicatePushDownToTableScan(sctx, plan)
 	}
 }

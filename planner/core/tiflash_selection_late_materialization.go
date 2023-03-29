@@ -178,6 +178,9 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 			return true
 		case ast.StrToDate, ast.SubDate, ast.SubTime, ast.TimeLiteral, ast.TimeFormat, ast.TimeToSec, ast.TimeDiff, ast.TimestampDiff:
 			return true
+		// regexp functions
+		case ast.Regexp, ast.RegexpLike, ast.RegexpReplace, ast.RegexpSubstr, ast.RegexpInStr:
+			return true
 			// TODO: add more heavy cost functions
 		}
 	}
