@@ -164,7 +164,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	// During the period, the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("addIdxNotOwnerErr")`))
 	// TODO: Remove this check after "err" isn't nil in runReorgJobAndHandleErr.
-	if variable.DDLEnableDistributeReorg.Load() {
+	if variable.EnableDistTask.Load() {
 		err = tk.ExecToErr("alter table t1 add index idx2(c1)")
 		require.EqualError(t, err, "[ddl:8201]TiDB server is not a DDL owner")
 	} else {

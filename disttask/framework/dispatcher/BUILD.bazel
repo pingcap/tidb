@@ -4,6 +4,7 @@ go_library(
     name = "dispatcher",
     srcs = [
         "dispatcher.go",
+        "dispatcher_mock.go",
         "register.go",
     ],
     importpath = "github.com/pingcap/tidb/disttask/framework/dispatcher",
@@ -16,6 +17,7 @@ go_library(
         "//util/logutil",
         "//util/syncutil",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//mock",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -23,7 +25,10 @@ go_library(
 go_test(
     name = "dispatcher_test",
     timeout = "short",
-    srcs = ["dispatcher_test.go"],
+    srcs = [
+        "dispatcher_test.go",
+        "main_test.go",
+    ],
     embed = [":dispatcher"],
     flaky = True,
     deps = [

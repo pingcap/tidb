@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package storage
+package storage_test
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
@@ -41,19 +42,20 @@ func TestGlobalTaskTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	gm := NewGlobalTaskManager(context.Background(), tk.Session())
+	gm := storage.NewGlobalTaskManager(context.Background(), tk.Session())
 
-	SetGlobalTaskManager(gm)
-	gm, err := GetGlobalTaskManager()
+	storage.SetGlobalTaskManager(gm)
+	gm, err := storage.GetGlobalTaskManager()
 	require.NoError(t, err)
 
-	id, err := gm.AddNewTask("test", 4, []byte("test"))
+	id, err := gm.AddNewTask("key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
 	task, err := gm.GetNewTask()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), task.ID)
+	require.Equal(t, "key1", task.Key)
 	require.Equal(t, "test", task.Type)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Equal(t, uint64(4), task.Concurrency)
@@ -81,6 +83,10 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, task5, 1)
 	require.Equal(t, task, task5[0])
+
+	// test cannot insert task with dup key
+	_, err = gm.AddNewTask("key1", "test2", 4, []byte("test2"))
+	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")
 }
 
 func TestSubTaskTable(t *testing.T) {
@@ -88,10 +94,10 @@ func TestSubTaskTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	sm := NewSubTaskManager(context.Background(), tk.Session())
+	sm := storage.NewSubTaskManager(context.Background(), tk.Session())
 
-	SetSubTaskManager(sm)
-	sm, err := GetSubTaskManager()
+	storage.SetSubTaskManager(sm)
+	sm, err := storage.GetSubTaskManager()
 	require.NoError(t, err)
 
 	err = sm.AddNewTask(1, "tidb1", []byte("test"), proto.TaskTypeExample, false)

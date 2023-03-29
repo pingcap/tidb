@@ -25,6 +25,7 @@ go_test(
     timeout = "short",
     srcs = ["checkpoint_test.go"],
     flaky = True,
+    race = "on",
     deps = [
         ":checkpoint",
         "//br/pkg/rtree",

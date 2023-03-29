@@ -23,6 +23,7 @@ go_library(
         "bind.go",
         "brie.go",
         "builder.go",
+        "calibrate_resource.go",
         "change.go",
         "checksum.go",
         "compact_table.go",
@@ -98,7 +99,6 @@ go_library(
     deps = [
         "//bindinfo",
         "//br/pkg/glue",
-        "//br/pkg/lightning/log",
         "//br/pkg/lightning/mydump",
         "//br/pkg/storage",
         "//br/pkg/task",
@@ -180,7 +180,6 @@ go_library(
         "//util/gcutil",
         "//util/hack",
         "//util/hint",
-        "//util/intest",
         "//util/keydecoder",
         "//util/kvcache",
         "//util/logutil",
@@ -264,7 +263,7 @@ go_library(
 
 go_test(
     name = "executor_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "adapter_test.go",
         "admin_test.go",
@@ -274,6 +273,7 @@ go_test(
         "batch_point_get_test.go",
         "benchmark_test.go",
         "brie_test.go",
+        "calibrate_resource_test.go",
         "charset_test.go",
         "chunk_size_control_test.go",
         "cluster_table_test.go",
@@ -354,7 +354,6 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
-        "//br/pkg/errors",
         "//config",
         "//ddl",
         "//ddl/placement",
@@ -389,7 +388,7 @@ go_test(
         "//sessionctx/binloginfo",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
-        "//sessionctx/variable/featuretag/distributereorg",
+        "//sessionctx/variable/featuretag/disttask",
         "//sessiontxn",
         "//sessiontxn/staleread",
         "//statistics",

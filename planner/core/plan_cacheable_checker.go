@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -94,11 +95,16 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
-			// do not cache insert-values-stmt like 'insert into t values (...)' since
-			// no performance benefit and to save memory.
-			checker.cacheable = false
-			checker.reason = "ignore insert-values-stmt"
-			return in, true
+			nRows := len(node.Lists)
+			nCols := 0
+			if len(node.Lists) > 0 { // avoid index-out-of-range
+				nCols = len(node.Lists[0])
+			}
+			if nRows*nCols > 200 { // to save memory
+				checker.cacheable = false
+				checker.reason = "too many values (more than 200) in the insert statement"
+				return in, true
+			}
 		}
 		for _, hints := range node.TableHints {
 			if hints.HintName.L == HintIgnorePlanCache {
@@ -233,17 +239,20 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		// We don't support the join for the non-prepared plan cache now.
 		return false, "queries that access multiple tables are not supported"
 	}
+
+	var tableNode *ast.TableName
 	switch x := tableRefs.Left.(type) {
 	case *ast.TableSource:
-		_, isTableName := x.Source.(*ast.TableName)
+		tbl, isTableName := x.Source.(*ast.TableName)
 		if !isTableName {
 			return false, "queries that have sub-queries are not supported"
 		}
+		tableNode = tbl
 	}
 
 	// allocate and init the checker
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
-	checker.reset(sctx, is)
+	checker.reset(sctx, is, tableNode)
 
 	node.Accept(checker)
 	cacheable, reason := checker.cacheable, checker.reason
@@ -267,12 +276,12 @@ type nonPreparedPlanCacheableChecker struct {
 	filterCnt int // the number of filters in the current node
 }
 
-func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema) {
+func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema, tableNode *ast.TableName) {
 	checker.sctx = sctx
 	checker.cacheable = true
 	checker.schema = schema
 	checker.reason = ""
-	checker.tableNode = nil
+	checker.tableNode = tableNode
 	checker.constCnt = 0
 	checker.filterCnt = 0
 }
@@ -285,7 +294,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr,
-		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr:
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.ColumnName:
 		if checker.filterCnt > 0 {
@@ -300,10 +309,10 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			}
 		}
 		return in, !checker.cacheable
-	case *ast.BinaryOperationExpr:
-		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
+	case *ast.FuncCallExpr:
+		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
-			checker.reason = "query has some unsupported binary operation"
+			checker.reason = "query has un-cacheable functions"
 		}
 		return in, !checker.cacheable
 	case *driver.ValueExpr:
@@ -321,7 +330,11 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		}
 		return in, !checker.cacheable
 	case *ast.TableName:
-		checker.tableNode = node
+		if filter.IsSystemSchema(node.Schema.O) {
+			checker.cacheable = false
+			checker.reason = "access tables in system schema"
+			return in, !checker.cacheable
+		}
 		if checker.schema != nil {
 			tb, err := checker.schema.TableByName(node.Schema, node.Name)
 			if err != nil {
@@ -435,7 +448,7 @@ func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
-func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int) (cacheable bool, reason string) {
+func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
 	var pp PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
@@ -454,6 +467,9 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 	}
 	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 		return false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off"
+	}
+	if hasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
+		return false, "the switch 'tidb_enable_plan_cache_for_subquery' is off"
 	}
 	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
 }

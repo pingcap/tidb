@@ -27,6 +27,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -153,6 +154,12 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 			return nil, errors.Trace(err)
 		}
 	}
+
+	replicaCount, err := ci.preInfoGetter.GetReplicationConfig(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tikvSourceSize = tikvSourceSize * replicaCount.MaxReplicas
 
 	if tikvSourceSize <= tikvAvail && tiflashSourceSize <= tiflashAvail {
 		theResult.Message = fmt.Sprintf("The storage space is rich, which TiKV/Tiflash is %s/%s. The estimated storage space is %s/%s.",
@@ -1262,7 +1269,7 @@ func checkFieldCompatibility(
 	values []types.Datum,
 	logger log.Logger,
 ) bool {
-	se := kv.NewSession(&kv.SessionOptions{
+	se := kv.NewSessionCtx(&encode.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	}, logger)
 	for i, col := range tbl.Columns {

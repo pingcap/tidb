@@ -44,8 +44,16 @@ const (
 type Dispatch interface {
 	// Start enables dispatching and monitoring mechanisms.
 	Start()
+	// GetAllSchedulerIDs gets handles the task's all available instances.
+	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
 	// Stop stops the dispatcher.
 	Stop()
+}
+
+// TaskHandle provides the interface for operations needed by task flow handles.
+type TaskHandle interface {
+	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
+	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
 }
 
 func (d *dispatcher) getRunningGlobalTasks() map[int64]*proto.Task {
@@ -80,7 +88,7 @@ type dispatcher struct {
 }
 
 // NewDispatcher creates a dispatcher struct.
-func NewDispatcher(ctx context.Context, globalTaskTable *storage.GlobalTaskManager, subtaskTable *storage.SubTaskManager) (*dispatcher, error) {
+func NewDispatcher(ctx context.Context, globalTaskTable *storage.GlobalTaskManager, subtaskTable *storage.SubTaskManager) (Dispatch, error) {
 	dispatcher := &dispatcher{
 		gTaskMgr:   globalTaskTable,
 		subTaskMgr: subtaskTable,
@@ -244,14 +252,14 @@ func (d *dispatcher) updateTaskRevertInfo(gTask *proto.Task) {
 
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
-	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d, gTask, receiveErr)
+	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d.ctx, d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 		return err
 	}
 
 	// TODO: Consider using a new context.
-	instanceIDs, err := d.getTaskAllInstances(d.ctx, gTask.ID)
+	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, gTask.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("get global task's all instances failed", zap.Error(err))
 		return err
@@ -273,7 +281,6 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 	// New rollback subtasks and write into the storage.
 	for _, id := range instanceIDs {
 		subtask := proto.NewSubtask(gTask.ID, gTask.Type, id, meta)
-		subtask.State = proto.TaskStateRevertPending
 		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta, subtask.Type, true)
 		if err != nil {
 			logutil.BgLogger().Warn("add subtask failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
@@ -291,11 +298,13 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		d.updateTaskRevertInfo(gTask)
 		return errors.Errorf("%s type handle doesn't register", gTask.Type)
 	}
-	metas, err := handle.ProcessNormalFlow(d, gTask)
+	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
 		return err
 	}
+	logutil.BgLogger().Info("process normal flow", zap.Uint64("con", gTask.Concurrency),
+		zap.Int64("task ID", gTask.ID), zap.String("state", gTask.State), zap.Int("subtasks", len(metas)))
 
 	// Adjust the global task's concurrency.
 	if gTask.Concurrency == 0 {
@@ -310,14 +319,20 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		// TODO: Consider using TS.
 		gTask.StartTime = time.Now().UTC()
 		gTask.State = proto.TaskStateRunning
+		gTask.StateUpdateTime = time.Now().UTC()
 	}
 	if len(metas) == 0 {
 		gTask.State = proto.TaskStateSucceed
+		gTask.StateUpdateTime = time.Now().UTC()
+		// Write the global task meta into the storage.
+		err = d.gTaskMgr.UpdateTask(gTask)
+		if err != nil {
+			logutil.BgLogger().Warn("update global task failed", zap.Error(err))
+			return err
+		}
+		return nil
 	}
-	gTask.StateUpdateTime = time.Now().UTC()
 
-	logutil.BgLogger().Info("process normal flow", zap.Uint64("con", gTask.Concurrency),
-		zap.Int64("task ID", gTask.ID), zap.String("state", gTask.State))
 	// TODO: UpdateTask and addSubtasks in a txn.
 	// Write the global task meta into the storage.
 	err = d.gTaskMgr.UpdateTask(gTask)
@@ -325,11 +340,6 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 		return err
 	}
-
-	if len(metas) == 0 {
-		return nil
-	}
-
 	// Write subtasks into the storage.
 	for _, meta := range metas {
 		instanceID, err := GetEligibleInstance(d.ctx)
@@ -374,7 +384,8 @@ func GetEligibleInstance(ctx context.Context) (string, error) {
 	return "", errors.New("not found instance")
 }
 
-func (d *dispatcher) getTaskAllInstances(ctx context.Context, gTaskID int64) ([]string, error) {
+// GetAllSchedulerIDs gets all the scheduler IDs.
+func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error) {
 	if len(MockTiDBIDs) != 0 {
 		return MockTiDBIDs, nil
 	}

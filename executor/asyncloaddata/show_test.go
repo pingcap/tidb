@@ -313,7 +313,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 			jobStatus:      "pending",
 			sourceFileSize: "<nil>",
 			loadedFileSize: "<nil>",
-			resultCode:     "0",
+			resultCode:     "<nil>",
 			resultMessage:  "",
 		}
 		r.checkIgnoreTimes(s.T(), row)
@@ -344,14 +344,14 @@ func (s *mockGCSSuite) TestInternalStatus() {
 
 		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
 		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":0,"LoadedRowCnt":1}`
+		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
 		require.Equal(s.T(), expected, info)
 
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
 		r.sourceFileSize = "2B"
-		r.loadedFileSize = "0B"
+		r.loadedFileSize = "1B"
 		r.checkIgnoreTimes(s.T(), row)
 
 		// tk @ 0:09
@@ -362,13 +362,13 @@ func (s *mockGCSSuite) TestInternalStatus() {
 
 		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
 		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":2}`
+		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
 		require.Equal(s.T(), expected, info)
 
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
-		r.loadedFileSize = "1B"
+		r.loadedFileSize = "2B"
 		r.checkIgnoreTimes(s.T(), row)
 
 		// tk @ 0:12
@@ -388,7 +388,6 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
-		r.loadedFileSize = "2B"
 		r.jobStatus = "finished"
 		r.resultCode = "0"
 		r.resultMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"

@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql"
@@ -245,6 +243,7 @@ type backfillWorker struct {
 	resultCh chan *backfillResult
 	ctx      context.Context
 	cancel   func()
+	wg       *sync.WaitGroup
 }
 
 func newBackfillWorker(ctx context.Context, bf backfiller) *backfillWorker {
@@ -450,6 +449,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	defer util.Recover(metrics.LabelDDL, "backfillWorker.run", func() {
 		w.resultCh <- &backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic}
 	}, false)
+	defer w.wg.Done()
 	for {
 		if util.HasCancelled(w.ctx) {
 			logutil.BgLogger().Info("[ddl] backfill worker exit on context done", zap.Stringer("worker", w))
@@ -522,106 +522,111 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	return ranges, nil
 }
 
-func waitTaskResults(scheduler *backfillScheduler, batchTasks []*reorgBackfillTask,
-	totalAddedCount *int64) (kv.Key, int64, error) {
-	var (
-		firstErr   error
-		addedCount int64
-	)
-	keeper := newDoneTaskKeeper(batchTasks[0].startKey)
-	taskSize := len(batchTasks)
-	for i := 0; i < taskSize; i++ {
-		result := <-scheduler.resultCh
-		if result.err != nil {
-			if firstErr == nil {
-				firstErr = result.err
-			}
-			logutil.BgLogger().Warn("[ddl] backfill worker failed",
-				zap.String("result next key", hex.EncodeToString(result.nextKey)),
-				zap.Error(result.err))
-			// Drain tasks.
-			cnt := drainTasks(scheduler.taskCh)
-			// We need to wait all the tasks to finish before closing it
-			// to prevent send on closed channel error.
-			taskSize -= cnt
-			continue
-		}
-		*totalAddedCount += int64(result.addedCount)
-		addedCount += int64(result.addedCount)
-		keeper.updateNextKey(result.taskID, result.nextKey)
-		if i%scheduler.workerSize()*4 == 0 {
-			// We try to adjust the worker size regularly to reduce
-			// the overhead of loading the DDL related global variables.
-			err := scheduler.adjustWorkerSize()
-			if err != nil {
-				logutil.BgLogger().Warn("[ddl] cannot adjust backfill worker size", zap.Error(err))
-			}
-		}
-	}
-	return keeper.nextKey, addedCount, errors.Trace(firstErr)
+type resultConsumer struct {
+	dc       *ddlCtx
+	wg       *sync.WaitGroup
+	err      error
+	hasError *atomic.Bool
 }
 
-func drainTasks(taskCh chan *reorgBackfillTask) int {
-	cnt := 0
-	for len(taskCh) > 0 {
-		<-taskCh
-		cnt++
+func newResultConsumer(dc *ddlCtx) *resultConsumer {
+	return &resultConsumer{
+		dc:       dc,
+		wg:       &sync.WaitGroup{},
+		hasError: &atomic.Bool{},
 	}
-	return cnt
 }
 
-// sendTasksAndWait sends tasks to workers, and waits for all the running workers to return results,
-// there are taskCnt running workers.
-func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount *int64,
-	batchTasks []*reorgBackfillTask) error {
+func (s *resultConsumer) run(scheduler *backfillScheduler, start kv.Key, totalAddedCount *int64) {
+	s.wg.Add(1)
+	go func() {
+		reorgInfo := scheduler.reorgInfo
+		err := consumeResults(scheduler, s, start, totalAddedCount)
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] backfill worker handle tasks failed",
+				zap.Int64("total added count", *totalAddedCount),
+				zap.String("start key", hex.EncodeToString(start)),
+				zap.String("task failed error", err.Error()))
+			s.err = err
+		} else {
+			logutil.BgLogger().Info("[ddl] backfill workers successfully processed",
+				zap.Stringer("element", reorgInfo.currElement),
+				zap.Int64("total added count", *totalAddedCount),
+				zap.String("start key", hex.EncodeToString(start)))
+		}
+		s.wg.Done()
+	}()
+}
+
+func (s *resultConsumer) getResult() error {
+	s.wg.Wait()
+	return s.err
+}
+
+func (s *resultConsumer) shouldAbort() bool {
+	return s.hasError.Load()
+}
+
+func consumeResults(scheduler *backfillScheduler, consumer *resultConsumer, start kv.Key, totalAddedCount *int64) error {
+	keeper := newDoneTaskKeeper(start)
+	handledTaskCnt := 0
+	var firstErr error
+	for result := range scheduler.resultCh {
+		err := handleOneResult(result, scheduler, consumer, keeper, totalAddedCount, handledTaskCnt)
+		handledTaskCnt++
+		if err != nil && firstErr == nil {
+			consumer.hasError.Store(true)
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func handleOneResult(result *backfillResult, scheduler *backfillScheduler, consumer *resultConsumer,
+	keeper *doneTaskKeeper, totalAddedCount *int64, taskSeq int) error {
 	reorgInfo := scheduler.reorgInfo
-	for _, task := range batchTasks {
-		if scheduler.copReqSenderPool != nil {
-			scheduler.copReqSenderPool.sendTask(task)
+	if result.err != nil {
+		logutil.BgLogger().Warn("[ddl] backfill worker failed",
+			zap.Int64("job ID", reorgInfo.ID),
+			zap.String("result next key", hex.EncodeToString(result.nextKey)),
+			zap.Error(result.err))
+		// Drain tasks to make it quit early.
+		for len(scheduler.taskCh) > 0 {
+			<-scheduler.taskCh
 		}
-		scheduler.taskCh <- task
+		return result.err
 	}
-
-	startKey := batchTasks[0].startKey
-	startTime := time.Now()
-	nextKey, taskAddedCount, err := waitTaskResults(scheduler, batchTasks, totalAddedCount)
-	elapsedTime := time.Since(startTime)
-	if err == nil {
-		err = dc.isReorgRunnable(reorgInfo.Job.ID, false)
-	}
-
-	// Update the reorg handle that has been processed.
-	err1 := reorgInfo.UpdateReorgMeta(nextKey, scheduler.sessPool)
-
-	if err != nil {
-		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
-		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
-
-			zap.Int64("total added count", *totalAddedCount),
-			zap.String("start key", hex.EncodeToString(startKey)),
-			zap.String("next key", hex.EncodeToString(nextKey)),
-			zap.Int64("batch added count", taskAddedCount),
-			zap.String("task failed error", err.Error()),
-			zap.String("take time", elapsedTime.String()),
-			zap.NamedError("updateHandleError", err1))
+	*totalAddedCount += int64(result.addedCount)
+	keeper.updateNextKey(result.taskID, result.nextKey)
+	if taskSeq%(scheduler.workerSize()*4) == 0 {
+		err := consumer.dc.isReorgRunnable(reorgInfo.ID, false)
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] backfill worker is not runnable", zap.Error(err))
+			// Drain tasks to make it quit early.
+			for len(scheduler.taskCh) > 0 {
+				<-scheduler.taskCh
+			}
+			return err
+		}
 		failpoint.Inject("MockGetIndexRecordErr", func() {
 			// Make sure this job didn't failed because by the "Write conflict" error.
 			if dbterror.ErrNotOwner.Equal(err) {
 				time.Sleep(50 * time.Millisecond)
 			}
 		})
-		return errors.Trace(err)
+		err = reorgInfo.UpdateReorgMeta(keeper.nextKey, scheduler.sessPool)
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] update reorg meta failed",
+				zap.Int64("job ID", reorgInfo.ID), zap.Error(err))
+		}
+		// We try to adjust the worker size regularly to reduce
+		// the overhead of loading the DDL related global variables.
+		err = scheduler.adjustWorkerSize()
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] cannot adjust backfill worker size",
+				zap.Int64("job ID", reorgInfo.ID), zap.Error(err))
+		}
 	}
-
-	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
-	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
-		zap.Stringer("element", reorgInfo.currElement),
-		zap.Int64("total added count", *totalAddedCount),
-		zap.String("start key", hex.EncodeToString(startKey)),
-		zap.String("next key", hex.EncodeToString(nextKey)),
-		zap.Int64("batch added count", taskAddedCount),
-		zap.String("take time", elapsedTime.String()),
-		zap.NamedError("updateHandleError", err1))
 	return nil
 }
 
@@ -674,18 +679,22 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 	return batchTasks
 }
 
-// handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.PhysicalTable,
-	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
+// sendTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
+func sendTasks(scheduler *backfillScheduler, consumer *resultConsumer, t table.PhysicalTable,
+	kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := getBatchTasks(t, scheduler.reorgInfo, kvRanges, backfillTaskChanSize)
 	if len(batchTasks) == 0 {
 		return nil, nil
 	}
 
-	// Wait tasks finish.
-	err := dc.sendTasksAndWait(scheduler, totalAddedCount, batchTasks)
-	if err != nil {
-		return nil, errors.Trace(err)
+	for _, task := range batchTasks {
+		if consumer.shouldAbort() {
+			return nil, nil
+		}
+		if scheduler.copReqSenderPool != nil {
+			scheduler.copReqSenderPool.sendTask(task)
+		}
+		scheduler.taskCh <- task
 	}
 
 	if len(batchTasks) < len(kvRanges) {
@@ -750,230 +759,11 @@ func setSessCtxLocation(sctx sessionctx.Context, tzLocation *model.TimeZoneLocat
 	return nil
 }
 
-type backfillScheduler struct {
-	ctx          context.Context
-	reorgInfo    *reorgInfo
-	sessPool     *sessionPool
-	tp           backfillerType
-	tbl          table.PhysicalTable
-	decodeColMap map[int64]decoder.Column
-	jobCtx       *JobContext
-
-	workers []*backfillWorker
-	maxSize int
-
-	taskCh   chan *reorgBackfillTask
-	resultCh chan *backfillResult
-
-	copReqSenderPool *copReqSenderPool // for add index in ingest way.
-}
-
 var backfillTaskChanSize = 1024
 
 // SetBackfillTaskChanSizeForTest is only used for test.
 func SetBackfillTaskChanSizeForTest(n int) {
 	backfillTaskChanSize = n
-}
-
-func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
-	tp backfillerType, tbl table.PhysicalTable, decColMap map[int64]decoder.Column,
-	jobCtx *JobContext) *backfillScheduler {
-	return &backfillScheduler{
-		ctx:          ctx,
-		reorgInfo:    info,
-		sessPool:     sessPool,
-		tp:           tp,
-		tbl:          tbl,
-		decodeColMap: decColMap,
-		jobCtx:       jobCtx,
-		workers:      make([]*backfillWorker, 0, variable.GetDDLReorgWorkerCounter()),
-		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
-		resultCh:     make(chan *backfillResult, backfillTaskChanSize),
-	}
-}
-
-func (b *backfillScheduler) newSessCtx() (sessionctx.Context, error) {
-	reorgInfo := b.reorgInfo
-	sessCtx := newContext(reorgInfo.d.store)
-	if err := initSessCtx(sessCtx, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return sessCtx, nil
-}
-
-func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) error {
-	// Unify the TimeZone settings in newContext.
-	if sessCtx.GetSessionVars().StmtCtx.TimeZone == nil {
-		tz := *time.UTC
-		sessCtx.GetSessionVars().StmtCtx.TimeZone = &tz
-	}
-	sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
-	// Set the row encode format version.
-	rowFormat := variable.GetDDLReorgRowFormat()
-	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
-	// Simulate the sql mode environment in the worker sessionCtx.
-	sessCtx.GetSessionVars().SQLMode = sqlMode
-	if err := setSessCtxLocation(sessCtx, tzLocation); err != nil {
-		return errors.Trace(err)
-	}
-	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
-	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
-	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
-	// Prevent initializing the mock context in the workers concurrently.
-	// For details, see https://github.com/pingcap/tidb/issues/40879.
-	_ = sessCtx.GetDomainInfoSchema()
-	return nil
-}
-
-func (b *backfillScheduler) setMaxWorkerSize(maxSize int) {
-	b.maxSize = maxSize
-}
-
-func (b *backfillScheduler) expectedWorkerSize() int {
-	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	if b.tp == typeAddIndexWorker && b.reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-		workerCnt = mathutil.Min(workerCnt/2+1, b.maxSize)
-	} else {
-		workerCnt = mathutil.Min(workerCnt, b.maxSize)
-	}
-	return workerCnt
-}
-
-func (b *backfillScheduler) workerSize() int {
-	return len(b.workers)
-}
-
-func (b *backfillScheduler) adjustWorkerSize() error {
-	b.initCopReqSenderPool()
-	reorgInfo := b.reorgInfo
-	job := reorgInfo.Job
-	jc := b.jobCtx
-	if err := loadDDLReorgVars(b.ctx, b.sessPool); err != nil {
-		logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
-	}
-	workerCnt := b.expectedWorkerSize()
-	// Increase the worker.
-	for i := len(b.workers); i < workerCnt; i++ {
-		sessCtx, err := b.newSessCtx()
-		if err != nil {
-			return err
-		}
-		var (
-			runner *backfillWorker
-			worker backfiller
-		)
-		switch b.tp {
-		case typeAddIndexWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "add_idx_rate", false)
-			if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-				idxWorker, err := newAddIndexIngestWorker(b.tbl, backfillCtx,
-					job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
-				if err != nil {
-					if canSkipError(b.reorgInfo.ID, len(b.workers), err) {
-						continue
-					}
-					return err
-				}
-				idxWorker.copReqSenderPool = b.copReqSenderPool
-				runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
-				worker = idxWorker
-			} else {
-				idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
-					job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
-				if err != nil {
-					return err
-				}
-				runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
-				worker = idxWorker
-			}
-		case typeAddIndexMergeTmpWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
-			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.currElement.ID)
-			runner = newBackfillWorker(jc.ddlJobCtx, tmpIdxWorker)
-			worker = tmpIdxWorker
-		case typeUpdateColumnWorker:
-			// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
-			sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
-			updateWorker := newUpdateColumnWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			runner = newBackfillWorker(jc.ddlJobCtx, updateWorker)
-			worker = updateWorker
-		case typeCleanUpIndexWorker:
-			idxWorker := newCleanUpIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
-			worker = idxWorker
-		case typeReorgPartitionWorker:
-			partWorker, err := newReorgPartitionWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			if err != nil {
-				return err
-			}
-			runner = newBackfillWorker(jc.ddlJobCtx, partWorker)
-			worker = partWorker
-		default:
-			return errors.New("unknown backfill type")
-		}
-		runner.taskCh = b.taskCh
-		runner.resultCh = b.resultCh
-		b.workers = append(b.workers, runner)
-		go runner.run(reorgInfo.d, worker, job)
-	}
-	// Decrease the worker.
-	if len(b.workers) > workerCnt {
-		workers := b.workers[workerCnt:]
-		b.workers = b.workers[:workerCnt]
-		closeBackfillWorkers(workers)
-	}
-	if b.copReqSenderPool != nil {
-		b.copReqSenderPool.adjustSize(len(b.workers))
-	}
-	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
-}
-
-func (b *backfillScheduler) initCopReqSenderPool() {
-	if b.tp != typeAddIndexWorker || b.reorgInfo.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge ||
-		b.copReqSenderPool != nil || len(b.workers) > 0 {
-		return
-	}
-	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
-	if indexInfo == nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
-			zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
-		return
-	}
-	sessCtx, err := b.newSessCtx()
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
-		return
-	}
-	copCtx, err := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
-		return
-	}
-	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore())
-}
-
-func canSkipError(jobID int64, workerCnt int, err error) bool {
-	if workerCnt > 0 {
-		// The error can be skipped because the rest workers can handle the tasks.
-		return true
-	}
-	logutil.BgLogger().Warn("[ddl] create add index backfill worker failed",
-		zap.Int("current worker count", workerCnt),
-		zap.Int64("job ID", jobID), zap.Error(err))
-	return false
-}
-
-func (b *backfillScheduler) Close() {
-	if b.copReqSenderPool != nil {
-		b.copReqSenderPool.close()
-	}
-	closeBackfillWorkers(b.workers)
-	close(b.taskCh)
-	close(b.resultCh)
 }
 
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
@@ -1018,17 +808,20 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 
 	jc := dc.jobContext(job.ID)
 	scheduler := newBackfillScheduler(dc.ctx, reorgInfo, sessPool, bfWorkerType, t, decodeColMap, jc)
-	defer scheduler.Close()
+	defer scheduler.close(true)
 
 	var ingestBeCtx *ingest.BackendContext
 	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
 			ingestBeCtx = bc
+			defer bc.EngMgr.ResetWorkers(bc, job.ID, reorgInfo.currElement.ID)
 		} else {
 			return errors.New(ingest.LitErrGetBackendFail)
 		}
 	}
 
+	consumer := newResultConsumer(dc)
+	consumer.run(scheduler, startKey, &totalAddedCount)
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
 		if err != nil {
@@ -1057,9 +850,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 				return errors.Trace(err)
 			}
 		}
-		remains, err := dc.handleRangeTasks(scheduler, t, &totalAddedCount, kvRanges)
+		remains, err := sendTasks(scheduler, consumer, t, kvRanges)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if consumer.shouldAbort() {
+			break
 		}
 		if len(remains) > 0 {
 			startKey = remains[0].StartKey
@@ -1071,10 +867,8 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			break
 		}
 	}
-	if ingestBeCtx != nil {
-		ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
-	}
-	return nil
+	scheduler.close(false)
+	return consumer.getResult()
 }
 
 func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
