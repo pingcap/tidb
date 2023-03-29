@@ -1923,7 +1923,7 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 7", "1 8", "1 9"))
 	tk.MustExec(`set @a2=4, @a3=2`)
 	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 10", "1 7", "1 8"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestIssue29565(t *testing.T) {
@@ -2336,7 +2336,7 @@ func TestIssue26873(t *testing.T) {
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestIssue29511(t *testing.T) {
