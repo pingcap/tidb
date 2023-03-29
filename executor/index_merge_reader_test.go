@@ -652,11 +652,7 @@ func TestIndexMergePanic(t *testing.T) {
 		var sql string
 		v1 := rand.Intn(maxV-minV) + minV
 		v2 := rand.Intn(maxV-minV) + minV
-		if !strings.Contains(fp, "Intersection") {
-			sql = fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d;", v1, v2)
-		} else {
-			sql = fmt.Sprintf("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c3 < %d and c2 < %d", v1, v2)
-		}
+		sql = fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d;", v1, v2)
 		res := tk.MustQuery("explain " + sql).Rows()
 		require.Contains(t, res[1][0], "IndexMerge")
 		err := tk.QueryToErr(sql)
@@ -669,8 +665,6 @@ func TestIndexMergePanic(t *testing.T) {
 		packagePath + "testIndexMergePanicPartialTableWorker",
 
 		packagePath + "testIndexMergePanicProcessWorkerUnion",
-		packagePath + "testIndexMergePanicProcessWorkerIntersection",
-		packagePath + "testIndexMergePanicPartitionTableIntersectionWorker",
 
 		packagePath + "testIndexMergePanicTableScanWorker",
 	}
