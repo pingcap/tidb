@@ -59,23 +59,14 @@ func copReadChunkPoolSize() int {
 	return 10 * int(variable.GetDDLReorgWorkerCounter())
 }
 
-func (c *copReqSenderPool) fetchChunk() (*chunk.Chunk, error) {
-	rs, ok := <-c.resultsCh
-	if !ok {
-		return nil, nil
-	}
-	if rs.err != nil {
-		logutil.BgLogger().Error("[ddl-ingest] finish a cop-request task with error",
-			zap.Int("id", rs.id), zap.Error(rs.err))
-	} else if rs.done {
-		logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task", zap.Int("id", rs.id))
-	}
-	return rs.chunk, rs.err
+// resultChan is used to receive the result of coprocessor request.
+type resultChan interface {
+	AddTask(idxRecResult)
 }
 
 type copReqSenderPool struct {
 	tasksCh   chan *reorgBackfillTask
-	resultsCh chan idxRecResult
+	resultsCh resultChan
 
 	ctx    context.Context
 	copCtx *copContext
@@ -100,7 +91,7 @@ func (c *copReqSender) run() {
 	defer p.wg.Done()
 	var curTaskID int
 	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
-		p.resultsCh <- idxRecResult{id: curTaskID, err: dbterror.ErrReorgPanic}
+		p.resultsCh.AddTask(idxRecResult{id: curTaskID, err: dbterror.ErrReorgPanic})
 	}, false)
 	for {
 		if util.HasCancelled(c.ctx) {
@@ -115,12 +106,12 @@ func (c *copReqSender) run() {
 			zap.Int("id", task.id), zap.String("task", task.String()))
 		ver, err := p.store.CurrentVersion(kv.GlobalTxnScope)
 		if err != nil {
-			p.resultsCh <- idxRecResult{id: task.id, err: err}
+			p.resultsCh.AddTask(idxRecResult{id: task.id, err: err})
 			return
 		}
 		rs, err := p.copCtx.buildTableScan(p.ctx, ver.Ver, task.startKey, task.excludedEndKey())
 		if err != nil {
-			p.resultsCh <- idxRecResult{id: task.id, err: err}
+			p.resultsCh.AddTask(idxRecResult{id: task.id, err: err})
 			return
 		}
 		failpoint.Inject("MockCopSenderPanic", func(val failpoint.Value) {
@@ -133,26 +124,26 @@ func (c *copReqSender) run() {
 			srcChk := p.getChunk()
 			done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk)
 			if err != nil {
-				p.resultsCh <- idxRecResult{id: task.id, err: err}
+				p.resultsCh.AddTask(idxRecResult{id: task.id, err: err})
 				p.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return
 			}
-			p.resultsCh <- idxRecResult{id: task.id, chunk: srcChk, done: done}
+			p.resultsCh.AddTask(idxRecResult{id: task.id, chunk: srcChk, done: done, end: task.endKey})
 		}
 		terror.Call(rs.Close)
 	}
 }
 
-func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage) *copReqSenderPool {
+func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
+	taskCh chan *reorgBackfillTask) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
 	}
 	return &copReqSenderPool{
-		tasksCh:    make(chan *reorgBackfillTask, backfillTaskChanSize),
-		resultsCh:  make(chan idxRecResult, backfillTaskChanSize),
+		tasksCh:    taskCh,
 		ctx:        ctx,
 		copCtx:     copCtx,
 		store:      store,
@@ -160,10 +151,6 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Stora
 		wg:         sync.WaitGroup{},
 		srcChkPool: srcChkPool,
 	}
-}
-
-func (c *copReqSenderPool) sendTask(task *reorgBackfillTask) {
-	c.tasksCh <- task
 }
 
 func (c *copReqSenderPool) adjustSize(n int) {
@@ -192,7 +179,6 @@ func (c *copReqSenderPool) close(force bool) {
 		return
 	}
 	logutil.BgLogger().Info("[ddl-ingest] close cop-request sender pool")
-	close(c.tasksCh)
 	if force {
 		for _, w := range c.senders {
 			w.cancel()
@@ -200,7 +186,6 @@ func (c *copReqSenderPool) close(force bool) {
 	}
 	// Wait for all cop-req senders to exit.
 	c.wg.Wait()
-	close(c.resultsCh)
 	c.closed = true
 }
 
@@ -489,5 +474,6 @@ type idxRecResult struct {
 	id    int
 	chunk *chunk.Chunk
 	err   error
+	end   kv.Key
 	done  bool
 }

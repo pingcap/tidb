@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -1665,131 +1666,58 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 }
 
 type addIndexIngestWorker struct {
-	*backfillCtx
+	d             *ddlCtx
+	metricCounter prometheus.Counter
+	sessCtx       sessionctx.Context
 
 	index            table.Index
 	writerCtx        *ingest.WriterContext
 	copReqSenderPool *copReqSenderPool
-	done             bool
+
+	resultCh chan *backfillResult
+	jobID    int64
 }
 
-func newAddIndexIngestWorker(t table.PhysicalTable, bfCtx *backfillCtx, jobID, eleID int64, eleTypeKey []byte) (*addIndexIngestWorker, error) {
-	if !bytes.Equal(eleTypeKey, meta.IndexElementKey) {
-		logutil.BgLogger().Error("Element type for addIndexIngestWorker incorrect",
-			zap.Int64("job ID", jobID), zap.ByteString("element type", eleTypeKey), zap.Int64("element ID", eleID))
-		return nil, errors.Errorf("element type is not index, typeKey: %v", eleTypeKey)
-	}
-	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, eleID)
+func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.EngineInfo,
+	resultCh chan *backfillResult, jobID int64, schemaName string, indexID int64, writerID int,
+	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context) (*addIndexIngestWorker, error) {
+	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-
-	var lwCtx *ingest.WriterContext
-	bc, ok := ingest.LitBackCtxMgr.Load(jobID)
-	if !ok {
-		return nil, errors.Trace(errors.New(ingest.LitErrGetBackendFail))
-	}
-	ei, err := bc.EngMgr.Register(bc, jobID, eleID, bfCtx.schemaName, t.Meta().Name.O)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	lwCtx, err = ei.NewWriterCtx(bfCtx.id, indexInfo.Unique)
+	lwCtx, err := ei.NewWriterCtx(writerID, indexInfo.Unique)
 	if err != nil {
 		return nil, err
 	}
 
 	return &addIndexIngestWorker{
-		backfillCtx: bfCtx,
-		index:       index,
-		writerCtx:   lwCtx,
+		d:       d,
+		sessCtx: sessCtx,
+		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
+			metrics.GenerateReorgLabel("add_idx_rate", schemaName, t.Meta().Name.O)),
+		index:            index,
+		writerCtx:        lwCtx,
+		copReqSenderPool: copReqSenderPool,
+		resultCh:         resultCh,
+		jobID:            jobID,
 	}, nil
 }
 
-func (w *addIndexIngestWorker) AddMetricInfo(count float64) {
-	if w.done {
-		return
+// WriteLocal will write index records to lightning engine.
+func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (taskCtx backfillTaskContext, err error) {
+	oprStartTime := time.Now()
+	copCtx := w.copReqSenderPool.copCtx
+	vars := w.sessCtx.GetSessionVars()
+	cnt, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, rs.chunk)
+	if err != nil {
+		w.copReqSenderPool.recycleChunk(rs.chunk)
+		return taskCtx, err
 	}
-	w.metricCounter.Add(count)
-}
-
-func (*addIndexIngestWorker) GetTasks() ([]*BackfillJob, error) {
-	return nil, nil
-}
-func (w *addIndexIngestWorker) UpdateTask(bfJob *BackfillJob) error {
-	s := newSession(w.backfillCtx.sessCtx)
-
-	return s.runInTxn(func(se *session) error {
-		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%s'", bfJob.keyString()), "update_backfill_task")
-		if err != nil {
-			return err
-		}
-		if len(jobs) == 0 {
-			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job")
-		}
-		if jobs[0].InstanceID != bfJob.InstanceID {
-			return dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get a backfill job %v, want instance ID %s", jobs[0], bfJob.InstanceID))
-		}
-
-		currTime, err := GetOracleTimeWithStartTS(se)
-		if err != nil {
-			return err
-		}
-		bfJob.InstanceLease = GetLeaseGoTime(currTime, InstanceLease)
-		return updateBackfillJob(se, BackgroundSubtaskTable, bfJob, "update_backfill_task")
-	})
-}
-func (w *addIndexIngestWorker) FinishTask(bfJob *BackfillJob) error {
-	s := newSession(w.backfillCtx.sessCtx)
-	return s.runInTxn(func(se *session) error {
-		txn, err := se.txn()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		bfJob.StateUpdateTS = txn.StartTS()
-		err = RemoveBackfillJob(se, false, bfJob)
-		if err != nil {
-			return err
-		}
-		return AddBackfillHistoryJob(se, []*BackfillJob{bfJob})
-	})
-}
-func (w *addIndexIngestWorker) GetCtx() *backfillCtx {
-	return w.backfillCtx
-}
-
-func (*addIndexIngestWorker) String() string {
-	return "ingest index"
-}
-
-// BackfillData will ingest index records through lightning engine.
-func (w *addIndexIngestWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error) {
-	taskCtx.nextKey = handleRange.startKey
-	var total int
-	for {
-		oprStartTime := time.Now()
-		copChunk, err := w.copReqSenderPool.fetchChunk()
-		if err != nil {
-			return taskCtx, err
-		}
-		if copChunk == nil {
-			// No more chunks.
-			break
-		}
-		copCtx := w.copReqSenderPool.copCtx
-		vars := w.sessCtx.GetSessionVars()
-		cnt, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, copChunk)
-		if err != nil {
-			w.copReqSenderPool.recycleChunk(copChunk)
-			return taskCtx, err
-		}
-		total += cnt
-		w.copReqSenderPool.recycleChunk(copChunk)
-		w.AddMetricInfo(float64(cnt))
-		logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
-	}
-	taskCtx.scanCount = total
-	taskCtx.addedCount = total
-	taskCtx.nextKey = handleRange.endKey
+	w.copReqSenderPool.recycleChunk(rs.chunk)
+	w.metricCounter.Add(float64(cnt))
+	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
+	taskCtx.scanCount = cnt
+	taskCtx.addedCount = cnt
+	taskCtx.nextKey = rs.end
 	taskCtx.done = true
-	w.done = true
 	return taskCtx, nil
 }
 
