@@ -300,9 +300,11 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	return nil
 }
 
+var ignoreInTest = false
+
 func (e *LoadDataController) initDefaultOptions() {
 	threadCnt := runtime.NumCPU()
-	if intest.InTest {
+	if intest.InTest && !ignoreInTest {
 		threadCnt = 1
 	}
 	if e.Format == LoadDataFormatParquet {

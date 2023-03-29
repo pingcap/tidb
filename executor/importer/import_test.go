@@ -33,6 +33,11 @@ import (
 )
 
 func TestInitDefaultOptions(t *testing.T) {
+	ignoreInTest = true
+	t.Cleanup(func() {
+		ignoreInTest = false
+	})
+
 	e := LoadDataController{}
 	e.initDefaultOptions()
 	require.Equal(t, LogicalImportMode, e.ImportMode)
