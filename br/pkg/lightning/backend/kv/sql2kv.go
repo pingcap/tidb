@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/expression"
@@ -36,14 +35,12 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
 type tableKVEncoder struct {
 	*BaseKVEncoder
-	recordCache []types.Datum
-	metrics     *metric.Metrics
+	metrics *metric.Metrics
 }
 
 func GetSession4test(encoder encode.Encoder) sessionctx.Context {
@@ -188,8 +185,8 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPerm
 	//nolint: prealloc
 	var record []types.Datum
 
-	if kvcodec.recordCache != nil {
-		record = kvcodec.recordCache
+	if kvcodec.RecordCache != nil {
+		record = kvcodec.RecordCache
 	} else {
 		record = make([]types.Datum, 0, len(cols)+1)
 	}
@@ -201,7 +198,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPerm
 		if j >= 0 && j < len(row) {
 			theDatum = &row[j]
 		}
-		value, err = kvcodec.getActualDatum(rowID, i, theDatum)
+		value, err = kvcodec.GetActualDatum(rowID, i, theDatum)
 		if err != nil {
 			return nil, kvcodec.LogKVConvertFailed(row, j, col.ToInfo(), err)
 		}
@@ -250,22 +247,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPerm
 		}
 	}
 
-	_, err = kvcodec.Table.AddRecord(kvcodec.SessionCtx, record)
-	if err != nil {
-		kvcodec.logger.Error("kv encode failed",
-			zap.Array("originalRow", RowArrayMarshaller(row)),
-			zap.Array("convertedRow", RowArrayMarshaller(record)),
-			log.ShortError(err),
-		)
-		return nil, errors.Trace(err)
-	}
-	kvPairs := kvcodec.SessionCtx.TakeKvPairs()
-	for i := 0; i < len(kvPairs.Pairs); i++ {
-		var encoded [9]byte // The max length of encoded int64 is 9.
-		kvPairs.Pairs[i].RowID = common.EncodeIntRowIDToBuf(encoded[:0], rowID)
-	}
-	kvcodec.recordCache = record[:0]
-	return kvPairs, nil
+	return kvcodec.Record2KV(record, row, rowID)
 }
 
 func IsAutoIncCol(colInfo *model.ColumnInfo) bool {
@@ -284,56 +266,7 @@ func GetEncoderSe(encoder encode.Encoder) *Session {
 
 // GetActualDatum export getActualDatum function.
 func GetActualDatum(encoder encode.Encoder, rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
-	return encoder.(*tableKVEncoder).getActualDatum(70, 0, inputDatum)
-}
-
-func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
-	var (
-		value types.Datum
-		err   error
-	)
-
-	cols := kvcodec.Table.Cols()
-
-	// Since this method is only called when iterating the columns in the `Encode()` method,
-	// we can assume that the `colIndex` always have a valid input
-	col := cols[colIndex]
-
-	isBadNullValue := false
-	if inputDatum != nil {
-		value, err = table.CastValue(kvcodec.SessionCtx, *inputDatum, col.ToInfo(), false, false)
-		if err != nil {
-			return value, err
-		}
-		if err := col.CheckNotNull(&value, 0); err == nil {
-			return value, nil // the most normal case
-		}
-		isBadNullValue = true
-	}
-	// handle special values
-	switch {
-	case IsAutoIncCol(col.ToInfo()):
-		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
-		value, err = table.CastValue(kvcodec.SessionCtx, types.NewIntDatum(rowID), col.ToInfo(), false, false)
-	case kvcodec.IsAutoRandomCol(col.ToInfo()):
-		var val types.Datum
-		realRowID := kvcodec.AutoIDFn(rowID)
-		if mysql.HasUnsignedFlag(col.GetFlag()) {
-			val = types.NewUintDatum(uint64(realRowID))
-		} else {
-			val = types.NewIntDatum(realRowID)
-		}
-		value, err = table.CastValue(kvcodec.SessionCtx, val, col.ToInfo(), false, false)
-	case col.IsGenerated():
-		// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
-		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
-		value = types.GetMinValue(&col.FieldType)
-	case isBadNullValue:
-		err = col.HandleBadNull(&value, kvcodec.SessionCtx.Vars.StmtCtx, 0)
-	default:
-		value, err = table.GetColDefaultValue(kvcodec.SessionCtx, col.ToInfo())
-	}
-	return value, err
+	return encoder.(*tableKVEncoder).GetActualDatum(70, 0, inputDatum)
 }
 
 // get record value for auto-increment field
