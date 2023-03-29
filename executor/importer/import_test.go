@@ -40,7 +40,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, config.OpLevelRequired, e.checksum)
 	require.Equal(t, true, e.addIndex)
 	require.Equal(t, config.OpLevelOptional, e.analyze)
-	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt)
+	require.Equal(t, int64(runtime.NumCPU()), e.ThreadCnt)
 	require.Equal(t, int64(1000), e.BatchSize)
 	require.Equal(t, unlimitedWriteSpeed, e.maxWriteSpeed)
 	require.Equal(t, false, e.splitFile)
@@ -49,8 +49,8 @@ func TestInitDefaultOptions(t *testing.T) {
 
 	e = LoadDataController{Format: LoadDataFormatParquet}
 	e.initDefaultOptions()
-	require.Greater(t, e.threadCnt, int64(0))
-	require.Equal(t, int64(math.Max(1, float64(runtime.NumCPU())*0.75)), e.threadCnt)
+	require.Greater(t, e.ThreadCnt, int64(0))
+	require.Equal(t, int64(math.Max(1, float64(runtime.NumCPU())*0.75)), e.ThreadCnt)
 }
 
 func TestInitOptions(t *testing.T) {
@@ -165,7 +165,7 @@ func TestInitOptions(t *testing.T) {
 	require.Equal(t, config.OpLevelOptional, e.checksum, sql)
 	require.False(t, e.addIndex, sql)
 	require.Equal(t, config.OpLevelRequired, e.analyze, sql)
-	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt, sql)
+	require.Equal(t, int64(runtime.NumCPU()), e.ThreadCnt, sql)
 	require.Equal(t, int64(2000), e.BatchSize, sql)
 	require.Equal(t, config.ByteSize(200<<20), e.maxWriteSpeed, sql)
 	require.True(t, e.splitFile, sql)
@@ -176,12 +176,12 @@ func TestInitOptions(t *testing.T) {
 func TestAdjustOptions(t *testing.T) {
 	e := LoadDataController{
 		diskQuota:     1,
-		threadCnt:     100000000,
+		ThreadCnt:     100000000,
 		maxWriteSpeed: 10,
 	}
 	e.adjustOptions()
 	require.Equal(t, minDiskQuota, e.diskQuota)
-	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt)
+	require.Equal(t, int64(runtime.NumCPU()), e.ThreadCnt)
 	require.Equal(t, minWriteSpeed, e.maxWriteSpeed)
 }
 

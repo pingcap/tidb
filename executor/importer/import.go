@@ -159,7 +159,7 @@ type LoadDataController struct {
 	checksum          config.PostOpLevel
 	addIndex          bool
 	analyze           config.PostOpLevel
-	threadCnt         int64
+	ThreadCnt         int64
 	BatchSize         int64
 	maxWriteSpeed     config.ByteSize // per second
 	splitFile         bool
@@ -302,6 +302,9 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 
 func (e *LoadDataController) initDefaultOptions() {
 	threadCnt := runtime.NumCPU()
+	if intest.InTest {
+		threadCnt = 1
+	}
 	if e.Format == LoadDataFormatParquet {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
@@ -311,7 +314,7 @@ func (e *LoadDataController) initDefaultOptions() {
 	e.checksum = config.OpLevelRequired
 	e.addIndex = true
 	e.analyze = config.OpLevelOptional
-	e.threadCnt = int64(threadCnt)
+	e.ThreadCnt = int64(threadCnt)
 	e.BatchSize = 1000
 	e.maxWriteSpeed = unlimitedWriteSpeed
 	e.splitFile = false
@@ -402,8 +405,8 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 	}
 	if opt, ok := specifiedOptions[threadOption]; ok {
 		// boolean true will be taken as 1
-		e.threadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || e.threadCnt <= 0 {
+		e.ThreadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || e.ThreadCnt <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -454,8 +457,8 @@ func (e *LoadDataController) adjustOptions() {
 	}
 	// max value is cpu-count
 	numCPU := int64(runtime.NumCPU())
-	if e.threadCnt > numCPU {
-		e.threadCnt = numCPU
+	if e.ThreadCnt > numCPU {
+		e.ThreadCnt = numCPU
 	}
 	if e.maxWriteSpeed < minWriteSpeed {
 		e.maxWriteSpeed = minWriteSpeed
@@ -692,8 +695,10 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 }
 
 // GetParser returns a parser for the data file.
-func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo LoadDataReaderInfo) (
-	parser mydump.Parser, err error) {
+func (e *LoadDataController) GetParser(
+	ctx context.Context,
+	dataFileInfo LoadDataReaderInfo,
+) (parser mydump.Parser, err error) {
 	reader, err2 := dataFileInfo.Opener(ctx)
 	if err2 != nil {
 		return nil, err2
