@@ -416,6 +416,14 @@ func TestLoadDataRestore(t *testing.T) {
 			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t`",
 			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
 		},
+		{
+			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t` character set utf8mb4",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t` CHARACTER SET utf8mb4",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t` character set gbk",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t` CHARACTER SET gbk",
+		},
 		// ignore N lines
 		{
 			sourceSQL: "load data infile '/a.csv' into table `t` ignore 0 lines",

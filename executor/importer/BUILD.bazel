@@ -16,6 +16,7 @@ go_library(
         "//parser/terror",
         "//planner/core",
         "//sessionctx",
+        "//sessionctx/variable",
         "//table",
         "//util/chunk",
         "//util/dbterror",

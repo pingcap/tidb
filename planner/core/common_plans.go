@@ -552,6 +552,7 @@ type LoadData struct {
 	Path        string
 	Format      *string
 	Table       *ast.TableName
+	Charset     *string
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
