@@ -1130,6 +1130,10 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
+
+	if err = do.initDistTaskLoop(ctx); err != nil {
+		return err
+	}
 	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
 	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
@@ -1155,10 +1159,6 @@ func (do *Domain) Init(
 		do.wg.Run(func() {
 			do.closestReplicaReadCheckLoop(ctx, pdCli)
 		}, "closestReplicaReadCheckLoop")
-	}
-
-	if err = do.initDistTaskLoop(ctx); err != nil {
-		return err
 	}
 
 	err = do.initLogBackup(ctx, pdCli)
