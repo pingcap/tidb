@@ -84,6 +84,10 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.Len(t, task5, 1)
 	require.Equal(t, task, task5[0])
 
+	task6, err := gm.GetTaskByKey("key1")
+	require.NoError(t, err)
+	require.Equal(t, task, task6)
+
 	// test cannot insert task with dup key
 	_, err = gm.AddNewTask("key1", "test2", 4, []byte("test2"))
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")

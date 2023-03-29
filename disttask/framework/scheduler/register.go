@@ -65,3 +65,11 @@ func RegisterSubtaskExectorConstructor(taskType string, constructor SubtaskExecu
 	}
 	subtaskExecutorOptions[taskType] = option
 }
+
+// ClearSchedulers is only used in test
+func ClearSchedulers() {
+	schedulerConstructors = make(map[string]Constructor)
+	schedulerOptions = make(map[string]schedulerRegisterOptions)
+	subtaskExecutorConstructors = make(map[string]SubtaskExecutorConstructor)
+	subtaskExecutorOptions = make(map[string]subtaskExecutorRegisterOptions)
+}
