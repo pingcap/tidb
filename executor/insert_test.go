@@ -2034,7 +2034,8 @@ func TestIssue32213(t *testing.T) {
 }
 
 func TestInsertLock(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -2080,7 +2081,7 @@ func TestInsertLock(t *testing.T) {
 			tk1.MustExec("drop table if exists t")
 			tk1.MustExec(tt.ddl)
 			tk1.MustExec("insert into t values (1)")
-			tk1.MustExec("begin")
+			tk1.MustExec("begin pessimistic")
 			tk1.MustExec(tt.dml)
 			done := make(chan struct{})
 			go func() {
@@ -2089,7 +2090,7 @@ func TestInsertLock(t *testing.T) {
 			}()
 			select {
 			case <-done:
-				require.Failf(t, "txn2 is not blocked by %q", tt.dml)
+				require.Fail(t, fmt.Sprintf("txn2 is not blocked by %q", tt.dml))
 			case <-time.After(100 * time.Millisecond):
 			}
 			tk1.MustExec("commit")
