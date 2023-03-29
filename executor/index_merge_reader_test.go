@@ -527,6 +527,40 @@ func TestIndexMergeSplitTable(t *testing.T) {
 	tk.MustQuery("SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 68 ) and col0 > 10 order by 1;").Check(testkit.Rows("0", "1", "2", "3", "4", "5", "6", "7"))
 }
 
+func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
+	insertStr := "insert into t1 values(0, 0, 0)"
+	for i := 1; i < 1000; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+
+	var err error
+	sql := "select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 900 or c2 < 1000;"
+	res := tk.MustQuery("explain " + sql).Rows()
+	require.Contains(t, res[1][0], "IndexMerge")
+
+	// If got goroutines leak in coprocessor, ci will fail.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePartialTableWorkerCoprLeak", `panic("testIndexMergePartialTableWorkerCoprLeak")`))
+	err = tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), "testIndexMergePartialTableWorkerCoprLeak")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialTableWorkerCoprLeak"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak", `panic("testIndexMergePartialIndexWorkerCoprLeak")`))
+	err = tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), "testIndexMergePartialIndexWorkerCoprLeak")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak"))
+}
+
 func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	// Same purpose with TestPessimisticLockOnPartition, but test IndexMergeReader.
 	store, clean := testkit.CreateMockStore(t)
