@@ -4,10 +4,10 @@ go_library(
     name = "mock",
     srcs = [
         "backend.go",
+        "encode.go",
         "glue.go",
         "glue_checkpoint.go",
         "importer.go",
-        "kv.go",
         "mock_cluster.go",
         "s3iface.go",
     ],
@@ -15,7 +15,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
-        "//br/pkg/lightning/backend/kv",
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/glue",

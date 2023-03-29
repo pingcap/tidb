@@ -114,15 +114,20 @@ func TestResourceGroup(t *testing.T) {
 
 	// test the independent policy ID allocation.
 	m := meta.NewMeta(txn)
+	groups, err := m.ListResourceGroups()
+	require.NoError(t, err)
+	require.Equal(t, len(groups), 1)
+	require.Equal(t, groups[0], meta.DefaultGroupMeta4Test())
 
+	groupID := int64(2)
 	checkResourceGroup := func(ru uint64) {
-		rg, err := m.GetResourceGroup(1)
+		rg, err := m.GetResourceGroup(groupID)
 		require.NoError(t, err)
 		require.Equal(t, rg.RURate, ru)
 	}
 
 	rg := &model.ResourceGroupInfo{
-		ID:   1,
+		ID:   groupID,
 		Name: model.NewCIStr("aa"),
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate: 100,
@@ -131,12 +136,16 @@ func TestResourceGroup(t *testing.T) {
 	require.NoError(t, m.AddResourceGroup(rg))
 	checkResourceGroup(100)
 
+	groups, err = m.ListResourceGroups()
+	require.NoError(t, err)
+	require.Equal(t, len(groups), 2)
+
 	rg.RURate = 200
 	require.NoError(t, m.UpdateResourceGroup(rg))
 	checkResourceGroup(200)
 
-	m.DropResourceGroup(1)
-	_, err = m.GetResourceGroup(1)
+	m.DropResourceGroup(groupID)
+	_, err = m.GetResourceGroup(groupID)
 	require.Error(t, err)
 }
 

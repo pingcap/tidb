@@ -16,7 +16,6 @@ go_test(
         "//executor",
         "//meta/autoid",
         "//sessionctx",
-        "//sessiontxn",
         "//testkit",
         "//util/dbterror/exeerrors",
         "@com_github_stretchr_testify//require",
