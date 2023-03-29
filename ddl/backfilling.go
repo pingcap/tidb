@@ -821,12 +821,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			break
 		}
 
-		scheduler.setMaxWorkerSize(len(kvRanges))
-		err = scheduler.adjustWorkerSize()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		logutil.BgLogger().Info("[ddl] start backfill workers to reorg record",
 			zap.Stringer("type", bfWorkerType),
 			zap.Int("workerCnt", scheduler.currentWorkerSize()),

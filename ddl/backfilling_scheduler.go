@@ -47,7 +47,6 @@ type backfillScheduler interface {
 	drainTasks()
 	receiveResult() (*backfillResult, bool)
 
-	setMaxWorkerSize(maxSize int)
 	currentWorkerSize() int
 	adjustWorkerSize() error
 }
@@ -56,6 +55,8 @@ var (
 	_ backfillScheduler = &txnBackfillScheduler{}
 	_ backfillScheduler = &ingestBackfillScheduler{}
 )
+
+const maxBackfillWorkerSize = 16
 
 type txnBackfillScheduler struct {
 	ctx          context.Context
@@ -68,7 +69,6 @@ type txnBackfillScheduler struct {
 
 	workers []*backfillWorker
 	wg      sync.WaitGroup
-	maxSize int
 
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
@@ -161,13 +161,9 @@ func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *
 	return nil
 }
 
-func (b *txnBackfillScheduler) setMaxWorkerSize(maxSize int) {
-	b.maxSize = maxSize
-}
-
 func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	return mathutil.Min(workerCnt, b.maxSize)
+	return mathutil.Min(workerCnt, maxBackfillWorkerSize)
 }
 
 func (b *txnBackfillScheduler) currentWorkerSize() int {
@@ -261,8 +257,7 @@ type ingestBackfillScheduler struct {
 	reorgInfo *reorgInfo
 	tbl       table.PhysicalTable
 
-	maxSize int
-	closed  bool
+	closed bool
 
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
@@ -358,10 +353,6 @@ func (b *ingestBackfillScheduler) receiveResult() (*backfillResult, bool) {
 	}
 }
 
-func (b *ingestBackfillScheduler) setMaxWorkerSize(maxSize int) {
-	b.maxSize = maxSize
-}
-
 func (b *ingestBackfillScheduler) currentWorkerSize() int {
 	return int(b.writerPool.Cap())
 }
@@ -419,9 +410,9 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 
 func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	readerSize = mathutil.Min(workerCnt/2, b.maxSize)
+	readerSize = mathutil.Min(workerCnt/2, maxBackfillWorkerSize)
 	readerSize = mathutil.Max(readerSize, 1)
-	writerSize = mathutil.Min(workerCnt/2+2, b.maxSize)
+	writerSize = mathutil.Min(workerCnt/2+2, maxBackfillWorkerSize)
 	return readerSize, writerSize
 }
 
