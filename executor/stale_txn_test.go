@@ -530,7 +530,9 @@ func TestStalenessTransactionSchemaVer(t *testing.T) {
 
 	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
+	time.Sleep(100 * time.Millisecond)
 	tk.MustExec("alter table t add c int")
+	time.Sleep(300 * time.Millisecond)
 
 	// confirm schema changed
 	time.Sleep(time.Millisecond * 20)
@@ -544,12 +546,12 @@ func TestStalenessTransactionSchemaVer(t *testing.T) {
 
 	// schema changed back to the newest
 	tk.MustExec("commit")
-	time.Sleep(time.Millisecond * 20)
+	tk.Session().PrepareStmt("select 1")
 	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
 
 	// select does not affect the infoschema
 	tk.MustExec(fmt.Sprintf(`SELECT * from t AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	time.Sleep(time.Millisecond * 20)
+	tk.Session().PrepareStmt("select 1")
 	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
 }
 
@@ -945,7 +947,9 @@ func TestSetTransactionInfoSchema(t *testing.T) {
 
 	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
+	time.Sleep(100 * time.Millisecond)
 	tk.MustExec("alter table t add c int")
+	time.Sleep(300 * time.Millisecond)
 
 	// confirm schema changed
 	schemaVer2 := tk.Session().GetInfoSchema().SchemaMetaVersion()
@@ -964,6 +968,7 @@ func TestSetTransactionInfoSchema(t *testing.T) {
 	tk.MustExec("begin;")
 	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
 	tk.MustExec("commit")
+	tk.Session().PrepareStmt("select 1")
 	require.Equal(t, schemaVer3, tk.Session().GetInfoSchema().SchemaMetaVersion())
 }
 
