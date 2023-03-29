@@ -2035,20 +2035,6 @@ func TestParseWithTimezone(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-=======
-func TestMarshalTime(t *testing.T) {
-	sc := mock.NewContext().GetSessionVars().StmtCtx
-	v1, err := types.ParseTime(sc, "2017-01-18 01:01:01.123456", mysql.TypeDatetime, types.MaxFsp, nil)
-	require.NoError(t, err)
-	j, err := json.Marshal(v1)
-	require.NoError(t, err)
-	var v2 types.Time
-	require.NoError(t, json.Unmarshal(j, &v2))
-	require.Equal(t, 0, v1.Compare(v2))
-}
-
->>>>>>> 8398f0fe098 (*: fix a timezone data race which may cause wrong row data (#41146))
 func BenchmarkFormat(b *testing.B) {
 	t1 := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	for i := 0; i < b.N; i++ {
@@ -2063,13 +2049,8 @@ func BenchmarkTimeAdd(b *testing.B) {
 	sc := &stmtctx.StatementContext{
 		TimeZone: time.UTC,
 	}
-<<<<<<< HEAD
-	arg1, _ := types.ParseTime(sc, "2017-01-18", mysql.TypeDatetime, types.MaxFsp)
-	arg2, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
-=======
 	arg1, _ := types.ParseTime(sc, "2017-01-18", mysql.TypeDatetime, types.MaxFsp, nil)
-	arg2, _, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
->>>>>>> 8398f0fe098 (*: fix a timezone data race which may cause wrong row data (#41146))
+	arg2, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
 	for i := 0; i < b.N; i++ {
 		_, err := arg1.Add(sc, arg2)
 		if err != nil {
