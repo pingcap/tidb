@@ -6718,7 +6718,8 @@ func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
 // The "virtual generated column" push down is not supported now.
 // This test covers: TopN, Projection, Selection.
 func TestVirtualExprPushDown(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -6754,6 +6755,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
