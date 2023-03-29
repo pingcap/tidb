@@ -1523,25 +1523,25 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where a+b=13",
 		"select * from t where mod(a, 3)=1",
 		"select * from t where d>now()",
-		"select distinct a from t1 where a > 1 and b < 2",                                  // distinct
-		"select count(*) from t1 where a > 1 and b < 2 group by a",                         // group by
-		"select * from t1 order by a",                                                      // order by
+		"select distinct a from t1 where a > 1 and b < 2",          // distinct
+		"select count(*) from t1 where a > 1 and b < 2 group by a", // group by
+		"select * from t1 order by a",                              // order by
 	}
 
 	unsupported := []string{
 		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",               // hint
 		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
-		"select * from t1 limit 1",                                                         // limit
-		"select * from t1, t2",                                                             // join
-		"select * from (select * from t1) t",                                               // sub-query
-		"insert into t1 values(1, 1)",                                                      // insert
-		"insert into t1(a, b) select a, b from t1",                                         // insert into select
-		"update t1 set a = 1 where b = 2",                                                  // update
-		"delete from t1 where b = 1",                                                       // delete
-		"select * from t1 for update",                                                      // lock
-		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
-		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
-		"select * from t where j < 1",                                                      // json
+		"select * from t1 limit 1",                                     // limit
+		"select * from t1, t2",                                         // join
+		"select * from (select * from t1) t",                           // sub-query
+		"insert into t1 values(1, 1)",                                  // insert
+		"insert into t1(a, b) select a, b from t1",                     // insert into select
+		"update t1 set a = 1 where b = 2",                              // update
+		"delete from t1 where b = 1",                                   // delete
+		"select * from t1 for update",                                  // lock
+		"select * from t1 where a in (select a from t)",                // uncorrelated sub-query
+		"select * from t1 where a in (select a from t where a > t1.a)", // correlated sub-query
+		"select * from t where j < 1",                                  // json
 		"select * from t where a > 1 and j < 1",
 		"select * from t where e < '1'", // enum
 		"select * from t where a > 1 and e < '1'",
