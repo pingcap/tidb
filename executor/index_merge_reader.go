@@ -419,9 +419,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					partialTableReader.dagPB = e.dagPBs[workID]
 				}
 
-<<<<<<< HEAD
-				for _, tbl := range tbls {
-=======
 				var tableReaderClosed bool
 				defer func() {
 					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
@@ -429,8 +426,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						terror.Call(worker.tableReader.Close)
 					}
 				}()
-				for parTblIdx, tbl := range tbls {
->>>>>>> 4aa3a95f9f (exeuctor: fix coprocessor goroutine leak for IndexMerge (#41610))
+				for _, tbl := range tbls {
 					// check if this executor is closed
 					select {
 					case <-e.finished:
