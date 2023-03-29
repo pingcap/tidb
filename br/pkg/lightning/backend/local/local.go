@@ -383,6 +383,58 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 	return nil
 }
 
+type BackendConfig struct {
+	PDAddr        string
+	LocalStoreDir string
+	// max number of connections to a store.
+	MaxConnPerStore int
+	// compress type when write or ingest into tikv
+	ConnCompressType config.CompressionType
+	// number of import(write & ingest) workers
+	WorkerConcurrency int
+	DupeConcurrency   int
+	KVWriteBatchSize  int
+	CheckpointEnabled bool
+	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
+	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
+	MemTableSize            int
+	LocalWriterMemCacheSize int64
+	// whether check TiKV capacity before write & ingest.
+	ShouldCheckTiKV    bool
+	DuplicateDetection bool
+	DuplicateDetectOpt DupDetectOpt
+	StoreWriteBWLimit  int
+	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
+	// To avoid this, we should check write stall before ingesting SSTs. Note that, we
+	// must check both leader node and followers in client side, because followers will
+	// not check write stall as long as ingest command is accepted by leader.
+	ShouldCheckWriteStall bool
+	MaxOpenFiles          int
+	KeyspaceName          string
+}
+
+func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string) BackendConfig {
+	return BackendConfig{
+		PDAddr:                  cfg.TiDB.PdAddr,
+		LocalStoreDir:           cfg.TikvImporter.SortedKVDir,
+		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
+		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
+		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
+		DupeConcurrency:         cfg.TikvImporter.RangeConcurrency * 2,
+		KVWriteBatchSize:        cfg.TikvImporter.SendKVPairs,
+		CheckpointEnabled:       cfg.Checkpoint.Enable,
+		MemTableSize:            int(cfg.TikvImporter.EngineMemCacheSize),
+		LocalWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
+		ShouldCheckTiKV:         cfg.App.CheckRequirements,
+		DuplicateDetection:      cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		DuplicateDetectOpt:      DupDetectOpt{reportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		StoreWriteBWLimit:       int(cfg.TikvImporter.StoreWriteBWLimit),
+		ShouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
+		MaxOpenFiles:            mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
+		KeyspaceName:            keyspaceName,
+	}
+}
+
 type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
@@ -390,26 +442,12 @@ type local struct {
 	splitCli         split.SplitClient
 	tikvCli          *tikvclient.KVStore
 	tls              *common.TLS
-	pdAddr           string
 	regionSizeGetter TableRegionSizeGetter
 	tikvCodec        tikvclient.Codec
 
-	localStoreDir string
+	BackendConfig
 
-	workerConcurrency int
-	kvWriteBatchSize  int
-	checkpointEnabled bool
-
-	dupeConcurrency int
-	maxOpenFiles    int
-
-	engineMemCacheSize      int
-	localWriterMemCacheSize int64
-	supportMultiIngest      bool
-
-	shouldCheckTiKV     bool
-	duplicateDetection  bool
-	duplicateDetectOpt  dupDetectOpt
+	supportMultiIngest  bool
 	duplicateDB         *pebble.DB
 	keyAdapter          KeyAdapter
 	errorMgr            *errormanager.ErrorManager
@@ -419,12 +457,6 @@ type local struct {
 	metrics      *metric.Metrics
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
-
-	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
-	// To avoid this, we should check write stall before ingesting SSTs. Note that, we
-	// must check both leader node and followers in client side, because followers will
-	// not check write stall as long as ingest command is accepted by leader.
-	shouldCheckWriteStall bool
 }
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
@@ -449,24 +481,20 @@ var (
 func NewLocalBackend(
 	ctx context.Context,
 	tls *common.TLS,
-	cfg *config.Config,
+	backendConfig BackendConfig,
 	regionSizeGetter TableRegionSizeGetter,
-	maxOpenFiles int,
 	errorMgr *errormanager.ErrorManager,
-	keyspaceName string,
 ) (backend.Backend, error) {
-	localFile := cfg.TikvImporter.SortedKVDir
-	rangeConcurrency := cfg.TikvImporter.RangeConcurrency
 
-	pdCtl, err := pdutil.NewPdController(ctx, cfg.TiDB.PdAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
+	pdCtl, err := pdutil.NewPdController(ctx, backendConfig.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
 		return backend.MakeBackend(nil), common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig(), false)
 
 	shouldCreate := true
-	if cfg.Checkpoint.Enable {
-		if info, err := os.Stat(localFile); err != nil {
+	if backendConfig.CheckpointEnabled {
+		if info, err := os.Stat(backendConfig.LocalStoreDir); err != nil {
 			if !os.IsNotExist(err) {
 				return backend.MakeBackend(nil), err
 			}
@@ -476,31 +504,31 @@ func NewLocalBackend(
 	}
 
 	if shouldCreate {
-		err = os.Mkdir(localFile, 0o700)
+		err = os.Mkdir(backendConfig.LocalStoreDir, 0o700)
 		if err != nil {
-			return backend.MakeBackend(nil), common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(localFile)
+			return backend.MakeBackend(nil), common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(backendConfig.LocalStoreDir)
 		}
 	}
 
 	var duplicateDB *pebble.DB
-	if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-		duplicateDB, err = openDuplicateDB(localFile)
+	if backendConfig.DuplicateDetection {
+		duplicateDB, err = openDuplicateDB(backendConfig.LocalStoreDir)
 		if err != nil {
 			return backend.MakeBackend(nil), common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(cfg.TiDB.PdAddr, ","), tls.TLSConfig())
+	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(backendConfig.PDAddr, ","), tls.TLSConfig())
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 
 	var pdCliForTiKV *tikvclient.CodecPDClient
-	if keyspaceName == "" {
+	if backendConfig.KeyspaceName == "" {
 		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCtl.GetPDClient())
 	} else {
-		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCtl.GetPDClient(), keyspaceName)
+		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCtl.GetPDClient(), backendConfig.KeyspaceName)
 		if err != nil {
 			return backend.MakeBackend(nil), common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
 		}
@@ -512,15 +540,14 @@ func NewLocalBackend(
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	importClientFactory := newImportClientFactoryImpl(splitCli, tls, rangeConcurrency, cfg.TikvImporter.CompressKVPairs)
-	duplicateDetection := cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone
+	importClientFactory := newImportClientFactoryImpl(splitCli, tls, backendConfig.MaxConnPerStore, backendConfig.ConnCompressType)
 	keyAdapter := KeyAdapter(noopKeyAdapter{})
-	if duplicateDetection {
+	if backendConfig.DuplicateDetection {
 		keyAdapter = dupDetectKeyAdapter{}
 	}
 	var writeLimiter StoreWriteLimiter
-	if cfg.TikvImporter.StoreWriteBWLimit > 0 {
-		writeLimiter = newStoreWriteLimiter(int(cfg.TikvImporter.StoreWriteBWLimit))
+	if backendConfig.StoreWriteBWLimit > 0 {
+		writeLimiter = newStoreWriteLimiter(int(backendConfig.StoreWriteBWLimit))
 	} else {
 		writeLimiter = noopStoreWriteLimiter{}
 	}
@@ -535,30 +562,18 @@ func NewLocalBackend(
 		splitCli:         splitCli,
 		tikvCli:          tikvCli,
 		tls:              tls,
-		pdAddr:           cfg.TiDB.PdAddr,
 		regionSizeGetter: regionSizeGetter,
 		tikvCodec:        tikvCodec,
 
-		localStoreDir:     localFile,
-		workerConcurrency: rangeConcurrency * 2,
-		dupeConcurrency:   rangeConcurrency * 2,
-		kvWriteBatchSize:  cfg.TikvImporter.SendKVPairs,
-		checkpointEnabled: cfg.Checkpoint.Enable,
-		maxOpenFiles:      mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
+		BackendConfig: backendConfig,
 
-		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
-		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		duplicateDetection:      duplicateDetection,
-		duplicateDetectOpt:      dupDetectOpt{duplicateDetection && cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
-		shouldCheckTiKV:         cfg.App.CheckRequirements,
-		duplicateDB:             duplicateDB,
-		keyAdapter:              keyAdapter,
-		errorMgr:                errorMgr,
-		importClientFactory:     importClientFactory,
-		bufferPool:              membuf.NewPool(membuf.WithAllocator(alloc)),
-		writeLimiter:            writeLimiter,
-		logger:                  log.FromContext(ctx),
-		shouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
+		duplicateDB:         duplicateDB,
+		keyAdapter:          keyAdapter,
+		errorMgr:            errorMgr,
+		importClientFactory: importClientFactory,
+		bufferPool:          membuf.NewPool(membuf.WithAllocator(alloc)),
+		writeLimiter:        writeLimiter,
+		logger:              log.FromContext(ctx),
 	}
 	if m, ok := metric.FromContext(ctx); ok {
 		local.metrics = m
@@ -731,8 +746,8 @@ func (local *local) Close() {
 		}
 		// If checkpoint is disabled, or we don't detect any duplicate, then this duplicate
 		// db dir will be useless, so we clean up this dir.
-		if allIsWell && (!local.checkpointEnabled || !hasDuplicates) {
-			if err := os.RemoveAll(filepath.Join(local.localStoreDir, duplicateDBName)); err != nil {
+		if allIsWell && (!local.CheckpointEnabled || !hasDuplicates) {
+			if err := os.RemoveAll(filepath.Join(local.LocalStoreDir, duplicateDBName)); err != nil {
 				local.logger.Warn("remove duplicate db file failed", zap.Error(err))
 			}
 		}
@@ -741,8 +756,8 @@ func (local *local) Close() {
 
 	// if checkpoint is disable or we finish load all data successfully, then files in this
 	// dir will be useless, so we clean up this dir and all files in it.
-	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
-		err := os.RemoveAll(local.localStoreDir)
+	if !local.CheckpointEnabled || common.IsEmptyDir(local.LocalStoreDir) {
+		err := os.RemoveAll(local.LocalStoreDir)
 		if err != nil {
 			local.logger.Warn("remove local db file failed", zap.Error(err))
 		}
@@ -794,7 +809,7 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize: local.engineMemCacheSize,
+		MemTableSize: local.MemTableSize,
 		// the default threshold value may cause write stall.
 		MemTableStopWritesThreshold: 8,
 		MaxConcurrentCompactions:    16,
@@ -802,7 +817,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 		L0CompactionThreshold: math.MaxInt32,
 		L0StopWritesThreshold: math.MaxInt32,
 		LBaseMaxBytes:         16 * units.TiB,
-		MaxOpenFiles:          local.maxOpenFiles,
+		MaxOpenFiles:          local.MaxOpenFiles,
 		DisableWAL:            true,
 		ReadOnly:              readOnly,
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
@@ -816,7 +831,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 		},
 	}
 
-	dbPath := filepath.Join(local.localStoreDir, engineUUID.String())
+	dbPath := filepath.Join(local.LocalStoreDir, engineUUID.String())
 	db, err := pebble.Open(dbPath, opt)
 	return db, errors.Trace(err)
 }
@@ -828,7 +843,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		return err
 	}
 
-	sstDir := engineSSTDir(local.localStoreDir, engineUUID)
+	sstDir := engineSSTDir(local.LocalStoreDir, engineUUID)
 	if err := os.RemoveAll(sstDir); err != nil {
 		return errors.Trace(err)
 	}
@@ -847,8 +862,8 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		cancel:             cancel,
 		config:             cfg.Local,
 		tableInfo:          cfg.TableInfo,
-		duplicateDetection: local.duplicateDetection,
-		dupDetectOpt:       local.duplicateDetectOpt,
+		duplicateDetection: local.DuplicateDetection,
+		dupDetectOpt:       local.DuplicateDetectOpt,
 		duplicateDB:        local.duplicateDB,
 		errorMgr:           local.errorMgr,
 		keyAdapter:         local.keyAdapter,
@@ -898,8 +913,8 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			keyAdapter:         local.keyAdapter,
-			duplicateDetection: local.duplicateDetection,
-			dupDetectOpt:       local.duplicateDetectOpt,
+			duplicateDetection: local.DuplicateDetection,
+			dupDetectOpt:       local.DuplicateDetectOpt,
 			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 			logger:             log.FromContext(ctx),
@@ -1208,7 +1223,7 @@ func (local *local) executeJob(
 		failpoint.Return(
 			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
 	})
-	if local.shouldCheckTiKV {
+	if local.ShouldCheckTiKV {
 		for _, peer := range job.region.Region.GetPeers() {
 			var (
 				store *pdtypes.StoreInfo
@@ -1238,7 +1253,7 @@ func (local *local) executeJob(
 	err := job.writeToTiKV(ctx,
 		local.tikvCodec.GetAPIVersion(),
 		local.importClientFactory,
-		local.kvWriteBatchSize,
+		local.KVWriteBatchSize,
 		local.bufferPool,
 		local.writeLimiter)
 	if err != nil {
@@ -1256,7 +1271,7 @@ func (local *local) executeJob(
 		local.importClientFactory,
 		local.splitCli,
 		local.supportMultiIngest,
-		local.shouldCheckWriteStall,
+		local.ShouldCheckWriteStall,
 	)
 	if err != nil {
 		if !local.isRetryableImportTiKVError(err) {
@@ -1383,7 +1398,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		}
 	}()
 
-	for i := 0; i < local.workerConcurrency; i++ {
+	for i := 0; i < local.WorkerConcurrency; i++ {
 		workGroup.Go(func() error {
 			return local.startWorker(workerCtx, jobToWorkerCh, jobFromWorkerCh)
 		})
@@ -1458,7 +1473,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
+		local.errorMgr, opts, local.DupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1476,7 +1491,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
+		local.errorMgr, opts, local.DupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1515,7 +1530,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}
 
 	errLimiter := rate.NewLimiter(1, 1)
-	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
+	pool := utils.NewWorkerPool(uint(local.DupeConcurrency), "resolve duplicate rows")
 	err = local.errorMgr.ResolveAllConflictKeys(
 		ctx, tableName, pool,
 		func(ctx context.Context, handleRows [][2][]byte) error {
@@ -1614,7 +1629,7 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	if err := localEngine.Close(); err != nil {
 		return err
 	}
-	if err := localEngine.Cleanup(local.localStoreDir); err != nil {
+	if err := localEngine.Cleanup(local.LocalStoreDir); err != nil {
 		return err
 	}
 	db, err := local.openEngineDB(engineUUID, false)
@@ -1654,7 +1669,7 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	if err != nil {
 		return err
 	}
-	err = localEngine.Cleanup(local.localStoreDir)
+	err = localEngine.Cleanup(local.LocalStoreDir)
 	if err != nil {
 		return err
 	}
@@ -1673,7 +1688,7 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, local.tikvCodec, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
+	return openLocalWriter(cfg, engine, local.tikvCodec, local.LocalWriterMemCacheSize, local.bufferPool.NewBuffer())
 }
 
 func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {

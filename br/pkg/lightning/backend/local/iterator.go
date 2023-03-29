@@ -80,10 +80,10 @@ type dupDetectIter struct {
 	writeBatch     *pebble.Batch
 	writeBatchSize int64
 	logger         log.Logger
-	option         dupDetectOpt
+	option         DupDetectOpt
 }
 
-type dupDetectOpt struct {
+type DupDetectOpt struct {
 	reportErrOnDup bool
 }
 
@@ -200,7 +200,7 @@ func (d *dupDetectIter) OpType() sst.Pair_OP {
 var _ Iter = &dupDetectIter{}
 
 func newDupDetectIter(db *pebble.DB, keyAdapter KeyAdapter,
-	opts *pebble.IterOptions, dupDB *pebble.DB, logger log.Logger, dupOpt dupDetectOpt) *dupDetectIter {
+	opts *pebble.IterOptions, dupDB *pebble.DB, logger log.Logger, dupOpt DupDetectOpt) *dupDetectIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
 		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, MinRowID)

@@ -96,7 +96,8 @@ func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (backe
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
 		DB: db,
 	}
-	return local.NewLocalBackend(ctx, tls, cfg.Lightning, regionSizeGetter, int(LitRLimit), errorMgr, cfg.KeyspaceName)
+	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName)
+	return local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter, errorMgr)
 }
 
 func newBackendContext(ctx context.Context, jobID int64, be *backend.Backend,
