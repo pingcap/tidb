@@ -4116,8 +4116,13 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
+<<<<<<< HEAD
         sum = "h1:i5i28CAz2d0Q3xElYHpUuWrgd7e6tDF7ulFqsJ4EcHY=",
         version = "v0.0.0-20230329033455-0f3bf1bf9fa7",
+=======
+        sum = "h1:bzlSSzw+6qTwPs8pMcPI1bt27TAOhSdAEwdPCz6eBlg=",
+        version = "v0.0.0-20230329114254-1948c247c2b1",
+>>>>>>> 366075fa4e6 (*: upgrade pd client (#42690))
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
