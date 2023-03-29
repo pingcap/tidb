@@ -83,7 +83,7 @@ for backend in tidb local; do
     run_for_auro_random_data2 'create table auto_random.t(c bigint auto_random primary key, a int, b int)'
     run_for_auro_random_data2 'create table auto_random.t(a int, b int, c bigint auto_random primary key)'
     # composite key and auto_random is the first column
-    run_for_auro_random_data2 'create table auto_random.t(c bigint auto_random, a int, b int, primary key(c, a))'
+    run_for_auro_random_data2 'create table auto_random.t(c bigint auto_random, a int, b int, primary key(c, a) clustered)'
     # composite key and auto_random is not the first column
-    run_for_auro_random_data2 'create table auto_random.t(a int, b int, c bigint auto_random, primary key(c, a))'
+    run_for_auro_random_data2 'create table auto_random.t(a int, b int, c bigint auto_random, primary key(c, a) clustered)'
 done

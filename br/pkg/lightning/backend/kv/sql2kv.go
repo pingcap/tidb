@@ -77,27 +77,13 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error
 
 	var autoRandomColID int64
 	autoIDFn := func(id int64) int64 { return id }
-<<<<<<< HEAD
-	if meta.PKIsHandle && meta.ContainsAutoRandomBits() {
-		for _, col := range cols {
-			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
-				autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits // nolint:gosec
-				autoIDFn = func(id int64) int64 {
-					return autoRandomBits | id
-				}
-				break
-			}
-=======
 	if meta.ContainsAutoRandomBits() {
 		col := common.GetAutoRandomColumn(meta)
 		autoRandomColID = col.ID
-
-		shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
-		shard := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63()
+		incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
+		autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits // nolint:gosec
 		autoIDFn = func(id int64) int64 {
-			return shardFmt.Compose(shard, id)
->>>>>>> 6837bd588d7 (lightning: support auto_random column in composite primary key (#41463))
+			return autoRandomBits | id
 		}
 	} else if meta.ShardRowIDBits > 0 {
 		rd := rand.New(rand.NewSource(options.AutoRandomSeed)) // nolint:gosec
@@ -117,23 +103,15 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error
 	}
 
 	return &tableKVEncoder{
-<<<<<<< HEAD
-		tbl:      tbl,
-		se:       se,
-		genCols:  genCols,
-		autoIDFn: autoIDFn,
-=======
 		tbl:             tbl,
 		autoRandomColID: autoRandomColID,
 		se:              se,
 		genCols:         genCols,
 		autoIDFn:        autoIDFn,
-		metrics:         metrics,
->>>>>>> 6837bd588d7 (lightning: support auto_random column in composite primary key (#41463))
 	}, nil
 }
 
-func autoRandomIncrementBits(col *table.Column, randomBits int) int {
+func autoRandomIncrementBits(col *model.ColumnInfo, randomBits int) int {
 	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[col.GetType()] * 8
 	incrementalBits := typeBitsLength - randomBits
 	hasSignBit := !mysql.HasUnsignedFlag(col.GetFlag())
@@ -391,13 +369,8 @@ func (kvcodec *tableKVEncoder) Encode(
 
 		record = append(record, value)
 
-<<<<<<< HEAD
-		if isTableAutoRandom(meta) && isPKCol(col.ToInfo()) {
-			incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
-=======
 		if kvcodec.isAutoRandomCol(col.ToInfo()) {
-			shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
->>>>>>> 6837bd588d7 (lightning: support auto_random column in composite primary key (#41463))
+			incrementalBits := autoRandomIncrementBits(col.ToInfo(), int(meta.AutoRandomBits))
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
 			if err := alloc.Rebase(context.Background(), value.GetInt64()&((1<<incrementalBits)-1), false); err != nil {
 				return nil, errors.Trace(err)
@@ -462,24 +435,8 @@ func isAutoIncCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasAutoIncrementFlag(colInfo.GetFlag())
 }
 
-<<<<<<< HEAD
 func isPKCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasPriKeyFlag(colInfo.GetFlag())
-=======
-// GetEncoderIncrementalID return Auto increment id.
-func GetEncoderIncrementalID(encoder Encoder, id int64) int64 {
-	return encoder.(*tableKVEncoder).autoIDFn(id)
-}
-
-// GetEncoderSe return session.
-func GetEncoderSe(encoder Encoder) *session {
-	return encoder.(*tableKVEncoder).se
-}
-
-// GetActualDatum export getActualDatum function.
-func GetActualDatum(encoder Encoder, rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
-	return encoder.(*tableKVEncoder).getActualDatum(70, 0, inputDatum)
->>>>>>> 6837bd588d7 (lightning: support auto_random column in composite primary key (#41463))
 }
 
 func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {

@@ -688,24 +688,17 @@ func (tr *TableRestore) postProcess(
 		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
 		var err error
-<<<<<<< HEAD
-		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
+		if tblInfo.ContainsAutoRandomBits() {
+			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
 			var maxAutoRandom, autoRandomTotalBits uint64
 			autoRandomTotalBits = 64
 			autoRandomBits := tblInfo.AutoRandomBits // range from (0, 15]
-			if !tblInfo.IsAutoRandomBitColUnsigned() {
+			if !mysql.HasUnsignedFlag(ft.GetFlag()) {
 				// if auto_random is signed, leave one extra bit
 				autoRandomTotalBits = 63
 			}
 			maxAutoRandom = 1<<(autoRandomTotalBits-autoRandomBits) - 1
 			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxAutoRandom)
-=======
-		if tblInfo.ContainsAutoRandomBits() {
-			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
-			shardFmt := autoid.NewShardIDFormat(ft, tblInfo.AutoRandomBits, tblInfo.AutoRandomRangeBits)
-			maxCap := shardFmt.IncrementalBitsCapacity()
-			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
->>>>>>> 6837bd588d7 (lightning: support auto_random column in composite primary key (#41463))
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle
 			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)

@@ -191,8 +191,8 @@ func TestGetAutoRandomColumn(t *testing.T) {
 		{"create table t(c int auto_increment)", ""},
 		{"create table t(c bigint auto_random primary key)", "c"},
 		{"create table t(a int, c bigint auto_random primary key)", "c"},
-		{"create table t(c bigint auto_random, a int, primary key(c,a))", "c"},
-		{"create table t(a int, c bigint auto_random, primary key(c,a))", "c"},
+		{"create table t(c bigint auto_random, a int, primary key(c,a) clustered)", "c"},
+		{"create table t(a int, c bigint auto_random, primary key(c,a) clustered)", "c"},
 	}
 	p := parser.New()
 	for _, tt := range tests {
