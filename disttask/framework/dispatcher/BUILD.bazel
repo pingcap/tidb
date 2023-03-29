@@ -16,6 +16,7 @@ go_library(
         "//util/logutil",
         "//util/syncutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//maps",
         "@org_uber_go_zap//:zap",
     ],
 )

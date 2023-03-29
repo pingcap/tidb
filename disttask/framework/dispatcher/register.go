@@ -17,6 +17,7 @@ package dispatcher
 import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/util/syncutil"
+	"golang.org/x/exp/maps"
 )
 
 // TaskFlowHandle is used to control the process operations for each global task.
@@ -40,7 +41,7 @@ func RegisterTaskFlowHandle(taskType string, dispatcherHandle TaskFlowHandle) {
 // ClearTaskFlowHandle is only used in test
 func ClearTaskFlowHandle() {
 	taskFlowHandleMap.Lock()
-	taskFlowHandleMap.handleMap = make(map[string]TaskFlowHandle)
+	maps.Clear(taskFlowHandleMap.handleMap)
 	taskFlowHandleMap.Unlock()
 }
 
