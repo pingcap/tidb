@@ -272,11 +272,9 @@ func TestIssue29850(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a range condition
-		`Selection_7 1.00 root  ge(test.t.a, 1), le(test.t.a, 1)`,
-		`└─TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`  └─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	tk.MustExec(`prepare stmt from 'select * from t where a=? or a=?'`)
 	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
@@ -284,9 +282,7 @@ func TestIssue29850(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a or condition
-		`Selection_7 1.00 root  or(eq(test.t.a, 1), eq(test.t.a, 1))`,
-		`└─TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`  └─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 }
 
@@ -335,6 +331,60 @@ func TestIssue28064(t *testing.T) {
 		"└─IndexLookUp_7 0.00 root  ",
 		"  ├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+}
+
+func TestIssue42125(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, unique key(a, b))")
+
+	// should use BatchPointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b in (?, ?)'")
+	tk.MustExec("set @a=1, @b=2")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Equal(t, rows[0][0], "Batch_Point_Get_5") // use BatchPointGet
+	tk.MustExec("execute st using @a, @b")
+
+	// should use PointGet: unsafe PointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b>=? and b<=?'")
+	tk.MustExec("set @a=1, @b=1")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Equal(t, rows[0][0], "Point_Get_5") // use Point_Get_5
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot hit
+
+	// safe PointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b=? and c<?'")
+	tk.MustExec("set @a=1, @b=1")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Contains(t, rows[0][0], "Selection") // PointGet -> Selection
+	require.Contains(t, rows[1][0], "Point_Get")
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // can hit
 }
 
 func TestPreparePlanCache4Blacklist(t *testing.T) {
