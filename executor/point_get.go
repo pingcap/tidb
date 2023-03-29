@@ -270,10 +270,11 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					if !e.txn.Valid() {
 						return kv.ErrInvalidTxn
 					}
-					memBuffer := e.txn.GetMemBuffer()
-					err = memBuffer.Set(e.idxKey, e.handleVal)
-					if err != nil {
-						return err
+					txn, ok := e.txn.(interface {
+						ChangeLockIntoPut(context.Context, kv.Key, []byte) bool
+					})
+					if ok {
+						txn.ChangeLockIntoPut(ctx, e.idxKey, e.handleVal)
 					}
 				}
 			}
