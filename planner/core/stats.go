@@ -564,7 +564,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
 			cnfItems := expression.SplitCNFItems(item)
-			
+
 			pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
 			for _, cnfItem := range cnfItems {
 				if expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx,
