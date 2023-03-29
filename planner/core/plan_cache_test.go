@@ -1523,15 +1523,15 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where a+b=13",
 		"select * from t where mod(a, 3)=1",
 		"select * from t where d>now()",
+		"select distinct a from t1 where a > 1 and b < 2",                                  // distinct
+		"select count(*) from t1 where a > 1 and b < 2 group by a",                         // group by
+		"select * from t1 order by a",                                                      // order by
 	}
 
 	unsupported := []string{
 		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",               // hint
-		"select distinct a from t1 where a > 1 and b < 2",                                  // distinct
-		"select count(*) from t1 where a > 1 and b < 2 group by a",                         // group by
 		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
 		"select * from t1 limit 1",                                                         // limit
-		"select * from t1 order by a",                                                      // order by
 		"select * from t1, t2",                                                             // join
 		"select * from (select * from t1) t",                                               // sub-query
 		"insert into t1 values(1, 1)",                                                      // insert
@@ -1563,9 +1563,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	}
 
 	reasons := []string{
-		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
-		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
-		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
