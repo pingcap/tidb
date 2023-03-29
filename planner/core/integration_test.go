@@ -6794,3 +6794,28 @@ func TestVirtualExprPushDown(t *testing.T) {
 	}
 	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 }
+
+// https://github.com/pingcap/tidb/issues/41273
+func TestIssue41273(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+    	a set('nwbk','r5','1ad3u','van','ir1z','y','9m','f1','z','e6yd','wfev') NOT NULL DEFAULT 'ir1z,f1,e6yd',
+    	b enum('soo2','4s4j','qi9om','8ue','i71o','qon','3','3feh','6o1i','5yebx','d') NOT NULL DEFAULT '8ue',
+    	c varchar(66) DEFAULT '13mdezixgcn',
+    	PRIMARY KEY (a,b) /*T![clustered_index] CLUSTERED */,
+    	UNIQUE KEY ib(b),
+    	KEY ia(a)
+    )ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin;`)
+	tk.MustExec("INSERT INTO t VALUES('ir1z,f1,e6yd','i71o','13mdezixgcn'),('ir1z,f1,e6yd','d','13mdezixgcn'),('nwbk','8ue','13mdezixgcn');")
+	expectedRes := []string{"ir1z,f1,e6yd d 13mdezixgcn", "ir1z,f1,e6yd i71o 13mdezixgcn", "nwbk 8ue 13mdezixgcn"}
+	tk.MustQuery("select * from t where a between 'e6yd' and 'z' or b <> '8ue';").Sort().Check(testkit.Rows(expectedRes...))
+	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';").Sort().Check(testkit.Rows(expectedRes...))
+	// For now tidb doesn't support push set type to TiKV, and column a is a set type, so we shouldn't generate a IndexMerge path.
+	require.False(t,
+		tk.HasPlan("select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue'",
+			"IndexMerge"),
+	)
+}

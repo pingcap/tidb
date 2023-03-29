@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -49,6 +50,26 @@ func TestSingleTableRead(t *testing.T) {
 	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ a from t1 where a < 2 or b > 4 order by a").Check(testkit.Rows("1",
 		"5"))
 	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(a) from t1 where a < 2 or b > 4").Check(testkit.Rows("6"))
+}
+
+func TestIndexMergePickAndExecTaskPanic(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id").Check(testkit.Rows("1 1 1 1 1",
+		"5 5 5 5 5"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePickAndExecTaskPanic", "panic(\"pickAndExecTaskPanic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePickAndExecTaskPanic"))
+	}()
+	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id")
+	require.Contains(t, err.Error(), "pickAndExecTaskPanic")
 }
 
 func TestJoin(t *testing.T) {
@@ -506,6 +527,30 @@ func TestIndexMergeSplitTable(t *testing.T) {
 	tk.MustQuery("SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 68 ) and col0 > 10 order by 1;").Check(testkit.Rows("0", "1", "2", "3", "4", "5", "6", "7"))
 }
 
+func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	setupPartitionTableHelper(tk)
+
+	var err error
+	sql := "select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 900 or c2 < 1000;"
+	res := tk.MustQuery("explain " + sql).Rows()
+	require.Contains(t, res[1][0], "IndexMerge")
+
+	// If got goroutines leak in coprocessor, ci will fail.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePartialTableWorkerCoprLeak", `panic("testIndexMergePartialTableWorkerCoprLeak")`))
+	err = tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), "testIndexMergePartialTableWorkerCoprLeak")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialTableWorkerCoprLeak"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak", `panic("testIndexMergePartialIndexWorkerCoprLeak")`))
+	err = tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), "testIndexMergePartialIndexWorkerCoprLeak")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak"))
+}
+
 func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	// Same purpose with TestPessimisticLockOnPartition, but test IndexMergeReader.
 	store, clean := testkit.CreateMockStore(t)
@@ -583,4 +628,106 @@ func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	<-ch // wait for goroutine to quit.
 
 	// TODO: add support for index merge reader in dynamic tidb_partition_prune_mode
+}
+
+func TestIndexMergePanic(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
+	tk.MustExec("insert into t1 values(1, 1, 1), (100, 100, 100)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly", "return(true)"))
+	tk.MustExec("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c1 < 100 or c2 < 100")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly"))
+
+	setupPartitionTableHelper(tk)
+
+	minV := 200
+	maxV := 1000
+	runSQL := func(fp string) {
+		var sql string
+		v1 := rand.Intn(maxV-minV) + minV
+		v2 := rand.Intn(maxV-minV) + minV
+		sql = fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d;", v1, v2)
+		res := tk.MustQuery("explain " + sql).Rows()
+		require.Contains(t, res[1][0], "IndexMerge")
+		err := tk.QueryToErr(sql)
+		require.Contains(t, err.Error(), fp)
+	}
+
+	packagePath := "github.com/pingcap/tidb/executor/"
+	panicFPPaths := []string{
+		packagePath + "testIndexMergePanicPartialIndexWorker",
+		packagePath + "testIndexMergePanicPartialTableWorker",
+
+		packagePath + "testIndexMergePanicProcessWorkerUnion",
+
+		packagePath + "testIndexMergePanicTableScanWorker",
+	}
+	for _, fp := range panicFPPaths {
+		fmt.Println("handling failpoint: ", fp)
+		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
+			// When mockSleepBeforeStartTableReader is enabled, will not read real data. This is to avoid leaking goroutines in coprocessor.
+			// But should disable mockSleepBeforeStartTableReader for testIndexMergePanicTableScanWorker.
+			// Because finalTableScanWorker need task.doneCh to pass error, so need partialIndexWorker/partialTableWorker runs normally.
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
+		}
+		for i := 0; i < 1000; i++ {
+			require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+			runSQL(fp)
+			require.NoError(t, failpoint.Disable(fp))
+		}
+		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
+		}
+	}
+
+	errFPPaths := []string{
+		packagePath + "testIndexMergeErrorPartialIndexWorker",
+		packagePath + "testIndexMergeErrorPartialTableWorker",
+	}
+	for _, fp := range errFPPaths {
+		fmt.Println("handling failpoint: ", fp)
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`return("%s")`, fp)))
+		for i := 0; i < 100; i++ {
+			runSQL(fp)
+		}
+		require.NoError(t, failpoint.Disable(fp))
+	}
+}
+
+func setupPartitionTableHelper(tk *testkit.TestKit) {
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
+	insertStr := "insert into t1 values(0, 0, 0)"
+	for i := 1; i < 1000; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+}
+
+func TestIndexMergeProcessWorkerHang(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	var err error
+	sql := "select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 900 or c2 < 1000;"
+	res := tk.MustQuery("explain " + sql).Rows()
+	require.Contains(t, res[1][0], "IndexMerge")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerUnionHang", "return(true)"))
+	err = tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), "testIndexMergeMainReturnEarly")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerUnionHang"))
 }

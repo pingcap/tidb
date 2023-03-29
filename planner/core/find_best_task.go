@@ -914,10 +914,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
 
-		if canConvertPointGet && expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
-			canConvertPointGet = ds.canConvertToPointGetForPlanCache(path)
-		}
-
 		if canConvertPointGet && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
 			canConvertPointGet = path.Index.Unique && !path.Index.HasPrefixIndex()
@@ -973,6 +969,13 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				} else {
 					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName, opt)
 				}
+
+				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
+				// For safety, prevent these plans from the plan cache here.
+				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) && !ds.isSafePointGetPlan4PlanCache(candidate.path) {
+					ds.ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+				}
+
 				appendCandidate(ds, pointGetTask, prop, opt)
 				if !pointGetTask.invalid() {
 					cntPlan += 1
@@ -1040,12 +1043,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return
 }
 
-func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bool {
+func (ds *DataSource) isSafePointGetPlan4PlanCache(path *util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
-	// So for safety, we narrow down the scope and just generate PointGet in some particular and simple scenarios.
 
-	// scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
+	// safe scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
 	if len(path.Ranges) > 0 && path.Ranges[0].Width() == len(path.AccessConds) {
 		for _, accessCond := range path.AccessConds {
 			f, ok := accessCond.(*expression.ScalarFunction)
@@ -1876,15 +1878,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	if ts.StoreType == kv.TiFlash {
-		for _, col := range ts.schema.Columns {
-			// In theory, TiFlash does not support virtual expr, but in non-mpp mode, if the cop request only contain table scan, then
-			// TiDB will fill the virtual column after decoding the cop response(executor.FillVirtualColumnValue), that is to say, the virtual
-			// columns in Cop request is just a placeholder, so TiFlash can support virtual column in cop request mode. However, virtual column
-			// with TiDBShard is special, it can be added using create index statement, TiFlash's ddl does not handle create index statement, so
-			// there is a chance that the TiDBShard's virtual column is not seen by TiFlash, in this case, TiFlash will throw column not found error
-			if ds.containExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr) {
-				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
-				return invalidTask, nil
+		for _, col := range ts.Columns {
+			if col.IsGenerated() && !col.GeneratedStored {
+				col.AddFlag(mysql.GeneratedColumnFlag)
 			}
 		}
 	}

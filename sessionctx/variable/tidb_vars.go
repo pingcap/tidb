@@ -652,6 +652,9 @@ const (
 	// When set to false, ANALYZE reads the latest data.
 	// When set to true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	TiDBEnableAnalyzeSnapshot = "tidb_enable_analyze_snapshot"
+
+	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
+	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
 )
 
 // TiDB vars that have only global scope
@@ -836,7 +839,7 @@ const (
 	DefTiDBRestrictedReadOnly                    = false
 	DefTiDBSuperReadOnly                         = false
 	DefTiDBShardAllocateStep                     = math.MaxInt64
-	DefTiDBEnableTelemetry                       = true
+	DefTiDBEnableTelemetry                       = false
 	DefTiDBEnableParallelApply                   = false
 	DefTiDBEnableAmendPessimisticTxn             = false
 	DefTiDBPartitionPruneMode                    = "static"

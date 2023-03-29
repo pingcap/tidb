@@ -2216,7 +2216,10 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 	if !txnCtx.IsPessimistic {
 		return nil
 	}
-	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
+
+	// The `forUpdateTS` should be refreshed for RC, or the `pointGetExecutor` may not read
+	// the latest data and no pessimistic locks would be acquired, thus the result is unexpected.
+	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok && !b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		return nil
 	}
 	// Activate the invalid txn, use the txn startTS as newForUpdateTS

@@ -543,7 +543,7 @@ func TestOptimisticConflicts(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	// This SQL use BatchGet and cache data in the txn snapshot.
 	// It can be changed to other SQLs that use BatchGet.
-	tk.MustExec("insert ignore into conflict values (1, 2)")
+	tk.MustExec("select * from conflict where id in (1, 2, 3)")
 
 	tk2.MustExec("update conflict set c = c - 1")
 
@@ -2913,6 +2913,40 @@ func TestChangeLockToPut(t *testing.T) {
 	tk.MustExec("admin check table t1")
 }
 
+func TestIssue28011(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, tt := range []struct {
+		name      string
+		lockQuery string
+		finalRows [][]interface{}
+	}{
+		{"Update", "update t set b = 'x' where a = 'a'", testkit.Rows("a x", "b y", "c z")},
+		{"BatchUpdate", "update t set b = 'x' where a in ('a', 'b', 'c')", testkit.Rows("a x", "b y", "c x")},
+		{"SelectForUpdate", "select a from t where a = 'a' for update", testkit.Rows("a x", "b y", "c z")},
+		{"BatchSelectForUpdate", "select a from t where a in ('a', 'b', 'c') for update", testkit.Rows("a x", "b y", "c z")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (a varchar(10) primary key nonclustered, b varchar(10))")
+			tk.MustExec("insert into t values ('a', 'x'), ('b', 'x'), ('c', 'z')")
+			tk.MustExec("begin pessimistic")
+			tk.MustExec(tt.lockQuery)
+			tk.MustQuery("select a from t").Check(testkit.Rows("a", "b", "c"))
+			tk.MustExec("replace into t values ('b', 'y')")
+			tk.MustQuery("select a from t").Check(testkit.Rows("a", "b", "c"))
+			tk.MustQuery("select a, b from t order by a").Check(tt.finalRows)
+			tk.MustExec("commit")
+			tk.MustQuery("select a, b from t order by a").Check(tt.finalRows)
+			tk.MustExec("admin check table t")
+		})
+	}
+}
+
 func createTable(part bool, columnNames []string, columnTypes []string) string {
 	var str string
 	str = "create table t("
@@ -3212,4 +3246,41 @@ func TestPessimisticLockOnPartition(t *testing.T) {
 	require.Equal(t, int32(1), <-ch)
 	require.Equal(t, int32(0), <-ch)
 	<-ch // wait for goroutine to quit.
+}
+
+func TestRCUpdateWithPointGet(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test")
+	tk.MustExec("create database test")
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int key, b int)")
+
+	// Try to cover https://github.com/pingcap/tidb/issues/41581.
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk1.MustExec("use test")
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values(5, 5)")
+	tk1.MustExec("update t set b = 22 where a = 5;")
+	require.Equal(t, uint64(1), tk1.Session().AffectedRows())
+	tk1.MustExec("commit")
+	tk2.MustQuery("select count(1) from t").Check(testkit.Rows("1"))
+
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values(6, 6)")
+	tk1.MustQuery("(select * from t where a = 6 for update) union all (select * from t where a = 7 for update)").Check(testkit.Rows("6 6"))
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values(7, 7)")
+	tk1.MustExec("delete from t where a = 7;")
+	require.Equal(t, uint64(1), tk1.Session().AffectedRows())
+	tk1.MustExec("commit")
 }
