@@ -941,10 +941,17 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+<<<<<<< HEAD
 github.com/tikv/client-go/v2 v2.0.7-0.20230328075239-e72043db9e79 h1:oVFdu5s0ASRiKYqo2OmYb1e4OhQ6xYpcqqrwwpp1Kss=
 github.com/tikv/client-go/v2 v2.0.7-0.20230328075239-e72043db9e79/go.mod h1:DPL03G+QwLmypNjDIl+B02UltorBMx3WzSh4yJbp+cw=
 github.com/tikv/pd/client v0.0.0-20230324043643-8c21dfc56c74 h1:EfoC5JuDSpMRADZ2TVcv3CKfzGOyKSTui5Db0hd94i4=
 github.com/tikv/pd/client v0.0.0-20230324043643-8c21dfc56c74/go.mod h1:3cTcfo8GRA2H/uSttqA3LvMfMSHVBJaXk3IgkFXFVxo=
+=======
+github.com/tikv/client-go/v2 v2.0.7-0.20230328084104-ea13e9700259 h1:XpdZrei86oIrRjXbqvlQh23TdHXVtSxWmsxxwy/Zgc0=
+github.com/tikv/client-go/v2 v2.0.7-0.20230328084104-ea13e9700259/go.mod h1:J6zUseSVj8p+Uyr1QQugZsPuksazVE1P4lbhSPISQ/o=
+github.com/tikv/pd/client v0.0.0-20230329032054-05f86a47e154 h1:Tk9xmtR6vicVhw+mNKcNpHIyyOcaM7e2DCwKL8E2+bs=
+github.com/tikv/pd/client v0.0.0-20230329032054-05f86a47e154/go.mod h1:3cTcfo8GRA2H/uSttqA3LvMfMSHVBJaXk3IgkFXFVxo=
+>>>>>>> f3faf956ecb (mod: update pd client to fix burst too many token request (#42660))
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e/go.mod h1:27bSVNWSBOHm+qRp1T9qzaIpsWEP6TbUnei/43HK+PQ=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=

@@ -92,8 +92,13 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.7-0.20230328075239-e72043db9e79
 	github.com/tikv/pd/client v0.0.0-20230324043643-8c21dfc56c74
+=======
+	github.com/tikv/client-go/v2 v2.0.7-0.20230328084104-ea13e9700259
+	github.com/tikv/pd/client v0.0.0-20230329032054-05f86a47e154
+>>>>>>> f3faf956ecb (mod: update pd client to fix burst too many token request (#42660))
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible

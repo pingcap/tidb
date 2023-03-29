@@ -4116,8 +4116,13 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
+<<<<<<< HEAD
         sum = "h1:EfoC5JuDSpMRADZ2TVcv3CKfzGOyKSTui5Db0hd94i4=",
         version = "v0.0.0-20230324043643-8c21dfc56c74",
+=======
+        sum = "h1:Tk9xmtR6vicVhw+mNKcNpHIyyOcaM7e2DCwKL8E2+bs=",
+        version = "v0.0.0-20230329032054-05f86a47e154",
+>>>>>>> f3faf956ecb (mod: update pd client to fix burst too many token request (#42660))
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
