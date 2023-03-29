@@ -87,7 +87,6 @@ const (
 	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
 	maxWriteAndIngestRetryTimes = 30
-	maxRetryBackoffSecond       = 30
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -118,7 +117,8 @@ var (
 	localMaxPDVersion   = version.NextMajorVersion()
 	tiFlashMinVersion   = *semver.New("4.0.5")
 
-	errorEngineClosed = errors.New("engine is closed")
+	errorEngineClosed     = errors.New("engine is closed")
+	maxRetryBackoffSecond = 30
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -1366,8 +1366,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
 				sleepSecond := math.Pow(2, float64(job.retryCount))
-				if sleepSecond > maxRetryBackoffSecond {
-					sleepSecond = maxRetryBackoffSecond
+				if sleepSecond > float64(maxRetryBackoffSecond) {
+					sleepSecond = float64(maxRetryBackoffSecond)
 				}
 				job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
 				log.FromContext(ctx).Info("put job back to jobCh to retry later",
