@@ -376,6 +376,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, b.engineInfo, b.resultCh, job.ID,
 		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, writerID, b.copReqSenderPool, sessCtx)
 	if err != nil {
+		// Return an error only if it is the first worker.
 		if b.writerMaxID.Load() == 0 {
 			b.poolErr <- err
 			return nil
@@ -422,10 +423,8 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 	}, false)
 
 	result := &backfillResult{
-		taskID:     rs.id,
-		err:        rs.err,
-		addedCount: 0,
-		nextKey:    rs.end,
+		taskID: rs.id,
+		err:    rs.err,
 	}
 	if result.err != nil {
 		logutil.BgLogger().Error("[ddl-ingest] finish a cop-request task with error",
@@ -439,19 +438,13 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		w.resultCh <- result
 		return
 	}
-	taskCtx, err := w.WriteLocal(&rs)
+	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
 		result.err = err
 		w.resultCh <- result
 		return
 	}
-	w.metricCounter.Add(float64(taskCtx.addedCount))
-	mergeBackfillCtxToResult(&taskCtx, result)
-	if ResultCounterForTest != nil && result.err == nil {
-		ResultCounterForTest.Add(1)
-	}
-	w.resultCh <- result
-	if rs.done {
+	if count == 0 {
 		logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task", zap.Int("id", rs.id))
 		if bc, ok := ingest.LitBackCtxMgr.Load(w.jobID); ok {
 			err := bc.Flush(w.index.Meta().ID)
@@ -460,7 +453,15 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 				w.resultCh <- result
 			}
 		}
+		return
 	}
+	result.scanCount = count
+	result.nextKey = nextKey
+	w.metricCounter.Add(float64(count))
+	if ResultCounterForTest != nil && result.err == nil {
+		ResultCounterForTest.Add(1)
+	}
+	w.resultCh <- result
 }
 
 func (w *addIndexIngestWorker) Close() {}

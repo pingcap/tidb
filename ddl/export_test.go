@@ -56,6 +56,7 @@ func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endK
 	pool.adjustSize(1)
 	pool.tasksCh <- task
 	rs := <-resultCh
+	close(taskCh)
 	pool.close(false)
 	return rs.chunk
 }

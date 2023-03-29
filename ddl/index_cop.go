@@ -129,7 +129,7 @@ func (c *copReqSender) run() {
 				terror.Call(rs.Close)
 				return
 			}
-			p.resultsCh.AddTask(idxRecResult{id: task.id, chunk: srcChk, done: done, end: task.endKey})
+			p.resultsCh.AddTask(idxRecResult{id: task.id, chunk: srcChk, done: done})
 		}
 		terror.Call(rs.Close)
 	}
@@ -474,6 +474,5 @@ type idxRecResult struct {
 	id    int
 	chunk *chunk.Chunk
 	err   error
-	end   kv.Key
 	done  bool
 }

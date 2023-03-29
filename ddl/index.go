@@ -1670,6 +1670,7 @@ type addIndexIngestWorker struct {
 	metricCounter prometheus.Counter
 	sessCtx       sessionctx.Context
 
+	tbl              table.PhysicalTable
 	index            table.Index
 	writerCtx        *ingest.WriterContext
 	copReqSenderPool *copReqSenderPool
@@ -1693,6 +1694,7 @@ func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.Engine
 		sessCtx: sessCtx,
 		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel("add_idx_rate", schemaName, t.Meta().Name.O)),
+		tbl:              t,
 		index:            index,
 		writerCtx:        lwCtx,
 		copReqSenderPool: copReqSenderPool,
@@ -1702,49 +1704,47 @@ func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.Engine
 }
 
 // WriteLocal will write index records to lightning engine.
-func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (taskCtx backfillTaskContext, err error) {
+func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey kv.Key, err error) {
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	cnt, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, rs.chunk)
-	if err != nil {
+	cnt, lastHandle, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, rs.chunk)
+	if err != nil || cnt == 0 {
 		w.copReqSenderPool.recycleChunk(rs.chunk)
-		return taskCtx, err
+		return 0, nil, err
 	}
 	w.copReqSenderPool.recycleChunk(rs.chunk)
 	w.metricCounter.Add(float64(cnt))
 	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
-	taskCtx.scanCount = cnt
-	taskCtx.addedCount = cnt
-	taskCtx.nextKey = rs.end
-	taskCtx.done = true
-	return taskCtx, nil
+	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
+	return cnt, nextKey, nil
 }
 
 func writeChunkToLocal(writerCtx *ingest.WriterContext,
 	index table.Index, copCtx *copContext, vars *variable.SessionVars,
-	copChunk *chunk.Chunk) (int, error) {
+	copChunk *chunk.Chunk) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
 	iter := chunk.NewIterator4Chunk(copChunk)
 	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
 	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
 	count := 0
+	var lastHandle kv.Handle
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		idxDataBuf, handleDataBuf = idxDataBuf[:0], handleDataBuf[:0]
 		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, idxDataBuf)
 		handleDataBuf := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, handleDataBuf)
 		handle, err := buildHandle(handleDataBuf, copCtx.tblInfo, copCtx.pkInfo, sCtx)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, nil, errors.Trace(err)
 		}
 		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, handleDataBuf)
 		err = writeOneKVToLocal(writerCtx, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, nil, errors.Trace(err)
 		}
 		count++
 	}
-	return count, nil
+	return count, lastHandle, nil
 }
 
 func writeOneKVToLocal(writerCtx *ingest.WriterContext,
