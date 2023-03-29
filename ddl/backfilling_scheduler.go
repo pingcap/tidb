@@ -267,7 +267,7 @@ type ingestBackfillScheduler struct {
 	writerPool  *workerpool.WorkerPool[idxRecResult]
 	writerMaxID atomic.Int64
 	poolErr     chan error
-	engineInfo  *ingest.EngineInfo
+	backendCtx  *ingest.BackendContext
 }
 
 func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo, tbl table.PhysicalTable) *ingestBackfillScheduler {
@@ -289,15 +289,12 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		logutil.BgLogger().Error(ingest.LitErrGetBackendFail, zap.Int64("job ID", job.ID))
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
-	ei, err := bc.EngMgr.Register(bc, job.ID, b.reorgInfo.currElement.ID, job.SchemaName, job.TableName)
+	b.backendCtx = bc
+	copReqSenderPool, err := b.createCopReqSenderPool()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b.engineInfo = ei
-	b.copReqSenderPool, err = b.createCopReqSenderPool()
-	if err != nil {
-		return errors.Trace(err)
-	}
+	b.copReqSenderPool = copReqSenderPool
 	_, writerCnt := b.expectedWorkerSize()
 	skipReg := workerpool.OptionSkipRegister[idxRecResult]{}
 	writerPool, err := workerpool.NewWorkerPool[idxRecResult]("ingest_writer",
@@ -373,7 +370,13 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 		b.poolErr <- err
 		return nil
 	}
-	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, b.engineInfo, b.resultCh, job.ID,
+	bcCtx := b.backendCtx
+	ei, err := bcCtx.EngMgr.Register(bcCtx, job.ID, b.reorgInfo.currElement.ID, job.SchemaName, job.TableName)
+	if err != nil {
+		b.poolErr <- err
+		return nil
+	}
+	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
 		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, writerID, b.copReqSenderPool, sessCtx)
 	if err != nil {
 		// Return an error only if it is the first worker.

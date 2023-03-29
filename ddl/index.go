@@ -1743,6 +1743,7 @@ func writeChunkToLocal(writerCtx *ingest.WriterContext,
 			return 0, nil, errors.Trace(err)
 		}
 		count++
+		lastHandle = handle
 	}
 	return count, lastHandle, nil
 }
