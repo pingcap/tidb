@@ -595,3 +595,10 @@ const (
 	// DefaultDecimal defines the default decimal value when the value out of range.
 	DefaultDecimal = "99999999999999999999999999999999999999999999999999999999999999999"
 )
+
+// This is enum_cursor_type in MySQL
+const (
+	CursorTypeReadOnly = 1 << iota
+	CursorTypeForUpdate
+	CursorTypeScrollable
+)
