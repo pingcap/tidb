@@ -211,6 +211,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: true,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "ceph",
 			},
 		},
 		{
@@ -225,6 +226,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: false,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "alibaba",
 			},
 		},
 		{
@@ -239,6 +241,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: false,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "netease",
 			},
 		},
 		{
@@ -1216,4 +1219,76 @@ func TestObjectLock(t *testing.T) {
 		}, nil,
 	)
 	require.Equal(t, true, s.storage.IsObjectLockEnabled())
+}
+
+func TestS3StorageBucketRegion(t *testing.T) {
+	type testcase struct {
+		name         string
+		expectRegion string
+		s3           *backuppb.S3
+	}
+
+	require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
+	require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+	require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
+
+	cases := []testcase{
+		{
+			"empty region from aws",
+			"us-east-1",
+			&backuppb.S3{
+				Region:   "",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "aws",
+			},
+		},
+		{
+			"region from different provider",
+			"sdg",
+			&backuppb.S3{
+				Region:   "sdg",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "ovh",
+			},
+		},
+		{
+			"empty region from different provider",
+			"",
+			&backuppb.S3{
+				Region:   "",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "ovh",
+			},
+		},
+		{
+			"region from aws",
+			"us-west-2",
+			&backuppb.S3{
+				Region:   "us-west-2",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "aws",
+			},
+		},
+	}
+	for _, ca := range cases {
+		func(name string, region string, s3 *backuppb.S3) {
+			s := createGetBucketRegionServer(region, 200, true)
+			defer s.Close()
+			s3.ForcePathStyle = true
+			s3.Endpoint = s.URL
+
+			t.Log(name)
+			es, err := New(context.Background(),
+				&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}},
+				&ExternalStorageOptions{})
+			require.NoError(t, err)
+			ss, ok := es.(*S3Storage)
+			require.True(t, ok)
+			require.Equal(t, region, ss.GetOptions().Region)
+		}(ca.name, ca.expectRegion, ca.s3)
+	}
 }
