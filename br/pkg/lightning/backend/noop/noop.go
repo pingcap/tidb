@@ -21,10 +21,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -140,18 +138,6 @@ func (b noopBackend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) erro
 // LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uuid.UUID) (backend.EngineWriter, error) {
 	return Writer{}, nil
-}
-
-func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
-	panic("Unsupported Operation")
-}
-
-func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
-	panic("Unsupported Operation")
-}
-
-func (b noopBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
-	return nil
 }
 
 func (b noopBackend) TotalMemoryConsume() int64 {

@@ -54,7 +54,7 @@ func TestBuildDupTask(t *testing.T) {
 		{&encode.SessionOptions{IndexID: info.Indices[1].ID}, false},
 	}
 	for _, tc := range testCases {
-		dupMgr, err := local.NewDuplicateManager(tbl, "t", nil, nil, keyspace.CodecV1, nil,
+		dupMgr, err := local.NewDupeDetector(tbl, "t", nil, nil, keyspace.CodecV1, nil,
 			tc.sessOpt, 4, atomic.NewBool(false), log.FromContext(context.Background()))
 		require.NoError(t, err)
 		tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
