@@ -878,11 +878,13 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 	defer se.Close()
 	ranges, err := util.LoadDeleteRanges(ctx, se, safePoint)
 	if err != nil {
+		logutil.Logger(ctx).Error("DBG load delete range error", zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	v2, err := isRaftKv2(ctx, se)
 	if err != nil {
+		logutil.Logger(ctx).Error("DBG is raft kv2 error", zap.Error(err))
 		return errors.Trace(err)
 	}
 	// Cache table ids on which placement rules have been GC-ed, to avoid redundantly GC the same table id multiple times.
