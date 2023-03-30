@@ -75,6 +75,20 @@ func (f filter[T]) TryNext(ctx context.Context) IterResult[T] {
 	}
 }
 
+type enumFilter[T any] struct {
+	inner       TryNextEnumor[T]
+	filterOutIf func(T) bool
+}
+
+func (f enumFilter[T]) TryNextEnum(ctx context.Context) (int, IterResult[T]) {
+	for {
+		off, r := f.inner.TryNextEnum(ctx)
+		if r.Err != nil || r.Finished || !f.filterOutIf(r.Item) {
+			return off, r
+		}
+	}
+}
+
 type take[T any] struct {
 	n     uint
 	inner TryNextor[T]
@@ -108,6 +122,22 @@ func (p pureMap[T, R]) TryNext(ctx context.Context) IterResult[R] {
 		return DoneBy[R](r)
 	}
 	return Emit(p.mapper(r.Item))
+}
+
+type toNextor[T, R any] struct {
+	inner TryNextEnumor[T]
+
+	mapper func(int, T) R
+}
+
+func (t toNextor[T, R]) TryNext(ctx context.Context) IterResult[R] {
+	off, r := t.inner.TryNextEnum(ctx)
+
+	if r.FinishedOrError() {
+		return DoneBy[R](r)
+	}
+
+	return Emit(t.mapper(off, r.Item))
 }
 
 func (j *join[T]) TryNext(ctx context.Context) IterResult[T] {

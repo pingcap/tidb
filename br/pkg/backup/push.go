@@ -168,8 +168,9 @@ func (push *pushDown) pushBackup(
 			if resp.GetError() == nil {
 				// None error means range has been backuped successfully.
 				if checkpointRunner != nil {
-					if err := checkpointRunner.Append(
+					if err := checkpoint.AppendForBackup(
 						ctx,
+						checkpointRunner,
 						pr.GroupKey,
 						resp.StartKey,
 						resp.EndKey,

@@ -368,7 +368,7 @@ func appendRangesToCheckpoint(ctx context.Context, runner *checkpoint.RestoreRun
 		ranges := result.Ranges[startOffset:endOffset]
 		// The checkpoint range shows this ranges of kvs has been restored into
 		// the table corresponding to the table-id.
-		if err := runner.AppendRanges(ctx, table.Table.ID, ranges); err != nil {
+		if err := checkpoint.AppendRangesForRestore(ctx, runner, table.Table.ID, ranges); err != nil {
 			return errors.Trace(err)
 		}
 		// update start offset

@@ -32,6 +32,12 @@ type TryNextor[T any] interface {
 	TryNext(ctx context.Context) IterResult[T]
 }
 
+// TryNextEnumor is the general interface for "impure" iterators:
+// which may trigger some error or block the caller when advancing.
+type TryNextEnumor[T any] interface {
+	TryNextEnum(ctx context.Context) (int, IterResult[T])
+}
+
 func (r IterResult[T]) FinishedOrError() bool {
 	return r.Err != nil || r.Finished
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/constraints"
 )
 
 func TestParTrans(t *testing.T) {
@@ -39,6 +40,31 @@ func TestFilter(t *testing.T) {
 	items = iter.FilterOut(items, func(n int) bool { return n == 0 || (n+1)%13 != 0 })
 	coll := iter.CollectAll(context.Background(), items)
 	require.Equal(t, []int{12, 12, 25, 64}, coll.Item, "%s", coll)
+}
+
+func rangeToArray[T constraints.Integer](start, end T) iter.TryNextEnumor[T] {
+	return iter.FromArray(iter.CollectAll(context.Background(), iter.OfRange(start, end)).Item)
+}
+
+func TestToNexter(t *testing.T) {
+	items1 := rangeToArray(0, 10)
+	items2 := iter.FlatToNextor(items1, func(off, n int) iter.TryNextor[int] {
+		return iter.Map(iter.OfRange(n, 10), func(i int) int { return n*i + off })
+	})
+	items2 = iter.FilterOut(items2, func(n int) bool { return n == 0 || (n+1)%13 != 0 })
+	coll := iter.CollectAll(context.Background(), items2)
+	require.Equal(t, []int{12, 12, 90}, coll.Item, "%s", coll)
+}
+
+func TestFilterEnum(t *testing.T) {
+	items1 := rangeToArray(0, 10)
+	items2 := iter.FlatToNextor(items1, func(off, n int) iter.TryNextor[int] {
+		return iter.Map(iter.OfRange(n, 10), func(i int) int { return n*i + off })
+	})
+	items3 := iter.FilterOutEnum(iter.FromArray(iter.CollectAll(context.Background(), items2).Item), func(n int) bool { return n == 0 || (n+1)%13 != 0 })
+	items4 := iter.ToNextor(items3, func(_, i int) int { return i })
+	coll := iter.CollectAll(context.Background(), items4)
+	require.Equal(t, []int{12, 12, 90}, coll.Item, "%s", coll)
 }
 
 func TestFailure(t *testing.T) {

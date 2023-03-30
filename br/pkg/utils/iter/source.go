@@ -12,6 +12,15 @@ func FromSlice[T any](s []T) TryNextor[T] {
 	return &sa
 }
 
+// FromArray creates an iterator that can return the next element
+// and its index in the array.
+func FromArray[T any](s []T) TryNextEnumor[T] {
+	return &fromArray[T]{
+		data:    s,
+		current: 0,
+	}
+}
+
 // OfRange creates an iterator that yields elements in the integer range.
 func OfRange[T constraints.Integer](begin, end T) TryNextor[T] {
 	return &ofRange[T]{

@@ -121,7 +121,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		err = checkpointRunner.Append(ctx, "a", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "a", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
 			{Name: d.Name},
 			{Name: d.Name2},
 		})
@@ -138,7 +138,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4, 40.0)
 
 	for _, d := range data2 {
-		err = checkpointRunner.Append(ctx, "+", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "+", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
 			{Name: d.Name},
 			{Name: d.Name2},
 		})
@@ -147,7 +147,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 
 	checkpointRunner.WaitForFinish(ctx)
 
-	checker := func(groupKey string, resp *rtree.Range) {
+	checker := func(groupKey string, resp checkpoint.BackupValueType) {
 		require.NotNil(t, resp)
 		d, ok := data[string(resp.StartKey)]
 		if !ok {
@@ -214,20 +214,14 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		"a": {
 			StartKey: "a",
 			EndKey:   "b",
-			Name:     "c",
-			Name2:    "d",
 		},
 		"A": {
 			StartKey: "A",
 			EndKey:   "B",
-			Name:     "C",
-			Name2:    "D",
 		},
 		"1": {
 			StartKey: "1",
 			EndKey:   "2",
-			Name:     "3",
-			Name2:    "4",
 		},
 	}
 
@@ -240,15 +234,15 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		"+": {
 			StartKey: "+",
 			EndKey:   "-",
-			Name:     "*",
-			Name2:    "/",
 		},
 	}
 
 	for _, d := range data {
-		err = checkpointRunner.Append(ctx, 1, []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
-			{Name: d.Name},
-			{Name: d.Name2},
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, []rtree.Range{
+			{
+				StartKey: []byte(d.StartKey),
+				EndKey:   []byte(d.EndKey),
+			},
 		})
 		require.NoError(t, err)
 	}
@@ -263,16 +257,18 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4, 40.0)
 
 	for _, d := range data2 {
-		err = checkpointRunner.Append(ctx, 2, []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
-			{Name: d.Name},
-			{Name: d.Name2},
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, []rtree.Range{
+			{
+				StartKey: []byte(d.StartKey),
+				EndKey:   []byte(d.EndKey),
+			},
 		})
 		require.NoError(t, err)
 	}
 
 	checkpointRunner.WaitForFinish(ctx)
 
-	checker := func(tableID int64, resp *rtree.Range) {
+	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
 		require.NotNil(t, resp)
 		d, ok := data[string(resp.StartKey)]
 		if !ok {
@@ -284,16 +280,15 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		}
 		require.Equal(t, d.StartKey, string(resp.StartKey))
 		require.Equal(t, d.EndKey, string(resp.EndKey))
-		require.Equal(t, d.Name, resp.Files[0].Name)
-		require.Equal(t, d.Name2, resp.Files[1].Name)
 	}
 
 	_, err = checkpoint.WalkCheckpointFileForRestore(ctx, s, cipher, taskName, checker)
 	require.NoError(t, err)
 
 	checkpointMeta := &checkpoint.CheckpointMetadata{
-		ConfigHash: []byte("123456"),
-		BackupTS:   123456,
+		GCServiceId: "654321",
+		ConfigHash:  []byte("123456"),
+		BackupTS:    123456,
 	}
 
 	err = checkpoint.SaveCheckpointMetadata(ctx, s, checkpointMeta)
@@ -320,6 +315,92 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, count, 2)
+}
+
+func TestCheckpointLogRestoreRunner(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	s, err := storage.NewLocalStorage(base)
+	require.NoError(t, err)
+	taskName := "test"
+
+	cipher := &backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+		CipherKey:  []byte("01234567890123456789012345678901"),
+	}
+	checkpointRunner, err := checkpoint.StartCheckpointLogRestoreRunnerForTest(ctx, s, cipher, 5*time.Second, taskName)
+	require.NoError(t, err)
+
+	data := map[string]map[int][]struct {
+		table int64
+		foff  int
+	}{
+		"a": {
+			0: {{1, 0}, {2, 1}},
+			1: {{1, 0}},
+		},
+		"A": {
+			0: {{3, 1}},
+		},
+	}
+
+	data2 := map[string]map[int][]struct {
+		table int64
+		foff  int
+	}{
+		"+": {
+			1: {{1, 0}},
+		},
+	}
+
+	for k, d := range data {
+		for g, fs := range d {
+			for _, f := range fs {
+				err = checkpoint.AppendRangeForLogRestore(ctx, checkpointRunner, k, f.table, g, f.foff)
+				require.NoError(t, err)
+			}
+		}
+	}
+
+	checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1, checkpoint.MaxChecksumTotalCost-20.0)
+	checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2, 40.0)
+	// now the checksum is flushed, because the total time cost is larger than `MaxChecksumTotalCost`
+	checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3, checkpoint.MaxChecksumTotalCost-20.0)
+	time.Sleep(6 * time.Second)
+	// the checksum has not been flushed even though after 6 seconds,
+	// because the total time cost is less than `MaxChecksumTotalCost`
+	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4, 40.0)
+
+	for k, d := range data2 {
+		for g, fs := range d {
+			for _, f := range fs {
+				err = checkpoint.AppendRangeForLogRestore(ctx, checkpointRunner, k, f.table, g, f.foff)
+				require.NoError(t, err)
+			}
+		}
+	}
+
+	checkpointRunner.WaitForFinish(ctx)
+
+	checker := func(metaKey string, resp checkpoint.LogRestoreValueType) {
+		require.NotNil(t, resp)
+		d, ok := data[metaKey]
+		if !ok {
+			d, ok = data2[metaKey]
+			require.True(t, ok)
+		}
+		fs, ok := d[resp.Goff]
+		require.True(t, ok)
+		for _, f := range fs {
+			if f.foff == resp.Foff && resp.TableID == resp.TableID {
+				return
+			}
+		}
+		require.FailNow(t, "not found in the original data")
+	}
+
+	_, err = checkpoint.WalkCheckpointFileForRestore(ctx, s, cipher, taskName, checker)
+	require.NoError(t, err)
 }
 
 func getLockData(p, l int64) ([]byte, error) {
