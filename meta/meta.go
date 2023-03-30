@@ -441,7 +441,7 @@ func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
 	return v, err
 }
 
-// Returns the raw kv key for a schema diff
+// EncodeSchemaDiffKey returns the raw kv key for a schema diff
 func (m *Meta) EncodeSchemaDiffKey(schemaVersion int64) kv.Key {
 	diffKey := m.schemaDiffKey(schemaVersion)
 	return m.txn.EncodeStringDataKey(diffKey)
