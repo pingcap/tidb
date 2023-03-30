@@ -283,9 +283,8 @@ func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, ver
 			return 0, errors.Errorf("There is no Write MVCC info for the schema version")
 		}
 		return int64(data.Info.Writes[0].CommitTs), nil
-	} else {
-		return 0, errors.Errorf("cannot get store from domain")
 	}
+	return 0, errors.Errorf("cannot get store from domain")
 }
 
 func (do *Domain) sysFacHack() (pools.Resource, error) {
