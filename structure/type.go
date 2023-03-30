@@ -43,6 +43,7 @@ const (
 // Make linter happy, since encodeHashMetaKey is unused in this repo.
 var _ = (&TxStructure{}).encodeHashMetaKey
 
+// EncodeStringDataKey will encode string key.
 func (t *TxStructure) EncodeStringDataKey(key []byte) kv.Key {
 	// for codec Encode, we may add extra bytes data, so here and following encode
 	// we will use extra length like 4 for a little optimization.
