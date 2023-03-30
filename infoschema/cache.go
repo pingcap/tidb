@@ -77,12 +77,12 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 		}
 		if ts >= uint64(is.timestamp) {
 			// found the largest version before the given ts
-			return is.infoschema, false
+			return is.infoschema, true
 		}
 	}
 
 	logutil.BgLogger().Debug("SCHEMA CACHE no schema found")
-	return nil, true
+	return nil, false
 }
 
 // GetByVersion gets the information schema based on schemaVersion. Returns nil if it is not loaded.

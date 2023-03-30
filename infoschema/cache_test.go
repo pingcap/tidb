@@ -42,7 +42,8 @@ func TestInsert(t *testing.T) {
 	ic.Insert(is5, 5)
 	require.Equal(t, is5, ic.GetByVersion(5))
 	require.Equal(t, is2, ic.GetByVersion(2))
-	require.Equal(t, is2, ic.GetBySnapshotTS(2))
+	// there is a gap in schema cache, so don't use this version
+	require.Nil(t, ic.GetBySnapshotTS(2))
 	require.Equal(t, is5, ic.GetBySnapshotTS(10))
 
 	// older
@@ -59,7 +60,9 @@ func TestInsert(t *testing.T) {
 	require.Equal(t, is5, ic.GetByVersion(5))
 	require.Equal(t, is2, ic.GetByVersion(2))
 	require.Nil(t, ic.GetByVersion(0))
-	require.Equal(t, is2, ic.GetBySnapshotTS(2))
+	// there is a gap in schema cache, so don't use this version
+	require.Nil(t, ic.GetBySnapshotTS(2))
+	require.Equal(t, is5, ic.GetBySnapshotTS(5))
 	require.Equal(t, is6, ic.GetBySnapshotTS(10))
 
 	// replace 2, drop 2
@@ -145,7 +148,8 @@ func TestGetByTimestamp(t *testing.T) {
 	ic.Insert(is3, 3)
 	require.Equal(t, is3, ic.GetLatest())
 	require.Nil(t, ic.GetBySnapshotTS(0))
-	require.Equal(t, is1, ic.GetBySnapshotTS(2))
+	// there is a gap, no schema returned for ts 2
+	require.Nil(t, ic.GetBySnapshotTS(2))
 	require.Equal(t, is3, ic.GetBySnapshotTS(3))
 	require.Equal(t, is3, ic.GetBySnapshotTS(4))
 
