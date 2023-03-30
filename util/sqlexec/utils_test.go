@@ -106,6 +106,7 @@ func TestEscapeBackslash(t *testing.T) {
 }
 
 func TestEscapeSQL(t *testing.T) {
+	type myint int
 	type mystr string
 	type mytime time.Time
 	type TestCase struct {
@@ -386,6 +387,12 @@ func TestEscapeSQL(t *testing.T) {
 			input:  "select %?",
 			params: []interface{}{[]float64{55.2, 0.66}},
 			output: "select 55.2,0.66",
+		},
+		{
+			name:   "myint",
+			input:  "select %?",
+			params: []interface{}{myint(3)},
+			output: "select 3",
 		},
 		{
 			name:   "mystr",
