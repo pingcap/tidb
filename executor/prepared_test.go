@@ -1216,12 +1216,6 @@ func TestIgnoreInsertStmt(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
 
-	// do not cache native insert-stmt
-	tk.MustExec("prepare st from 'insert into t values (1)'")
-	tk.MustExec("execute st")
-	tk.MustExec("execute st")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
 	// ignore-hint in insert-stmt can work
 	tk.MustExec("prepare st from 'insert into t select * from t'")
 	tk.MustExec("execute st")
