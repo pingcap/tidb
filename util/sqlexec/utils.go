@@ -93,10 +93,6 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 	return escapeBytesBackslash(buf, hack.Slice(v))
 }
 
-var (
-	reflectTpTime = reflect.TypeOf(time.Time{})
-)
-
 // escapeSQL is the internal impl of EscapeSQL and FormatSQL.
 func escapeSQL(sql string, args ...interface{}) ([]byte, error) {
 	buf := make([]byte, 0, len(sql))
