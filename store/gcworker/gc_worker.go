@@ -862,8 +862,10 @@ func isRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	}
 
 	// All nodes should have the same type of engine
-	raftVersion, err := hex.DecodeString(row.GetString(3))
+	val := row.GetString(3)
+	raftVersion, err := hex.DecodeString(val)
 	if err != nil {
+		logutil.Logger(ctx).Error("DBG decode string error", zap.String("val", val), zap.Error(err))
 		return false, errors.Trace(err)
 	}
 	return string(raftVersion) == raftKv2, nil
