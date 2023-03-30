@@ -3828,9 +3828,6 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 		indexReq.OutputOffsets = append(offset, indexReq.OutputOffsets...)
 	}
 
-	if len(indexReq.OutputOffsets) == 0 {
-		indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
-	}
 	return indexReq, err
 }
 
