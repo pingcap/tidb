@@ -278,16 +278,16 @@ func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
-// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
-func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
+// AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte) {
 	if tc.unchangedRowKeys == nil {
 		tc.unchangedRowKeys = map[string]struct{}{}
 	}
 	tc.unchangedRowKeys[string(key)] = struct{}{}
 }
 
-// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
-func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
+// CollectUnchangedKeysForLock collects unchanged keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key {
 	for key := range tc.unchangedRowKeys {
 		buf = append(buf, kv.Key(key))
 	}
