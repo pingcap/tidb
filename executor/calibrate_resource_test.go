@@ -96,6 +96,10 @@ func TestCalibrateResource(t *testing.T) {
 		return fpName == fpname
 	})
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("68569"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD TPCC").Check(testkit.Rows("68569"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE").Check(testkit.Rows("68570"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY").Check(testkit.Rows("21745"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY").Check(testkit.Rows("24615"))
 
 	// change total tidb cpu to less than tikv_cpu_quota
 	mockData["tidb_server_maxprocs"] = [][]types.Datum{

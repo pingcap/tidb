@@ -1070,7 +1070,11 @@ AAAAAAAAAAAA5gm5Mg==
 		{"SET SESSION_STATES now()", false, ""},
 
 		// for calibrate resource
-		{"calibrate resource", true, "CALIBRATE RESOURCE"},
+		{"calibrate resource", true, "CALIBRATE RESOURCE WORKLOAD TPCC"},
+		{"calibrate resource workload tpcc", true, "CALIBRATE RESOURCE WORKLOAD TPCC"},
+		{"calibrate resource workload oltp_read_write", true, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE"},
+		{"calibrate resource workload oltp_read_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY"},
+		{"calibrate resource workload oltp_write_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY"},
 	}
 	RunTest(t, table, false)
 }

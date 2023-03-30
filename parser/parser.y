@@ -642,6 +642,11 @@ import (
 	week                  "WEEK"
 	weightString          "WEIGHT_STRING"
 	without               "WITHOUT"
+	workload              "WORKLOAD"
+	workloadTpcc          "TPCC"
+	workloadOltpReadWrite "OLTP_READ_WRITE"
+	workloadOltpReadOnly  "OLTP_READ_ONLY"
+	workloadOltpWriteOnly "OLTP_WRITE_ONLY"
 	x509                  "X509"
 	yearType              "YEAR"
 	wait                  "WAIT"
@@ -1382,6 +1387,7 @@ import (
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
+	CalibrateResourceWorkloadOption        "Calibrate Resource workload option"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -14677,8 +14683,32 @@ PlanReplayerStmt:
  * CALIBRATE RESOURCE
  *******************************************************************/
 CalibrateResourceStmt:
-	"CALIBRATE" "RESOURCE"
+	"CALIBRATE" "RESOURCE" CalibrateResourceWorkloadOption
 	{
-		$$ = &ast.CalibrateResourceStmt{}
+		$$ = &ast.CalibrateResourceStmt{
+			Tp: $3.(ast.CalibrateResourceType),
+		}
+	}
+
+CalibrateResourceWorkloadOption:
+	/* empty */
+	{
+		$$ = ast.CalibrateResourceTPCC
+	}
+|	"WORKLOAD" "TPCC"
+	{
+		$$ = ast.CalibrateResourceTPCC
+	}
+|	"WORKLOAD" "OLTP_READ_WRITE"
+	{
+		$$ = ast.OLTPREADWRITE
+	}
+|	"WORKLOAD" "OLTP_READ_ONLY"
+	{
+		$$ = ast.OLTPREADONLY
+	}
+|	"WORKLOAD" "OLTP_WRITE_ONLY"
+	{
+		$$ = ast.OLTPWRITEONLY
 	}
 %%
