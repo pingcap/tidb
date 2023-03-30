@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -102,40 +103,50 @@ func (e *LoadDataController) import0(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	cfg := config.NewConfig()
-	cfg.TikvImporter.Backend = config.BackendLocal
-	cfg.TikvImporter.SortedKVDir = dir
-	_, err = cfg.AdjustCommon()
-	if err != nil {
-		e.logger.Warn("lightning cfg error", zap.Error(err))
-		return err
-	}
-	cfg.Checkpoint.Enable = false
-	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
-	cfg.TiDB.PdAddr = tidbCfg.Path
-	cfg.TiDB.Host = "127.0.0.1"
-	cfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
-	// Set TLS related information
-	cfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
-	cfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
-	cfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
 
-	tls, err := cfg.ToTLS()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
 	if err != nil {
 		return err
 	}
 
 	// Disable GC because TiDB enables GC already.
 	keySpaceName := tidb.GetGlobalKeyspaceName()
-	kvStore, err := GetKVStore(fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", cfg.TiDB.PdAddr, keySpaceName), tls.ToTiKVSecurityConfig())
+	kvStore, err := GetKVStore(fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", tidbCfg.Path, keySpaceName), tls.ToTiKVSecurityConfig())
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	backendConfig := local.BackendConfig{
+		PDAddr:                  tidbCfg.Path,
+		LocalStoreDir:           dir,
+		MaxConnPerStore:         config.DefaultRangeConcurrency,
+		ConnCompressType:        config.CompressionNone,
+		WorkerConcurrency:       config.DefaultRangeConcurrency * 2,
+		DupeConcurrency:         config.DefaultRangeConcurrency * 2,
+		KVWriteBatchSize:        config.KVWriteBatchSize,
+		CheckpointEnabled:       false,
+		MemTableSize:            int(config.DefaultEngineMemCacheSize),
+		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
+		ShouldCheckTiKV:         true,
+		DupeDetectEnabled:       false,
+		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
+		StoreWriteBWLimit:       0,
+		ShouldCheckWriteStall:   false,
+		MaxOpenFiles:            int(util.GenRLimit()),
+		KeyspaceName:            keySpaceName,
 	}
 
 	errorMgr := errormanager.New(nil, cfg, log.Logger{Logger: logutil.BgLogger()})
 	// todo: use a real region size getter
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
-	localBackend, err := local.NewLocalBackend(ctx, tls, cfg, regionSizeGetter, int(util.GenRLimit()), errorMgr, keySpaceName)
+	localBackend, err := local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter, errorMgr)
 	if err != nil {
 		return err
 	}
