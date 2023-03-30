@@ -108,7 +108,6 @@ func TestEscapeBackslash(t *testing.T) {
 func TestEscapeSQL(t *testing.T) {
 	type mystr string
 	type mytime time.Time
-	type myfloat64s []float64
 	type TestCase struct {
 		name   string
 		input  string
