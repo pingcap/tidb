@@ -58,14 +58,20 @@ type paramReplacer struct {
 	// This is to make the output field names be corresponding to these values.
 	// Use int instead of bool to support nested SelectField.
 	selFieldsCnt int
+
+	// Skip all values in GroupByClause since them can affect the full_group_by check.
+	groupByCnt int
 }
 
 func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
 	case *ast.SelectField:
 		pr.selFieldsCnt++
+	case *ast.GroupByClause:
+		pr.groupByCnt++
 	case *driver.ValueExpr:
-		if pr.selFieldsCnt == 0 { // not in SelectField
+		if pr.selFieldsCnt == 0 && // not in SelectField
+			pr.groupByCnt == 0 { // not in GroupBy
 			pr.params = append(pr.params, n)
 			param := ast.NewParamMarkerExpr(len(pr.params) - 1)      // offset is used as order in non-prepared plan cache.
 			param.(*driver.ParamMarkerExpr).Datum = *n.Datum.Clone() // init the ParamMakerExpr's Datum
@@ -76,13 +82,16 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 }
 
 func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
-	if _, ok := in.(*ast.SelectField); ok {
+	switch in.(type) {
+	case *ast.SelectField:
 		pr.selFieldsCnt--
+	case *ast.GroupByClause:
+		pr.groupByCnt--
 	}
 	return in, true
 }
 
-func (pr *paramReplacer) Reset() { pr.params = nil }
+func (pr *paramReplacer) Reset() { pr.params, pr.selFieldsCnt, pr.groupByCnt = nil, 0, 0 }
 
 // ParameterizeAST parameterizes this StmtNode.
 // e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23].
