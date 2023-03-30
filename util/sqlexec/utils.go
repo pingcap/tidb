@@ -94,17 +94,7 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 }
 
 var (
-	reflectTpTime     = reflect.TypeOf(time.Time{})
-	reflectTpJSON     = reflect.TypeOf(json.RawMessage{})
-	reflectTpBytes    = reflect.TypeOf([]byte{})
-	reflectTpStrings  = reflect.TypeOf([]string{})
-	reflectTpFloat32s = reflect.TypeOf([]float32{})
-	reflectTpFloat64s = reflect.TypeOf([]float64{})
-
-	reflectUnderlyingTypes = []reflect.Type{
-		reflectTpTime, reflectTpJSON, reflectTpBytes, reflectTpStrings,
-		reflectTpFloat32s, reflectTpFloat64s,
-	}
+	reflectTpTime = reflect.TypeOf(time.Time{})
 )
 
 // escapeSQL is the internal impl of EscapeSQL and FormatSQL.
