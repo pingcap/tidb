@@ -87,6 +87,24 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
+	case *ast.InsertStmt:
+		if node.Select == nil {
+			nRows := len(node.Lists)
+			nCols := 0
+			if len(node.Lists) > 0 { // avoid index-out-of-range
+				nCols = len(node.Lists[0])
+			}
+			if nRows*nCols > 200 { // to save memory
+				checker.cacheable = false
+				return in, true
+			}
+		}
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				checker.cacheable = false
+				return in, true
+			}
+		}
 	case *ast.VariableExpr, *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
 		checker.cacheable = false
 		return in, true
