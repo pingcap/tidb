@@ -564,3 +564,31 @@ func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.Table
 
 	return ts.InfoSchema.SchemaByTable(tableInfo)
 }
+<<<<<<< HEAD
+=======
+
+// UpdateTableInfo implements InfoSchema.SchemaByTable.
+func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo table.Table) error {
+	if ts.MdlTables == nil {
+		ts.MdlTables = NewSessionTables()
+	}
+	err := ts.MdlTables.AddTable(db, tableInfo)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// HasTemporaryTable returns whether information schema has temporary table
+func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
+	return ts.LocalTemporaryTables != nil && ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
+}
+
+// DetachTemporaryTableInfoSchema returns a new SessionExtendedInfoSchema without temporary tables
+func (ts *SessionExtendedInfoSchema) DetachTemporaryTableInfoSchema() *SessionExtendedInfoSchema {
+	return &SessionExtendedInfoSchema{
+		InfoSchema: ts.InfoSchema,
+		MdlTables:  ts.MdlTables,
+	}
+}
+>>>>>>> 9e849851061 (infoschema: fix select temporary table with view will panic problem (#42566))

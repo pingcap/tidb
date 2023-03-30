@@ -38,8 +38,13 @@ func AttachLocalTemporaryTableInfoSchema(sctx sessionctx.Context, is infoschema.
 
 // DetachLocalTemporaryTableInfoSchema detach local temporary table information schema from is
 func DetachLocalTemporaryTableInfoSchema(is infoschema.InfoSchema) infoschema.InfoSchema {
+<<<<<<< HEAD
 	if attachedInfoSchema, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
 		return attachedInfoSchema.InfoSchema
+=======
+	if attachedInfoSchema, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+		return attachedInfoSchema.DetachTemporaryTableInfoSchema()
+>>>>>>> 9e849851061 (infoschema: fix select temporary table with view will panic problem (#42566))
 	}
 
 	return is
