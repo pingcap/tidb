@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
 	"math/rand"
 	"strings"
 	"testing"
@@ -516,6 +518,25 @@ func TestNonPreparedPlanCacheSetOperations(t *testing.T) {
 		tk.MustQuery(q).Check(testkit.Rows())
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	}
+}
+
+func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+	p := parser.New()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+
+	stmt, err := p.ParseOneStmt("select avg(a),avg(b),avg(c) from t", "", "")
+	require.NoError(t, err)
+	err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+	require.NoError(t, err) // no error
+	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+	require.NoError(t, err) // no error
+	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+	require.NoError(t, err) // no error
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }
 
 func TestNonPreparedPlanCacheSpecialTables(t *testing.T) {
