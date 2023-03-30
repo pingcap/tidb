@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -42,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/filter"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -129,7 +127,6 @@ func (e *LoadDataController) import0(ctx context.Context) error {
 		MaxConnPerStore:         config.DefaultRangeConcurrency,
 		ConnCompressType:        config.CompressionNone,
 		WorkerConcurrency:       config.DefaultRangeConcurrency * 2,
-		DupeConcurrency:         config.DefaultRangeConcurrency * 2,
 		KVWriteBatchSize:        config.KVWriteBatchSize,
 		CheckpointEnabled:       false,
 		MemTableSize:            int(config.DefaultEngineMemCacheSize),
@@ -143,10 +140,26 @@ func (e *LoadDataController) import0(ctx context.Context) error {
 		KeyspaceName:            keySpaceName,
 	}
 
-	errorMgr := errormanager.New(nil, cfg, log.Logger{Logger: logutil.BgLogger()})
+	tableMeta := &mydump.MDTableMeta{
+		DB:        e.DBName,
+		Name:      e.Table.Meta().Name.O,
+		DataFiles: e.toDataFiles(),
+	}
+	dataDivideCfg := &mydump.DataDivideConfig{
+		ColumnCnt:         len(e.Table.Meta().Columns),
+		EngineDataSize:    int64(config.DefaultBatchSize),
+		MaxChunkSize:      int64(config.MaxRegionSize),
+		Concurrency:       int(e.threadCnt),
+		EngineConcurrency: config.DefaultTableConcurrency,
+		BatchImportRatio:  config.DefaultBatchImportRatio,
+		IOWorkers:         nil,
+		Store:             e.dataStore,
+		TableMeta:         tableMeta,
+	}
+
 	// todo: use a real region size getter
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
-	localBackend, err := local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter, errorMgr)
+	localBackend, err := local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter)
 	if err != nil {
 		return err
 	}
@@ -161,16 +174,12 @@ func (e *LoadDataController) import0(ctx context.Context) error {
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
 		},
-		tableMeta: &mydump.MDTableMeta{
-			DB:        e.DBName,
-			Name:      e.Table.Meta().Name.O,
-			DataFiles: e.toDataFiles(),
-		},
+		tableMeta:       tableMeta,
 		encTable:        tbl,
-		store:           e.dataStore,
 		dbID:            e.DBID,
+		dataDivideCfg:   dataDivideCfg,
+		store:           e.dataStore,
 		kvStore:         kvStore,
-		cfg:             cfg,
 		logger:          e.logger,
 		regionSplitSize: int64(config.SplitRegionSize),
 		regionSplitKeys: int64(config.SplitRegionKeys),
@@ -192,8 +201,9 @@ type tableImporterImpl struct {
 	tableInfo *checkpoints.TidbTableInfo
 	tableMeta *mydump.MDTableMeta
 	// this table has a separate id allocator used to record the max row id allocated.
-	encTable table.Table
-	dbID     int64
+	encTable      table.Table
+	dbID          int64
+	dataDivideCfg *mydump.DataDivideConfig
 
 	store           storage.ExternalStorage
 	kvStore         tidbkv.Storage
@@ -247,7 +257,7 @@ func (ti *tableImporterImpl) importTable(ctx context.Context) error {
 // then table-importer handles data belongs to the subtask.
 func (ti *tableImporterImpl) populateChunks(ctx context.Context) error {
 	ti.logger.Info("populate chunks")
-	tableRegions, err := mydump.MakeTableRegions(ctx, ti.tableMeta, len(ti.tableInfo.Core.Columns), ti.cfg, nil, ti.store)
+	tableRegions, err := mydump.MakeTableRegions(ctx, ti.dataDivideCfg)
 
 	if err != nil {
 		ti.logger.Error("populate chunks failed", zap.Error(err))
