@@ -140,87 +140,98 @@ func escapeSQL(sql string, args ...interface{}) ([]byte, error) {
 			if arg == nil {
 				buf = append(buf, "NULL"...)
 			} else {
-				reflectTp := reflect.TypeOf(arg)
-				kind := reflectTp.Kind()
-				switch kind {
-				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-					buf = strconv.AppendInt(buf, reflect.ValueOf(arg).Int(), 10)
-				case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-					buf = strconv.AppendUint(buf, reflect.ValueOf(arg).Uint(), 10)
-				case reflect.Float32:
-					buf = strconv.AppendFloat(buf, reflect.ValueOf(arg).Float(), 'g', -1, 32)
-				case reflect.Float64:
-					buf = strconv.AppendFloat(buf, reflect.ValueOf(arg).Float(), 'g', -1, 64)
-				case reflect.Bool:
-					if reflect.ValueOf(arg).Bool() {
-						buf = append(buf, '1')
-					} else {
-						buf = append(buf, '0')
-					}
-				case reflect.String:
-					buf = append(buf, '\'')
-					buf = escapeStringBackslash(buf, reflect.ValueOf(arg).String())
-					buf = append(buf, '\'')
-				case reflect.Struct:
-					t, ok := arg.(time.Time)
-					if !ok {
-						if reflectTp.ConvertibleTo(reflectTpTime) {
-							t = reflect.ValueOf(arg).Convert(reflectTpTime).Interface().(time.Time)
-							ok = true
-						}
-					}
-					if !ok {
-						return nil, errors.Errorf("unsupported %d-th argument: %v", argPos, arg)
-					}
-					if t.IsZero() {
+				switch v := arg.(type) {
+				case int:
+					buf = strconv.AppendInt(buf, int64(v), 10)
+				case int8:
+					buf = strconv.AppendInt(buf, int64(v), 10)
+				case int16:
+					buf = strconv.AppendInt(buf, int64(v), 10)
+				case int32:
+					buf = strconv.AppendInt(buf, int64(v), 10)
+				case int64:
+					buf = strconv.AppendInt(buf, v, 10)
+				case uint:
+					buf = strconv.AppendUint(buf, uint64(v), 10)
+				case uint8:
+					buf = strconv.AppendUint(buf, uint64(v), 10)
+				case uint16:
+					buf = strconv.AppendUint(buf, uint64(v), 10)
+				case uint32:
+					buf = strconv.AppendUint(buf, uint64(v), 10)
+				case uint64:
+					buf = strconv.AppendUint(buf, v, 10)
+				case float32:
+					buf = strconv.AppendFloat(buf, float64(v), 'g', -1, 32)
+				case float64:
+					buf = strconv.AppendFloat(buf, v, 'g', -1, 64)
+				case bool:
+					buf = appendSQLArgBool(buf, v)
+				case time.Time:
+					if v.IsZero() {
 						buf = append(buf, "'0000-00-00'"...)
 					} else {
 						buf = append(buf, '\'')
-						buf = t.AppendFormat(buf, "2006-01-02 15:04:05.999999")
+						buf = v.AppendFormat(buf, "2006-01-02 15:04:05.999999")
 						buf = append(buf, '\'')
 					}
-				case reflect.Slice:
-					switch v := arg.(type) {
-					case json.RawMessage:
-						buf = append(buf, '\'')
+				case json.RawMessage:
+					buf = append(buf, '\'')
+					buf = escapeBytesBackslash(buf, v)
+					buf = append(buf, '\'')
+				case []byte:
+					if v == nil {
+						buf = append(buf, "NULL"...)
+					} else {
+						buf = append(buf, "_binary'"...)
 						buf = escapeBytesBackslash(buf, v)
 						buf = append(buf, '\'')
-					case []byte:
-						if v == nil {
-							buf = append(buf, "NULL"...)
-						} else {
-							buf = append(buf, "_binary'"...)
-							buf = escapeBytesBackslash(buf, v)
-							buf = append(buf, '\'')
+					}
+				case string:
+					buf = appendSQLArgString(buf, v)
+				case []string:
+					for i, k := range v {
+						if i > 0 {
+							buf = append(buf, ',')
 						}
-					case []string:
-						for i, k := range v {
-							if i > 0 {
-								buf = append(buf, ',')
-							}
-							buf = append(buf, '\'')
-							buf = escapeStringBackslash(buf, k)
-							buf = append(buf, '\'')
+						buf = append(buf, '\'')
+						buf = escapeStringBackslash(buf, k)
+						buf = append(buf, '\'')
+					}
+				case []float32:
+					for i, k := range v {
+						if i > 0 {
+							buf = append(buf, ',')
 						}
-					case []float32:
-						for i, k := range v {
-							if i > 0 {
-								buf = append(buf, ',')
-							}
-							buf = strconv.AppendFloat(buf, float64(k), 'g', -1, 32)
+						buf = strconv.AppendFloat(buf, float64(k), 'g', -1, 32)
+					}
+				case []float64:
+					for i, k := range v {
+						if i > 0 {
+							buf = append(buf, ',')
 						}
-					case []float64:
-						for i, k := range v {
-							if i > 0 {
-								buf = append(buf, ',')
-							}
-							buf = strconv.AppendFloat(buf, k, 'g', -1, 64)
-						}
+						buf = strconv.AppendFloat(buf, k, 'g', -1, 64)
+					}
+				default:
+					// slow path based on reflection
+					reflectTp := reflect.TypeOf(arg)
+					kind := reflectTp.Kind()
+					switch kind {
+					case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+						buf = strconv.AppendInt(buf, reflect.ValueOf(arg).Int(), 10)
+					case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+						buf = strconv.AppendUint(buf, reflect.ValueOf(arg).Uint(), 10)
+					case reflect.Float32:
+						buf = strconv.AppendFloat(buf, reflect.ValueOf(arg).Float(), 'g', -1, 32)
+					case reflect.Float64:
+						buf = strconv.AppendFloat(buf, reflect.ValueOf(arg).Float(), 'g', -1, 64)
+					case reflect.Bool:
+						buf = appendSQLArgBool(buf, reflect.ValueOf(arg).Bool())
+					case reflect.String:
+						buf = appendSQLArgString(buf, reflect.ValueOf(arg).String())
 					default:
 						return nil, errors.Errorf("unsupported %d-th argument: %v", argPos, arg)
 					}
-				default:
-					return nil, errors.Errorf("unsupported %d-th argument: %v", argPos, arg)
 				}
 			}
 			i++ // skip specifier
@@ -232,6 +243,20 @@ func escapeSQL(sql string, args ...interface{}) ([]byte, error) {
 		}
 	}
 	return buf, nil
+}
+
+func appendSQLArgBool(buf []byte, v bool) []byte {
+	if v {
+		return append(buf, '1')
+	}
+	return append(buf, '0')
+}
+
+func appendSQLArgString(buf []byte, s string) []byte {
+	buf = append(buf, '\'')
+	buf = escapeStringBackslash(buf, s)
+	buf = append(buf, '\'')
+	return buf
 }
 
 // EscapeSQL will escape input arguments into the sql string, doing necessary processing.

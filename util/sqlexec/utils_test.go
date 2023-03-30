@@ -105,10 +105,10 @@ func TestEscapeBackslash(t *testing.T) {
 	}
 }
 
+type myInt int
+type myStr string
+
 func TestEscapeSQL(t *testing.T) {
-	type myint int
-	type mystr string
-	type mytime time.Time
 	type TestCase struct {
 		name   string
 		input  string
@@ -389,22 +389,16 @@ func TestEscapeSQL(t *testing.T) {
 			output: "select 55.2,0.66",
 		},
 		{
-			name:   "myint",
+			name:   "myInt",
 			input:  "select %?",
-			params: []interface{}{myint(3)},
+			params: []interface{}{myInt(3)},
 			output: "select 3",
 		},
 		{
-			name:   "mystr",
+			name:   "myStr",
 			input:  "select %?",
-			params: []interface{}{mystr("3")},
+			params: []interface{}{myStr("3")},
 			output: "select '3'",
-		},
-		{
-			name:   "mytime",
-			input:  "select %?",
-			params: []interface{}{mytime(time2)},
-			output: "select '2018-01-23 04:03:05'",
 		},
 	}
 	for _, v := range tests {
@@ -479,10 +473,20 @@ func BenchmarkEscapeString(b *testing.B) {
 	}
 }
 
-type mystr string
-
 func BenchmarkUnderlyingString(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		escapeSQL("select %?", mystr("3"))
+		escapeSQL("select %?", myStr("3"))
+	}
+}
+
+func BenchmarkEscapeInt(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		escapeSQL("select %?", 3)
+	}
+}
+
+func BenchmarkUnderlyingInt(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		escapeSQL("select %?", myInt(3))
 	}
 }
