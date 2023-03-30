@@ -910,10 +910,12 @@ func (m *DupeDetector) CollectDuplicateRowsFromTiKV(ctx context.Context, importC
 
 // DupeController is used to collect duplicate keys from local and remote data source and resolve duplication.
 type DupeController struct {
-	splitCli            split.SplitClient
-	tikvCli             *tikvclient.KVStore
-	tikvCodec           tikvclient.Codec
-	errorMgr            *errormanager.ErrorManager
+	splitCli  split.SplitClient
+	tikvCli   *tikvclient.KVStore
+	tikvCodec tikvclient.Codec
+	errorMgr  *errormanager.ErrorManager
+	// number of workers to do duplicate detection on local db and TiKV
+	// on TiKV, it is the max number of regions being checked concurrently
 	dupeConcurrency     int
 	duplicateDB         *pebble.DB
 	keyAdapter          KeyAdapter

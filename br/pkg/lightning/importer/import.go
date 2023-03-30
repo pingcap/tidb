@@ -364,7 +364,7 @@ func NewImportControllerWithPauser(
 			DB: db,
 		}
 		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName)
-		backendObj, err = local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter, errorMgr)
+		backendObj, err = local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}

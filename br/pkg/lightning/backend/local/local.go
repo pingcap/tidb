@@ -386,9 +386,6 @@ type BackendConfig struct {
 	ConnCompressType config.CompressionType
 	// number of import(write & ingest) workers
 	WorkerConcurrency int
-	// number of workers to do duplicate detection on local db and TiKV
-	// on TiKV, it is the max number of regions being checked concurrently
-	DupeConcurrency   int
 	KVWriteBatchSize  int
 	CheckpointEnabled bool
 	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
@@ -419,7 +416,6 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
-		DupeConcurrency:         cfg.TikvImporter.RangeConcurrency * 2,
 		KVWriteBatchSize:        cfg.TikvImporter.SendKVPairs,
 		CheckpointEnabled:       cfg.Checkpoint.Enable,
 		MemTableSize:            int(cfg.TikvImporter.EngineMemCacheSize),
@@ -453,7 +449,6 @@ type Local struct {
 	supportMultiIngest  bool
 	duplicateDB         *pebble.DB
 	keyAdapter          KeyAdapter
-	errorMgr            *errormanager.ErrorManager
 	importClientFactory ImportClientFactory
 
 	bufferPool   *membuf.Pool
@@ -486,7 +481,6 @@ func NewLocalBackend(
 	tls *common.TLS,
 	config BackendConfig,
 	regionSizeGetter TableRegionSizeGetter,
-	errorMgr *errormanager.ErrorManager,
 ) (backend.Backend, error) {
 	config.Adjust()
 	pdCtl, err := pdutil.NewPdController(ctx, config.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
@@ -572,7 +566,6 @@ func NewLocalBackend(
 
 		duplicateDB:         duplicateDB,
 		keyAdapter:          keyAdapter,
-		errorMgr:            errorMgr,
 		importClientFactory: importClientFactory,
 		bufferPool:          membuf.NewPool(membuf.WithAllocator(alloc)),
 		writeLimiter:        writeLimiter,
@@ -1526,13 +1519,13 @@ func (local *Local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	return nil
 }
 
-func (local *Local) GetDupeController() *DupeController {
+func (local *Local) GetDupeController(dupeConcurrency int, errorMgr *errormanager.ErrorManager) *DupeController {
 	return &DupeController{
 		splitCli:            local.splitCli,
 		tikvCli:             local.tikvCli,
 		tikvCodec:           local.tikvCodec,
-		errorMgr:            local.errorMgr,
-		dupeConcurrency:     local.DupeConcurrency,
+		errorMgr:            errorMgr,
+		dupeConcurrency:     dupeConcurrency,
 		duplicateDB:         local.duplicateDB,
 		keyAdapter:          local.keyAdapter,
 		importClientFactory: local.importClientFactory,

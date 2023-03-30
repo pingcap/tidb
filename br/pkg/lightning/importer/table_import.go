@@ -920,7 +920,7 @@ func (tr *TableImporter) postProcess(
 		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
 		// try to abstract it with logical mode.
 		localBackend := rc.backend.Inner().(*local.Local)
-		dupeController := localBackend.GetDupeController()
+		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
 		hasDupe := false
 		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			opts := &encode.SessionOptions{
