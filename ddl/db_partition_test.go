@@ -3419,7 +3419,9 @@ func TestCoalescePartition(t *testing.T) {
 	)
 	partition by hash( month(signed) )
 	partitions 12`)
-	tk.MustExec(`insert into t values (1, "Joe", "Doe", '2023-03-21'), (2, "Jane", "Doe", '2022-03-21')`)
+	for i := 0; i < 200; i++ {
+		tk.MustExec(`insert into t values (?, "Joe", "Doe", from_days(738974 + ?))`, i, i*3)
+	}
 	tk.MustExec("alter table t coalesce partition 4")
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -3429,6 +3431,16 @@ func TestCoalescePartition(t *testing.T) {
 		"  `signed` date DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (MONTH(`signed`)) PARTITIONS 8"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_name = 't' and table_schema = 'coalescePart'`).Sort().Check(testkit.Rows(""+
+		"p0 20",
+		"p1 30",
+		"p2 30",
+		"p3 27",
+		"p4 31",
+		"p5 20",
+		"p6 20",
+		"p7 22"))
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (
 		id int,
@@ -3438,7 +3450,9 @@ func TestCoalescePartition(t *testing.T) {
 	)
 	partition by key(signed,fname)
 	partitions 12`)
-	tk.MustExec(`insert into t values (1, "Joe", "Doe", '2023-03-21'), (2, "Jane", "Doe", '2022-03-21')`)
+	for i := 0; i < 200; i++ {
+		tk.MustExec(`insert into t values (?, "Joe", "Doe", from_days(738974 + ?))`, i, i*3)
+	}
 	tk.MustExec("alter table t coalesce partition 4")
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -3448,6 +3462,16 @@ func TestCoalescePartition(t *testing.T) {
 		"  `signed` date DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY KEY (`signed`,`fname`) PARTITIONS 8"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_name = 't' and table_schema = 'coalescePart'`).Sort().Check(testkit.Rows(""+
+		"p0 26",
+		"p1 28",
+		"p2 22",
+		"p3 24",
+		"p4 30",
+		"p5 27",
+		"p6 22",
+		"p7 21"))
 }
 
 func TestAddHashPartition(t *testing.T) {

@@ -4165,8 +4165,8 @@ func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, 
 			// and None should be the correct Clause for HASH/KEY
 		}
 	}
-	if newSpec.Num < uint64(len(pi.Definitions)) {
-		newSpec.Num = uint64(len(pi.Definitions))
+	if newSpec.Num < uint64(len(newSpec.PartDefinitions)) {
+		newSpec.Num = uint64(len(newSpec.PartDefinitions))
 	}
 
 	// TODO: Check if possible to coalesce with named partitions?
