@@ -47,22 +47,38 @@ var (
 	}}
 )
 
+// paramReplacer is an ast.Visitor that replaces all values with `?` and collects them.
 type paramReplacer struct {
 	params []*driver.ValueExpr
+
+	// Skip all values in SelectField, e.g.
+	// `select a+1 from t where a<10 and b<23` should be parameterized to
+	// `select a+1 from t where a<? and b<?`, instead of
+	// `select a+? from t where a<? and b<?`.
+	// This is to make the output field names be corresponding to these values.
+	// Use int instead of bool to support nested SelectField.
+	selFieldsCnt int
 }
 
 func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
+	case *ast.SelectField:
+		pr.selFieldsCnt++
 	case *driver.ValueExpr:
-		pr.params = append(pr.params, n)
-		param := ast.NewParamMarkerExpr(len(pr.params) - 1)      // offset is used as order in non-prepared plan cache.
-		param.(*driver.ParamMarkerExpr).Datum = *n.Datum.Clone() // init the ParamMakerExpr's Datum
-		return param, true
+		if pr.selFieldsCnt == 0 { // not in SelectField
+			pr.params = append(pr.params, n)
+			param := ast.NewParamMarkerExpr(len(pr.params) - 1)      // offset is used as order in non-prepared plan cache.
+			param.(*driver.ParamMarkerExpr).Datum = *n.Datum.Clone() // init the ParamMakerExpr's Datum
+			return param, true
+		}
 	}
 	return in, false
 }
 
 func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
+	if _, ok := in.(*ast.SelectField); ok {
+		pr.selFieldsCnt--
+	}
 	return in, true
 }
 
