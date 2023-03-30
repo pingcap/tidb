@@ -2493,7 +2493,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		}
 		oldHist = idx.Histogram.Copy()
 	} else {
-		_, bktID := idx.LessRowCountWithBktIdx(idx.LastAnalyzePos)
+		_, bktID := idx.LessRowCountWithBktIdx(nil, idx.LastAnalyzePos)
 		if bktID == 0 {
 			return analyzeTask
 		}
@@ -2831,7 +2831,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 			b.err = err
 			return nil
 		}
-		_, bktID := col.LessRowCountWithBktIdx(d)
+		_, bktID := col.LessRowCountWithBktIdx(nil, d)
 		if bktID == 0 {
 			return analyzeTask
 		}

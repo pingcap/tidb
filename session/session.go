@@ -2101,9 +2101,28 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
+	cmdByte := byte(atomic.LoadUint32(&s.GetSessionVars().CommandValue))
 	if topsqlstate.TopSQLEnabled() {
 		s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
 		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, s.sessionVars.InRestrictedSQL)
+	}
+	if sessVars.InPlanReplayer {
+		sessVars.StmtCtx.EnableOptimizerDebugTrace = true
+	} else if dom := domain.GetDomain(s); dom != nil {
+		// This is the earliest place we can get the SQL digest for this execution.
+		// If we find this digest is registered for PLAN REPLAYER CAPTURE, we need to enable optimizer debug trace no matter
+		// the plan digest will be matched or not.
+		if planReplayerHandle := dom.GetPlanReplayerHandle(); planReplayerHandle != nil {
+			tasks := planReplayerHandle.GetTasks()
+			for _, task := range tasks {
+				if task.SQLDigest == digest.String() {
+					sessVars.StmtCtx.EnableOptimizerDebugTrace = true
+				}
+			}
+		}
+	}
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		plannercore.DebugTraceReceivedCommand(s, cmdByte, stmtNode)
 	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
@@ -2111,8 +2130,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
-	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
-	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
+	s.SetProcessInfo(stmtNode.Text(), time.Now(), cmdByte, 0)
 	s.txn.onStmtStart(digest.String())
 	defer sessiontxn.GetTxnManager(s).OnStmtEnd()
 	defer s.txn.onStmtEnd()

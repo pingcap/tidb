@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"math"
 	"runtime"
 	"strconv"
@@ -278,6 +279,13 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+	sessVars := sctx.GetSessionVars()
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		debug_trace.EnterContextCommon(sctx)
+		defer debug_trace.LeaveContextCommon(sctx)
+
+	}
+
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
@@ -285,7 +293,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if checkStableResultMode(sctx) {
 		flag |= flagStabilizeResults
 	}
-	if sctx.GetSessionVars().StmtCtx.StraightJoinOrder {
+	if sessVars.StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^flagJoinReOrder
 	}
@@ -298,7 +306,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	planCounter := PlanCounterTp(sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan)
+	planCounter := PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
 		planCounter = -1
 	}
@@ -311,11 +319,11 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		return nil, 0, err
 	}
 
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
+	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace {
-		sctx.GetSessionVars().StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
+	if sessVars.StmtCtx.EnableOptimizeTrace {
+		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
 	}
 	return finalPlan, cost, nil
 }
@@ -1069,6 +1077,10 @@ func LogicalOptimizeTest(ctx context.Context, flag uint64, logic LogicalPlan) (L
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debug_trace.EnterContextCommon(logic.SCtx())
+		defer debug_trace.LeaveContextCommon(logic.SCtx())
+	}
 	opt := defaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
@@ -1105,6 +1117,10 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 }
 
 func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan PhysicalPlan, cost float64, err error) {
+	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debug_trace.EnterContextCommon(logic.SCtx())
+		defer debug_trace.LeaveContextCommon(logic.SCtx())
+	}
 	if _, err := logic.recursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}

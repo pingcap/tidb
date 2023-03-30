@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"math"
 	"strings"
 
@@ -36,6 +37,10 @@ import (
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
 func (ds *DataSource) generateIndexMergePath() error {
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debug_trace.EnterContextCommon(ds.ctx)
+		defer debug_trace.LeaveContextCommon(ds.ctx)
+	}
 	var warningMsg string
 	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
 	defer func() {

@@ -4864,6 +4864,7 @@ const (
 
 	// TracePlanTargetEstimation indicates CE trace target for optimizer trace.
 	TracePlanTargetEstimation = "estimation"
+	TracePlanTargetDebug      = "debug"
 )
 
 // buildTrace builds a trace plan. Inside this method, it first optimize the
@@ -4878,19 +4879,24 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	}
 	// TODO: forbid trace plan if the statement isn't select read-only statement
 	if trace.TracePlan {
-		if trace.TracePlanTarget != "" && trace.TracePlanTarget != TracePlanTargetEstimation {
-			return nil, errors.New("trace plan target should only be 'estimation'")
-		}
-		if trace.TracePlanTarget == TracePlanTargetEstimation {
-			schema := newColumnsWithNames(1)
-			schema.Append(buildColumnWithName("", "CE_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
-			p.SetSchema(schema.col2Schema())
-			p.names = schema.names
-		} else {
+		switch trace.TracePlanTarget {
+		case "":
 			schema := newColumnsWithNames(1)
 			schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
 			p.SetSchema(schema.col2Schema())
 			p.names = schema.names
+		case TracePlanTargetEstimation:
+			schema := newColumnsWithNames(1)
+			schema.Append(buildColumnWithName("", "CE_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
+			p.SetSchema(schema.col2Schema())
+			p.names = schema.names
+		case TracePlanTargetDebug:
+			schema := newColumnsWithNames(1)
+			schema.Append(buildColumnWithName("", "Debug_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
+			p.SetSchema(schema.col2Schema())
+			p.names = schema.names
+		default:
+			return nil, errors.New("trace plan target should only be 'estimation'")
 		}
 		return p, nil
 	}

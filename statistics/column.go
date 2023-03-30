@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"math"
 	"strconv"
 
@@ -115,8 +116,25 @@ var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{
 
 // IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
 // as need histogram.
-func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
+func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
+	var totalCount float64
+	var ndv int64
+	var inValidForCollPseudo, essentialLoaded bool
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debug_trace.EnterContextCommon(sctx)
+		defer func() {
+			debug_trace.DebugTraceAnyValuesWithNames(sctx,
+				"IsInvalid", res,
+				"InValidForCollPseudo", inValidForCollPseudo,
+				"TotalCount", totalCount,
+				"NDV", ndv,
+				"EssentialLoaded", essentialLoaded,
+			)
+			debug_trace.LeaveContextCommon(sctx)
+		}()
+	}
 	if collPseudo && c.NotAccurate() {
+		inValidForCollPseudo = true
 		return true
 	}
 	if sctx != nil {
@@ -135,10 +153,21 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 	// In some cases, some statistics in column would be evicted
 	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
 	// In this case, we will think this column as valid due to we can still use the rest of the statistics to do optimize.
-	return c.TotalRowCount() == 0 || (!c.IsEssentialStatsLoaded() && c.Histogram.NDV > 0)
+	totalCount = c.TotalRowCount()
+	essentialLoaded = c.IsEssentialStatsLoaded()
+	ndv = c.Histogram.NDV
+	return totalCount == 0 || (!essentialLoaded && ndv > 0)
 }
 
-func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
+func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error) {
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debug_trace.EnterContextCommon(sctx)
+		debug_trace.DebugTraceAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
+		defer func() {
+			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Result", result, "Error", err)
+			debug_trace.LeaveContextCommon(sctx)
+		}()
+	}
 	if val.IsNull() {
 		return float64(c.NullCount), nil
 	}
@@ -148,13 +177,13 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 			return 0.0, nil
 		}
 		if c.Histogram.NDV > 0 && c.outOfRange(val) {
-			return outOfRangeEQSelectivity(c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+			return outOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
-			count, err := queryValue(sctx.GetSessionVars().StmtCtx, c.CMSketch, c.TopN, val)
+			count, err := queryValue(sctx, c.CMSketch, c.TopN, val)
 			return float64(count), errors.Trace(err)
 		}
-		histRowCount, _ := c.Histogram.equalRowCount(val, false)
+		histRowCount, _ := c.Histogram.equalRowCount(sctx, val, false)
 		return histRowCount, nil
 	}
 
@@ -165,13 +194,13 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 	}
 	// 1. try to find this value in TopN
 	if c.TopN != nil {
-		rowcount, ok := c.TopN.QueryTopN(encodedVal)
+		rowcount, ok := c.TopN.QueryTopN(sctx, encodedVal)
 		if ok {
 			return float64(rowcount), nil
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
-	histCnt, matched := c.Histogram.equalRowCount(val, true)
+	histCnt, matched := c.Histogram.equalRowCount(sctx, val, true)
 	if matched {
 		return histCnt, nil
 	}
@@ -186,6 +215,11 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 // GetColumnRowCount estimates the row count by a slice of Range.
 func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
+	debugTrace := sc.EnableOptimizerDebugTrace
+	if debugTrace {
+		debug_trace.EnterContextCommon(sctx)
+		defer debug_trace.LeaveContextCommon(sctx)
+	}
 	var rowCount float64
 	for _, rg := range ranges {
 		highVal := *rg.HighVal[0].Clone()
@@ -208,12 +242,18 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		if err != nil {
 			return 0, err
 		}
+		if debugTrace {
+			debugTraceStartEstimateRange(sctx, rg, lowEncoded, highEncoded, rowCount)
+		}
 		if cmp == 0 {
 			// case 1: it's a point
 			if !rg.LowExclude && !rg.HighExclude {
 				// In this case, the row count is at most 1.
 				if pkIsHandle {
 					rowCount++
+					if debugTrace {
+						debugTraceEndEstimateRange(sctx, 1, DebugTraceUniquePoint)
+					}
 					continue
 				}
 				var cnt float64
@@ -224,6 +264,9 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 				// If the current table row count has changed, we should scale the row count accordingly.
 				cnt *= c.GetIncreaseFactor(realtimeRowCount)
 				rowCount += cnt
+				if debugTrace {
+					debugTraceEndEstimateRange(sctx, cnt, DebugTracePoint)
+				}
 			}
 			continue
 		}
@@ -241,6 +284,9 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 					}
 					// If the current table row count has changed, we should scale the row count accordingly.
 					cnt *= c.GetIncreaseFactor(realtimeRowCount)
+					if debugTrace {
+						debugTraceEndEstimateRange(sctx, cnt, DebugTraceVer1SmallRange)
+					}
 					rowCount += cnt
 				}
 
@@ -281,9 +327,12 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		// handling the out-of-range part
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			cnt += c.Histogram.outOfRangeRowCount(&lowVal, &highVal, modifyCount)
+			cnt += c.Histogram.outOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount)
 		}
 
+		if debugTrace {
+			debugTraceEndEstimateRange(sctx, cnt, DebugTraceRange)
+		}
 		rowCount += cnt
 	}
 	rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
@@ -438,11 +487,11 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 
 // BetweenRowCount estimates the row count for interval [l, r).
 func (c *Column) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
-	histBetweenCnt := c.Histogram.BetweenRowCount(l, r)
+	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
 	if c.StatsVer <= Version1 {
 		return histBetweenCnt
 	}
-	return float64(c.TopN.BetweenCount(lowEncoded, highEncoded)) + histBetweenCnt
+	return float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded)) + histBetweenCnt
 }
 
 // StatusToString gets the string info of StatsLoadedStatus
