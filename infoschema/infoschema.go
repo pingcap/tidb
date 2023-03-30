@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -628,7 +629,9 @@ func (is *SessionTables) RemoveTable(schema, table model.CIStr) (exist bool) {
 // Copy is to copy a new SessionTables object
 func (is *SessionTables) Copy() *SessionTables {
 	newSchemaMap := make(map[string]*schemaTables, len(is.schemaMap))
+	maps.Copy(newSchemaMap, is.schemaMap)
 	newIdx2table := make(map[int64]table.Table, len(is.idx2table))
+	maps.Copy(newIdx2table, is.idx2table)
 	return &SessionTables{
 		schemaMap: newSchemaMap,
 		idx2table: newIdx2table,
