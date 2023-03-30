@@ -29,6 +29,7 @@ var (
 	ErrWarnMemoryQuotaOverflow          = terror.ClassParser.NewStd(mysql.ErrWarnMemoryQuotaOverflow)
 	ErrWarnOptimizerHintParseError      = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintParseError)
 	ErrWarnOptimizerHintInvalidInteger  = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintInvalidInteger)
+	ErrWarnOptimizerHintWrongPos        = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintWrongPos)
 )
 
 //revive:enable:exported

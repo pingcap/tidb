@@ -1061,6 +1061,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWarnOptimizerHintInvalidToken:    mysql.Message("Cannot use %s '%s' (tok = %d) in an optimizer hint", nil),
 	ErrWarnMemoryQuotaOverflow:          mysql.Message("Max value of MEMORY_QUOTA is %d bytes, ignore this invalid limit", nil),
 	ErrWarnOptimizerHintParseError:      mysql.Message("Optimizer hint syntax error at %v", nil),
+	ErrWarnOptimizerHintWrongPos:        mysql.Message("Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.", nil),
 
 	ErrSequenceUnsupportedTableOption:      mysql.Message("Unsupported sequence table-option %s", nil),
 	ErrColumnTypeUnsupportedNextValue:      mysql.Message("Unsupported sequence default value for column type '%s'", nil),

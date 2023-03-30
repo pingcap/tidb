@@ -555,6 +555,8 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 			} else {
 				isOptimizerHint = true
 			}
+		} else {
+			s.AppendWarn(ErrWarnOptimizerHintWrongPos)
 		}
 
 	case '*': // '/**' if the next char is '/' it would close the comment.
