@@ -34,6 +34,7 @@ go_test(
     srcs = [
         "ddl_test.go",
         "interceptor_test.go",
+        "intergration_test.go",
         "main_test.go",
     ],
     embed = [":temptable"],
@@ -41,6 +42,11 @@ go_test(
     deps = [
         "//infoschema",
         "//kv",
+<<<<<<< HEAD
+=======
+        "//meta/autoid",
+        "//parser/auth",
+>>>>>>> 9e849851061 (infoschema: fix select temporary table with view will panic problem (#42566))
         "//parser/model",
         "//parser/mysql",
         "//sessionctx",
@@ -48,6 +54,7 @@ go_test(
         "//store/mockstore",
         "//table",
         "//tablecodec",
+        "//testkit",
         "//testkit/testsetup",
         "//types",
         "//util/codec",
