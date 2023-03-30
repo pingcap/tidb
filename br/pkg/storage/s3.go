@@ -187,6 +187,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.ForcePathStyle = options.ForcePathStyle
 	s3.RoleArn = options.RoleARN
 	s3.ExternalId = options.ExternalID
+	s3.Provider = options.Provider
 	return nil
 }
 
@@ -354,22 +355,37 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		)
 	}
 	c := s3.New(ses, s3CliConfigs...)
-	confCred := ses.Config.Credentials
-	setCredOpt := func(req *request.Request) {
-		// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
-		// we need reassign credential to be compatible with minio authentication.
-		if confCred != nil {
-			req.Config.Credentials = confCred
+
+	var region string
+	if len(qs.Provider) == 0 || qs.Provider == "aws" {
+		confCred := ses.Config.Credentials
+		setCredOpt := func(req *request.Request) {
+			// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+			// we need reassign credential to be compatible with minio authentication.
+			if confCred != nil {
+				req.Config.Credentials = confCred
+			}
+			// s3manager.GetBucketRegionWithClient use path style addressing default.
+			// we need set S3ForcePathStyle by our config if we set endpoint.
+			if qs.Endpoint != "" {
+				req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
+			}
 		}
-		// s3manager.GetBucketRegionWithClient use path style addressing default.
-		// we need set S3ForcePathStyle by our config if we set endpoint.
-		if qs.Endpoint != "" {
-			req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
+		region, err = s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
 		}
+<<<<<<< HEAD
 	}
 	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
+=======
+	} else {
+		// for other s3 compatible provider like ovh storage didn't return the region correctlly
+		// so we cannot automatically get the bucket region. just fallback to manually region setting.
+		region = qs.Region
+>>>>>>> 0a08f64082e (br: skip automatically get bucket region with other s3 compatible provider. (#41889))
 	}
 
 	if qs.Region != region {
