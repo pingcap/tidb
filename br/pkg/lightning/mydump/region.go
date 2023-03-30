@@ -147,10 +147,10 @@ func AllocateEngineIDs(
 
 type DataDivideConfig struct {
 	ColumnCnt int
-	// soft limit of engine size
-	BatchSize int64
-	// max chunk size
-	MaxRegionSize int64
+	// limit of engine size, we have a complex algorithm to calculate the best engine size, see AllocateEngineIDs.
+	EngineDataSize int64
+	// max chunk size(inside this file we named it region which collides with TiKV region)
+	MaxChunkSize int64
 	// number of concurrent workers to dive data files
 	Concurrency int
 	// number of engine runs concurrently, need this to calculate the best engine size for pipelining local-sort and import.
@@ -158,6 +158,7 @@ type DataDivideConfig struct {
 	// assumption of the algorithm is broken.
 	EngineConcurrency int
 	// used together with prev param. it is 0.75 nearly all the time, see Mydumper.BatchImportRatio.
+	// this variable is defined as speed-write-to-TiKV / speed-to-do-local-sort
 	BatchImportRatio float64
 	// used to split large CSV files, to limit concurrency of data read/seek operations
 	// when nil, no limit.
@@ -166,7 +167,7 @@ type DataDivideConfig struct {
 	Store     storage.ExternalStorage
 	TableMeta *MDTableMeta
 
-	// used when split large CSV files.
+	// only used when split large CSV files.
 	StrictFormat           bool
 	DataCharacterSet       string
 	DataInvalidCharReplace string
@@ -182,11 +183,11 @@ func NewDataDivideConfig(cfg *config.Config,
 ) *DataDivideConfig {
 	return &DataDivideConfig{
 		ColumnCnt:              columns,
-		BatchSize:              int64(cfg.Mydumper.BatchSize),
-		BatchImportRatio:       cfg.Mydumper.BatchImportRatio,
-		MaxRegionSize:          int64(cfg.Mydumper.MaxRegionSize),
+		EngineDataSize:         int64(cfg.Mydumper.BatchSize),
+		MaxChunkSize:           int64(cfg.Mydumper.MaxRegionSize),
 		Concurrency:            cfg.App.RegionConcurrency,
 		EngineConcurrency:      cfg.App.TableConcurrency,
+		BatchImportRatio:       cfg.Mydumper.BatchImportRatio,
 		IOWorkers:              ioWorkers,
 		Store:                  store,
 		TableMeta:              meta,
@@ -236,7 +237,7 @@ func MakeTableRegions(
 					regions, sizes, err = makeParquetFileRegion(ctx, cfg, info)
 				} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
 					info.FileMeta.Compression == CompressionNone &&
-					dataFileSize > cfg.MaxRegionSize+cfg.MaxRegionSize/largeCSVLowerThresholdRation {
+					dataFileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
 					// If a csv file is overlarge, we need to split it into multiple regions.
 					// Note: We can only split a csv file whose format is strict.
 					// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
@@ -310,10 +311,10 @@ func MakeTableRegions(
 		rowIDBase = fileRegionsRes.regions[len(fileRegionsRes.regions)-1].Chunk.RowIDMax
 	}
 
-	batchSize := CalculateBatchSize(float64(cfg.BatchSize), meta.IsRowOrdered, float64(meta.TotalSize))
+	batchSize := CalculateBatchSize(float64(cfg.EngineDataSize), meta.IsRowOrdered, float64(meta.TotalSize))
 
 	log.FromContext(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
-		zap.Int64("MaxRegionSize", cfg.MaxRegionSize),
+		zap.Int64("MaxRegionSize", cfg.MaxChunkSize),
 		zap.Int("RegionsCount", len(filesRegions)),
 		zap.Float64("BatchSize", batchSize),
 		zap.Duration("cost", time.Since(start)))
@@ -426,7 +427,7 @@ func SplitLargeCSV(
 	cfg *DataDivideConfig,
 	dataFile FileInfo,
 ) (regions []*TableRegion, dataFileSizes []float64, err error) {
-	maxRegionSize := cfg.MaxRegionSize
+	maxRegionSize := cfg.MaxChunkSize
 	dataFileSizes = make([]float64, 0, dataFile.FileMeta.FileSize/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
 	var columns []string

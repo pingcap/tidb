@@ -23,6 +23,8 @@ import (
 )
 
 const (
+	DefaultBatchImportRatio = 0.75
+
 	// mydumper
 	ReadBlockSize ByteSize = 64 * units.KiB
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360

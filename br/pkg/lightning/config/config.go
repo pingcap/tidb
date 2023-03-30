@@ -76,7 +76,7 @@ const (
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
 	defaultChecksumTableConcurrency   = 2
-	defaultTableConcurrency           = 6
+	DefaultTableConcurrency           = 6
 	defaultIndexConcurrency           = 2
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
@@ -1176,7 +1176,7 @@ func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
 		cfg.App.IndexConcurrency = defaultIndexConcurrency
 	}
 	if cfg.App.TableConcurrency == 0 {
-		cfg.App.TableConcurrency = defaultTableConcurrency
+		cfg.App.TableConcurrency = DefaultTableConcurrency
 	}
 
 	if len(cfg.App.MetaSchemaName) == 0 {
@@ -1318,7 +1318,7 @@ func (cfg *Config) AdjustCheckPoint() {
 
 func (cfg *Config) AdjustMydumper() {
 	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
-		cfg.Mydumper.BatchImportRatio = 0.75
+		cfg.Mydumper.BatchImportRatio = DefaultBatchImportRatio
 	}
 	if cfg.Mydumper.ReadBlockSize <= 0 {
 		cfg.Mydumper.ReadBlockSize = ReadBlockSize

@@ -290,7 +290,7 @@ func TestSplitLargeFile(t *testing.T) {
 		{18, [][]int64{{6, 30}}},
 		{19, [][]int64{{6, 30}}},
 	} {
-		divideConfig.MaxRegionSize = int64(tc.maxRegionSize)
+		divideConfig.MaxChunkSize = int64(tc.maxRegionSize)
 
 		regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
 		assert.NoError(t, err)
