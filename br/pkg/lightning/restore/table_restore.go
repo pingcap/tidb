@@ -775,12 +775,14 @@ func (tr *TableRestore) postProcess(
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
 				return false, e
-			} else {
-				hasDupe = hasDupe || hasRemoteDupe
 			}
-			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
-				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
-				return false, err
+			hasDupe = hasDupe || hasRemoteDupe
+
+			if hasDupe {
+				if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
+					return false, err
+				}
 			}
 		}
 
