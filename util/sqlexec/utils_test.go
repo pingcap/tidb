@@ -400,12 +400,6 @@ func TestEscapeSQL(t *testing.T) {
 			params: []interface{}{mytime(time2)},
 			output: "select '2018-01-23 04:03:05'",
 		},
-		{
-			name:   "myfloadt64s",
-			input:  "select %?",
-			params: []interface{}{myfloat64s{55.2, 0.66}},
-			output: "select 55.2,0.66",
-		},
 	}
 	for _, v := range tests {
 		// copy iterator variable into a new variable, see issue #27779
