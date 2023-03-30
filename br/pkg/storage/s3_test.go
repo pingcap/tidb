@@ -211,6 +211,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: true,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "ceph",
 			},
 		},
 		{
@@ -225,6 +226,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: false,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "alibaba",
 			},
 		},
 		{
@@ -239,6 +241,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: false,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "netease",
 			},
 		},
 		{
