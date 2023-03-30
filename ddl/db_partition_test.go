@@ -3361,8 +3361,9 @@ func TestPartitionErrorCode(t *testing.T) {
 	)
 	partition by hash(store_id)
 	partitions 4;`)
-	tk.MustGetDBError("alter table employees add partition partitions 8;", dbterror.ErrUnsupportedAddPartition)
-	tk.MustGetDBError("alter table employees add partition (partition p5 values less than (42));", dbterror.ErrUnsupportedAddPartition)
+	tk.MustExec("alter table employees add partition partitions 8")
+	tk.MustGetDBError("alter table employees add partition (partition pNew values less than (42))", ast.ErrPartitionWrongValues)
+	tk.MustGetDBError("alter table employees add partition (partition pNew values in (42))", ast.ErrPartitionWrongValues)
 
 	// coalesce partition
 	tk.MustExec(`create table clients (
@@ -3373,7 +3374,7 @@ func TestPartitionErrorCode(t *testing.T) {
 	)
 	partition by hash( month(signed) )
 	partitions 12;`)
-	tk.MustGetDBError("alter table clients coalesce partition 4;", dbterror.ErrUnsupportedCoalescePartition)
+	tk.MustGetDBError("alter table clients coalesce partition 4", ast.ErrCoalescePartitionNoPartition)
 
 	tk.MustExec(`create table t_part (a int key)
 		partition by range(a) (

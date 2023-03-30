@@ -4151,7 +4151,22 @@ func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, 
 	newSpec := *spec
 	newSpec.PartitionNames = make([]model.CIStr, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
+		// reorganize ALL partitions into the new number of partitions
 		newSpec.PartitionNames[i] = pi.Definitions[i].Name
+	}
+	for i := 0; i < len(newSpec.PartDefinitions); i++ {
+		switch newSpec.PartDefinitions[i].Clause.(type) {
+		case *ast.PartitionDefinitionClauseIn:
+			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("LIST", "IN"))
+		case *ast.PartitionDefinitionClauseLessThan:
+			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("RANGE", "LESS THAN"))
+		default:
+			// accept the others, HISTORY is not accepted but ignore it here.
+			// and None should be the correct Clause for HASH/KEY
+		}
+	}
+	if newSpec.Num < uint64(len(pi.Definitions)) {
+		newSpec.Num = uint64(len(pi.Definitions))
 	}
 
 	// TODO: Check if possible to coalesce with named partitions?
@@ -7101,7 +7116,7 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		switch spec.Tp {
 		case ast.AlterTableCoalescePartitions:
 			if int(spec.Num) >= len(meta.Partition.Definitions) {
-				return nil, ast.ErrCoalescePartitionNoPartition.GenWithStackByArgs(meta.Partition.Type)
+				return nil, ast.ErrCoalescePartitionNoPartition
 			}
 			resetNum := meta.Partition.Num
 			defer func() { meta.Partition.Num = resetNum }()
