@@ -1440,6 +1440,38 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheFieldNames(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	checkFieldName := func(sql, hit string, fields ...string) {
+		rs, err := tk.Exec(sql)
+		require.NoError(t, err)
+		for i, f := range rs.Fields() {
+			require.Equal(t, f.Column.Name.L, fields[i])
+		}
+		require.NoError(t, rs.Close())
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(hit))
+	}
+
+	checkFieldName(`select a+1 from t where a<10`, `0`, `a+1`)
+	checkFieldName(`select a+1 from t where a<20`, `1`, `a+1`)
+	checkFieldName(`select a+2 from t where a<30`, `0`, `a+2`) // can not hit since field names changed
+	checkFieldName(`select a+2 from t where a<40`, `1`, `a+2`)
+	checkFieldName(`select a,a+1 from t where a<30`, `0`, `a`, `a+1`) // can not hit since field names changed
+	checkFieldName(`select a,a+1 from t where a<40`, `1`, `a`, `a+1`)
+
+	checkFieldName(`select 1 from t where a<10`, `0`, `1`)
+	checkFieldName(`select 1 from t where a<20`, `1`, `1`)
+	checkFieldName(`select 2 from t where a<10`, `0`, `2`)
+	checkFieldName(`select 2 from t where a<20`, `1`, `2`)
+	checkFieldName(`select 1,2 from t where a<10`, `0`, `1`, `2`)
+	checkFieldName(`select 1,2 from t where a<20`, `1`, `1`, `2`)
+}
+
 func TestNonPreparedPlanCacheExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
