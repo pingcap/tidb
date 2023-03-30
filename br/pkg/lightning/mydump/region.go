@@ -79,7 +79,7 @@ func AllocateEngineIDs(
 	dataFileSizes []float64,
 	batchSize float64,
 	batchImportRatio float64,
-	tableConcurrency float64,
+	engineConcurrency float64,
 ) {
 	totalDataFileSize := 0.0
 	for _, dataFileSize := range dataFileSizes {
@@ -111,8 +111,8 @@ func AllocateEngineIDs(
 	logGammaR, _ := math.Lgamma(batchImportRatio)
 	invBetaNR := math.Exp(logGammaNPlusR - logGammaN - logGammaR) // 1/B(N, R) = Γ(N+R)/Γ(N)Γ(R)
 	for {
-		if n <= 0 || n > tableConcurrency {
-			n = tableConcurrency
+		if n <= 0 || n > engineConcurrency {
+			n = engineConcurrency
 			break
 		}
 		realRatio := n - invBetaNR
@@ -149,12 +149,16 @@ type DataDivideConfig struct {
 	ColumnCnt int
 	// soft limit of engine size
 	BatchSize int64
-	// magic parameter which is 0.75 nearly all the time, see Mydumper.BatchImportRatio.
-	BatchImportRatio float64
 	// max chunk size
-	MaxRegionSize     int64
-	RegionConcurrency int
-	TableConcurrency  int
+	MaxRegionSize int64
+	// number of concurrent workers to dive data files
+	Concurrency int
+	// number of engine runs concurrently, need this to calculate the best engine size for pipelining local-sort and import.
+	// todo: remove those 2 params, the algorithm seems useless, since we can import concurrently now, the foundation
+	// assumption of the algorithm is broken.
+	EngineConcurrency int
+	// used together with prev param. it is 0.75 nearly all the time, see Mydumper.BatchImportRatio.
+	BatchImportRatio float64
 	// used to split large CSV files, to limit concurrency of data read/seek operations
 	// when nil, no limit.
 	IOWorkers *worker.Pool
@@ -181,8 +185,8 @@ func NewDataDivideConfig(cfg *config.Config,
 		BatchSize:              int64(cfg.Mydumper.BatchSize),
 		BatchImportRatio:       cfg.Mydumper.BatchImportRatio,
 		MaxRegionSize:          int64(cfg.Mydumper.MaxRegionSize),
-		RegionConcurrency:      cfg.App.RegionConcurrency,
-		TableConcurrency:       cfg.App.TableConcurrency,
+		Concurrency:            cfg.App.RegionConcurrency,
+		EngineConcurrency:      cfg.App.TableConcurrency,
 		IOWorkers:              ioWorkers,
 		Store:                  store,
 		TableMeta:              meta,
@@ -213,7 +217,7 @@ func MakeTableRegions(
 	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	concurrency := mathutil.Max(cfg.RegionConcurrency, 2)
+	concurrency := mathutil.Max(cfg.Concurrency, 2)
 	fileChan := make(chan FileInfo, concurrency)
 	resultChan := make(chan fileRegionRes, concurrency)
 	var wg sync.WaitGroup
@@ -313,7 +317,7 @@ func MakeTableRegions(
 		zap.Int("RegionsCount", len(filesRegions)),
 		zap.Float64("BatchSize", batchSize),
 		zap.Duration("cost", time.Since(start)))
-	AllocateEngineIDs(filesRegions, dataFileSizes, batchSize, cfg.BatchImportRatio, float64(cfg.TableConcurrency))
+	AllocateEngineIDs(filesRegions, dataFileSizes, batchSize, cfg.BatchImportRatio, float64(cfg.EngineConcurrency))
 	return filesRegions, nil
 }
 
