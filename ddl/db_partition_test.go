@@ -3373,8 +3373,8 @@ func TestPartitionErrorCode(t *testing.T) {
 		signed date
 	)
 	partition by hash( month(signed) )
-	partitions 12;`)
-	tk.MustGetDBError("alter table clients coalesce partition 4", ast.ErrCoalescePartitionNoPartition)
+	partitions 12`)
+	tk.MustGetDBError("alter table clients coalesce partition 12", ast.ErrCoalescePartitionNoPartition)
 
 	tk.MustExec(`create table t_part (a int key)
 		partition by range(a) (

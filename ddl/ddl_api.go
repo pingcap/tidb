@@ -4169,7 +4169,6 @@ func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, 
 		newSpec.Num = uint64(len(newSpec.PartDefinitions))
 	}
 
-	// TODO: Check if possible to coalesce with named partitions?
 	return d.ReorganizePartitions(sctx, ident, &newSpec)
 }
 
