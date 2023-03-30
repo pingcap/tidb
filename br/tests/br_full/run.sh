@@ -58,6 +58,12 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-lz4" --concurrency 4 
 export GO_FAILPOINTS=""
 size_lz4=$(du -d 0 $TEST_DIR/$DB-lz4 | awk '{print $1}')
 
+if ! grep -i "$error_str" $test_log; then
+    echo "${error_str} not found in log"
+    echo "TEST: [$TEST_NAME] test restore failed!"
+    exit 1
+fi
+
 echo "backup with zstd start..."
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-zstd" --concurrency 4 --compression zstd --compression-level 6
 size_zstd=$(du -d 0 $TEST_DIR/$DB-zstd | awk '{print $1}')
