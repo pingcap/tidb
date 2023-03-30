@@ -4608,7 +4608,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
 	err = tk.ExecToErr(`ALTER TABLE t LAST PARTITION LESS THAN (10)`)
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported add partitions", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported LAST PARTITION of HASH/KEY partitioned table", err.Error())
 	tk.MustExec(`drop table t`)
 
 	tk.MustExec(`create table t (a int, b varchar(255)) partition by list (a) (partition p0 values in (1,2,3), partition p1 values in (22,23,24))`)

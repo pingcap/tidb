@@ -3869,6 +3869,14 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if pi.Type == model.PartitionTypeHash || pi.Type == model.PartitionTypeKey {
 		// Add partition for hash/key is actually a reorganize partition
 		// operation and not a metadata only change!
+		switch spec.Tp {
+		case ast.AlterTableAddLastPartition:
+			return errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION of HASH/KEY partitioned table"))
+		case ast.AlterTableAddPartitions:
+		// only thing supported
+		default:
+			return errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of HASH/KEY partitioned table"))
+		}
 		return d.hashPartitionManagement(ctx, ident, spec, pi)
 	}
 
