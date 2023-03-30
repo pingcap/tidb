@@ -1196,12 +1196,14 @@ func TestCheckPeersBusy(t *testing.T) {
 				return importCli
 			},
 		},
-		logger:                log.L(),
-		writeLimiter:          noopStoreWriteLimiter{},
-		bufferPool:            membuf.NewPool(),
-		supportMultiIngest:    true,
-		shouldCheckWriteStall: true,
-		tikvCodec:             keyspace.CodecV1,
+		logger:             log.L(),
+		writeLimiter:       noopStoreWriteLimiter{},
+		bufferPool:         membuf.NewPool(),
+		supportMultiIngest: true,
+		BackendConfig: BackendConfig{
+			ShouldCheckWriteStall: true,
+		},
+		tikvCodec: keyspace.CodecV1,
 	}
 
 	db, tmpPath := makePebbleDB(t, nil)

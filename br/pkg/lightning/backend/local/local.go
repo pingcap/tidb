@@ -384,14 +384,18 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 }
 
 type BackendConfig struct {
+	// comma separated list of PD endpoints.
 	PDAddr        string
 	LocalStoreDir string
-	// max number of connections to a store.
+	// max number of cached grpc.ClientConn to a store.
+	// note: this is not the limit of actual connections, each grpc.ClientConn can have one or more of it.
 	MaxConnPerStore int
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
 	// number of import(write & ingest) workers
 	WorkerConcurrency int
+	// number of workers to do duplicate detection on local db and TiKV
+	// on TiKV, it is the max number of regions being checked concurrently
 	DupeConcurrency   int
 	KVWriteBatchSize  int
 	CheckpointEnabled bool
@@ -401,16 +405,19 @@ type BackendConfig struct {
 	LocalWriterMemCacheSize int64
 	// whether check TiKV capacity before write & ingest.
 	ShouldCheckTiKV    bool
-	DuplicateDetection bool
+	DupeDetectEnabled  bool
 	DuplicateDetectOpt DupDetectOpt
-	StoreWriteBWLimit  int
+	// max write speed in bytes per second to each store(burst is allowed), 0 means no limit
+	StoreWriteBWLimit int
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
 	// To avoid this, we should check write stall before ingesting SSTs. Note that, we
 	// must check both leader node and followers in client side, because followers will
 	// not check write stall as long as ingest command is accepted by leader.
 	ShouldCheckWriteStall bool
-	MaxOpenFiles          int
-	KeyspaceName          string
+	// soft limit on the number of open files that can be used by pebble DB.
+	// the minimum value is 128.
+	MaxOpenFiles int
+	KeyspaceName string
 }
 
 func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string) BackendConfig {
@@ -426,13 +433,17 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		MemTableSize:            int(cfg.TikvImporter.EngineMemCacheSize),
 		LocalWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
 		ShouldCheckTiKV:         cfg.App.CheckRequirements,
-		DuplicateDetection:      cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		DuplicateDetectOpt:      DupDetectOpt{reportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		DupeDetectEnabled:       cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		DuplicateDetectOpt:      DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
 		StoreWriteBWLimit:       int(cfg.TikvImporter.StoreWriteBWLimit),
 		ShouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
-		MaxOpenFiles:            mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
+		MaxOpenFiles:            maxOpenFiles,
 		KeyspaceName:            keyspaceName,
 	}
+}
+
+func (c *BackendConfig) Adjust() {
+	c.MaxOpenFiles = mathutil.Max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
 type local struct {
@@ -481,20 +492,20 @@ var (
 func NewLocalBackend(
 	ctx context.Context,
 	tls *common.TLS,
-	backendConfig BackendConfig,
+	config BackendConfig,
 	regionSizeGetter TableRegionSizeGetter,
 	errorMgr *errormanager.ErrorManager,
 ) (backend.Backend, error) {
-
-	pdCtl, err := pdutil.NewPdController(ctx, backendConfig.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
+	config.Adjust()
+	pdCtl, err := pdutil.NewPdController(ctx, config.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
 		return backend.MakeBackend(nil), common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig(), false)
 
 	shouldCreate := true
-	if backendConfig.CheckpointEnabled {
-		if info, err := os.Stat(backendConfig.LocalStoreDir); err != nil {
+	if config.CheckpointEnabled {
+		if info, err := os.Stat(config.LocalStoreDir); err != nil {
 			if !os.IsNotExist(err) {
 				return backend.MakeBackend(nil), err
 			}
@@ -504,31 +515,31 @@ func NewLocalBackend(
 	}
 
 	if shouldCreate {
-		err = os.Mkdir(backendConfig.LocalStoreDir, 0o700)
+		err = os.Mkdir(config.LocalStoreDir, 0o700)
 		if err != nil {
-			return backend.MakeBackend(nil), common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(backendConfig.LocalStoreDir)
+			return backend.MakeBackend(nil), common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
 		}
 	}
 
 	var duplicateDB *pebble.DB
-	if backendConfig.DuplicateDetection {
-		duplicateDB, err = openDuplicateDB(backendConfig.LocalStoreDir)
+	if config.DupeDetectEnabled {
+		duplicateDB, err = openDuplicateDB(config.LocalStoreDir)
 		if err != nil {
 			return backend.MakeBackend(nil), common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(backendConfig.PDAddr, ","), tls.TLSConfig())
+	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 
 	var pdCliForTiKV *tikvclient.CodecPDClient
-	if backendConfig.KeyspaceName == "" {
+	if config.KeyspaceName == "" {
 		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCtl.GetPDClient())
 	} else {
-		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCtl.GetPDClient(), backendConfig.KeyspaceName)
+		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCtl.GetPDClient(), config.KeyspaceName)
 		if err != nil {
 			return backend.MakeBackend(nil), common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
 		}
@@ -540,14 +551,14 @@ func NewLocalBackend(
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	importClientFactory := newImportClientFactoryImpl(splitCli, tls, backendConfig.MaxConnPerStore, backendConfig.ConnCompressType)
+	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	keyAdapter := KeyAdapter(noopKeyAdapter{})
-	if backendConfig.DuplicateDetection {
+	if config.DupeDetectEnabled {
 		keyAdapter = dupDetectKeyAdapter{}
 	}
 	var writeLimiter StoreWriteLimiter
-	if backendConfig.StoreWriteBWLimit > 0 {
-		writeLimiter = newStoreWriteLimiter(int(backendConfig.StoreWriteBWLimit))
+	if config.StoreWriteBWLimit > 0 {
+		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
 	} else {
 		writeLimiter = noopStoreWriteLimiter{}
 	}
@@ -565,7 +576,7 @@ func NewLocalBackend(
 		regionSizeGetter: regionSizeGetter,
 		tikvCodec:        tikvCodec,
 
-		BackendConfig: backendConfig,
+		BackendConfig: config,
 
 		duplicateDB:         duplicateDB,
 		keyAdapter:          keyAdapter,
@@ -862,10 +873,9 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		cancel:             cancel,
 		config:             cfg.Local,
 		tableInfo:          cfg.TableInfo,
-		duplicateDetection: local.DuplicateDetection,
+		duplicateDetection: local.DupeDetectEnabled,
 		dupDetectOpt:       local.DuplicateDetectOpt,
 		duplicateDB:        local.duplicateDB,
-		errorMgr:           local.errorMgr,
 		keyAdapter:         local.keyAdapter,
 		logger:             log.FromContext(ctx),
 	})
@@ -913,10 +923,9 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			keyAdapter:         local.keyAdapter,
-			duplicateDetection: local.DuplicateDetection,
+			duplicateDetection: local.DupeDetectEnabled,
 			dupDetectOpt:       local.DuplicateDetectOpt,
 			duplicateDB:        local.duplicateDB,
-			errorMgr:           local.errorMgr,
 			logger:             log.FromContext(ctx),
 		}
 		engine.sstIngester = dbSSTIngester{e: engine}

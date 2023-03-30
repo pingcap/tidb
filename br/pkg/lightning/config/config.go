@@ -69,6 +69,9 @@ const (
 	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
 
+	KVWriteBatchSize        = 32768
+	DefaultRangeConcurrency = 16
+
 	defaultDistSQLScanConcurrency     = 15
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
@@ -88,8 +91,9 @@ const (
 	// With cron.check-disk-quota = 1m, region-concurrency = 40, this should
 	// contribute 2.3 GiB to the reserved size.
 	// autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
-	defaultEngineMemCacheSize      = 512 * units.MiB
-	defaultLocalWriterMemCacheSize = 128 * units.MiB
+
+	DefaultEngineMemCacheSize      = 512 * units.MiB
+	DefaultLocalWriterMemCacheSize = 128 * units.MiB
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
@@ -856,7 +860,7 @@ func NewConfig() *Config {
 			Backend:             "",
 			OnDuplicate:         ReplaceOnDup,
 			MaxKVPairs:          4096,
-			SendKVPairs:         32768,
+			SendKVPairs:         KVWriteBatchSize,
 			RegionSplitSize:     0,
 			DiskQuota:           ByteSize(math.MaxInt64),
 			DuplicateResolution: DupeResAlgNone,
@@ -1094,10 +1098,10 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 
 	// TODO calculate these from the machine's free memory.
 	if cfg.TikvImporter.EngineMemCacheSize == 0 {
-		cfg.TikvImporter.EngineMemCacheSize = defaultEngineMemCacheSize
+		cfg.TikvImporter.EngineMemCacheSize = DefaultEngineMemCacheSize
 	}
 	if cfg.TikvImporter.LocalWriterMemCacheSize == 0 {
-		cfg.TikvImporter.LocalWriterMemCacheSize = defaultLocalWriterMemCacheSize
+		cfg.TikvImporter.LocalWriterMemCacheSize = DefaultLocalWriterMemCacheSize
 	}
 
 	if cfg.TikvImporter.Backend == BackendLocal {
@@ -1179,7 +1183,7 @@ func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
 		cfg.App.MetaSchemaName = defaultMetaSchemaName
 	}
 	if cfg.TikvImporter.RangeConcurrency == 0 {
-		cfg.TikvImporter.RangeConcurrency = 16
+		cfg.TikvImporter.RangeConcurrency = DefaultRangeConcurrency
 	}
 	if cfg.TiDB.BuildStatsConcurrency == 0 {
 		cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency

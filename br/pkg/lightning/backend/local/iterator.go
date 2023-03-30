@@ -84,7 +84,7 @@ type dupDetectIter struct {
 }
 
 type DupDetectOpt struct {
-	reportErrOnDup bool
+	ReportErrOnDup bool
 }
 
 func (d *dupDetectIter) Seek(key []byte) bool {
@@ -152,7 +152,7 @@ func (d *dupDetectIter) Next() bool {
 			d.curVal = append(d.curVal[:0], d.iter.Value()...)
 			return true
 		}
-		if d.option.reportErrOnDup {
+		if d.option.ReportErrOnDup {
 			dupKey := make([]byte, len(d.curKey))
 			dupVal := make([]byte, len(d.iter.Value()))
 			copy(dupKey, d.curKey)
