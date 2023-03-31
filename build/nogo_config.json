@@ -301,7 +301,7 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*pb\\.go$": "ignore generated code",
-      "br/pkg/errors/errors.go": "ignore error",
+      "br/pkg/errors/errors.go": "ignore error"
     }
   },
   "makezero": {
