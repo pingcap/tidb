@@ -62,18 +62,6 @@ type LoadDataExec struct {
 	detachHandled  bool
 }
 
-func buildCloseSessionOnErr(
-	err *error,
-	sctx sessionctx.Context,
-	closeFn func(sessionctx.Context),
-) func() {
-	return func() {
-		if err != nil && *err != nil {
-			closeFn(sctx)
-		}
-	}
-}
-
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.maxChunkSize)
@@ -122,9 +110,8 @@ type commitTask struct {
 type LoadDataWorker struct {
 	UserSctx sessionctx.Context
 
-	// TODO: they should be []T to support concurrent load data.
-	encodeWorker *encodeWorker
-	commitWorker *commitWorker
+	encodeWorkers []*encodeWorker
+	commitWorkers []*commitWorker
 
 	controller *importer.LoadDataController
 
@@ -155,37 +142,53 @@ func NewLoadDataWorker(
 		setNonRestrictiveFlags(userSctx.GetSessionVars().StmtCtx)
 	}
 
-	// TODO: create N InsertValues where N is threadCnt
-	encodeCore, err2 := createInsertValues(userSctx, plan, tbl, controller)
-	if err2 != nil {
-		return nil, err2
-	}
-	defer buildCloseSessionOnErr(&err, encodeCore.ctx, CloseSession)()
-	commitCore, err2 := createInsertValues(userSctx, plan, tbl, controller)
-	if err2 != nil {
-		return nil, err2
-	}
-	defer buildCloseSessionOnErr(&err, commitCore.ctx, CloseSession)()
+	var createdSessions []sessionctx.Context
+	defer func() {
+		if err != nil {
+			for _, s := range createdSessions {
+				CloseSession(s)
+			}
+		}
+	}()
 
-	encode := &encodeWorker{
-		InsertValues: encodeCore,
-		controller:   controller,
-		killed:       &userSctx.GetSessionVars().Killed,
-	}
-	encode.resetBatch()
 	progress := asyncloaddata.NewProgress()
-	commit := &commitWorker{
-		InsertValues: commitCore,
-		controller:   controller,
-		progress:     progress,
+	encodeWorkers := make([]*encodeWorker, 0, controller.ThreadCnt)
+	commitWorkers := make([]*commitWorker, 0, controller.ThreadCnt)
+
+	// TODO: create total ThreadCnt workers rather than 2*ThreadCnt?
+	for i := int64(0); i < controller.ThreadCnt; i++ {
+		encodeCore, err2 := createInsertValues(userSctx, plan, tbl, controller)
+		if err2 != nil {
+			return nil, err2
+		}
+		createdSessions = append(createdSessions, encodeCore.ctx)
+		commitCore, err2 := createInsertValues(userSctx, plan, tbl, controller)
+		if err2 != nil {
+			return nil, err2
+		}
+		createdSessions = append(createdSessions, commitCore.ctx)
+		encode := &encodeWorker{
+			InsertValues: encodeCore,
+			controller:   controller,
+			killed:       &userSctx.GetSessionVars().Killed,
+		}
+		encode.resetBatch()
+		encodeWorkers = append(encodeWorkers, encode)
+		commit := &commitWorker{
+			InsertValues: commitCore,
+			controller:   controller,
+			progress:     progress,
+		}
+		commitWorkers = append(commitWorkers, commit)
 	}
+
 	loadDataWorker := &LoadDataWorker{
-		UserSctx:     userSctx,
-		encodeWorker: encode,
-		commitWorker: commit,
-		table:        tbl,
-		controller:   controller,
-		progress:     progress,
+		UserSctx:      userSctx,
+		encodeWorkers: encodeWorkers,
+		commitWorkers: commitWorkers,
+		table:         tbl,
+		controller:    controller,
+		progress:      progress,
 	}
 	return loadDataWorker, nil
 }
@@ -202,7 +205,11 @@ func createInsertValues(
 	if err2 != nil {
 		return nil, err2
 	}
-	defer buildCloseSessionOnErr(&err, sysSession, CloseSession)()
+	defer func() {
+		if err != nil {
+			CloseSession(sysSession)
+		}
+	}()
 
 	err = ResetContextOfStmt(sysSession, &ast.LoadDataStmt{})
 	if err != nil {
@@ -248,17 +255,24 @@ func createInsertValues(
 	return ret, nil
 }
 
+func (e *LoadDataWorker) closeWorkerSessions() {
+	for _, w := range e.encodeWorkers {
+		CloseSession(w.ctx)
+	}
+	for _, w := range e.commitWorkers {
+		CloseSession(w.ctx)
+	}
+}
+
 func (e *LoadDataWorker) loadRemote(ctx context.Context) (int64, error) {
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
-		CloseSession(e.encodeWorker.ctx)
-		CloseSession(e.commitWorker.ctx)
+		e.closeWorkerSessions()
 		return 0, err2
 	}
 
 	if e.controller.ImportMode == importer.PhysicalImportMode {
 		// will not use session context
-		CloseSession(e.encodeWorker.ctx)
-		CloseSession(e.commitWorker.ctx)
+		e.closeWorkerSessions()
 		return e.controller.PhysicalImport(ctx)
 	}
 
@@ -316,11 +330,13 @@ func (e *LoadDataWorker) doLoad(
 	jobID int64,
 ) (err error) {
 	defer func() {
-		e.encodeWorker.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.encodeWorker.id, e.encodeWorker.stats)
-		e.commitWorker.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.commitWorker.id, e.commitWorker.stats)
-
-		CloseSession(e.encodeWorker.ctx)
-		CloseSession(e.commitWorker.ctx)
+		for _, w := range e.encodeWorkers {
+			w.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.id, w.stats)
+		}
+		for _, w := range e.commitWorkers {
+			w.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.id, w.stats)
+		}
+		e.closeWorkerSessions()
 	}()
 
 	// get a session for UpdateJobProgress.
@@ -382,37 +398,47 @@ func (e *LoadDataWorker) doLoad(
 	failpoint.Inject("AfterStartJob", nil)
 
 	group, groupCtx := errgroup.WithContext(ctx)
-	// done is used to let commitWork goroutine notify UpdateJobProgress
-	// goroutine that the job is finished.
-	done := make(chan struct{})
+	// main goroutine -> readerInfoCh -> processOneStream goroutines
+	readerInfoCh := make(chan importer.LoadDataReaderInfo, e.controller.ThreadCnt)
+	// processOneStream goroutines -> commitTaskCh -> commitWork goroutines
 	commitTaskCh := make(chan commitTask, taskQueueSize)
+	// commitWork goroutines -> done -> UpdateJobProgress goroutine
+	done := make(chan struct{})
 
-	// processStream goroutine.
+	// processOneStream goroutines.
 	group.Go(func() error {
-		err := sessiontxn.NewTxn(ctx, e.encodeWorker.ctx)
-		if err != nil {
-			return err
-		}
-		for _, info := range readerInfos {
-			dataParser, err2 := e.controller.GetParser(ctx, info)
-			if err2 != nil {
-				return err2
-			}
+		encodeGroup, encodeCtx := errgroup.WithContext(groupCtx)
 
-			err2 = e.encodeWorker.processStream(groupCtx, dataParser, commitTaskCh)
-			terror.Log(dataParser.Close())
-			if err2 != nil {
-				return err2
-			}
+		for i := range e.encodeWorkers {
+			worker := e.encodeWorkers[i]
+			encodeGroup.Go(func() error {
+				err2 := sessiontxn.NewTxn(encodeCtx, worker.ctx)
+				if err2 != nil {
+					return err2
+				}
+				return worker.processStream(encodeCtx, readerInfoCh, commitTaskCh)
+			})
 		}
 
-		close(commitTaskCh)
-		return nil
+		err2 := encodeGroup.Wait()
+		if err2 == nil {
+			close(commitTaskCh)
+		}
+		return err2
 	})
-	// commitWork goroutine.
+	// commitWork goroutines.
 	group.Go(func() error {
-		failpoint.Inject("BeforeCommitWork", nil)
-		err2 := e.commitWorker.commitWork(groupCtx, commitTaskCh)
+		commitGroup, commitCtx := errgroup.WithContext(groupCtx)
+
+		for i := range e.commitWorkers {
+			worker := e.commitWorkers[i]
+			commitGroup.Go(func() error {
+				failpoint.Inject("BeforeCommitWork", nil)
+				return worker.commitWork(commitCtx, commitTaskCh)
+			})
+		}
+
+		err2 := commitGroup.Wait()
 		if err2 == nil {
 			close(done)
 		}
@@ -447,6 +473,15 @@ func (e *LoadDataWorker) doLoad(
 		}
 	})
 
+	for i := range readerInfos {
+		select {
+		case <-groupCtx.Done():
+			return groupCtx.Err()
+		case readerInfoCh <- readerInfos[i]:
+		}
+	}
+	close(readerInfoCh)
+
 	err = group.Wait()
 	msg = e.mergeAndSetMessage()
 	return err
@@ -460,9 +495,37 @@ type encodeWorker struct {
 	rows       [][]types.Datum
 }
 
-// processStream process input stream from parser. When returns nil, it means
-// all data is read.
+// processStream always trys to build a parser from channel and process it. When
+// it returns nil, it means all data is read.
 func (w *encodeWorker) processStream(
+	ctx context.Context,
+	inCh <-chan importer.LoadDataReaderInfo,
+	outCh chan<- commitTask,
+) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case readerInfo, ok := <-inCh:
+			if !ok {
+				return nil
+			}
+			dataParser, err := w.controller.GetParser(ctx, readerInfo)
+			if err != nil {
+				return err
+			}
+			err = w.processOneStream(ctx, dataParser, outCh)
+			terror.Log(dataParser.Close())
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// processOneStream process input stream from parser. When returns nil, it means
+// all data is read.
+func (w *encodeWorker) processOneStream(
 	ctx context.Context,
 	parser mydump.Parser,
 	outCh chan<- commitTask,
@@ -506,8 +569,6 @@ func (w *encodeWorker) processStream(
 		case <-checkKilled.C:
 			if atomic.CompareAndSwapUint32(w.killed, 1, 0) {
 				logutil.Logger(ctx).Info("load data query interrupted quit data processing")
-				// TODO: after multiple encodeWorker, caller should close this channel
-				close(outCh)
 				return exeerrors.ErrQueryInterrupted
 			}
 			goto TrySendTask
@@ -788,38 +849,54 @@ func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum) error
 // mergeAndSetMessage merges stats from all used session context and sets info
 // message(ERR_LOAD_INFO) generated by LOAD statement to UserSctx.
 func (e *LoadDataWorker) mergeAndSetMessage() string {
-	encodeStmtCtx := e.encodeWorker.ctx.GetSessionVars().StmtCtx
-	numWarnings := encodeStmtCtx.WarningCount()
+	var (
+		numWarnings uint64
+		numAffected uint64
+		numRecords  uint64
+		numDeletes  uint64
+		numSkipped  uint64
+	)
 
-	commitStmtCtx := e.commitWorker.ctx.GetSessionVars().StmtCtx
-	numAffected := commitStmtCtx.AffectedRows()
-	numRecords := commitStmtCtx.RecordRows()
-	numDeletes := commitStmtCtx.DeletedRows()
-	numSkipped := numRecords - commitStmtCtx.CopiedRows()
-	numWarnings += commitStmtCtx.WarningCount()
+	for _, w := range e.encodeWorkers {
+		numWarnings += uint64(w.ctx.GetSessionVars().StmtCtx.WarningCount())
+	}
+	for _, w := range e.commitWorkers {
+		commitStmtCtx := w.ctx.GetSessionVars().StmtCtx
+		numWarnings += uint64(commitStmtCtx.WarningCount())
+		numAffected += commitStmtCtx.AffectedRows()
+		numRecords += commitStmtCtx.RecordRows()
+		numDeletes += commitStmtCtx.DeletedRows()
+		numSkipped += commitStmtCtx.RecordRows() - commitStmtCtx.CopiedRows()
+	}
+
+	if numWarnings > math.MaxUint16 {
+		numWarnings = math.MaxUint16
+	}
 
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	if !e.controller.Detached {
 		userStmtCtx := e.UserSctx.GetSessionVars().StmtCtx
 		userStmtCtx.SetMessage(msg)
 
-		encodeWarns := e.encodeWorker.ctx.GetSessionVars().StmtCtx.GetWarnings()
-		commitWarns := e.commitWorker.ctx.GetSessionVars().StmtCtx.GetWarnings()
-		warnsLen := math.MaxUint16
-		if len(encodeWarns)+len(commitWarns) < math.MaxUint16 {
-			warnsLen = len(encodeWarns) + len(commitWarns)
-		}
-		warns := make([]stmtctx.SQLWarn, warnsLen)
-		n := copy(warns, encodeWarns)
-		copy(warns[n:], commitWarns)
-		userStmtCtx.SetWarnings(warns)
-
-		userStmtCtx.LastInsertID = e.encodeWorker.lastInsertID
-		if e.commitWorker.lastInsertID > userStmtCtx.LastInsertID {
-			userStmtCtx.LastInsertID = e.commitWorker.lastInsertID
-		}
-
 		userStmtCtx.SetAffectedRows(numAffected)
+
+		warns := make([]stmtctx.SQLWarn, numWarnings)
+		n := 0
+		lastInsertID := uint64(0)
+		for _, w := range e.encodeWorkers {
+			n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
+			if w.lastInsertID > lastInsertID {
+				lastInsertID = w.lastInsertID
+			}
+		}
+		for _, w := range e.commitWorkers {
+			n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
+			if w.lastInsertID > lastInsertID {
+				lastInsertID = w.lastInsertID
+			}
+		}
+		userStmtCtx.SetWarnings(warns)
+		userStmtCtx.LastInsertID = lastInsertID
 	}
 	return msg
 }
@@ -837,40 +914,40 @@ func (e *LoadDataWorker) GetController() *importer.LoadDataController {
 
 // TestLoad is a helper function for unit test.
 func (e *LoadDataWorker) TestLoad(parser mydump.Parser) error {
-	err := ResetContextOfStmt(e.encodeWorker.ctx, &ast.LoadDataStmt{})
+	err := ResetContextOfStmt(e.encodeWorkers[0].ctx, &ast.LoadDataStmt{})
 	if err != nil {
 		return err
 	}
-	setNonRestrictiveFlags(e.encodeWorker.ctx.GetSessionVars().StmtCtx)
-	err = ResetContextOfStmt(e.commitWorker.ctx, &ast.LoadDataStmt{})
+	setNonRestrictiveFlags(e.encodeWorkers[0].ctx.GetSessionVars().StmtCtx)
+	err = ResetContextOfStmt(e.commitWorkers[0].ctx, &ast.LoadDataStmt{})
 	if err != nil {
 		return err
 	}
-	setNonRestrictiveFlags(e.commitWorker.ctx.GetSessionVars().StmtCtx)
+	setNonRestrictiveFlags(e.commitWorkers[0].ctx.GetSessionVars().StmtCtx)
 
 	ctx := context.Background()
 	for i := uint64(0); i < e.controller.IgnoreLines; i++ {
 		//nolint: errcheck
 		_ = parser.ReadRow()
 	}
-	err = e.encodeWorker.readOneBatchRows(ctx, parser)
+	err = e.encodeWorkers[0].readOneBatchRows(ctx, parser)
 	if err != nil {
 		return err
 	}
-	err = sessiontxn.NewTxn(ctx, e.commitWorker.ctx)
+	err = sessiontxn.NewTxn(ctx, e.commitWorkers[0].ctx)
 	if err != nil {
 		return err
 	}
-	err = e.commitWorker.checkAndInsertOneBatch(
+	err = e.commitWorkers[0].checkAndInsertOneBatch(
 		ctx,
-		e.encodeWorker.rows,
-		e.encodeWorker.curBatchCnt)
+		e.encodeWorkers[0].rows,
+		e.encodeWorkers[0].curBatchCnt)
 	if err != nil {
 		return err
 	}
-	e.encodeWorker.resetBatch()
-	e.commitWorker.ctx.StmtCommit(ctx)
-	err = e.commitWorker.ctx.CommitTxn(ctx)
+	e.encodeWorkers[0].resetBatch()
+	e.commitWorkers[0].ctx.StmtCommit(ctx)
+	err = e.commitWorkers[0].ctx.CommitTxn(ctx)
 	if err != nil {
 		return err
 	}
