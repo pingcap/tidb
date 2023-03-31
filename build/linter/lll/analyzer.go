@@ -28,9 +28,11 @@ const lllName = "lll"
 
 const goCommentDirectivePrefix = "//go:"
 
-type LllSettings struct {
-	LineLength int `mapstructure:"line-length"`
-	TabWidth   int `mapstructure:"tab-width"`
+type settings struct {
+	// LineLength is the maximum line length.
+	LineLength int
+	// TabWidth is the width of a tab character.
+	TabWidth int
 }
 
 // Analyzer is the analyzer struct of lll.
@@ -38,7 +40,7 @@ var Analyzer = &analysis.Analyzer{
 	Name: lllName,
 	Doc:  "Reports long lines",
 	Run: func(pass *analysis.Pass) (any, error) {
-		err := runLll(pass, &LllSettings{
+		err := runLll(pass, &settings{
 			LineLength: 120,
 			TabWidth:   1,
 		})
@@ -56,7 +58,7 @@ type result struct {
 	Text     string
 }
 
-func runLll(pass *analysis.Pass, settings *LllSettings) error {
+func runLll(pass *analysis.Pass, settings *settings) error {
 	fileNames := make([]string, 0, len(pass.Files))
 	for _, f := range pass.Files {
 		pos := pass.Fset.PositionFor(f.Pos(), false)
