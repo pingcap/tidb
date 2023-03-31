@@ -430,7 +430,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 	}
 }
 
-func (c *BackendConfig) Adjust() {
+func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = mathutil.Max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
@@ -482,7 +482,7 @@ func NewLocalBackend(
 	config BackendConfig,
 	regionSizeGetter TableRegionSizeGetter,
 ) (backend.Backend, error) {
-	config.Adjust()
+	config.adjust()
 	pdCtl, err := pdutil.NewPdController(ctx, config.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
 		return backend.MakeBackend(nil), common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)

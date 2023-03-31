@@ -314,7 +314,7 @@ func MakeTableRegions(
 	batchSize := CalculateBatchSize(float64(cfg.EngineDataSize), meta.IsRowOrdered, float64(meta.TotalSize))
 
 	log.FromContext(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
-		zap.Int64("MaxRegionSize", cfg.MaxChunkSize),
+		zap.Int64("MaxChunkSize", cfg.MaxChunkSize),
 		zap.Int("RegionsCount", len(filesRegions)),
 		zap.Float64("BatchSize", batchSize),
 		zap.Duration("cost", time.Since(start)))
