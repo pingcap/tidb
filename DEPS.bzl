@@ -452,8 +452,8 @@ def go_deps():
         name = "com_github_census_instrumentation_opencensus_proto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/census-instrumentation/opencensus-proto",
-        sum = "h1:glEXhBS5PSLLv4IXzLA5yPRVX4bilULVyxxbrfOtDAk=",
-        version = "v0.2.1",
+        sum = "h1:t/LhUZLVitR1Ow2YOnduCsavhwFUklBMoGVYUCqmCqk=",
+        version = "v0.3.0",
     )
     go_repository(
         name = "com_github_certifi_gocertifi",
@@ -2206,13 +2206,6 @@ def go_deps():
         sum = "h1:0Vihzu20St42/UDsvZGdNE6jak7oi/UOeMzwMPHkgFY=",
         version = "v3.2.0+incompatible",
     )
-    go_repository(
-        name = "com_github_jarcoal_httpmock",
-        build_file_proto_mode = "disable",
-        importpath = "github.com/jarcoal/httpmock",
-        sum = "h1:gSvTxxFR/MEMfsGrvRbdfpRUMBStovlSRLw0Ep1bwwc=",
-        version = "v1.2.0",
-    )
 
     go_repository(
         name = "com_github_jcmturner_aescts_v2",
@@ -3380,8 +3373,9 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:P4MWntrAwXARSLRVgnJ8W2zqIhHWvOSSLK4DjNyiN4A=",
-        version = "v0.0.0-20230317010544-b47a4830141f",
+        replace = "github.com/Lloyd-Pottiger/kvproto",
+        sum = "h1:yNcnY4OtmayTBYdQ1wUWpqY+Hcnv5bLFJU34MY0alVo=",
+        version = "v0.0.0-20230328095322-29719f7f8762",
     )
     go_repository(
         name = "com_github_pingcap_log",

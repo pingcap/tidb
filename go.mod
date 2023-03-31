@@ -54,7 +54,6 @@ require (
 	github.com/gostaticanalysis/forcetypeassert v0.1.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/iancoleman/strcase v0.2.0
-	github.com/jarcoal/httpmock v1.2.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/jingyugao/rowserrcheck v1.1.1
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
@@ -283,3 +282,7 @@ replace (
 	github.com/pingcap/tidb/parser => ./parser
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
+
+replace github.com/pingcap/kvproto => github.com/Lloyd-Pottiger/kvproto v0.0.0-20230330085733-53f6de19158c
+
+replace github.com/tikv/client-go/v2 => /data1/qiuyang/projects/client-go

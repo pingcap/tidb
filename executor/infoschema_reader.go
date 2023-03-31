@@ -20,9 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -73,6 +71,8 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/syncutil"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -2989,7 +2989,7 @@ type TiFlashSystemTableRetriever struct {
 	outputCols    []*model.ColumnInfo
 	instanceCount int
 	instanceIdx   int
-	instanceInfos []tiflashInstanceInfo
+	instanceIds   []string
 	rowIdx        int
 	retrieved     bool
 	initialized   bool
@@ -3012,7 +3012,7 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 	}
 
 	for {
-		rows, err := e.dataForTiFlashSystemTables(sctx, e.extractor.TiDBDatabases, e.extractor.TiDBTables)
+		rows, err := e.dataForTiFlashSystemTables(ctx, sctx, e.extractor.TiDBDatabases, e.extractor.TiDBTables)
 		if err != nil {
 			return nil, err
 		}
@@ -3020,11 +3020,6 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 			return rows, nil
 		}
 	}
-}
-
-type tiflashInstanceInfo struct {
-	id  string
-	url string
 }
 
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
@@ -3045,53 +3040,8 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 		if len(hostAndStatusPort) != 2 {
 			return errors.Errorf("node status addr: %s format illegal", info.StatusAddr)
 		}
-		// fetch tiflash config
-		configURL := fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), info.StatusAddr)
-		resp, err := util.InternalHTTPClient().Get(configURL)
-		if err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			continue
-		}
-		if resp.StatusCode != http.StatusOK {
-			return errors.Errorf("request %s failed: %s", configURL, resp.Status)
-		}
-		// parse http_port or https_port from the fetched config
-		var nestedConfig map[string]interface{}
-		if err = json.NewDecoder(resp.Body).Decode(&nestedConfig); err != nil {
-			return err
-		}
-		if engineStoreConfig, ok := nestedConfig["engine-store"]; ok {
-			foundPort := false
-			var port interface{}
-			portProtocol := ""
-			if httpPort, ok := engineStoreConfig.(map[string]interface{})["http_port"]; ok {
-				foundPort = true
-				port = httpPort
-				portProtocol = "http"
-			} else if httpsPort, ok := engineStoreConfig.(map[string]interface{})["https_port"]; ok {
-				foundPort = true
-				port = httpsPort
-				portProtocol = "https"
-			}
-			if !foundPort {
-				return errors.Errorf("engine-store.http_port/https_port not found in server %s", info.Address)
-			}
-			switch portValue := port.(type) {
-			case float64:
-				e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
-					id:  info.Address,
-					url: fmt.Sprintf("%s://%s:%d", portProtocol, hostAndStatusPort[0], int(portValue)),
-				})
-				e.instanceCount += 1
-			default:
-				return errors.Errorf("engine-store.http_port value(%p) unexpected in server %s", port, info.Address)
-			}
-		} else {
-			return errors.Errorf("engine-store config not found in server %s", info.Address)
-		}
-		if err = resp.Body.Close(); err != nil {
-			return err
-		}
+		e.instanceIds = append(e.instanceIds, info.Address)
+		e.instanceCount += 1
 	}
 	e.initialized = true
 	return nil
@@ -3107,7 +3057,7 @@ type tiFlashSQLExecuteResponse struct {
 	Data [][]interface{}                       `json:"data"`
 }
 
-func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
+func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
 	maxCount := 1024
 	targetTable := strings.ToLower(strings.Replace(e.table.Name.O, "TIFLASH", "DT", 1))
 	var filters []string
@@ -3122,27 +3072,31 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(filters, " AND "))
 	}
 	sql = fmt.Sprintf("%s LIMIT %d, %d", sql, e.rowIdx, maxCount)
-	instanceInfo := e.instanceInfos[e.instanceIdx]
-	url := instanceInfo.url
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	request := tikvrpc.Request{
+		Type:    tikvrpc.CmdGetTiFlashSystemTable,
+		StoreTp: tikvrpc.TiFlash,
+		Req: &kvrpcpb.TiFlashSystemTableRequest{
+			Sql: sql,
+		},
+	}
+
+	store := sctx.GetStore()
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Get tiflash system tables can only run with tikv compatible storage")
+	}
+	// send request to tiflash, timeout is 1s
+	instanceId := e.instanceIds[e.instanceIdx]
+	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceId, &request, 1000000000)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	q := req.URL.Query()
-	q.Add("query", sql)
-	q.Add("default_format", "JSONCompact")
-	req.URL.RawQuery = q.Encode()
-	resp, err := util.InternalHTTPClient().Do(req)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if resp.Resp == nil {
+		return nil, errors.New("Get tiflash system tables failed: empty response")
 	}
-	body, err := io.ReadAll(resp.Body)
-	terror.Log(resp.Body.Close())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	tiflashResp := resp.Resp.(*kvrpcpb.TiFlashSystemTableResponse)
 	var result tiFlashSQLExecuteResponse
-	err = json.Unmarshal(body, &result)
+	err = json.Unmarshal(tiflashResp.Data, &result)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to decode JSON from TiFlash")
 	}
@@ -3194,7 +3148,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 				return nil, errors.Errorf("Meet column of unknown type %v", column)
 			}
 		}
-		outputRow[len(e.outputCols)-1].SetString(instanceInfo.id, mysql.DefaultCollationName)
+		outputRow[len(e.outputCols)-1].SetString(instanceId, mysql.DefaultCollationName)
 		outputRows = append(outputRows, outputRow)
 	}
 	e.rowIdx += len(outputRows)
