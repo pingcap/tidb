@@ -6374,14 +6374,16 @@ func cleanPartition(n ast.Node) {
 func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
-	switch node := in.(type) {
-	case ast.ValueExpr:
-		tpFlag := node.GetType().GetFlag()
+	if v, ok := in.(ast.ValueExpr); ok && v != nil {
+		tpFlag := v.GetType().GetFlag()
 		if tpFlag&mysql.UnderScoreCharsetFlag != 0 {
 			// ignore underscore charset flag to let `'abc' = _utf8'abc'` pass
 			tpFlag ^= mysql.UnderScoreCharsetFlag
-			node.GetType().SetFlag(tpFlag)
+			v.GetType().SetFlag(tpFlag)
 		}
+	}
+
+	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		for _, opt := range node.Options {
 			switch opt.Tp {
