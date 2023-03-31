@@ -203,8 +203,8 @@ type TxnCtxNoNeedToRestore struct {
 	shardRemain  int
 	currentShard int64
 
-	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
-	unchangedRowKeys map[string]struct{}
+	// unchangedKeys is used to store the unchanged keys that needs to lock for pessimistic transaction.
+	unchangedKeys map[string]struct{}
 
 	PessimisticCacheHit int
 
@@ -280,18 +280,18 @@ func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 
 // AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
 func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte) {
-	if tc.unchangedRowKeys == nil {
-		tc.unchangedRowKeys = map[string]struct{}{}
+	if tc.unchangedKeys == nil {
+		tc.unchangedKeys = map[string]struct{}{}
 	}
-	tc.unchangedRowKeys[string(key)] = struct{}{}
+	tc.unchangedKeys[string(key)] = struct{}{}
 }
 
 // CollectUnchangedKeysForLock collects unchanged keys for pessimistic lock.
 func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key {
-	for key := range tc.unchangedRowKeys {
+	for key := range tc.unchangedKeys {
 		buf = append(buf, kv.Key(key))
 	}
-	tc.unchangedRowKeys = nil
+	tc.unchangedKeys = nil
 	return buf
 }
 
