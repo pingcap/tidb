@@ -32,7 +32,7 @@ type TableKVDecoder struct {
 	se  *Session
 	// tableName is the unique table name in the form "`db`.`tbl`".
 	tableName string
-	genCols   []genCol
+	genCols   []GeneratedCol
 }
 
 func (t *TableKVDecoder) Name() string {
@@ -77,7 +77,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 				row[i] = types.GetMinValue(&col.FieldType)
 			}
 		}
-		if _, err := evaluateGeneratedColumns(t.se, row, t.tbl.Cols(), t.genCols); err != nil {
+		if _, err := evalGeneratedColumns(t.se, row, t.tbl.Cols(), t.genCols); err != nil {
 			return err
 		}
 	}
@@ -121,7 +121,7 @@ func NewTableKVDecoder(
 	recordCtx := tables.NewCommonAddRecordCtx(len(cols))
 	tables.SetAddRecordCtx(se, recordCtx)
 
-	genCols, err := collectGeneratedColumns(se, tbl.Meta(), cols)
+	genCols, err := CollectGeneratedColumns(se, tbl.Meta(), cols)
 	if err != nil {
 		return nil, err
 	}

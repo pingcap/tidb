@@ -4,6 +4,7 @@ go_library(
     name = "kv",
     srcs = [
         "allocator.go",
+        "base.go",
         "kv2sql.go",
         "session.go",
         "sql2kv.go",
