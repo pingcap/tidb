@@ -59,7 +59,8 @@ type paramReplacer struct {
 	// Use int instead of bool to support nested SelectField.
 	selFieldsCnt int
 
-	// Skip all values in GroupByClause since them can affect the full_group_by check.
+	// Skip all values in GroupByClause since them can affect the full_group_by check, e.g.
+	// `select a*2 from t group by a*?` cannot pass the full_group_by check.
 	groupByCnt int
 }
 
