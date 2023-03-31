@@ -1149,7 +1149,7 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 
 // AppendRows appends rows to the SST file.
 func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
-	kvs := kv.KvPairsFromRows(rows)
+	kvs := kv.Rows2KvPairs(rows)
 	if len(kvs) == 0 {
 		return nil
 	}

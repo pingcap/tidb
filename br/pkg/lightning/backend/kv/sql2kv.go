@@ -140,8 +140,8 @@ func (kvcodec *tableKVEncoder) Close() {
 	}
 }
 
-// KvPairs implements the Encoder interface.
-type KvPairs struct {
+// Pairs implements the Encoder interface.
+type Pairs struct {
 	Pairs    []common.KvPair
 	BytesBuf *BytesBuf
 	MemBuf   *MemBuf
@@ -151,30 +151,28 @@ type KvPairs struct {
 // mainly used for testing only. The resulting Rows instance should only be used
 // for the importer backend.
 func MakeRowsFromKvPairs(pairs []common.KvPair) encode.Rows {
-	return &KvPairs{Pairs: pairs}
+	return &Pairs{Pairs: pairs}
 }
 
 // MakeRowFromKvPairs converts a KvPair slice into a Row instance. This is
 // mainly used for testing only. The resulting Row instance should only be used
 // for the importer backend.
 func MakeRowFromKvPairs(pairs []common.KvPair) encode.Row {
-	return &KvPairs{Pairs: pairs}
+	return &Pairs{Pairs: pairs}
 }
 
-// KvPairsFromRows converts a Rows instance constructed from MakeRowsFromKvPairs
+// Rows2KvPairs converts a Rows instance constructed from MakeRowsFromKvPairs
 // back into a slice of KvPair. This method panics if the Rows is not
 // constructed in such way.
-// nolint:golint // kv.KvPairsFromRows sounds good.
-func KvPairsFromRows(rows encode.Rows) []common.KvPair {
-	return rows.(*KvPairs).Pairs
+func Rows2KvPairs(rows encode.Rows) []common.KvPair {
+	return rows.(*Pairs).Pairs
 }
 
-// KvPairsFromRow converts a Row instance constructed from MakeRowFromKvPairs
+// Row2KvPairs converts a Row instance constructed from MakeRowFromKvPairs
 // back into a slice of KvPair. This method panics if the Row is not
 // constructed in such way.
-// nolint:golint // kv.KvPairsFromRow sounds good.
-func KvPairsFromRow(row encode.Row) []common.KvPair {
-	return row.(*KvPairs).Pairs
+func Row2KvPairs(row encode.Row) []common.KvPair {
+	return row.(*Pairs).Pairs
 }
 
 // Encode a row of data into KV pairs.
@@ -265,7 +263,7 @@ func GetAutoRecordID(d types.Datum, target *types.FieldType) int64 {
 }
 
 // Size returns the total size of the key-value pairs.
-func (kvs *KvPairs) Size() uint64 {
+func (kvs *Pairs) Size() uint64 {
 	size := uint64(0)
 	for _, kv := range kvs.Pairs {
 		size += uint64(len(kv.Key) + len(kv.Val))
@@ -274,14 +272,14 @@ func (kvs *KvPairs) Size() uint64 {
 }
 
 // ClassifyAndAppend separates the key-value pairs into data and index key-value pairs.
-func (kvs *KvPairs) ClassifyAndAppend(
+func (kvs *Pairs) ClassifyAndAppend(
 	data *encode.Rows,
 	dataChecksum *verification.KVChecksum,
 	indices *encode.Rows,
 	indexChecksum *verification.KVChecksum,
 ) {
-	dataKVs := (*data).(*KvPairs)
-	indexKVs := (*indices).(*KvPairs)
+	dataKVs := (*data).(*Pairs)
+	indexKVs := (*indices).(*Pairs)
 
 	for _, kv := range kvs.Pairs {
 		if kv.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
@@ -306,7 +304,7 @@ func (kvs *KvPairs) ClassifyAndAppend(
 }
 
 // SplitIntoChunks splits the key-value pairs into chunks.
-func (kvs *KvPairs) SplitIntoChunks(splitSize int) []encode.Rows {
+func (kvs *Pairs) SplitIntoChunks(splitSize int) []encode.Rows {
 	if len(kvs.Pairs) == 0 {
 		return nil
 	}
@@ -317,7 +315,7 @@ func (kvs *KvPairs) SplitIntoChunks(splitSize int) []encode.Rows {
 	for j, pair := range kvs.Pairs {
 		size := len(pair.Key) + len(pair.Val)
 		if i < j && cumSize+size > splitSize {
-			res = append(res, &KvPairs{Pairs: kvs.Pairs[i:j]})
+			res = append(res, &Pairs{Pairs: kvs.Pairs[i:j]})
 			i = j
 			cumSize = 0
 		}
@@ -327,7 +325,7 @@ func (kvs *KvPairs) SplitIntoChunks(splitSize int) []encode.Rows {
 	if i == 0 {
 		res = append(res, kvs)
 	} else {
-		res = append(res, &KvPairs{
+		res = append(res, &Pairs{
 			Pairs:    kvs.Pairs[i:],
 			BytesBuf: kvs.BytesBuf,
 			MemBuf:   kvs.MemBuf,
@@ -337,7 +335,7 @@ func (kvs *KvPairs) SplitIntoChunks(splitSize int) []encode.Rows {
 }
 
 // Clear clears the key-value pairs.
-func (kvs *KvPairs) Clear() encode.Rows {
+func (kvs *Pairs) Clear() encode.Rows {
 	if kvs.BytesBuf != nil {
 		kvs.MemBuf.Recycle(kvs.BytesBuf)
 		kvs.BytesBuf = nil

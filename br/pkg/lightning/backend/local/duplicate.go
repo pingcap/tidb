@@ -237,27 +237,27 @@ type DupKVStream interface {
 	Close() error
 }
 
-// LocalDupKVStream implements the interface of DupKVStream.
+// DupKVStreamImpl implements the interface of DupKVStream.
 // It collects duplicate key-value pairs from a pebble.DB.
 //
 //goland:noinspection GoNameStartsWithPackageName
-type LocalDupKVStream struct {
+type DupKVStreamImpl struct {
 	iter Iter
 }
 
-// NewLocalDupKVStream creates a new LocalDupKVStream with the given duplicate db and key range.
-func NewLocalDupKVStream(dupDB *pebble.DB, keyAdapter KeyAdapter, keyRange tidbkv.KeyRange) *LocalDupKVStream {
+// NewLocalDupKVStream creates a new DupKVStreamImpl with the given duplicate db and key range.
+func NewLocalDupKVStream(dupDB *pebble.DB, keyAdapter KeyAdapter, keyRange tidbkv.KeyRange) *DupKVStreamImpl {
 	opts := &pebble.IterOptions{
 		LowerBound: keyRange.StartKey,
 		UpperBound: keyRange.EndKey,
 	}
 	iter := newDupDBIter(dupDB, keyAdapter, opts)
 	iter.First()
-	return &LocalDupKVStream{iter: iter}
+	return &DupKVStreamImpl{iter: iter}
 }
 
 // Next implements the interface of DupKVStream.
-func (s *LocalDupKVStream) Next() (key, val []byte, err error) {
+func (s *DupKVStreamImpl) Next() (key, val []byte, err error) {
 	if !s.iter.Valid() {
 		err = s.iter.Error()
 		if err == nil {
@@ -272,7 +272,7 @@ func (s *LocalDupKVStream) Next() (key, val []byte, err error) {
 }
 
 // Close implements the interface of DupKVStream.
-func (s *LocalDupKVStream) Close() error {
+func (s *DupKVStreamImpl) Close() error {
 	return s.iter.Close()
 }
 

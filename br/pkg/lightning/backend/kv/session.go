@@ -88,7 +88,7 @@ type MemBuf struct {
 	kv.MemBuffer
 	buf           *BytesBuf
 	availableBufs []*BytesBuf
-	kvPairs       *KvPairs
+	kvPairs       *Pairs
 	size          int
 }
 
@@ -318,19 +318,19 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
-	s.txn.kvPairs = &KvPairs{}
+	s.txn.kvPairs = &Pairs{}
 
 	return s
 }
 
-// TakeKvPairs returns the current KvPairs and resets the buffer.
-func (se *Session) TakeKvPairs() *KvPairs {
+// TakeKvPairs returns the current Pairs and resets the buffer.
+func (se *Session) TakeKvPairs() *Pairs {
 	memBuf := &se.txn.MemBuf
 	pairs := memBuf.kvPairs
 	if pairs.BytesBuf != nil {
 		pairs.MemBuf = memBuf
 	}
-	memBuf.kvPairs = &KvPairs{Pairs: make([]common.KvPair, 0, len(pairs.Pairs))}
+	memBuf.kvPairs = &Pairs{Pairs: make([]common.KvPair, 0, len(pairs.Pairs))}
 	memBuf.size = 0
 	return pairs
 }

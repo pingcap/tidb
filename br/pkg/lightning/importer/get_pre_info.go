@@ -735,7 +735,7 @@ outloop:
 		}
 		if isRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
-			for _, kv := range kv.KvPairsFromRows(dataKVs) {
+			for _, kv := range kv.Rows2KvPairs(dataKVs) {
 				if len(lastKey) == 0 {
 					lastKey = kv.Key
 				} else if bytes.Compare(lastKey, kv.Key) > 0 {
