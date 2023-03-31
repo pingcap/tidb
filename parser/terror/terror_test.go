@@ -157,7 +157,7 @@ func TestTraceAndLocation(t *testing.T) {
 		// ```
 		//
 		// So we have to deal with these boundary conditions.
-		if strings.Contains(line, goroot) || strings.Contains(line, "GOROOT") || strings.Contains(line, "runtime.goexit") {
+		if strings.Contains(line, goroot) || strings.Contains(line, "src/runtime") {
 			sysStack++
 		}
 	}

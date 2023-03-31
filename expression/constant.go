@@ -132,7 +132,7 @@ func (c *Constant) GetType() *types.FieldType {
 		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
 		tp := types.NewFieldType(mysql.TypeUnspecified)
 		dt := c.ParamMarker.GetUserVar()
-		types.DefaultParamTypeForValue(dt.GetValue(), tp)
+		types.InferParamTypeFromDatum(&dt, tp)
 		return tp
 	}
 	return c.RetType

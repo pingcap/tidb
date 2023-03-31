@@ -16,6 +16,7 @@ require (
 	github.com/apache/skywalking-eyes v0.4.0
 	github.com/ashanbrown/makezero v1.1.1
 	github.com/aws/aws-sdk-go v1.44.48
+	github.com/bazelbuild/buildtools v0.0.0-20230317132445-9c3c1fc0106e
 	github.com/blacktear23/go-proxyprotocol v1.0.5
 	github.com/carlmjohnson/flagext v0.21.0
 	github.com/charithe/durationcheck v0.0.10
@@ -92,8 +93,8 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.7-0.20230317032622-884a634378d4
-	github.com/tikv/pd/client v0.0.0-20230324033443-79ec29cee8db
+	github.com/tikv/client-go/v2 v2.0.7-0.20230328084104-ea13e9700259
+	github.com/tikv/pd/client v0.0.0-20230329114254-1948c247c2b1
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible

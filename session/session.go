@@ -169,6 +169,17 @@ type Session interface {
 	SetExtensions(extensions *extension.SessionExtensions)
 }
 
+func init() {
+	executor.CreateSession = func(ctx sessionctx.Context) (sessionctx.Context, error) {
+		return CreateSession(ctx.GetStore())
+	}
+	executor.CloseSession = func(ctx sessionctx.Context) {
+		if se, ok := ctx.(Session); ok {
+			se.Close()
+		}
+	}
+}
+
 var _ Session = (*session)(nil)
 
 type stmtRecord struct {
@@ -341,7 +352,7 @@ func (s *session) cleanRetryInfo() {
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
 				bindSQL, _ := plannercore.GetBindSQL4PlanCache(s, preparedObj)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion,
-					0, bindSQL)
+					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -4220,8 +4231,11 @@ func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 
 	// Decode session variables.
 	for name, val := range sessionStates.SystemVars {
-		if err := s.sessionVars.SetSystemVarWithoutValidation(name, val); err != nil {
-			return err
+		// Experimental system variables may change scope, data types, or even be removed.
+		// We just ignore the errors and continue.
+		if err := s.sessionVars.SetSystemVar(name, val); err != nil {
+			logutil.Logger(ctx).Warn("set session variable during decoding session states error",
+				zap.String("name", name), zap.String("value", val), zap.Error(err))
 		}
 	}
 

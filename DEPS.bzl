@@ -286,6 +286,13 @@ def go_deps():
         sum = "h1:Q2feRPMlcfVcqz3pF87PJzkm5lZrL+x6BDtzhODzNJM=",
         version = "v11.2.8+incompatible",
     )
+    go_repository(
+        name = "com_github_bazelbuild_buildtools",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/bazelbuild/buildtools",
+        sum = "h1:XmPu4mXICgdGnC5dXGjUGbwUD/kUmS0l5Aop3LaevBM=",
+        version = "v0.0.0-20230317132445-9c3c1fc0106e",
+    )
 
     go_repository(
         name = "com_github_benbjohnson_clock",
@@ -4101,8 +4108,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:m5Y7tBW5Rq8L1ANxibitBa/DInDy3hA2Qvk1Ys9u1NU=",
-        version = "v2.0.7-0.20230317032622-884a634378d4",
+        sum = "h1:XpdZrei86oIrRjXbqvlQh23TdHXVtSxWmsxxwy/Zgc0=",
+        version = "v2.0.7-0.20230328084104-ea13e9700259",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -4116,8 +4123,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:hZ9gL1wq4dnIzEHjoTB4MHiqi3cA6pqANL4yxUtyCP0=",
-        version = "v0.0.0-20230324033443-79ec29cee8db",
+        sum = "h1:bzlSSzw+6qTwPs8pMcPI1bt27TAOhSdAEwdPCz6eBlg=",
+        version = "v0.0.0-20230329114254-1948c247c2b1",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
@@ -5828,6 +5835,14 @@ def go_deps():
         sum = "h1:7uVkIFmeBqHfdjD+gZwtXXI+RODJ2Wc4O7MPEh/QiW4=",
         version = "v1.3.0",
     )
+    go_repository(
+        name = "net_starlark_go",
+        build_file_proto_mode = "disable",
+        importpath = "go.starlark.net",
+        sum = "h1:xwwDQW5We85NaTk2APgoN9202w/l0DVGp+GZMfsrh7s=",
+        version = "v0.0.0-20210223155950-e043a3d3c984",
+    )
+
     go_repository(
         name = "org_golang_google_api",
         build_file_proto_mode = "disable_global",

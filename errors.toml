@@ -1601,7 +1601,7 @@ error = '''
 TiDB admin check table failed.
 '''
 
-["executor:8067"]
+["executor:8068"]
 error = '''
 Load data: unmatched columns
 '''
@@ -1891,7 +1891,7 @@ error = '''
 A path expression is not a path to a cell in an array.
 '''
 
-["json:8066"]
+["json:8067"]
 error = '''
 JSON_OBJECTAGG: unsupported second argument type %v
 '''

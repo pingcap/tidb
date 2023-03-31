@@ -104,7 +104,7 @@ func NewEncodingBuilder() encode.EncodingBuilder {
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
 func (b *encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	se := kv.NewSession(&config.SessionOptions, log.FromContext(ctx))
+	se := kv.NewSessionCtx(&config.SessionOptions, log.FromContext(ctx))
 	if config.SQLMode.HasStrictMode() {
 		se.GetSessionVars().SkipUTF8Check = false
 		se.GetSessionVars().SkipASCIICheck = false
@@ -251,11 +251,9 @@ func (b *targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.Che
 }
 
 type tidbBackend struct {
-	db               *sql.DB
-	onDuplicate      string
-	errorMgr         *errormanager.ErrorManager
-	encBuilder       encode.EncodingBuilder
-	targetInfoGetter backend.TargetInfoGetter
+	db          *sql.DB
+	onDuplicate string
+	errorMgr    *errormanager.ErrorManager
 }
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
@@ -270,11 +268,9 @@ func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMg
 		onDuplicate = config.ReplaceOnDup
 	}
 	return backend.MakeBackend(&tidbBackend{
-		db:               db,
-		onDuplicate:      onDuplicate,
-		errorMgr:         errorMgr,
-		encBuilder:       NewEncodingBuilder(),
-		targetInfoGetter: NewTargetInfoGetter(db),
+		db:          db,
+		onDuplicate: onDuplicate,
+		errorMgr:    errorMgr,
 	})
 }
 
@@ -479,7 +475,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, rowID int64, columnPermutation
 		// 1. if len(row) < enc.columnCnt: data in row cannot populate the insert statement, because
 		// there are enc.columnCnt elements to insert but fewer columns in row
 		enc.logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
-			zap.Array("data", kv.RowArrayMarshaler(row)))
+			zap.Array("data", kv.RowArrayMarshaller(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
 	}
 
@@ -487,7 +483,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, rowID int64, columnPermutation
 		// 2. if len(row) > len(columnIdx): raw row data has more columns than those
 		// in the table
 		enc.logger.Error("column count mismatch", zap.Ints("column_count", enc.columnIdx),
-			zap.Array("data", kv.RowArrayMarshaler(row)))
+			zap.Array("data", kv.RowArrayMarshaller(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, at most %d but got %d", len(enc.columnIdx), len(row))
 	}
 
@@ -505,7 +501,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, rowID int64, columnPermutation
 		datum := field
 		if err := enc.appendSQL(&encoded, &datum, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
 			enc.logger.Error("tidb encode failed",
-				zap.Array("original", kv.RowArrayMarshaler(row)),
+				zap.Array("original", kv.RowArrayMarshaller(row)),
 				zap.Int("originalCol", i),
 				log.ShortError(err),
 			)
@@ -543,10 +539,6 @@ func (be *tidbBackend) Close() {
 	// TidbManager, so we let the manager to close it.
 }
 
-func (be *tidbBackend) MakeEmptyRows() encode.Rows {
-	return be.encBuilder.MakeEmptyRows()
-}
-
 func (be *tidbBackend) RetryImportDelay() time.Duration {
 	return 0
 }
@@ -560,14 +552,6 @@ func (be *tidbBackend) MaxChunkSize() int {
 
 func (be *tidbBackend) ShouldPostProcess() bool {
 	return true
-}
-
-func (be *tidbBackend) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
-	return be.targetInfoGetter.CheckRequirements(ctx, nil)
-}
-
-func (be *tidbBackend) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	return be.encBuilder.NewEncoder(ctx, config)
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
@@ -750,10 +734,6 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
 	})
 	return nil
-}
-
-func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return be.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
 
 func (be *tidbBackend) EngineFileSizes() []backend.EngineFileSize {
