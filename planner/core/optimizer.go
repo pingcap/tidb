@@ -558,6 +558,10 @@ func tryEnableLateMaterialization(sctx sessionctx.Context, plan PhysicalPlan) {
 	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
 		predicatePushDownToTableScan(sctx, plan)
 	}
+	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
+		sc := sctx.GetSessionVars().StmtCtx
+		sc.AppendWarning(errors.New("FastScan is not compatible with late materialization, late materialization is disabled"))
+	}
 }
 
 /*
