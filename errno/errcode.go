@@ -894,6 +894,7 @@ const (
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
 	ErrExistsInHistoryPassword                               = 3638
+	ErrWrongSridForColumn                                    = 3643
 	ErrForeignKeyCannotDropParent                            = 3730
 	ErrForeignKeyCannotUseVirtualColumn                      = 3733
 	ErrForeignKeyNoColumnInParent                            = 3734

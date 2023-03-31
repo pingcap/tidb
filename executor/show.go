@@ -1009,6 +1009,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 				buf.WriteString(" VIRTUAL")
 			}
 		}
+		if mysql.HasSridFlag(col.GetFlag()) {
+			buf.WriteString(fmt.Sprintf(" /*!80003 SRID %d */", col.Srid))
+		}
 		if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 			hasAutoIncID = true
 			buf.WriteString(" NOT NULL AUTO_INCREMENT")

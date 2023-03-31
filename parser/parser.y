@@ -143,6 +143,7 @@ import (
 	from              "FROM"
 	fulltext          "FULLTEXT"
 	generated         "GENERATED"
+	geometryType      "GEOMETRY"
 	grant             "GRANT"
 	group             "GROUP"
 	groups            "GROUPS"
@@ -216,6 +217,7 @@ import (
 	over              "OVER"
 	partition         "PARTITION"
 	percentRank       "PERCENT_RANK"
+	pointType         "POINT"
 	precisionType     "PRECISION"
 	primary           "PRIMARY"
 	procedure         "PROCEDURE"
@@ -592,6 +594,7 @@ import (
 	sqlTsiSecond          "SQL_TSI_SECOND"
 	sqlTsiWeek            "SQL_TSI_WEEK"
 	sqlTsiYear            "SQL_TSI_YEAR"
+	srid                  "SRID"
 	start                 "START"
 	statsAutoRecalc       "STATS_AUTO_RECALC"
 	statsPersistent       "STATS_PERSISTENT"
@@ -3335,6 +3338,11 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
 	}
+|	"SRID" NUM
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionSrid, Srid: uint32($2.(int64))}
+	}
+
 
 AutoRandomOpt:
 	{
@@ -6429,6 +6437,7 @@ UnReservedKeyword:
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|	"SRID"
 |	"CALIBRATE"
 
 TiDBKeyword:
@@ -8263,6 +8272,24 @@ CastType:
 		tp.AddFlag(mysql.BinaryFlag)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
+|	"GEOMETRY"
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.AddFlag(mysql.BinaryFlag)
+		tp.SetCharset(mysql.DefaultCharset)
+		tp.SetCollate(mysql.DefaultCollationName)
+		tp.SetGeoType(mysql.GeoTypeGeometry)
+		$$ = tp
+	}
+|	"POINT"
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.AddFlag(mysql.BinaryFlag)
+		tp.SetCharset(mysql.DefaultCharset)
+		tp.SetCollate(mysql.DefaultCollationName)
+		tp.SetGeoType(mysql.GeoTypePoint)
 		$$ = tp
 	}
 
@@ -12326,6 +12353,24 @@ StringType:
 		if $2.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
+		$$ = tp
+	}
+|	"GEOMETRY"
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetGeoType(mysql.GeoTypeGeometry)
+		$$ = tp
+	}
+|	"POINT"
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetGeoType(mysql.GeoTypePoint)
 		$$ = tp
 	}
 

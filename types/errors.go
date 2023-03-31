@@ -92,4 +92,6 @@ var (
 	// ErrPartitionColumnStatsMissing is returned when the partition-level column stats is missing and the build global-level stats fails.
 	// Put this error here is to prevent `import cycle not allowed`.
 	ErrPartitionColumnStatsMissing = dbterror.ClassTypes.NewStd(mysql.ErrPartitionColumnStatsMissing)
+	// ErrWrongSridForColumn is returned if the column and the value don't have the same SRID
+	ErrWrongSridForColumn = dbterror.ClassTypes.NewStd(mysql.ErrWrongSridForColumn)
 )
