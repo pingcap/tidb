@@ -1440,6 +1440,22 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheGroupBy(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, b int, index(a))")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select sum(b) from t group by a+1`)
+	tk.MustExec(`select sum(b) from t group by a+1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`select sum(b) from t group by a+2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select sum(b) from t group by a+2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func TestNonPreparedPlanCacheFieldNames(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
