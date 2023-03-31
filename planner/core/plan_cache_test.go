@@ -1846,7 +1846,7 @@ func TestNonPreparedPlanCacheUnicode(t *testing.T) {
 	tk.MustExec(`insert into t1 values ('a',1)`)
 	tk.MustQuery(`select concat(a, if(b>10, N'x', N'y')) from t1`).Check(testkit.Rows("ay")) // no error
 	tk.MustQuery(`select concat(a, if(b>10, N'x', N'y')) from t1`).Check(testkit.Rows("ay"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
