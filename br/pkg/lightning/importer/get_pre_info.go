@@ -113,6 +113,7 @@ const (
 	preInfoGetterKeyDBMetas preInfoGetterKey = "PRE_INFO_GETTER/DB_METAS"
 )
 
+// WithPreInfoGetterDBMetas returns a new context with the specified dbMetas.
 func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) context.Context {
 	return context.WithValue(ctx, preInfoGetterKeyDBMetas, dbMetas)
 }

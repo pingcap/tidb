@@ -648,8 +648,8 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 }
 
 // rlock read locks a local file and returns the Engine instance if it exists.
-func (local *local) rLockEngine(engineId uuid.UUID) *Engine {
-	if e, ok := local.engines.Load(engineId); ok {
+func (local *local) rLockEngine(engineID uuid.UUID) *Engine {
+	if e, ok := local.engines.Load(engineID); ok {
 		engine := e.(*Engine)
 		engine.rLock()
 		return engine

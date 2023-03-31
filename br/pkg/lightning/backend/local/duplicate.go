@@ -117,6 +117,7 @@ func (indexHandles *pendingIndexHandles) Swap(i, j int) {
 
 type pendingKeyRange tidbkv.KeyRange
 
+// Less implements btree.Item.
 func (kr pendingKeyRange) Less(other btree.Item) bool {
 	return bytes.Compare(kr.EndKey, other.(pendingKeyRange).EndKey) < 0
 }
@@ -255,6 +256,7 @@ func NewLocalDupKVStream(dupDB *pebble.DB, keyAdapter KeyAdapter, keyRange tidbk
 	return &LocalDupKVStream{iter: iter}
 }
 
+// Next implements the interface of DupKVStream.
 func (s *LocalDupKVStream) Next() (key, val []byte, err error) {
 	if !s.iter.Valid() {
 		err = s.iter.Error()
@@ -269,6 +271,7 @@ func (s *LocalDupKVStream) Next() (key, val []byte, err error) {
 	return
 }
 
+// Close implements the interface of DupKVStream.
 func (s *LocalDupKVStream) Close() error {
 	return s.iter.Close()
 }
@@ -277,6 +280,7 @@ type regionError struct {
 	inner *errorpb.Error
 }
 
+// Error implements the interface of error.
 func (r regionError) Error() string {
 	return r.inner.String()
 }
@@ -362,6 +366,7 @@ func (s *RemoteDupKVStream) tryRecv() error {
 	return nil
 }
 
+// Next implements the interface of DupKVStream.
 func (s *RemoteDupKVStream) Next() (key, val []byte, err error) {
 	for len(s.kvs) == 0 {
 		if s.atEOF {
@@ -376,6 +381,7 @@ func (s *RemoteDupKVStream) Next() (key, val []byte, err error) {
 	return
 }
 
+// Close implements the interface of DupKVStream.
 func (s *RemoteDupKVStream) Close() error {
 	s.cancel()
 	return nil

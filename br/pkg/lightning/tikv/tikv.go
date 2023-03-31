@@ -211,6 +211,7 @@ func FetchRemoteDBModelsFromTLS(ctx context.Context, tls *common.TLS) ([]*model.
 	return dbs, nil
 }
 
+// FetchRemoteTableModelsFromTLS obtains the remote table models from the given TLS.
 func FetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {
 	var tables []*model.TableInfo
 	err := tls.GetJSON(ctx, "/schema/"+schema, &tables)
@@ -220,6 +221,7 @@ func FetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema 
 	return tables, nil
 }
 
+// CheckPDVersion checks the version of PD.
 func CheckPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
 	ver, err := pdutil.FetchPDVersion(ctx, tls, pdAddr)
 	if err != nil {
@@ -229,6 +231,7 @@ func CheckPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, require
 	return version.CheckVersion("PD", *ver, requiredMinVersion, requiredMaxVersion)
 }
 
+// CheckTiKVVersion checks the version of TiKV.
 func CheckTiKVVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
 	return ForAllStores(
 		ctx,

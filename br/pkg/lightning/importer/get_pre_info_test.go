@@ -254,7 +254,7 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 
 func generateParquetData(t *testing.T) []byte {
 	type parquetStruct struct {
-		Id   int64  `parquet:"name=id, type=INT64"`
+		ID   int64  `parquet:"name=id, type=INT64"`
 		Name string `parquet:"name=name, type=BYTE_ARRAY"`
 	}
 	pf, err := pqt_buf_src.NewBufferFile(make([]byte, 0))
@@ -263,7 +263,7 @@ func generateParquetData(t *testing.T) []byte {
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
 		require.NoError(t, pw.Write(parquetStruct{
-			Id:   int64(i + 1),
+			ID:   int64(i + 1),
 			Name: fmt.Sprintf("name_%d", i+1),
 		}))
 	}

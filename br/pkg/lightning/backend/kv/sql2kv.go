@@ -43,10 +43,12 @@ type tableKVEncoder struct {
 	metrics *metric.Metrics
 }
 
+// GetSession4test is only used for test.
 func GetSession4test(encoder encode.Encoder) sessionctx.Context {
 	return encoder.(*tableKVEncoder).SessionCtx
 }
 
+// NewTableKVEncoder creates a new tableKVEncoder.
 func NewTableKVEncoder(
 	config *encode.EncodingConfig,
 	metrics *metric.Metrics,
@@ -130,6 +132,7 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	return genCols, nil
 }
 
+// Close implements the Encoder interface.
 func (kvcodec *tableKVEncoder) Close() {
 	kvcodec.SessionCtx.Close()
 	if kvcodec.metrics != nil {
@@ -137,6 +140,7 @@ func (kvcodec *tableKVEncoder) Close() {
 	}
 }
 
+// KvPairs implements the Encoder interface.
 type KvPairs struct {
 	Pairs    []common.KvPair
 	BytesBuf *BytesBuf
@@ -225,6 +229,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPerm
 	return kvcodec.Record2KV(record, row, rowID)
 }
 
+// IsAutoIncCol return true if the column is auto increment column.
 func IsAutoIncCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasAutoIncrementFlag(colInfo.GetFlag())
 }
@@ -244,6 +249,7 @@ func GetActualDatum(encoder encode.Encoder, col *table.Column, rowID int64, inpu
 	return encoder.(*tableKVEncoder).getActualDatum(col, rowID, inputDatum)
 }
 
+// GetAutoRecordID returns the record ID for an auto-increment field.
 // get record value for auto-increment field
 //
 // See: https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
@@ -258,6 +264,7 @@ func GetAutoRecordID(d types.Datum, target *types.FieldType) int64 {
 	}
 }
 
+// Size returns the total size of the key-value pairs.
 func (kvs *KvPairs) Size() uint64 {
 	size := uint64(0)
 	for _, kv := range kvs.Pairs {
@@ -266,6 +273,7 @@ func (kvs *KvPairs) Size() uint64 {
 	return size
 }
 
+// ClassifyAndAppend separates the key-value pairs into data and index key-value pairs.
 func (kvs *KvPairs) ClassifyAndAppend(
 	data *encode.Rows,
 	dataChecksum *verification.KVChecksum,
@@ -297,6 +305,7 @@ func (kvs *KvPairs) ClassifyAndAppend(
 	*indices = indexKVs
 }
 
+// SplitIntoChunks splits the key-value pairs into chunks.
 func (kvs *KvPairs) SplitIntoChunks(splitSize int) []encode.Rows {
 	if len(kvs.Pairs) == 0 {
 		return nil
@@ -327,6 +336,7 @@ func (kvs *KvPairs) SplitIntoChunks(splitSize int) []encode.Rows {
 	return res
 }
 
+// Clear clears the key-value pairs.
 func (kvs *KvPairs) Clear() encode.Rows {
 	if kvs.BytesBuf != nil {
 		kvs.MemBuf.Recycle(kvs.BytesBuf)
