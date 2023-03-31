@@ -302,8 +302,29 @@
       ".*_generated\\.go$": "ignore generated code",
       ".*pb\\.go$": "ignore generated code",
       "br/pkg/errors/errors.go": "ignore error",
-      "util/column-mapping/column.go": "ignore error"
-    }
+      "util/column-mapping/column.go": "ignore error",
+      "parser/mysql/": "ignore mysql code",
+      "parser/auth": "ignore auth code",
+      "parser/charset/charset.go": "ignore charset code",
+      "parser/types/field_type.go": "ignore field_type code",
+      "parser/model/ddl.go": "ignore ddl code",
+      "parser/model/model.go": "ignore model code",
+      "parser/model/model_test.go": "ignore tables code",
+      "parser/ast": "ignore ast code",
+      "parser/parser.go": "ignore parser code",
+      "parser/hintparser.go": "ignore hintparser code",
+      "parser/yy_parser.go": "ignore yy_parser code",
+      "parser/digester.go": "ignore digester code",
+      "errno/errname.go": "ignore errname code"
+    },
+     "only_files": {
+       "br/": "only for br code",
+       "ddl/": "only for ddl code",
+       "ttl/": "only for ttl code",
+       "planner/": "only for planner code",
+       "parser/": "only for parser code",
+       "dumpling/": "only for dumpling code"
+     }
   },
   "makezero": {
     "exclude_files": {
