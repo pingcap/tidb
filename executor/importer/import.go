@@ -31,6 +31,7 @@ import (
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
+	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
 )
 
@@ -104,6 +106,10 @@ var (
 	// LoadDataReadBlockSize is exposed for test.
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 )
+
+// GetKVStore returns a kv.Storage.
+// kv encoder of physical mode needs it.
+var GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
 
 // FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {

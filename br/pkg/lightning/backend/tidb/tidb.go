@@ -475,7 +475,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, rowID int64, columnPermutation
 		// 1. if len(row) < enc.columnCnt: data in row cannot populate the insert statement, because
 		// there are enc.columnCnt elements to insert but fewer columns in row
 		enc.logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
-			zap.Array("data", kv.RowArrayMarshaler(row)))
+			zap.Array("data", kv.RowArrayMarshaller(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
 	}
 
@@ -483,7 +483,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, rowID int64, columnPermutation
 		// 2. if len(row) > len(columnIdx): raw row data has more columns than those
 		// in the table
 		enc.logger.Error("column count mismatch", zap.Ints("column_count", enc.columnIdx),
-			zap.Array("data", kv.RowArrayMarshaler(row)))
+			zap.Array("data", kv.RowArrayMarshaller(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, at most %d but got %d", len(enc.columnIdx), len(row))
 	}
 
@@ -501,7 +501,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, rowID int64, columnPermutation
 		datum := field
 		if err := enc.appendSQL(&encoded, &datum, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
 			enc.logger.Error("tidb encode failed",
-				zap.Array("original", kv.RowArrayMarshaler(row)),
+				zap.Array("original", kv.RowArrayMarshaller(row)),
 				zap.Int("originalCol", i),
 				log.ShortError(err),
 			)
