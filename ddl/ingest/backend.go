@@ -59,6 +59,9 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 	// Check remote duplicate value for the index.
 	if unique {
 		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
+		// backend must be a local backend.
+		// todo: when we can separate local backend completely from tidb backend, will remove this cast.
+		//nolint:forcetypeassert
 		dupeController := bc.backend.Inner().(*local.Local).GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 		hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
