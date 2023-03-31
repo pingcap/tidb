@@ -315,7 +315,8 @@
       "parser/hintparser.go": "ignore hintparser code",
       "parser/yy_parser.go": "ignore yy_parser code",
       "parser/digester.go": "ignore digester code",
-      "errno/errname.go": "ignore errname code"
+      "errno/errname.go": "ignore errname code",
+      "planner/funcdep/fd_graph.go": "ignore fd_graph code"
     },
      "only_files": {
        "br/": "only for br code",
