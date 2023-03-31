@@ -903,11 +903,12 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context,
 			return err
 		}
 		if colPrune.defaultPartID > 0 {
-			if lp.defaultPartitionIdx > 0 {
-				return table.ErrUnknownPartition
-			}
 			for i := range defs {
 				if defs[i].ID == colPrune.defaultPartID {
+					if lp.defaultPartitionIdx >= 0 && i != lp.defaultPartitionIdx {
+						// Should be same for all columns, i.e. should never happen!
+						return table.ErrUnknownPartition
+					}
 					lp.defaultPartitionIdx = i
 				}
 			}

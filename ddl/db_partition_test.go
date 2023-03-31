@@ -964,10 +964,6 @@ func TestCreateTableWithListPartition(t *testing.T) {
 			dbterror.ErrTooManyPartitions,
 		},
 		{
-			"create table t (a int) partition by list (a) (partition p0 values in (default), partition p1 values in (maxvalue))",
-			dbterror.ErrMaxvalueInValuesIn,
-		},
-		{
 			"create table t (a int) partition by list (a) (partition p0 values in (default), partition p1 values in (default))",
 			dbterror.ErrMultipleDefConstInListPart,
 		},
@@ -1245,6 +1241,9 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 		partition p4 values in (7),
 		partition p5 values in (8,9));`)
 
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef values in (default, 6))`,
+		"[ddl:8200]VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
+	tk.MustExec("set @@session.tidb_enable_default_list_partition = ON")
 	tk.MustExec(`alter table t add partition (partition pDef values in (default, 6))`)
 	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10, default))`, `[ddl:1495]Multiple definition of same constant in list partitioning`)
 	ctx := tk.Session()
@@ -1360,29 +1359,37 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
 	    partition p3 values in ((5,null))
-	);`)
+	)`)
+	tk.MustGetErrCode(`create table t (a int) partition by list (a) (partition p0 values in (default), partition p1 values in (maxvalue))`,
+		errno.ErrParse)
 	tk.MustExec(`alter table t add partition (
-			partition p4 values in ((7,'a')),
-			partition p5 values in ((8,'a')));`)
+				partition p4 values in ((7,'a')),
+				partition p5 values in ((8,'a')));`)
 	// We only support a single DEFAULT (catch-all),
 	// Not a DEFAULT per column in LIST COLUMNS!
 	tk.MustGetErrMsg(`alter table t add partition (
-			partition pDef values in (10, default))`, `[ddl:1653]Inconsistency in usage of column lists for partitioning`)
-	tk.MustGetErrCode(`alter table t add partition (
-			partition pDef values in ((10, default)))`, errno.ErrParse)
+				partition pDef values in (10, default))`,
+		"[ddl:8200]VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
+	tk.MustExec(`set tidb_enable_default_list_partition = ON`)
 	tk.MustGetErrMsg(`alter table t add partition (
-			partition pDef values in (default, 10))`, `[ddl:1653]Inconsistency in usage of column lists for partitioning`)
+				partition pDef values in (10, default))`, `[ddl:1653]Inconsistency in usage of column lists for partitioning`)
 	tk.MustGetErrCode(`alter table t add partition (
-			partition pDef values in ((default, 10)))`, errno.ErrParse)
+				partition pDef values in ((10, default)))`, errno.ErrParse)
+	tk.MustGetErrMsg(`alter table t add partition (
+				partition pDef values in (default, 10))`, `[ddl:1653]Inconsistency in usage of column lists for partitioning`)
 	tk.MustGetErrCode(`alter table t add partition (
-			partition pDef values in ((9,'a'), (default, 10, 'q'))`, errno.ErrParse)
+				partition pDef values in ((default, 10)))`, errno.ErrParse)
 	tk.MustGetErrCode(`alter table t add partition (
-			partition pDef values in ((9,'a'), (10, default, 'q'))`, errno.ErrParse)
+				partition pDef values in ((9,'a'), (default, 10, 'q'))`, errno.ErrParse)
+	tk.MustGetErrCode(`alter table t add partition (
+				partition pDef values in ((9,'a'), (10, default, 'q'))`, errno.ErrParse)
 	tk.MustExec(`alter table t add partition (
 		partition pDef values in (default))`)
 	tk.MustGetErrMsg(`alter table t add partition (
 		partition pDef2 values in (default))`,
 		"[ddl:1495]Multiple definition of same constant in list partitioning")
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (partition pDef default)`)
 	tk.MustExec(`alter table t drop partition pDef`)
 	tk.MustExec(`alter table t add partition (
 		partition pDef values in ((9, 'c'), default))`)
@@ -1406,6 +1413,18 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	tk.MustGetErrCode(`alter table t add partition (
 		partition pDef values in ((9,'a'), (10, default, 'q'))`, errno.ErrParse)
 
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `name` varchar(10) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`id`,`name`)\n" +
+		"(PARTITION `p0` VALUES IN ((1,'a'),(2,'b')),\n" +
+		" PARTITION `p1` VALUES IN ((3,'a'),(4,'b')),\n" +
+		" PARTITION `p3` VALUES IN ((5,NULL)),\n" +
+		" PARTITION `p4` VALUES IN ((7,'a')),\n" +
+		" PARTITION `p5` VALUES IN ((8,'a')),\n" +
+		" PARTITION `pDef` VALUES IN ((9,'d'),DEFAULT,(10,'d')))"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1462,6 +1481,24 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 			i, tt.sql, tt.err, err,
 		)
 	}
+	tk.MustExec(`drop table t`)
+	tk.MustExec(
+		"CREATE TABLE `t` (\n" +
+			"  `id` int(11) DEFAULT NULL,\n" +
+			"  `name` varchar(10) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY LIST COLUMNS(`id`,`name`)\n" +
+			"(PARTITION `p0` VALUES IN ((1,'a'),(2,'b')),\n" +
+			" PARTITION `p1` VALUES IN ((3,'a'),(4,'b')),\n" +
+			" PARTITION `p3` VALUES IN ((5,NULL)),\n" +
+			" PARTITION `p4` VALUES IN ((7,'a')),\n" +
+			" PARTITION `p5` VALUES IN ((8,'a')),\n" +
+			" PARTITION `pDef` VALUES IN ((9,'d'),DEFAULT,(10,'d')))")
+	tk.MustExec("set @@session.tidb_enable_list_partition = OFF")
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef)`,
+		"[ddl:1479]Syntax : LIST PARTITIONING requires definition of VALUES IN for each partition")
+	tk.MustExec(`alter table t add partition (partition pDef default)`)
 }
 
 func TestDefaultListPartition(t *testing.T) {
@@ -1566,6 +1603,44 @@ func TestDefaultListColumnPartition(t *testing.T) {
 
 	// DEFAULT partition will not be used in reorganize partition if not included in the source/destination
 	tk.MustExecToErr(`alter table t reorganize partition p0 into (partition p0 values in (0))`, "[table:1526]Table has no partition for value 4")
+}
+
+func TestDefaultListErrors(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create schema defaultListErrors")
+	tk.MustExec("use defaultListErrors")
+	tk.MustExec(`set tidb_enable_default_list_partition=ON`)
+	tk.MustContainErrMsg(`create table t (a int) partition by range (a) (partition p0 values less than (default))`,
+		"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 86 near ")
+	tk.MustContainErrMsg(`create table t (a int) partition by range (a) (partition p0 values less than ("default"))`,
+		"[ddl:1697]VALUES value for partition 'p0' must have type INT")
+	tk.MustExec(`create table t (a varchar(55)) partition by range columns (a) (partition p0 values less than ("default"))`)
+	tk.MustExec(`drop table t`)
+	tk.MustContainErrMsg(`create table t (a varchar(55)) partition by range columns (a) (partition p0 values less than (default))`,
+		"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 102 near ")
+	tk.MustContainErrMsg(`create table t (a varchar(55)) partition by range columns (a) (partition p0 default)`,
+		"[ddl:1480]Only LIST PARTITIONING can use VALUES IN in partition definition")
+	tk.MustExec(`create table t (a varchar(55)) partition by list columns (a) (partition p0 default)`)
+	tk.MustExec(`insert into t values ('Hi')`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` varchar(55) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`a`)\n" +
+		"(PARTITION `p0` DEFAULT)"))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int) partition by list (a) (partition p0 default)`)
+	tk.MustExec(`insert into t values (2)`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p0` DEFAULT)"))
+	tk.MustExec(`drop table t`)
+	tk.MustContainErrMsg(`create table t (a int) partition by list (a) (partition p0 values in ())`,
+		"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 71 near ")
 }
 
 func TestAlterTableDropPartitionByList(t *testing.T) {

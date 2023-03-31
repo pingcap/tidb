@@ -425,6 +425,24 @@ func storeHasEngineTiFlashLabel(store *metapb.Store) bool {
 	return false
 }
 
+func checkDefaultListPartition(ctx sessionctx.Context, defs []*ast.PartitionDefinition) error {
+	if !ctx.GetSessionVars().EnableDefaultListPartition {
+		// Check for DEFAULT list partition
+		for _, def := range defs {
+			valIn, ok := def.Clause.(*ast.PartitionDefinitionClauseIn)
+			if !ok {
+				return dbterror.ErrUnsupportedCreatePartition.GenWithStack("VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
+			}
+			for _, val := range valIn.Values {
+				if _, ok := val[0].(*ast.DefaultExpr); ok {
+					return dbterror.ErrUnsupportedCreatePartition.GenWithStack("VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // buildTablePartitionInfo builds partition info and checks for some errors.
 func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tbInfo *model.TableInfo) error {
 	if s == nil {
@@ -462,18 +480,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	case model.PartitionTypeList:
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
-		if enable && !ctx.GetSessionVars().EnableDefaultListPartition {
-			// Check for DEFAULT list partition
-			for _, def := range s.Definitions {
-				valIn, ok := def.Clause.(*ast.PartitionDefinitionClauseIn)
-				if !ok {
-					return dbterror.ErrUnsupportedCreatePartition.GenWithStack("VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
-				}
-				for _, val := range valIn.Values {
-					if _, ok := val[0].(*ast.DefaultExpr); ok {
-						return dbterror.ErrUnsupportedCreatePartition.GenWithStack("VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
-					}
-				}
+		if enable {
+			err := checkDefaultListPartition(ctx, s.Definitions)
+			if err != nil {
+				return err
 			}
 		}
 	}
@@ -3665,24 +3675,32 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 			}
 			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", strings.Join(lessThans, ","))
 		} else if partitionInfo.Type == model.PartitionTypeList {
-			values := bytes.NewBuffer(nil)
-			for j, inValues := range def.InValues {
-				if j > 0 {
-					values.WriteString(",")
-				}
-				if len(inValues) > 1 {
-					values.WriteString("(")
-					tmpVals := make([]string, len(inValues))
-					for idx, v := range inValues {
-						tmpVals[idx] = hexIfNonPrint(v)
+			if len(def.InValues) == 0 {
+				fmt.Fprintf(buf, " DEFAULT")
+			} else if len(def.InValues) == 1 &&
+				len(def.InValues[0]) == 1 &&
+				strings.EqualFold(def.InValues[0][0], "DEFAULT") {
+				fmt.Fprintf(buf, " DEFAULT")
+			} else {
+				values := bytes.NewBuffer(nil)
+				for j, inValues := range def.InValues {
+					if j > 0 {
+						values.WriteString(",")
 					}
-					values.WriteString(strings.Join(tmpVals, ","))
-					values.WriteString(")")
-				} else if len(inValues) == 1 {
-					values.WriteString(hexIfNonPrint(inValues[0]))
+					if len(inValues) > 1 {
+						values.WriteString("(")
+						tmpVals := make([]string, len(inValues))
+						for idx, v := range inValues {
+							tmpVals[idx] = hexIfNonPrint(v)
+						}
+						values.WriteString(strings.Join(tmpVals, ","))
+						values.WriteString(")")
+					} else if len(inValues) == 1 {
+						values.WriteString(hexIfNonPrint(inValues[0]))
+					}
 				}
+				fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
 			}
-			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
 		}
 		if len(def.Comment) > 0 {
 			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(def.Comment)))

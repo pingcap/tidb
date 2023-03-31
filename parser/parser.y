@@ -853,7 +853,8 @@ import (
 %token not2
 %type	<expr>
 	Expression                      "expression"
-	MaxValueOrDefaultOrExpression   "maxvalue, default or expression"
+	MaxValueOrExpression            "maxvalue or expression"
+	DefaultOrExpression             "default or expression"
 	BoolPri                         "boolean primary expression"
 	ExprOrDefault                   "expression or default"
 	PredicateExpr                   "Predicate expression factor"
@@ -1058,7 +1059,8 @@ import (
 	EscapedTableRef                        "escaped table reference"
 	ExpressionList                         "expression list"
 	ExtendedPriv                           "Extended privileges like LOAD FROM S3 or dynamic privileges"
-	MaxValueOrDefaultOrExpressionList      "maxvalue, default or expression list"
+	MaxValueOrExpressionList               "maxvalue or expression list"
+	DefaultOrExpressionList                "default or expression list"
 	ExpressionListOpt                      "expression list opt"
 	FetchFirstOpt                          "Fetch First/Next Option"
 	FuncDatetimePrecListOpt                "Function datetime precision list opt"
@@ -4459,7 +4461,7 @@ PartDefValuesOpt:
 			Exprs: []ast.ExprNode{&ast.MaxValueExpr{}},
 		}
 	}
-|	"VALUES" "LESS" "THAN" '(' MaxValueOrDefaultOrExpressionList ')'
+|	"VALUES" "LESS" "THAN" '(' MaxValueOrExpressionList ')'
 	{
 		$$ = &ast.PartitionDefinitionClauseLessThan{
 			Exprs: $5.([]ast.ExprNode),
@@ -4467,9 +4469,11 @@ PartDefValuesOpt:
 	}
 |	"DEFAULT"
 	{
-		$$ = &ast.PartitionDefinitionClauseIn{}
+		$$ = &ast.PartitionDefinitionClauseIn{
+			Values: [][]ast.ExprNode{{&ast.DefaultExpr{}}},
+		}
 	}
-|	"VALUES" "IN" '(' MaxValueOrDefaultOrExpressionList ')'
+|	"VALUES" "IN" '(' DefaultOrExpressionList ')'
 	{
 		exprs := $4.([]ast.ExprNode)
 		values := make([][]ast.ExprNode, 0, len(exprs))
@@ -5501,12 +5505,15 @@ Expression:
 	}
 |	BoolPri
 
-MaxValueOrDefaultOrExpression:
+DefaultOrExpression:
 	"DEFAULT"
 	{
 		$$ = &ast.DefaultExpr{}
 	}
-|	"MAXVALUE"
+|	BitExpr
+
+MaxValueOrExpression:
+	"MAXVALUE"
 	{
 		$$ = &ast.MaxValueExpr{}
 	}
@@ -5552,12 +5559,22 @@ ExpressionList:
 		$$ = append($1.([]ast.ExprNode), $3)
 	}
 
-MaxValueOrDefaultOrExpressionList:
-	MaxValueOrDefaultOrExpression
+MaxValueOrExpressionList:
+	MaxValueOrExpression
 	{
 		$$ = []ast.ExprNode{$1}
 	}
-|	MaxValueOrDefaultOrExpressionList ',' MaxValueOrDefaultOrExpression
+|	MaxValueOrExpressionList ',' MaxValueOrExpression
+	{
+		$$ = append($1.([]ast.ExprNode), $3)
+	}
+
+DefaultOrExpressionList:
+	DefaultOrExpression
+	{
+		$$ = []ast.ExprNode{$1}
+	}
+|	DefaultOrExpressionList ',' DefaultOrExpression
 	{
 		$$ = append($1.([]ast.ExprNode), $3)
 	}
