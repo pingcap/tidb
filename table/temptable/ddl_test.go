@@ -31,7 +31,7 @@ import (
 )
 
 func createTestSuite(t *testing.T) (sessionctx.Context, *temporaryTableDDL) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 
 	sctx := mock.NewContext()

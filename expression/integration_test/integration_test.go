@@ -39,6 +39,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
@@ -244,7 +245,7 @@ func TestBuiltinFuncJsonPretty(t *testing.T) {
 
 func TestGetLock(t *testing.T) {
 	ctx := context.Background()
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 	tk := testkit.NewTestKit(t, store)
 
 	// No timeout specified

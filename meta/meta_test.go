@@ -197,7 +197,7 @@ func TestBackupAndRestoreAutoIDs(t *testing.T) {
 }
 
 func TestMeta(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 
 	defer func() {
@@ -432,7 +432,7 @@ func TestMeta(t *testing.T) {
 }
 
 func TestSnapshot(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()

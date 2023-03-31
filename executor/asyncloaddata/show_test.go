@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -65,7 +66,7 @@ func (s *mockGCSSuite) SetupSuite() {
 	}
 	s.server, err = fakestorage.NewServerWithOptions(opt)
 	s.Require().NoError(err)
-	s.store = testkit.CreateMockStore(s.T())
+	s.store = testkit.CreateMockStore(s.T(), mockstore.WithStoreType(mockstore.EmbedUnistore))
 	s.tk = testkit.NewTestKit(s.T(), s.store)
 }
 

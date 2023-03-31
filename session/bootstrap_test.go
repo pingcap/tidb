@@ -134,7 +134,7 @@ func globalVarsCount() int64 {
 // We should make sure that the following session could finish the bootstrap process.
 func TestBootstrapWithError(t *testing.T) {
 	ctx := context.Background()
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -777,7 +777,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 }
 
 func TestIndexMergeInNewCluster(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
 	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
@@ -955,7 +955,7 @@ func TestInitializeSQLFile(t *testing.T) {
 
 func testEmptyInitSQLFile(t *testing.T) {
 	// An non-existent sql file would stop the bootstrap of the tidb cluster
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = "non-existent.sql"
 	defer func() {
@@ -1156,7 +1156,7 @@ insert into test.t values ("abc"); -- invalid statement
 `)
 	require.NoError(t, err)
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
 	defer func() {
@@ -1172,7 +1172,7 @@ insert into test.t values ("abc"); -- invalid statement
 	runBootstrapSQLFile = false
 
 	// Bootstrap with the second sql file, which would not been executed.
-	store, err = mockstore.NewMockStore()
+	store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1350,7 +1350,7 @@ func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
 }
 
 func TestTiDBOptAdvancedJoinHintInNewCluster(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
 	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
@@ -1376,7 +1376,7 @@ func TestTiDBOptAdvancedJoinHintInNewCluster(t *testing.T) {
 }
 
 func TestTiDBCostModelInNewCluster(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
 	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
