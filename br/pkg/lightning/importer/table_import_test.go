@@ -1449,7 +1449,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 		"db1": s.dbInfo,
 	}
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
-	mockTarget := restoremock.NewMockTargetInfo()
+	mockTarget := restoremock.NewTargetInfo()
 
 	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              s.cfg,
