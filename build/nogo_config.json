@@ -295,6 +295,13 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "lll": {
+    "exclude_files": {
+      "/cgo/": "ignore cgo code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "makezero": {
     "exclude_files": {
       "/cgo/": "ignore cgo code",
