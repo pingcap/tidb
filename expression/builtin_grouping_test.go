@@ -34,7 +34,7 @@ func createGroupingFunc(ctx sessionctx.Context, args []Expression) (*builtinGrou
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinGroupingSig{bf, 0, map[int64]int64{}}
+	sig := &builtinGroupingSig{bf, 0, map[int64]struct{}{}}
 	sig.setPbCode(tipb.ScalarFuncSig_GroupingSig)
 	return sig, nil
 }
@@ -44,33 +44,33 @@ func TestGrouping(t *testing.T) {
 	tests := []struct {
 		groupingID   uint64
 		version      uint32
-		groupingIDs  map[int64]int64
+		groupingIDs  map[int64]struct{}
 		expectResult uint64
 	}{
 		// version 1
-		{1, 1, map[int64]int64{1: 0}, 1},
-		{1, 1, map[int64]int64{3: 0}, 1},
-		{1, 1, map[int64]int64{6: 0}, 0},
-		{2, 1, map[int64]int64{1: 0}, 0},
-		{2, 1, map[int64]int64{3: 0}, 1},
-		{2, 1, map[int64]int64{6: 0}, 1},
-		{4, 1, map[int64]int64{2: 0}, 0},
-		{4, 1, map[int64]int64{4: 0}, 1},
-		{4, 1, map[int64]int64{6: 0}, 1},
+		{1, 1, map[int64]struct{}{1: {}}, 1},
+		{1, 1, map[int64]struct{}{3: {}}, 1},
+		{1, 1, map[int64]struct{}{6: {}}, 0},
+		{2, 1, map[int64]struct{}{1: {}}, 0},
+		{2, 1, map[int64]struct{}{3: {}}, 1},
+		{2, 1, map[int64]struct{}{6: {}}, 1},
+		{4, 1, map[int64]struct{}{2: {}}, 0},
+		{4, 1, map[int64]struct{}{4: {}}, 1},
+		{4, 1, map[int64]struct{}{6: {}}, 1},
 
 		// version 2
-		{0, 2, map[int64]int64{0: 0}, 0},
-		{0, 2, map[int64]int64{2: 0}, 0},
-		{2, 2, map[int64]int64{0: 0}, 1},
-		{2, 2, map[int64]int64{1: 0}, 1},
-		{2, 2, map[int64]int64{2: 0}, 0},
-		{2, 2, map[int64]int64{3: 0}, 0},
+		{0, 2, map[int64]struct{}{0: {}}, 0},
+		{0, 2, map[int64]struct{}{2: {}}, 0},
+		{2, 2, map[int64]struct{}{0: {}}, 1},
+		{2, 2, map[int64]struct{}{1: {}}, 1},
+		{2, 2, map[int64]struct{}{2: {}}, 0},
+		{2, 2, map[int64]struct{}{3: {}}, 0},
 
 		// version 3
-		{1, 3, map[int64]int64{1: 0, 2: 0}, 0},
-		{1, 3, map[int64]int64{2: 0}, 1},
-		{2, 3, map[int64]int64{1: 0, 3: 0}, 1},
-		{2, 3, map[int64]int64{2: 0, 3: 0}, 0},
+		{1, 3, map[int64]struct{}{1: {}, 2: {}}, 0},
+		{1, 3, map[int64]struct{}{2: {}}, 1},
+		{2, 3, map[int64]struct{}{1: {}, 3: {}}, 1},
+		{2, 3, map[int64]struct{}{2: {}, 3: {}}, 0},
 	}
 
 	for _, testCase := range tests {

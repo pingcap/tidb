@@ -45,7 +45,7 @@ func (c *groupingFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinGroupingSig{bf, 0, map[int64]int64{}}
+	sig := &builtinGroupingSig{bf, 0, map[int64]struct{}{}}
 	sig.setPbCode(tipb.ScalarFuncSig_GroupingSig)
 	return sig, nil
 }
@@ -55,14 +55,14 @@ type builtinGroupingSig struct {
 
 	// TODO these are two temporary fields for tests
 	version     uint32
-	groupingIDs map[int64]int64
+	groupingIDs map[int64]struct{}
 }
 
 func (b *builtinGroupingSig) SetMetaVersion(version uint32) {
 	b.version = version
 }
 
-func (b *builtinGroupingSig) SetMetaGroupingIDs(groupingIDs map[int64]int64) {
+func (b *builtinGroupingSig) SetMetaGroupingIDs(groupingIDs map[int64]struct{}) {
 	b.groupingIDs = groupingIDs
 }
 
@@ -86,7 +86,7 @@ func (b *builtinGroupingSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGroupingSig) getMetaGroupingIDs() map[int64]int64 {
+func (b *builtinGroupingSig) getMetaGroupingIDs() map[int64]struct{} {
 	return b.groupingIDs
 }
 
@@ -162,13 +162,8 @@ func (b *builtinGroupingSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 func (b *builtinGroupingSig) groupingVec(groupingIds *chunk.Column, rowNum int, result *chunk.Column) {
 	result.ResizeInt64(rowNum, false)
-	result.MergeNulls(groupingIds)
 	resContainer := result.Int64s()
 	for i := 0; i < rowNum; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-
 		resContainer[i] = b.grouping(groupingIds.GetInt64(i))
 	}
 }
