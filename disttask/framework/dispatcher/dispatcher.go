@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
@@ -43,6 +44,9 @@ var (
 	DefaultDispatchConcurrency = 4
 	checkTaskFinishedInterval  = 500 * time.Millisecond
 	checkTaskRunningInterval   = 300 * time.Millisecond
+	nonRetrySQLTime            = 1
+	retrySQLTimes              = variable.DefTiDBDDLErrorCountLimit
+	retrySQLInterval           = 500 * time.Millisecond
 )
 
 // Dispatch defines the interface for operations inside a dispatcher.
@@ -141,7 +145,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 	for {
 		select {
 		case <-d.ctx.Done():
-			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(d.ctx.Err()))
+			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(d.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
 			cnt := d.getRunningGTaskCnt()
@@ -175,6 +179,8 @@ func (d *dispatcher) DispatchTaskLoop() {
 				}
 
 				err = d.processNormalFlow(gTask)
+				logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
+					zap.String("state", gTask.State), zap.Uint64("con", gTask.Concurrency), zap.Error(err))
 				if err != nil || gTask.IsFinished() {
 					continue
 				}
@@ -274,7 +280,7 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr string) bool {
 		if gTask.State == proto.TaskStateReverting {
 			// Finish the rollback step.
 			logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("taskID", gTask.ID))
-			err = d.updateTaskRevertInfo(gTask)
+			err = d.updateTask(gTask, proto.TaskStateReverted, retrySQLTimes)
 		} else {
 			// Finish the normal step.
 			logutil.BgLogger().Info("process flow, process normal", zap.Int64("taskID", gTask.ID))
@@ -291,16 +297,26 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr string) bool {
 	return false
 }
 
-func (d *dispatcher) updateTaskRevertInfo(gTask *proto.Task) error {
+func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, retryTimes int) (err error) {
 	prevState := gTask.State
-	// TODO: Add error msg to task.
-	gTask.State = proto.TaskStateReverted
-	// Write the global task meta into the storage.
-	err := d.gTaskMgr.UpdateTask(gTask)
-	if err != nil {
-		logutil.BgLogger().Warn("update global task failed",
-			zap.String("previous state", prevState), zap.String("curr state", gTask.State), zap.Error(err))
-		gTask.State = prevState
+	for i := 0; i < retryTimes; i++ {
+		gTask.State = gTaskState
+		// Write the global task meta into the storage.
+		err = d.gTaskMgr.UpdateTask(gTask)
+		if err == nil {
+			break
+		}
+		if i%10 == 0 {
+			logutil.BgLogger().Warn("update global task first failed", zap.Int64("taskID", gTask.ID),
+				zap.String("previous state", prevState), zap.String("curr state", gTask.State),
+				zap.Int("retry times", retryTimes), zap.Error(err))
+		}
+		time.Sleep(retrySQLInterval)
+	}
+	if err != nil && retryTimes != nonRetrySQLTime {
+		logutil.BgLogger().Warn("update global task failed and delete running task info", zap.Int64("taskID", gTask.ID),
+			zap.String("previous state", prevState), zap.String("curr state", gTask.State), zap.Int("retry times", retryTimes), zap.Error(err))
+		d.delRunningGTask(gTask.ID)
 	}
 	return err
 }
@@ -320,19 +336,12 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 	}
 
 	if len(instanceIDs) == 0 {
-		return d.updateTaskRevertInfo(gTask)
+		return d.updateTask(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 
 	// TODO: UpdateTask and AddNewTask in a txn.
-	prevState := gTask.State
-	defer func() {
-		if err != nil {
-			gTask.State = prevState
-		}
-	}()
-	gTask.State = proto.TaskStateReverting
 	// Write the global task meta into the storage.
-	err = d.gTaskMgr.UpdateTask(gTask)
+	err = d.updateTask(gTask, proto.TaskStateReverting, retrySQLTimes)
 	if err != nil {
 		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 		return err
@@ -354,15 +363,15 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-		return d.updateTaskRevertInfo(gTask)
+		return d.updateTask(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
 		return err
 	}
-	logutil.BgLogger().Info("process normal flow", zap.Uint64("con", gTask.Concurrency),
-		zap.Int64("task ID", gTask.ID), zap.String("state", gTask.State), zap.Int("subtasks", len(metas)))
+	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),
+		zap.String("state", gTask.State), zap.Uint64("con", gTask.Concurrency), zap.Int("subtasks", len(metas)))
 
 	// Adjust the global task's concurrency.
 	if gTask.Concurrency == 0 {
@@ -372,24 +381,20 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		gTask.Concurrency = MaxSubtaskConcurrency
 	}
 
-	prevState := gTask.State
-	defer func() {
-		if err != nil {
-			gTask.State = prevState
-		}
-	}()
+	retryTimes := retrySQLTimes
 	// Special handling for the new tasks.
-	if prevState == proto.TaskStatePending {
+	if gTask.State == proto.TaskStatePending {
 		// TODO: Consider using TS.
 		gTask.StartTime = time.Now().UTC()
 		gTask.State = proto.TaskStateRunning
 		gTask.StateUpdateTime = time.Now().UTC()
+		retryTimes = nonRetrySQLTime
 	}
+
 	if len(metas) == 0 {
-		gTask.State = proto.TaskStateSucceed
 		gTask.StateUpdateTime = time.Now().UTC()
 		// Write the global task meta into the storage.
-		err = d.gTaskMgr.UpdateTask(gTask)
+		err = d.updateTask(gTask, proto.TaskStateSucceed, retryTimes)
 		if err != nil {
 			logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 			return err
@@ -399,7 +404,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 
 	// TODO: UpdateTask and AddNewTask in a txn.
 	// Write the global task meta into the storage.
-	err = d.gTaskMgr.UpdateTask(gTask)
+	err = d.updateTask(gTask, gTask.State, retryTimes)
 	if err != nil {
 		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 		return err
