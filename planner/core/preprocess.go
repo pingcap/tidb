@@ -255,7 +255,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
 		p.resolveCreateTableStmt(node)
-		p.checkCreateTableGrammar(node)
+		if node.JsonFile == "" {
+			p.checkCreateTableGrammar(node)
+		}
 	case *ast.CreateViewStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable

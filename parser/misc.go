@@ -730,6 +730,7 @@ var tokenMap = map[string]int{
 	"SYSTEM_TIME":              systemTime,
 	"TARGET":                   target,
 	"TABLE_CHECKSUM":           tableChecksum,
+	"TABLE_FROM_JSON":          tableFromJson,
 	"TABLE":                    tableKwd,
 	"TABLES":                   tables,
 	"TABLESAMPLE":              tableSample,

@@ -21,7 +21,9 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"math"
 	"strconv"
 	"strings"
@@ -2344,7 +2346,33 @@ func (d *ddl) assignPartitionIDs(defs []model.PartitionDefinition) error {
 	return nil
 }
 
+func (d *ddl) readJsonFileAndParse(jsonFile string) (*model.TableInfo, error) {
+	// read json file and parse it to TableInfo
+	file, err := ioutil.ReadFile(jsonFile)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var tblInfo model.TableInfo
+	err = json.Unmarshal([]byte(file), &tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &tblInfo, nil
+}
+
 func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+	if s.JsonFile != "" {
+		// read json file and parse it to TableInfo
+		tblInfo, err := d.readJsonFileAndParse(s.JsonFile)
+		if err != nil {
+			return err
+		}
+		onExist := OnExistError
+		if s.IfNotExists {
+			onExist = OnExistIgnore
+		}
+		return d.CreateTableWithInfo(ctx, model.NewCIStr("test"), tblInfo, onExist)
+	}
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)

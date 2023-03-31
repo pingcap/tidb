@@ -254,6 +254,7 @@ import (
 	straightJoin      "STRAIGHT_JOIN"
 	tidbCurrentTSO    "TiDB_CURRENT_TSO"
 	tableKwd          "TABLE"
+	tableFromJson     "TABLE_FROM_JSON"
 	tableSample       "TABLESAMPLE"
 	stored            "STORED"
 	terminated        "TERMINATED"
@@ -4083,6 +4084,15 @@ CreateTableStmt:
 		}
 		$$ = tmp
 	}
+|	"CREATE" "TABLE_FROM_JSON" IfNotExists TableName stringLit
+	{
+		$$ = &ast.CreateTableStmt{
+			Table:       $4.(*ast.TableName),
+			IfNotExists: $3.(bool),
+			JsonFile:    $5,
+		}
+	}
+
 
 OnCommitOpt:
 	{
