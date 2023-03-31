@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	. "github.com/pingcap/tidb/parser/ast"
 	. "github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/test_driver"
 	"github.com/stretchr/testify/require"
 )
@@ -122,6 +123,15 @@ type nodeTextCleaner struct {
 func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
+	if v, ok := in.(ValueExpr); ok && v != nil {
+		tpFlag := v.GetType().GetFlag()
+		if tpFlag&mysql.UnderScoreCharsetFlag != 0 {
+			// ignore underscore charset flag to let `'abc' = _utf8'abc'` pass
+			tpFlag ^= mysql.UnderScoreCharsetFlag
+			v.GetType().SetFlag(tpFlag)
+		}
+	}
+
 	switch node := in.(type) {
 	case *Constraint:
 		if node.Option != nil {
