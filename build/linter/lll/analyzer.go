@@ -86,6 +86,7 @@ func runLll(pass *analysis.Pass, settings *settings) error {
 func getLLLIssuesForFile(filename string, maxLineLen int, tabSpaces string) ([]result, error) {
 	var res []result
 
+	// nolint:gosec
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("can't open file %s: %s", filename, err)
