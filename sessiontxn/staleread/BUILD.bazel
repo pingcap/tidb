@@ -53,6 +53,7 @@ go_test(
         "//parser/auth",
         "//sessionctx",
         "//sessiontxn",
+        "//store/mockstore",
         "//table/temptable",
         "//testkit",
         "//testkit/testsetup",

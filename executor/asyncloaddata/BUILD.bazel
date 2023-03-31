@@ -41,6 +41,7 @@ go_test(
         "//executor/importer",
         "//kv",
         "//parser/auth",
+        "//store/mockstore",
         "//testkit",
         "//util/sqlexec",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
