@@ -315,6 +315,11 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		}
 		return in, !checker.cacheable
 	case *driver.ValueExpr:
+		if node.GetType().GetFlag()&mysql.UnderScoreCharsetFlag > 0 {
+			// for safety, not support values with under-score charsets, e.g. select _latin1'abc' from t.
+			checker.cacheable = false
+			checker.reason = "query has values with under-score charset"
+		}
 		if node.IsNull() {
 			// for a condition like `not-null-col = null`, the planner will optimize it to `False` and generate a
 			// table-dual plan, but if it is converted to `not-null-col = ?` here, then the planner cannot do this
