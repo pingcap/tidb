@@ -1750,6 +1750,45 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("create table t2 (a int, b int, c int)")
+	tk.MustExec("create table t3 (a int, b int, c int)")
+
+	supported := []string{
+		"select * from t1, t2 where t1.a=t2.a and t1.b<10",
+		"select * from t1, t2",
+		"select * from t1, t2 where t1.a<t2.a and t2.c=10",
+		"select * from t1 tx, t1 ty",
+		"select * from t1 tx, t1 ty where tx.a=ty.a",
+		"select * from t1 inner join t2",
+		"select * from t1 inner join t2 on t1.a=t2.a",
+		"select * from t1 inner join t2 on t1.a=t2.a and t2.c<10",
+		"select * from t1 left join t2 on t1.a=t2.a",
+		"select * from t1 left join t2 on t1.a=t2.a and t2.c<10",
+	}
+	unsupported := []string{
+		"select * from t1, t2, t3",                // 3-way join
+		"select * from t1, t2, t1 tx",             // 3-way join
+		"select * from t1, (select * from t2) t2", // subquery
+	}
+
+	for _, sql := range supported {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
+	for _, sql := range unsupported {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+}
+
 func TestNonPreparedPlanCacheAgg(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
