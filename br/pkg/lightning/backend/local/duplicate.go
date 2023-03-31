@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
-	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -911,8 +910,8 @@ func (m *DupeDetector) CollectDuplicateRowsFromTiKV(ctx context.Context, importC
 // DupeController is used to collect duplicate keys from local and remote data source and resolve duplication.
 type DupeController struct {
 	splitCli  split.SplitClient
-	tikvCli   *tikvclient.KVStore
-	tikvCodec tikvclient.Codec
+	tikvCli   *tikv.KVStore
+	tikvCodec tikv.Codec
 	errorMgr  *errormanager.ErrorManager
 	// number of workers to do duplicate detection on local db and TiKV
 	// on TiKV, it is the max number of regions being checked concurrently
