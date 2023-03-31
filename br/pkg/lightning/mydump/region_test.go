@@ -165,10 +165,24 @@ func TestAllocateEngineIDs(t *testing.T) {
 	})
 }
 
-func TestMakeSourceFileRegion(t *testing.T) {
-	meta := &MDTableMeta{
-		DB:   "csv",
-		Name: "large_csv_file",
+func TestMakeTableRegionsSplitLargeFile(t *testing.T) {
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			MaxRegionSize: 1,
+			CSV: config.CSVConfig{
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              []string{"NULL"},
+				EscapedBy:         `\`,
+			},
+			StrictFormat: true,
+			Filter:       []string{"*.*"},
+		},
 	}
 	filePath := "./csv/split_large_file.csv"
 	dataFileInfo, err := os.Stat(filePath)
@@ -177,15 +191,19 @@ func TestMakeSourceFileRegion(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := 3
 	columns := []string{"a", "b", "c"}
+	meta := &MDTableMeta{
+		DB:        "csv",
+		Name:      "large_csv_file",
+		DataFiles: []FileInfo{fileInfo},
+	}
 
 	ctx := context.Background()
+	store, err := storage.NewLocalStorage(".")
+	assert.NoError(t, err)
 
-	fileInfo.FileMeta.Compression = CompressionNone
-	divideConfig := &DataDivideConfig{
-		ColumnCnt: colCnt,
-		TableMeta: meta,
-	}
-	regions, _, err := MakeSourceFileRegion(ctx, divideConfig, fileInfo)
+	meta.DataFiles[0].FileMeta.Compression = CompressionNone
+	divideConfig := NewDataDivideConfig(cfg, colCnt, nil, store, meta)
+	regions, err := MakeTableRegions(ctx, divideConfig)
 	assert.NoError(t, err)
 	offsets := [][]int64{{6, 12}, {12, 18}, {18, 24}, {24, 30}}
 	assert.Len(t, regions, len(offsets))
@@ -196,8 +214,8 @@ func TestMakeSourceFileRegion(t *testing.T) {
 	}
 
 	// test - gzip compression
-	fileInfo.FileMeta.Compression = CompressionGZ
-	regions, _, err = MakeSourceFileRegion(ctx, divideConfig, fileInfo)
+	meta.DataFiles[0].FileMeta.Compression = CompressionGZ
+	regions, err = MakeTableRegions(ctx, divideConfig)
 	assert.NoError(t, err)
 	assert.Len(t, regions, 1)
 	assert.Equal(t, int64(0), regions[0].Chunk.Offset)
