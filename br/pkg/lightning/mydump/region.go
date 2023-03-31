@@ -145,6 +145,7 @@ func AllocateEngineIDs(
 	}
 }
 
+// DataDivideConfig config used to divide data files into chunks/engines(regions in this context).
 type DataDivideConfig struct {
 	ColumnCnt int
 	// limit of engine size, we have a complex algorithm to calculate the best engine size, see AllocateEngineIDs.
@@ -175,6 +176,7 @@ type DataDivideConfig struct {
 	CSV                    config.CSVConfig
 }
 
+// NewDataDivideConfig creates a new DataDivideConfig from lightning cfg.
 func NewDataDivideConfig(cfg *config.Config,
 	columns int,
 	ioWorkers *worker.Pool,
