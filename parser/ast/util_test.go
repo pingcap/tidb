@@ -15,13 +15,13 @@ package ast_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/parser/mysql"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/parser"
 	. "github.com/pingcap/tidb/parser/ast"
 	. "github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/test_driver"
 	"github.com/stretchr/testify/require"
 )
