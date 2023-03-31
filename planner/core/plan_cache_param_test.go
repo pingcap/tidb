@@ -56,6 +56,24 @@ func TestParameterize(t *testing.T) {
 			[]interface{}{"a", "bbbbbbbbbbbbbbbbbbbbbbbb"},
 			"SELECT * FROM `t` WHERE `a`=_UTF8MB4'a' AND `b`=_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbb'",
 		},
+		{
+			"select 1, 2, 3 from t where a<10",
+			"SELECT 1,2,3 FROM `t` WHERE `a`<?",
+			[]interface{}{int64(10)},
+			"SELECT 1,2,3 FROM `t` WHERE `a`<10",
+		},
+		{
+			"select a+1 from t where a<10",
+			"SELECT `a`+1 FROM `t` WHERE `a`<?",
+			[]interface{}{int64(10)},
+			"SELECT `a`+1 FROM `t` WHERE `a`<10",
+		},
+		{
+			"select a+1, sum(b) from t where a<10 group by a+1",
+			"SELECT `a`+1,SUM(`b`) FROM `t` WHERE `a`<? GROUP BY `a`+1",
+			[]interface{}{int64(10)},
+			"SELECT `a`+1,SUM(`b`) FROM `t` WHERE `a`<10 GROUP BY `a`+1",
+		},
 		// TODO: more test cases
 	}
 

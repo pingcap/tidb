@@ -223,9 +223,8 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		return false, "not a select statement"
 	}
 	if len(selectStmt.TableHints) > 0 || // hints
-		selectStmt.Distinct || selectStmt.GroupBy != nil || selectStmt.Having != nil || // agg
+		selectStmt.Having != nil || // having
 		selectStmt.WindowSpecs != nil || // window function
-		selectStmt.OrderBy != nil || // order
 		selectStmt.Limit != nil || // limit
 		selectStmt.LockInfo != nil || selectStmt.SelectIntoOpt != nil { // lock info
 		return false, "queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
@@ -239,17 +238,20 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		// We don't support the join for the non-prepared plan cache now.
 		return false, "queries that access multiple tables are not supported"
 	}
+
+	var tableNode *ast.TableName
 	switch x := tableRefs.Left.(type) {
 	case *ast.TableSource:
-		_, isTableName := x.Source.(*ast.TableName)
+		tbl, isTableName := x.Source.(*ast.TableName)
 		if !isTableName {
 			return false, "queries that have sub-queries are not supported"
 		}
+		tableNode = tbl
 	}
 
 	// allocate and init the checker
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
-	checker.reset(sctx, is)
+	checker.reset(sctx, is, tableNode)
 
 	node.Accept(checker)
 	cacheable, reason := checker.cacheable, checker.reason
@@ -273,12 +275,12 @@ type nonPreparedPlanCacheableChecker struct {
 	filterCnt int // the number of filters in the current node
 }
 
-func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema) {
+func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema, tableNode *ast.TableName) {
 	checker.sctx = sctx
 	checker.cacheable = true
 	checker.schema = schema
 	checker.reason = ""
-	checker.tableNode = nil
+	checker.tableNode = tableNode
 	checker.constCnt = 0
 	checker.filterCnt = 0
 }
@@ -291,7 +293,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr,
-		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr:
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.ColumnName:
 		if checker.filterCnt > 0 {
@@ -306,10 +308,10 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			}
 		}
 		return in, !checker.cacheable
-	case *ast.BinaryOperationExpr:
-		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
+	case *ast.FuncCallExpr:
+		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
-			checker.reason = "query has some unsupported binary operation"
+			checker.reason = "query has un-cacheable functions"
 		}
 		return in, !checker.cacheable
 	case *driver.ValueExpr:
@@ -326,8 +328,25 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.reason = "query has more than 50 constants"
 		}
 		return in, !checker.cacheable
+	case *ast.GroupByClause:
+		for _, item := range node.Items {
+			if _, isPos := item.Expr.(*ast.PositionExpr); isPos {
+				checker.cacheable = false
+				checker.reason = "query has group by position"
+				return in, !checker.cacheable
+			}
+		}
+		return in, !checker.cacheable
+	case *ast.OrderByClause:
+		for _, item := range node.Items {
+			if _, isPos := item.Expr.(*ast.PositionExpr); isPos {
+				checker.cacheable = false
+				checker.reason = "query has order by position"
+				return in, !checker.cacheable
+			}
+		}
+		return in, !checker.cacheable
 	case *ast.TableName:
-		checker.tableNode = node
 		if filter.IsSystemSchema(node.Schema.O) {
 			checker.cacheable = false
 			checker.reason = "access tables in system schema"

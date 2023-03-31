@@ -991,8 +991,9 @@ const (
 	ErrWarnMemoryQuotaOverflow             = 8063
 	ErrWarnOptimizerHintParseError         = 8064
 	ErrWarnOptimizerHintInvalidInteger     = 8065
-	ErrUnsupportedSecondArgumentType       = 8066
-	ErrColumnNotMatched                    = 8067
+	ErrWarnOptimizerHintWrongPos           = 8066
+	ErrUnsupportedSecondArgumentType       = 8067
+	ErrColumnNotMatched                    = 8068
 	ErrInvalidPluginID                     = 8101
 	ErrInvalidPluginManifest               = 8102
 	ErrInvalidPluginName                   = 8103
