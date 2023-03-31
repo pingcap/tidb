@@ -285,4 +285,4 @@ replace (
 
 replace github.com/pingcap/kvproto => github.com/Lloyd-Pottiger/kvproto v0.0.0-20230330085733-53f6de19158c
 
-replace github.com/tikv/client-go/v2 => /data1/qiuyang/projects/client-go
+replace github.com/tikv/client-go/v2 => github.com/Lloyd-Pottiger/client-go/v2 v2.0.0-20230331050153-a81383b29c0e

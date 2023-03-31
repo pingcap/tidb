@@ -416,6 +416,8 @@ github.com/Jeffail/gabs/v2 v2.5.1 h1:ANfZYjpMlfTTKebycu4X1AgkVWumFVDYQl7JwOr4mDk
 github.com/Jeffail/gabs/v2 v2.5.1/go.mod h1:xCn81vdHKxFUuWWAaD5jCTQDNPBMh5pPs9IJ+NcziBI=
 github.com/Joker/hpp v1.0.0/go.mod h1:8x5n+M1Hp5hC0g8okX3sR3vFQwynaX/UgSOM9MeBKzY=
 github.com/Joker/jade v1.0.1-0.20190614124447-d475f43051e7/go.mod h1:6E6s8o2AE4KhCrqr6GRJjdC/gNfTdxkIXvuGZZda2VM=
+github.com/Lloyd-Pottiger/client-go/v2 v2.0.0-20230331050153-a81383b29c0e h1:wc3puedJfd5W4ECGkXij3JrHqvHHDlmDpak7+08wAUU=
+github.com/Lloyd-Pottiger/client-go/v2 v2.0.0-20230331050153-a81383b29c0e/go.mod h1:fqVAIRVacZay0p05MeHwNAEQiyaEvMQ7wilU8AGaZTw=
 github.com/Lloyd-Pottiger/kvproto v0.0.0-20230330085733-53f6de19158c h1:LiIb8faoKMXhirn/qvRfv1HWN23tVyjCvd5puQXUB74=
 github.com/Lloyd-Pottiger/kvproto v0.0.0-20230330085733-53f6de19158c/go.mod h1:RjuuhxITxwATlt5adgTedg3ehKk01M03L1U4jNHdeeQ=
 github.com/Masterminds/goutils v1.1.1 h1:5nUrii3FMTL5diU80unEVvNevw1nH4+ZV4DSLVJLSYI=
