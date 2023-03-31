@@ -1029,7 +1029,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 		if err1 != nil {
 			return err1
 		}
-		keys = txnCtx.CollectUnchangedRowKeys(keys)
+		keys = txnCtx.CollectUnchangedKeysForLock(keys)
 		if len(keys) == 0 {
 			return nil
 		}
