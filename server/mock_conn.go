@@ -15,10 +15,10 @@
 package server
 
 import (
-	"github.com/pingcap/tidb/session"
 	"bufio"
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/session"
 	"math/rand"
 	"testing"
 
