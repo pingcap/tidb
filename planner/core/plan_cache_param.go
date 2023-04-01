@@ -47,26 +47,52 @@ var (
 	}}
 )
 
+// paramReplacer is an ast.Visitor that replaces all values with `?` and collects them.
 type paramReplacer struct {
 	params []*driver.ValueExpr
+
+	// Skip all values in SelectField, e.g.
+	// `select a+1 from t where a<10 and b<23` should be parameterized to
+	// `select a+1 from t where a<? and b<?`, instead of
+	// `select a+? from t where a<? and b<?`.
+	// This is to make the output field names be corresponding to these values.
+	// Use int instead of bool to support nested SelectField.
+	selFieldsCnt int
+
+	// Skip all values in GroupByClause since them can affect the full_group_by check, e.g.
+	// `select a*2 from t group by a*?` cannot pass the full_group_by check.
+	groupByCnt int
 }
 
 func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
+	case *ast.SelectField:
+		pr.selFieldsCnt++
+	case *ast.GroupByClause:
+		pr.groupByCnt++
 	case *driver.ValueExpr:
-		pr.params = append(pr.params, n)
-		// offset is used as order in non-prepared plan cache.
-		param := ast.NewParamMarkerExpr(len(pr.params) - 1)
-		return param, true
+		if pr.selFieldsCnt == 0 && // not in SelectField
+			pr.groupByCnt == 0 { // not in GroupBy
+			pr.params = append(pr.params, n)
+			param := ast.NewParamMarkerExpr(len(pr.params) - 1)      // offset is used as order in non-prepared plan cache.
+			param.(*driver.ParamMarkerExpr).Datum = *n.Datum.Clone() // init the ParamMakerExpr's Datum
+			return param, true
+		}
 	}
 	return in, false
 }
 
 func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
+	switch in.(type) {
+	case *ast.SelectField:
+		pr.selFieldsCnt--
+	case *ast.GroupByClause:
+		pr.groupByCnt--
+	}
 	return in, true
 }
 
-func (pr *paramReplacer) Reset() { pr.params = nil }
+func (pr *paramReplacer) Reset() { pr.params, pr.selFieldsCnt, pr.groupByCnt = nil, 0, 0 }
 
 // ParameterizeAST parameterizes this StmtNode.
 // e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23].
@@ -136,7 +162,7 @@ func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
 	exprs := make([]expression.Expression, 0, len(params))
 	for _, p := range params {
 		tp := new(types.FieldType)
-		types.DefaultParamTypeForValue(p.Datum.GetValue(), tp)
+		types.InferParamTypeFromDatum(&p.Datum, tp)
 		exprs = append(exprs, &expression.Constant{
 			Value:   p.Datum,
 			RetType: tp,

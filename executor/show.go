@@ -2161,7 +2161,8 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 		e.result.AppendString(6, info.ImportMode)
 		e.result.AppendString(7, info.User)
 		e.result.AppendString(8, "loading")
-		e.result.AppendString(9, info.Status.String())
+		status := info.Status
+		e.result.AppendString(9, status.String())
 		progress, err2 := asyncloaddata.ProgressFromJSON([]byte(info.Progress))
 		if err2 != nil {
 			// maybe empty progress
@@ -2172,7 +2173,7 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 			e.result.AppendNull(11)
 		} else {
 			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
-			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize)))
+			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize.Load())))
 		}
 		terr := new(terror.Error)
 		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))
@@ -2181,7 +2182,11 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 			e.result.AppendString(13, terr.GetMsg())
 			return
 		}
-		e.result.AppendInt64(12, 0)
+		if status == asyncloaddata.JobFinished {
+			e.result.AppendInt64(12, 0)
+		} else {
+			e.result.AppendNull(12)
+		}
 		e.result.AppendString(13, info.StatusMessage)
 	}
 

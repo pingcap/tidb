@@ -15,14 +15,17 @@
 package dispatcher
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/util/syncutil"
+	"golang.org/x/exp/maps"
 )
 
 // TaskFlowHandle is used to control the process operations for each global task.
 type TaskFlowHandle interface {
-	ProcessNormalFlow(d Dispatch, gTask *proto.Task) (metas [][]byte, err error)
-	ProcessErrFlow(d Dispatch, gTask *proto.Task, receive string) (meta []byte, err error)
+	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (metas [][]byte, err error)
+	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receive string) (meta []byte, err error)
 }
 
 var taskFlowHandleMap struct {
@@ -34,6 +37,13 @@ var taskFlowHandleMap struct {
 func RegisterTaskFlowHandle(taskType string, dispatcherHandle TaskFlowHandle) {
 	taskFlowHandleMap.Lock()
 	taskFlowHandleMap.handleMap[taskType] = dispatcherHandle
+	taskFlowHandleMap.Unlock()
+}
+
+// ClearTaskFlowHandle is only used in test
+func ClearTaskFlowHandle() {
+	taskFlowHandleMap.Lock()
+	maps.Clear(taskFlowHandleMap.handleMap)
 	taskFlowHandleMap.Unlock()
 }
 

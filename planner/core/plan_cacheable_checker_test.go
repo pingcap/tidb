@@ -298,6 +298,11 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t where a in (1, 2) and b < 15",
 		"select * from test.t where a between 1 and 10",
 		"select * from test.t where a between 1 and 10 and b < 15",
+		"select * from test.t where a+b=13",      // '+'
+		"select * from test.t where mod(a, 3)=1", // mod
+		"select * from test.t where d>now()",     // now
+		"select a+1 from test.t where a<13",
+		"select mod(a, 10) from test.t where a<13",
 	}
 
 	unsupported := []string{
@@ -316,10 +321,6 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t1 for update",                                                      // lock
 		"select * from test.t1 where a in (select a from t)",                                    // uncorrelated sub-query
 		"select * from test.t1 where a in (select a from test.t where a > t1.a)",                // correlated sub-query
-
-		"select * from test.t where a+b=13",      // '+'
-		"select * from test.t where mod(a, 3)=1", // mod
-		"select * from test.t where d>now()",     // now
 	}
 
 	for _, q := range unsupported {
