@@ -303,6 +303,7 @@
       ".*pb\\.go$": "ignore generated code",
       "br/pkg/errors/errors.go": "ignore error",
       "br/pkg/rtree/logging_test.go": "ignore rtree code",
+      "br/pkg/storage/": "ignore storage code",
       "util/column-mapping/column.go": "ignore error",
       "parser/mysql/": "ignore mysql code",
       "parser/auth": "ignore auth code",
