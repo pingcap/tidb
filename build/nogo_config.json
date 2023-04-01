@@ -317,7 +317,8 @@
       "parser/digester.go": "ignore digester code",
       "errno/errname.go": "ignore errname code",
       "planner/funcdep/fd_graph.go": "ignore fd_graph code",
-      "planner/funcdep/doc.go": "ignore funcdep code"
+      "planner/funcdep/doc.go": "ignore funcdep code",
+      "ddl/placement/": "ignore placement code"
     },
      "only_files": {
        "br/": "only for br code",
