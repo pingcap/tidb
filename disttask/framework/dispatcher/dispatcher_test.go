@@ -130,13 +130,27 @@ const (
 )
 
 func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
+	// test DispatchTaskLoop
+	// test parallelism control
+	var originalConcurrency int
+	if taskCnt == 1 {
+		originalConcurrency = dispatcher.DefaultDispatchConcurrency
+		dispatcher.DefaultDispatchConcurrency = 1
+	}
+
 	dsp, gTaskMgr, subTaskMgr, store := MockDispatcher(t)
 	dsp.Start()
-	defer dsp.Stop()
+	defer func() {
+		dsp.Stop()
+		// make data race happy
+		if taskCnt == 1 {
+			dispatcher.DefaultDispatchConcurrency = originalConcurrency
+		}
+	}()
 
 	dispatcher.RegisterTaskFlowHandle(taskTypeExample, NumberExampleHandle{})
 
-	cnt := 10
+	cnt := 20
 	checkGetRunningGTaskCnt := func() {
 		var retCnt int
 		for i := 0; i < cnt; i++ {
@@ -149,15 +163,6 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		require.Equal(t, retCnt, taskCnt)
 	}
 
-	// test DispatchTaskLoop
-	// test parallelism control
-	if taskCnt == 1 {
-		originalConcurrency := dispatcher.DefaultDispatchConcurrency
-		dispatcher.DefaultDispatchConcurrency = 1
-		defer func() {
-			dispatcher.DefaultDispatchConcurrency = originalConcurrency
-		}()
-	}
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
