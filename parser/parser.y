@@ -175,6 +175,7 @@ import (
 	int3Type          "INT3"
 	int4Type          "INT4"
 	int8Type          "INT8"
+	iterate           "ITERATE"
 	join              "JOIN"
 	key               "KEY"
 	keys              "KEYS"
@@ -183,6 +184,7 @@ import (
 	lastValue         "LAST_VALUE"
 	lead              "LEAD"
 	leading           "LEADING"
+	leave             "LEAVE"
 	left              "LEFT"
 	like              "LIKE"
 	ilike             "ILIKE"
@@ -278,6 +280,7 @@ import (
 	union             "UNION"
 	unlock            "UNLOCK"
 	unsigned          "UNSIGNED"
+	until             "UNTIL"
 	update            "UPDATE"
 	usage             "USAGE"
 	use               "USE"
@@ -1024,6 +1027,10 @@ import (
 	ProcedureFetchInto         "Procedure fetch into cursor"
 	ProcedureHcond             "Procedure handle error condition"
 	ProcedurceCond             "Procedure handle error code"
+	ProcedureLabeledBlock      "Procedure label block"
+	ProcedureStmtLabeled       "Procedure label loop"
+	ProcedureIterate           "Procedure label iterate"
+	ProcedureLeave             "Procedure label leave"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -1515,6 +1522,7 @@ import (
 	StringName                      "string literal or identifier"
 	StringNameOrBRIEOptionKeyword   "string literal or identifier or keyword used for BRIE options"
 	Symbol                          "Constraint Symbol"
+	ProcedurceLabelOpt              "Procedure label name opt"
 
 %precedence empty
 %precedence as
@@ -15188,6 +15196,69 @@ ProcedureUnlabeledControl:
 			Body:      $4.([]ast.StmtNode),
 		}
 	}
+|	"REPEAT" ProcedureProcStmt1s "UNTIL" Expression "END" "REPEAT"
+	{
+		$$ = &ast.ProcedureRepeatStmt{
+			Body:      $2.([]ast.StmtNode),
+			Condition: $4.(ast.ExprNode),
+		}
+	}
+
+ProcedureLabeledBlock:
+	identifier ':' ProcedureBlockContent ProcedurceLabelOpt
+	{
+		labelBlock := &ast.ProcedureLabelBlock{
+			LableName: $1,
+			Block:     $3.(*ast.ProcedureBlock),
+		}
+		if $4 != "" && ($1 != $4) {
+			labelBlock.LableError = true
+			labelBlock.LableEnd = $4
+		}
+		$$ = labelBlock
+	}
+
+ProcedurceLabelOpt:
+	/* Empty  */
+	{
+		$$ = ""
+	}
+|	identifier
+	{
+		$$ = $1
+	}
+
+ProcedureStmtLabeled:
+	identifier ':' ProcedureUnlabeledControl ProcedurceLabelOpt
+	{
+		labelLoop := &ast.ProcedureLabelLoop{
+			LableName: $1,
+			Block:     $3.(ast.StmtNode),
+		}
+		if $4 != "" && ($1 != $4) {
+			labelLoop.LableError = true
+			labelLoop.LableEnd = $4
+		}
+		$$ = labelLoop
+	}
+
+ProcedureIterate:
+	"ITERATE" identifier
+	{
+		$$ = &ast.ProcedureJump{
+			Name:    $2,
+			IsLeave: false,
+		}
+	}
+
+ProcedureLeave:
+	"LEAVE" identifier
+	{
+		$$ = &ast.ProcedureJump{
+			Name:    $2,
+			IsLeave: true,
+		}
+	}
 
 ProcedureProcStmt:
 	ProcedureStatementStmt
@@ -15198,6 +15269,10 @@ ProcedureProcStmt:
 |	ProcedureOpenCur
 |	ProcedureCloseCur
 |	ProcedureFetchInto
+|	ProcedureLabeledBlock
+|	ProcedureStmtLabeled
+|	ProcedureIterate
+|	ProcedureLeave
 
 /********************************************************************************************
  *

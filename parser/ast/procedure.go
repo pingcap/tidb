@@ -34,10 +34,16 @@ var (
 	_ StmtNode = &ProcedureIfBlock{}
 	_ StmtNode = &SimpleWhenCaseStmt{}
 	_ StmtNode = &ProcedureIfInfo{}
+	_ StmtNode = &ProcedureLabelBlock{}
+	_ StmtNode = &ProcedureLabelLoop{}
+	_ StmtNode = &ProcedureJump{}
 
 	_ DeclNode = &ProcedureErrorControl{}
 	_ DeclNode = &ProcedureCursor{}
 	_ DeclNode = &ProcedureDecl{}
+
+	_ LableInfo = &ProcedureLabelBlock{}
+	_ LableInfo = &ProcedureLabelLoop{}
 
 	_ ErrNode = &ProcedureErrorCon{}
 	_ ErrNode = &ProcedureErrorVal{}
@@ -76,6 +82,14 @@ type ProcedureDeclInfo struct {
 
 type ProcedureErrorList struct {
 	stmtNode
+}
+
+// LableInfo interface
+type LableInfo interface {
+	GetErrorStatus() (string, bool)
+	GetLableName() string
+	IsBlock() bool
+	GetBlock() StmtNode
 }
 
 // StoreParameter Stored procedure entry and exit parameters.
@@ -215,7 +229,7 @@ func (n *ProcedureBlock) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WritePlain(";")
 	}
-	ctx.WriteKeyWord(" END;")
+	ctx.WriteKeyWord(" END")
 	return nil
 }
 
@@ -643,6 +657,58 @@ func (n *SearchCaseStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// ProcedureRepeatStmt.
+type ProcedureRepeatStmt struct {
+	stmtNode
+
+	Body      []StmtNode
+	Condition ExprNode
+}
+
+// Restore implements ProcedureRepeatStmt interface.
+func (n *ProcedureRepeatStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("REPEAT ")
+	for _, stmt := range n.Body {
+		err := stmt.Restore(ctx)
+		if err != nil {
+			return err
+		}
+		ctx.WriteKeyWord(";")
+	}
+	ctx.WriteKeyWord("UNTIL ")
+	err := n.Condition.Restore(ctx)
+	if err != nil {
+		return err
+	}
+	ctx.WriteKeyWord(" END REPEAT")
+	return nil
+}
+
+// Accept implements ProcedureRepeatStmt Accept interface.
+func (n *ProcedureRepeatStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureRepeatStmt)
+
+	for i, stmt := range n.Body {
+		node, ok := stmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Body[i] = node.(StmtNode)
+	}
+
+	node, ok := n.Condition.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Condition = node.(ExprNode)
+
+	return v.Leave(n)
+}
+
 // ProcedureWhileStmt
 type ProcedureWhileStmt struct {
 	stmtNode
@@ -931,5 +997,158 @@ func (n *ProcedureErrorCon) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureErrorCon)
+	return v.Leave(n)
+}
+
+// ProcedureLabelBlock stored procedure block.
+type ProcedureLabelBlock struct {
+	stmtNode
+	LableName  string
+	Block      *ProcedureBlock
+	LableError bool
+	LableEnd   string
+}
+
+// Restore implements ProcedureLabelBlock interface.
+func (n *ProcedureLabelBlock) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteName(n.LableName)
+	ctx.WriteKeyWord(": ")
+	err := n.Block.Restore(ctx)
+	if err != nil {
+		return err
+	}
+	if n.LableError {
+		return errors.New("Inconsistent start and end Lable")
+	}
+	ctx.WriteKeyWord(" ")
+	ctx.WriteName(n.LableName)
+	return nil
+}
+
+// Accept implements ProcedureLabelBlock Accept interface.
+func (n *ProcedureLabelBlock) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureLabelBlock)
+
+	node, ok := n.Block.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Block = node.(*ProcedureBlock)
+	// Store Procedure do not check sql justifiability, so don't traverse 	ProcedureProcStmts.
+	return v.Leave(n)
+}
+
+// GetErrorStatus get lable error info.
+func (n *ProcedureLabelBlock) GetErrorStatus() (string, bool) {
+	return n.LableEnd, n.LableError
+}
+
+// GetLableName get label name.
+func (n *ProcedureLabelBlock) GetLableName() string {
+	return n.LableName
+}
+
+// IsBlock get block flag.
+func (n *ProcedureLabelBlock) IsBlock() bool {
+	return true
+}
+
+// GetBlock get label stmtnode
+func (n *ProcedureLabelBlock) GetBlock() StmtNode {
+	return n.Block
+}
+
+// ProcedureLabelLoop stored procedure block.
+type ProcedureLabelLoop struct {
+	stmtNode
+	LableName  string
+	Block      StmtNode
+	LableError bool
+	LableEnd   string
+}
+
+// Restore implements ProcedureLabelLoop interface.
+func (n *ProcedureLabelLoop) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteName(n.LableName)
+	ctx.WriteKeyWord(": ")
+	err := n.Block.Restore(ctx)
+	if err != nil {
+		return err
+	}
+	if n.LableError {
+		return errors.New("Inconsistent start and end Lable")
+	}
+	ctx.WriteKeyWord(" ")
+	ctx.WriteName(n.LableName)
+	return nil
+}
+
+// Accept implements ProcedureLabelBlock Accept interface.
+func (n *ProcedureLabelLoop) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureLabelLoop)
+
+	node, ok := n.Block.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Block = node.(StmtNode)
+	// Store Procedure do not check sql justifiability, so don't traverse 	ProcedureProcStmts.
+	return v.Leave(n)
+}
+
+// GetErrorStatus get lable error info.
+func (n *ProcedureLabelLoop) GetErrorStatus() (string, bool) {
+	return n.LableEnd, n.LableError
+}
+
+// GetLableName get label name.
+func (n *ProcedureLabelLoop) GetLableName() string {
+	return n.LableName
+}
+
+// IsBlock get block flag.
+func (n *ProcedureLabelLoop) IsBlock() bool {
+	return false
+}
+
+// GetBlock get label stmtnode
+func (n *ProcedureLabelLoop) GetBlock() StmtNode {
+	return n.Block
+}
+
+// ProcedureJump stored procedure block.
+type ProcedureJump struct {
+	stmtNode
+	Name    string
+	IsLeave bool
+}
+
+// Restore implements ProcedureIterate interface.
+func (n *ProcedureJump) Restore(ctx *format.RestoreCtx) error {
+	if n.IsLeave {
+		ctx.WriteKeyWord("LEAVE ")
+	} else {
+		ctx.WriteKeyWord("ITERATE ")
+	}
+
+	ctx.WriteString(n.Name)
+	return nil
+}
+
+// Accept implements ProcedureIterate Accept interface.
+func (n *ProcedureJump) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureJump)
 	return v.Leave(n)
 }
