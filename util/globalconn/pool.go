@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
-	"github.com/ngaut/sync2"
 )
 
 const (
@@ -122,11 +121,11 @@ func (p AutoIncPool) String() string {
 // LockFreeCircularPool is a lock-free circular implementation of IDPool.
 // Note that to reduce memory usage, LockFreeCircularPool supports 32bits IDs ONLY.
 type LockFreeCircularPool struct {
-	_    uint64             // align to 64bits
-	head sync2.AtomicUint32 // first available slot
-	_    uint32             // padding to avoid false sharing
-	tail sync2.AtomicUint32 // first empty slot. `head==tail` means empty.
-	_    uint32             // padding to avoid false sharing
+	_    uint64        // align to 64bits
+	head atomic.Uint32 // first available slot
+	_    uint32        // padding to avoid false sharing
+	tail atomic.Uint32 // first empty slot. `head==tail` means empty.
+	_    uint32        // padding to avoid false sharing
 
 	cap   uint32
 	slots []lockFreePoolItem
@@ -164,8 +163,8 @@ func (p *LockFreeCircularPool) InitExt(sizeInBits uint32, fillCount uint32) {
 		p.slots[i] = lockFreePoolItem{value: math.MaxUint32, seq: i}
 	}
 
-	p.head.Set(0)
-	p.tail.Set(fillCount)
+	p.head.Store(0)
+	p.tail.Store(fillCount)
 }
 
 // InitForTest used to unit test overflow of head & tail.
@@ -179,20 +178,20 @@ func (p *LockFreeCircularPool) InitForTest(head uint32, fillCount uint32) {
 		p.slots[i] = lockFreePoolItem{value: math.MaxUint32, seq: head + i}
 	}
 
-	p.head.Set(head)
-	p.tail.Set(head + fillCount)
+	p.head.Store(head)
+	p.tail.Store(head + fillCount)
 }
 
 // Len implements IDPool interface.
 func (p *LockFreeCircularPool) Len() int {
-	return int(p.tail.Get() - p.head.Get())
+	return int(p.tail.Load() - p.head.Load())
 }
 
 // String implements IDPool interface.
 // Notice: NOT thread safe.
-func (p LockFreeCircularPool) String() string {
-	head := p.head.Get()
-	tail := p.tail.Get()
+func (p *LockFreeCircularPool) String() string {
+	head := p.head.Load()
+	tail := p.tail.Load()
 	headSlot := &p.slots[head&(p.cap-1)]
 	tailSlot := &p.slots[tail&(p.cap-1)]
 	length := tail - head
@@ -204,8 +203,8 @@ func (p LockFreeCircularPool) String() string {
 // Put implements IDPool interface.
 func (p *LockFreeCircularPool) Put(val uint64) (ok bool) {
 	for {
-		tail := p.tail.Get() // `tail` should be loaded before `head`, to avoid "false full".
-		head := p.head.Get()
+		tail := p.tail.Load() // `tail` should be loaded before `head`, to avoid "false full".
+		head := p.head.Load()
 
 		if tail-head == p.cap-1 { // full
 			return false
@@ -233,8 +232,8 @@ func (p *LockFreeCircularPool) Put(val uint64) (ok bool) {
 // Get implements IDPool interface.
 func (p *LockFreeCircularPool) Get() (val uint64, ok bool) {
 	for {
-		head := p.head.Get()
-		tail := p.tail.Get()
+		head := p.head.Load()
+		tail := p.tail.Load()
 		if head == tail { // empty
 			return IDPoolInvalidValue, false
 		}

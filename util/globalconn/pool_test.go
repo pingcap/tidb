@@ -445,9 +445,8 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 		{producers: 1, consumers: 1},
 		{producers: 3, consumers: 3},
 		{producers: 10, consumers: 10},
+		{producers: 20, consumers: 20},
 		{producers: 100, consumers: 100},
-		{producers: 1000, consumers: 1000},
-		{producers: 10000, consumers: 10000},
 	}
 
 	for _, ta := range cases {
