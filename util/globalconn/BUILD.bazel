@@ -13,7 +13,9 @@ go_library(
 
 go_test(
     name = "globalconn_test",
+    timeout = "short",
     srcs = ["pool_test.go"],
+    flaky = True,
     deps = [
         ":globalconn",
         "@com_github_cznic_mathutil//:mathutil",
