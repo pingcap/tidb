@@ -1120,7 +1120,7 @@ func (do *Domain) Init(
 	}
 
 	if config.GetGlobalConfig().EnableGlobalKill {
-		do.connIDAllocator = util.NewGlobalConnIDAllocator(do.ServerID, reservedLocalConns)
+		do.connIDAllocator = util.NewGlobalConnIDAllocator(do.ServerID)
 
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
@@ -1138,7 +1138,7 @@ func (do *Domain) Init(
 			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
 		}
 	} else {
-		do.connIDAllocator = util.NewSimpleConnIDAllocator(reservedLocalConns)
+		do.connIDAllocator = util.NewSimpleConnIDAllocator()
 	}
 
 	// step 1: prepare the info/schema syncer which domain reload needed.

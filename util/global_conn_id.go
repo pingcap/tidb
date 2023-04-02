@@ -68,9 +68,9 @@ type SimpleConnIDAllocator struct {
 }
 
 // NewSimpleConnIDAllocator creates a new SimpleConnIDAllocator.
-func NewSimpleConnIDAllocator(reservedCnt uint64) *SimpleConnIDAllocator {
+func NewSimpleConnIDAllocator() *SimpleConnIDAllocator {
 	a := &SimpleConnIDAllocator{}
-	a.pool.InitExt(64, false, 1, reservedCnt)
+	a.pool.Init(64)
 	return a
 }
 
@@ -201,12 +201,12 @@ func (g *GlobalConnIDAllocator) UpgradeTo64() {
 const LocalConnIDAllocator64TryCount = 10
 
 // NewGlobalConnIDAllocator creates a GlobalConnIDAllocator.
-func NewGlobalConnIDAllocator(serverIDGetter serverIDGetterFn, reservedCnt uint64) *GlobalConnIDAllocator {
+func NewGlobalConnIDAllocator(serverIDGetter serverIDGetterFn) *GlobalConnIDAllocator {
 	g := &GlobalConnIDAllocator{
 		serverIDGetter: serverIDGetter,
 	}
 	g.local32.InitExt(LocalConnIDBits32, math.MaxUint32)
-	g.local64.InitExt(LocalConnIDBits64, true, LocalConnIDAllocator64TryCount, reservedCnt)
+	g.local64.InitExt(LocalConnIDBits64, true, LocalConnIDAllocator64TryCount)
 
 	g.is64bits.Set(1) // TODO: set 32bits as default, after 32bits logics is fully implemented and tested.
 	return g
@@ -302,10 +302,9 @@ var (
 
 // AutoIncPool simply do auto-increment to allocate ID. Wrapping will happen.
 type AutoIncPool struct {
-	lastID      atomic.Uint64
-	idMask      uint64
-	tryCnt      int
-	reservedCnt uint64 // reservedCnt is the count of reserved IDs.
+	lastID uint64
+	idMask uint64
+	tryCnt int
 
 	mu      *sync.Mutex
 	existed map[uint64]struct{}
@@ -313,42 +312,23 @@ type AutoIncPool struct {
 
 // Init initiates AutoIncPool.
 func (p *AutoIncPool) Init(sizeInBits uint32) {
-	p.InitExt(sizeInBits, false, 1, 0)
+	p.InitExt(sizeInBits, false, 1)
 }
 
 // InitExt initiates AutoIncPool with more parameters.
-func (p *AutoIncPool) InitExt(sizeInBits uint32, checkExisted bool, tryCnt int, reservedCnt uint64) {
+func (p *AutoIncPool) InitExt(sizeInBits uint32, checkExisted bool, tryCnt int) {
 	p.idMask = 1<<sizeInBits - 1
 	if checkExisted {
 		p.existed = make(map[uint64]struct{})
 		p.mu = &sync.Mutex{}
 	}
 	p.tryCnt = tryCnt
-	p.reservedCnt = reservedCnt
-	p.lastID.Store(reservedCnt)
-
-	if reservedCnt >= p.idMask {
-		panic(fmt.Sprintf("reservedCnt is too large, %v should be less than %v", reservedCnt, p.idMask))
-	}
-}
-
-func (p *AutoIncPool) incrementLastID() uint64 {
-	for {
-		id := p.lastID.Add(1) & p.idMask
-		if id < p.reservedCnt {
-			if p.lastID.CompareAndSwap(id, p.reservedCnt) {
-				return p.reservedCnt
-			}
-		} else {
-			return id
-		}
-	}
 }
 
 // Get id by auto-increment.
 func (p *AutoIncPool) Get() (id uint64, ok bool) {
 	for i := 0; i < p.tryCnt; i++ {
-		id := p.incrementLastID()
+		id := atomic.AddUint64(&p.lastID, 1) & p.idMask
 		if p.existed != nil {
 			p.mu.Lock()
 			_, occupied := p.existed[id]
@@ -387,7 +367,7 @@ func (p *AutoIncPool) Len() int {
 
 // String implements IDPool interface.
 func (p AutoIncPool) String() string {
-	return fmt.Sprintf("lastID: %v", p.lastID.Load())
+	return fmt.Sprintf("lastID: %v", p.lastID)
 }
 
 // LockFreeCircularPool is a lock-free circular implementation of IDPool.

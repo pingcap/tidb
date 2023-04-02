@@ -74,47 +74,6 @@ func TestGlobalConnIDParse(t *testing.T) {
 	assert.False(connID2.Is64bits)
 }
 
-func TestAutoIncPoolReservedCnt(t *testing.T) {
-	assert := assert.New(t)
-
-	const SizeInBits uint32 = 4
-	const ReservedCnt uint64 = 8
-
-	var pool util.AutoIncPool
-	pool.InitExt(SizeInBits, false, 1, ReservedCnt)
-
-	counter := make([]uint64, 1<<SizeInBits)
-	mu := sync.Mutex{}
-
-	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			for j := 0; j < 100; j++ {
-				id, _ := pool.Get()
-
-				mu.Lock()
-				counter[id]++
-				mu.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
-
-	var i uint64
-	for i = 0; i < ReservedCnt; i++ {
-		assert.Equal(uint64(0), counter[i])
-	}
-
-	assert.Equal(uint64(0), 100*100%(1<<SizeInBits-ReservedCnt))
-	expected := 100 * 100 / (1<<SizeInBits - ReservedCnt)
-	for i = ReservedCnt; i < 1<<SizeInBits; i++ {
-		assert.Equal(expected, counter[i])
-	}
-}
-
 func TestGlobalConnIDAutoIncPool(t *testing.T) {
 	assert := assert.New(t)
 
@@ -129,7 +88,7 @@ func TestGlobalConnIDAutoIncPool(t *testing.T) {
 		i    uint64
 	)
 
-	pool.InitExt(SizeInBits, true, TryCnt, 0)
+	pool.InitExt(SizeInBits, true, TryCnt)
 	assert.Equal(0, pool.Len())
 
 	// get all.
@@ -608,7 +567,7 @@ func BenchmarkLocalConnIDAllocator(b *testing.B) {
 	for _, concurrency := range concurrencyCases {
 		b.Run(fmt.Sprintf("Allocator 64 x%v", concurrency), func(b *testing.B) {
 			pool := util.AutoIncPool{}
-			pool.InitExt(util.LocalConnIDBits64, true, util.LocalConnIDAllocator64TryCount, 0)
+			pool.InitExt(util.LocalConnIDBits64, true, util.LocalConnIDAllocator64TryCount)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()
