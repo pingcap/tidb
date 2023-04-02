@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
@@ -59,6 +60,8 @@ func init() {
 	// Setup the Hooks to dynamic control global resource controller.
 	variable.EnableGlobalResourceControlFunc = tikv.EnableResourceControl
 	variable.DisableGlobalResourceControlFunc = tikv.DisableResourceControl
+	// cannot use this package directly, it causes import cycle
+	importer.GetKVStore = getKVStore
 }
 
 // Option is a function that changes some config of Driver
@@ -102,13 +105,17 @@ func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv
 		return errors.New("cannot setup up resource controller, should use tikv storage")
 	}
 
-	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil)
+	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil, rmclient.WithMaxWaitDuration(time.Second*30))
 	if err != nil {
 		return err
 	}
 	tikv.SetResourceControlInterceptor(control)
 	control.Start(ctx)
 	return nil
+}
+
+func getKVStore(path string, tls config.Security) (kv.Storage, error) {
+	return TiKVDriver{}.OpenWithOptions(path, WithSecurity(tls))
 }
 
 // TiKVDriver implements engine TiKV.

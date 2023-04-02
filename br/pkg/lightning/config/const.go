@@ -25,7 +25,6 @@ import (
 const (
 	// mydumper
 	ReadBlockSize ByteSize = 64 * units.KiB
-	MaxRegionSize ByteSize = 256 * units.MiB
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
 	// lower the max-key-count to avoid tikv trigger region auto split
 	SplitRegionSize         ByteSize = 96 * units.MiB
@@ -33,8 +32,6 @@ const (
 	MaxSplitRegionSizeRatio int      = 10
 
 	defaultMaxAllowedPacket = 64 * units.MiB
-
-	DefaultBatchSize ByteSize = 100 * units.GiB
 )
 
 var (
@@ -44,5 +41,8 @@ var (
 		PermitWithoutStream: false,
 	})
 	// BufferSizeScale is the factor of block buffer size
-	BufferSizeScale = int64(5)
+	BufferSizeScale           = int64(5)
+	DefaultBatchSize ByteSize = 100 * units.GiB
+	// mydumper
+	MaxRegionSize ByteSize = 256 * units.MiB
 )

@@ -280,6 +280,9 @@ type LogicalPlan interface {
 	// deriveTopN derives an implicit TopN from a filter on row_number window function..
 	deriveTopN(opt *logicalOptimizeOp) LogicalPlan
 
+	// predicateSimplification consolidates different predcicates on a column and its equivalence classes.
+	predicateSimplification(opt *logicalOptimizeOp) LogicalPlan
+
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
 
@@ -725,11 +728,10 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 }
 
 func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
-	ctx.GetSessionVars().PlanID++
-	id := ctx.GetSessionVars().PlanID
+	id := ctx.GetSessionVars().PlanID.Add(1)
 	return basePlan{
 		tp:          tp,
-		id:          id,
+		id:          int(id),
 		ctx:         ctx,
 		blockOffset: offset,
 	}

@@ -30,9 +30,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// One engine for one index reorg task, each task will create several new writers under the
-// Opened Engine. Note engineInfo is not thread safe.
-type engineInfo struct {
+// EngineInfo is the engine for one index reorg task, each task will create several new writers under the
+// Opened Engine. Note EngineInfo is not thread safe.
+type EngineInfo struct {
 	ctx          context.Context
 	jobID        int64
 	indexID      int64
@@ -44,12 +44,13 @@ type engineInfo struct {
 	memRoot      MemRoot
 	diskRoot     DiskRoot
 	rowSeq       atomic.Int64
+	flushing     atomic.Bool
 }
 
 // NewEngineInfo create a new EngineInfo struct.
 func NewEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.EngineConfig,
-	en *backend.OpenedEngine, uuid uuid.UUID, wCnt int, memRoot MemRoot, diskRoot DiskRoot) *engineInfo {
-	return &engineInfo{
+	en *backend.OpenedEngine, uuid uuid.UUID, wCnt int, memRoot MemRoot, diskRoot DiskRoot) *EngineInfo {
+	return &EngineInfo{
 		ctx:          ctx,
 		jobID:        jobID,
 		indexID:      indexID,
@@ -64,7 +65,7 @@ func NewEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 }
 
 // Flush imports all the key-values in engine to the storage.
-func (ei *engineInfo) Flush() error {
+func (ei *EngineInfo) Flush() error {
 	err := ei.openedEngine.Flush(ei.ctx)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.Error(err),
@@ -74,7 +75,19 @@ func (ei *engineInfo) Flush() error {
 	return nil
 }
 
-func (ei *engineInfo) Clean() {
+// AcquireFlushLock acquires the flush lock of the engine.
+func (ei *EngineInfo) AcquireFlushLock() (release func()) {
+	ok := ei.flushing.CompareAndSwap(false, true)
+	if !ok {
+		return nil
+	}
+	return func() {
+		ei.flushing.Store(false)
+	}
+}
+
+// Clean closes the engine and removes the local intermediate files.
+func (ei *EngineInfo) Clean() {
 	if ei.openedEngine == nil {
 		return
 	}
@@ -98,7 +111,8 @@ func (ei *engineInfo) Clean() {
 	}
 }
 
-func (ei *engineInfo) ImportAndClean() error {
+// ImportAndClean imports the engine data to TiKV and cleans up the local intermediate files.
+func (ei *EngineInfo) ImportAndClean() error {
 	// Close engine and finish local tasks of lightning.
 	logutil.BgLogger().Info(LitInfoCloseEngine, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	indexEngine := ei.openedEngine
@@ -151,7 +165,8 @@ type WriterContext struct {
 	lWrite *backend.LocalEngineWriter
 }
 
-func (ei *engineInfo) NewWriterCtx(id int, unique bool) (*WriterContext, error) {
+// NewWriterCtx creates a new WriterContext.
+func (ei *EngineInfo) NewWriterCtx(id int, unique bool) (*WriterContext, error) {
 	ei.memRoot.RefreshConsumption()
 	ok := ei.memRoot.CheckConsume(StructSizeWriterCtx)
 	if !ok {
@@ -179,7 +194,7 @@ func (ei *engineInfo) NewWriterCtx(id int, unique bool) (*WriterContext, error) 
 // If local writer not exist, then create new one and store it into engine info writer cache.
 // note: operate ei.writeCache map is not thread safe please make sure there is sync mechanism to
 // make sure the safe.
-func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*WriterContext, error) {
+func (ei *EngineInfo) newWriterContext(workerID int, unique bool) (*WriterContext, error) {
 	lWrite, exist := ei.writerCache.Load(workerID)
 	if !exist {
 		var err error
@@ -198,7 +213,7 @@ func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*WriterContex
 	return wc, nil
 }
 
-func (ei *engineInfo) closeWriters() error {
+func (ei *EngineInfo) closeWriters() error {
 	var firstErr error
 	for _, wid := range ei.writerCache.Keys() {
 		if w, ok := ei.writerCache.Load(wid); ok {

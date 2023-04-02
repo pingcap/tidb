@@ -2,14 +2,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "splittest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "split_table_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//ddl",
         "//domain/infosync",

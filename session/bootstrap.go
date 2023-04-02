@@ -553,6 +553,7 @@ const (
 	// CreateGlobalTask is a table about global task.
 	CreateGlobalTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
@@ -561,11 +562,9 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
-		key(state)
+		key(state),
+      	UNIQUE KEY task_key(task_key)
 	);`
-
-	// CreateDefaultResourceGroup is the statement to create the default resource group
-	CreateDefaultResourceGroup = "CREATE RESOURCE GROUP IF NOT EXISTS `default` RU_PER_SEC=1000000 BURSTABLE;"
 
 	// CreateLoadDataJobs is a table that LOAD DATA uses
 	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
@@ -853,11 +852,13 @@ const (
 	version138 = 138
 	// version 139 creates mysql.load_data_jobs table for LOAD DATA statement
 	version139 = 139
+	// version 140 add column task_key to mysql.tidb_global_task
+	version140 = 140
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version139
+var currentBootstrapVersion int64 = version140
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -985,6 +986,7 @@ var (
 		upgradeToVer137,
 		upgradeToVer138,
 		upgradeToVer139,
+		upgradeToVer140,
 	}
 )
 
@@ -2411,10 +2413,7 @@ func upgradeToVer136(s Session, ver int64) {
 }
 
 func upgradeToVer137(s Session, ver int64) {
-	if ver >= version137 {
-		return
-	}
-	doReentrantDDL(s, CreateDefaultResourceGroup)
+	// NOOP, we don't depend on ddl to init the default group due to backward compatible issue.
 }
 
 // For users that upgrade TiDB from a version below 7.0, we want to enable tidb tidb_enable_null_aware_anti_join by default.
@@ -2430,6 +2429,14 @@ func upgradeToVer139(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateLoadDataJobs)
+}
+
+func upgradeToVer140(s Session, ver int64) {
+	if ver >= version140 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `task_key` VARCHAR(256) NOT NULL AFTER `id`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD UNIQUE KEY task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
 func writeOOMAction(s Session) {
@@ -2544,8 +2551,6 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLJobHistory)
 	// Create tidb_global_task table
 	mustExecute(s, CreateGlobalTask)
-	// Create default resource group
-	mustExecute(s, CreateDefaultResourceGroup)
 	// Create load_data_jobs
 	mustExecute(s, CreateLoadDataJobs)
 }
