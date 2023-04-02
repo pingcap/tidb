@@ -1548,6 +1548,7 @@ func TestDefaultListPartition(t *testing.T) {
 		"  └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t where a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1, index:a(a) "))
 
+	// TODO: check ranges with 1,2 and 3 matching values, including 'holes' matching DEFAULT
 	// DEFAULT partition will not be used in reorganize partition if not included in the source/destination
 	tk.MustExecToErr(`alter table t reorganize partition p0 into (partition p0 values in (0))`, "[table:1526]Table has no partition for value 4")
 }
@@ -1569,37 +1570,90 @@ func TestDefaultListColumnPartition(t *testing.T) {
 		"(PARTITION `p0` VALUES IN (0,4),\n" +
 		" PARTITION `p1` VALUES IN (1,NULL,DEFAULT),\n" +
 		" PARTITION `p2` VALUES IN (2,7,10))"))
-	tk.MustExec(`insert into t values (1, "1"), (2, "2"), (3,'3'), (null, "null"), (4, "4"), (11, "11")`)
+	tk.MustExec(`insert into t values (1, "1"), (2, "2"), (3,'3'), (null, null), (4, "4"), (11, "11")`)
 	tk.MustExec(`analyze table t`)
 
 	tk.MustQuery(`select * from t partition(p0)`).Sort().Check(testkit.Rows("4 4"))
-	tk.MustQuery(`select * from t partition(p1)`).Sort().Check(testkit.Rows("1 1", "11 11", "3 3", "<nil> null"))
+	tk.MustQuery(`select * from t partition(p1)`).Sort().Check(testkit.Rows("1 1", "11 11", "3 3", "<nil> <nil>"))
 	tk.MustQuery(`select partition_name, partition_method, partition_expression, partition_description, table_rows from information_schema.partitions where table_schema = 'defaultPartition'`).Sort().Check(testkit.Rows(""+
 		"p0 LIST COLUMNS `a` 0,4 1",
 		"p1 LIST COLUMNS `a` 1,NULL,DEFAULT 4",
 		"p2 LIST COLUMNS `a` 2,7,10 1"))
 	tk.MustExec(`set @@tidb_partition_prune_mode = 'dynamic'`)
-	tk.MustQuery(`select * from t where a = 4`).Check(testkit.Rows("4 4"))
-	// TODO: Fix pruning for DEFAULT partition
-	//tk.MustQuery(`select * from t where a is null`).Check(testkit.Rows("<nil> null"))
-	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
-	//tk.MustQuery(`explain format = 'brief' select * from t where a = 4`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0, index:a(a) "))
 	tk.MustQuery(`explain format = 'brief' select * from t where a is null`).Check(testkit.Rows(""+
-		"TableReader 0.00 root partition:p1 data:Selection",
-		"└─Selection 0.00 cop[tikv]  isnull(defaultpartition.t.a)",
+		"TableReader 1.00 root partition:p1 data:Selection",
+		"└─Selection 1.00 cop[tikv]  isnull(defaultpartition.t.a)",
 		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
-	//tk.MustQuery(`explain format = 'brief' select * from t where a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1, index:a(a) "))
-	tk.MustExec(`set @@tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`select * from t where a is null`).Check(testkit.Rows("<nil> <nil>"))
 	tk.MustQuery(`select * from t where a = 4`).Check(testkit.Rows("4 4"))
-	// TODO: FIXME!!
-	//tk.MustQuery(`select * from t where a is null`).Check(testkit.Rows("<nil> null"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 4`).Check(testkit.Rows(
+		"TableReader 4.80 root partition:p0,p1,p2 data:Selection",
+		"└─Selection 4.80 cop[tikv]  eq(cast(defaultpartition.t.a, double BINARY), 4)",
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
-	//tk.MustQuery(`explain format = 'brief' select * from t where a = 4`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0, index:a(a) "))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 3`).Check(testkit.Rows(
+		"TableReader 4.80 root partition:p0,p1,p2 data:Selection",
+		"└─Selection 4.80 cop[tikv]  eq(cast(defaultpartition.t.a, double BINARY), 3)",
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = "3"`).Check(testkit.Rows(
+		"TableReader 1.00 root partition:p1 data:Selection",
+		`└─Selection 1.00 cop[tikv]  eq(defaultpartition.t.a, "3")`,
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from t where a = "3"`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`select * from t where a = "4"`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = "4"`).Check(testkit.Rows(
+		"TableReader 1.00 root partition:p0 data:Selection",
+		`└─Selection 1.00 cop[tikv]  eq(defaultpartition.t.a, "4")`,
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+
+	// Notice in string context that "35" is between "3" and "4"
+	tk.MustQuery(`explain format = 'brief' select * from t where a between "3" and "4"`).Check(testkit.Rows(""+
+		`TableReader 2.00 root partition:p0,p1 data:Selection`,
+		`└─Selection 2.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`select * from t where a between "3" and "4"`).Sort().Check(testkit.Rows("3 3", "4 4"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a >= "3" and a <= "4"`).Check(testkit.Rows(""+
+		`TableReader 2.00 root partition:p0,p1 data:Selection`,
+		`└─Selection 2.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`select * from t where a >= "3" and a <= "4"`).Sort().Check(testkit.Rows("3 3", "4 4"))
+
+	tk.MustExec(`set @@tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`select * from t where a is null`).Check(testkit.Rows("<nil> <nil>"))
 	tk.MustQuery(`explain format = 'brief' select * from t where a is null`).Check(testkit.Rows(""+
-		"TableReader 0.00 root  data:Selection",
-		"└─Selection 0.00 cop[tikv]  isnull(defaultpartition.t.a)",
-		"  └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false"))
-	//tk.MustQuery(`explain format = 'brief' select * from t where a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1, index:a(a) "))
+		`TableReader 1.00 root  data:Selection`,
+		`└─Selection 1.00 cop[tikv]  isnull(defaultpartition.t.a)`,
+		`  └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false`))
+	tk.MustQuery(`select * from t where a = 4`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`select * from t where a = "4"`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = "4"`).Check(testkit.Rows(""+
+		`TableReader 1.00 root  data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(defaultpartition.t.a, "4")`,
+		`  └─TableFullScan 1.00 cop[tikv] table:t, partition:p0 keep order:false`))
+	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`select * from t where a = "3"`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = "3"`).Check(testkit.Rows(""+
+		`TableReader 1.00 root  data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(defaultpartition.t.a, "3")`,
+		`  └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a between "3" and "4"`).Check(testkit.Rows(""+
+		`PartitionUnion 2.00 root  `,
+		`├─TableReader 1.00 root  data:Selection`,
+		`│ └─Selection 1.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`│   └─TableFullScan 1.00 cop[tikv] table:t, partition:p0 keep order:false`,
+		`└─TableReader 1.00 root  data:Selection`,
+		`  └─Selection 1.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`    └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false`))
+	tk.MustQuery(`select * from t where a between "3" and "4"`).Sort().Check(testkit.Rows("3 3", "4 4"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a >= "3" and a <= "4"`).Check(testkit.Rows(""+
+		`PartitionUnion 2.00 root  `,
+		`├─TableReader 1.00 root  data:Selection`,
+		`│ └─Selection 1.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`│   └─TableFullScan 1.00 cop[tikv] table:t, partition:p0 keep order:false`,
+		`└─TableReader 1.00 root  data:Selection`,
+		`  └─Selection 1.00 cop[tikv]  ge(defaultpartition.t.a, "3"), le(defaultpartition.t.a, "4")`,
+		`    └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false`))
+	tk.MustQuery(`select * from t where a >= "3" and a <= "4"`).Sort().Check(testkit.Rows("3 3", "4 4"))
 
 	// DEFAULT partition will not be used in reorganize partition if not included in the source/destination
 	tk.MustExecToErr(`alter table t reorganize partition p0 into (partition p0 values in (0))`, "[table:1526]Table has no partition for value 4")

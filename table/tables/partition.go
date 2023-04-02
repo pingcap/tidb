@@ -1001,6 +1001,10 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 	return location[0].PartIdx, nil
 }
 
+func (lp *ForListPruning) GetDefaultIdx() int {
+	return lp.defaultPartitionIdx
+}
+
 // buildPartitionValueMapAndSorted builds list columns partition value map for the specified column.
 // It also builds list columns partition value btree for the specified column.
 // colIdx is the specified column index in the list columns.
@@ -1012,6 +1016,10 @@ func (lp *ForListColumnPruning) buildPartitionValueMapAndSorted(p *parser.Parser
 	}
 
 	return lp.buildListPartitionValueMapAndSorted(p, defs)
+}
+
+func (lp *ForListColumnPruning) HasDefault() bool {
+	return lp.defaultPartID > 0
 }
 
 // RebuildPartitionValueMapAndSorted rebuilds list columns partition value map for the specified column.
@@ -1027,8 +1035,6 @@ func (lp *ForListColumnPruning) buildListPartitionValueMapAndSorted(p *parser.Pa
 DEFS:
 	for partitionIdx, def := range defs {
 		for groupIdx, vs := range def.InValues {
-			// TODO: Add support for DEFAULT partition
-			// TODO: Use correct constant for "DEFAULT"
 			if len(vs) == 1 && vs[0] == "DEFAULT" {
 				lp.defaultPartID = def.ID
 				continue DEFS
@@ -1091,14 +1097,13 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 	}
 	location, ok := lp.valueMap[string(key)]
 	if !ok {
-		// TODO: Handle DEFAULT (and NULL?)
 		return nil, nil
 	}
 	return location, nil
 }
 
 // LocateRanges locates partition ranges by the column range
-func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range) ([]ListPartitionLocation, error) {
+func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range, defaultPartIdx int) ([]ListPartitionLocation, error) {
 	var lowKey, highKey []byte
 	var err error
 	lowVal := r.LowVal[0]
@@ -1142,7 +1147,33 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 		locations = append(locations, item.location)
 		return true
 	})
-	// TODO: Handle DEFAULT (and NULL?)
+	if lp.HasDefault() {
+		// Add the default partition since there may be a gap
+		// between the conditions range and the LIST COLUMNS values
+		addDefault := true
+		if len(lp.tblInfo.Partition.Columns) == 1 {
+			rangeSteps := 0
+			for ; rangeSteps <= len(locations); rangeSteps++ {
+				if bytes.Compare(lowKey, highKey) < 0 {
+					// TODO: Does this work? Also for int?
+					lowKey = kv.Key(lowKey).PrefixNext()
+				} else {
+					break
+				}
+			}
+			if rangeSteps == len(locations) {
+				addDefault = false
+			}
+		}
+		if addDefault {
+			locations = append(locations, ListPartitionLocation{
+				ListPartitionGroup{
+					PartIdx:   defaultPartIdx,
+					GroupIdxs: []int{-1}, // Special group!
+				},
+			})
+		}
+	}
 	return locations, nil
 }
 

@@ -552,7 +552,7 @@ func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.E
 			continue
 		}
 		if cnfLoc.IsEmpty() {
-			// No partition for intersection, just return 0 partition.
+			// No partition for intersection, just return no partitions.
 			return nil, false, nil
 		}
 		if !helper.Intersect(cnfLoc) {
@@ -592,6 +592,7 @@ func (l *listPartitionPruner) locatePartitionByColumn(cond *expression.ScalarFun
 	for _, cp := range l.listPrune.ColPrunes {
 		if cp.ExprCol.ID == condCols[0].ID {
 			colPrune = cp
+			break
 		}
 	}
 	if colPrune == nil {
@@ -621,9 +622,18 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			if err != nil {
 				return nil, false, err
 			}
+			if location == nil && colPrune.HasDefault() {
+				// TODO: What if location != but there are multiple columns?
+				location = tables.ListPartitionLocation{
+					tables.ListPartitionGroup{
+						PartIdx:   l.listPrune.GetDefaultIdx(),
+						GroupIdxs: []int{-1}, // Special group!
+					},
+				}
+			}
 			locations = []tables.ListPartitionLocation{location}
 		} else {
-			locations, err = colPrune.LocateRanges(sc, r)
+			locations, err = colPrune.LocateRanges(sc, r, l.listPrune.GetDefaultIdx())
 			if types.ErrOverflow.Equal(err) {
 				return nil, true, nil // return full-scan if over-flow
 			}
