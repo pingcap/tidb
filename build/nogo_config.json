@@ -304,6 +304,7 @@
       "br/pkg/errors/errors.go": "ignore error",
       "br/pkg/rtree/logging_test.go": "ignore rtree code",
       "br/pkg/storage/": "ignore storage code",
+      "ddl/util/util.go": "ignore util code",
       "util/column-mapping/column.go": "ignore error",
       "parser/mysql/": "ignore mysql code",
       "parser/auth": "ignore auth code",
