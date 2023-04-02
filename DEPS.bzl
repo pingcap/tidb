@@ -1613,8 +1613,8 @@ def go_deps():
         name = "com_github_golangci_golangci_lint",
         build_file_proto_mode = "disable",
         importpath = "github.com/golangci/golangci-lint",
-        sum = "h1:TwQtQi5dGE/uFOxYGKwddJo7T9sHsRfTUN00HZMl5Jo=",
-        version = "v1.52.1",
+        sum = "h1:FrPElUUI5rrHXg1mQ7KxI1MXPAw5lBVskiz7U7a8a1A=",
+        version = "v1.52.2",
     )
     go_repository(
         name = "com_github_golangci_gosec",
@@ -3015,8 +3015,8 @@ def go_deps():
         name = "com_github_moricho_tparallel",
         build_file_proto_mode = "disable",
         importpath = "github.com/moricho/tparallel",
-        sum = "h1:8dDx3S3e+jA+xiQXC7O3dvfRTe/J+FYlTDDW01Y7z/Q=",
-        version = "v0.3.0",
+        sum = "h1:fQKD4U1wRMAYNngDonW5XupoB/ZGJHdpzrWqgyg9krA=",
+        version = "v0.3.1",
     )
 
     go_repository(
