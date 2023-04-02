@@ -386,7 +386,7 @@ func (p *AutoIncPool) Len() int {
 }
 
 // String implements IDPool interface.
-func (p *AutoIncPool) String() string {
+func (p AutoIncPool) String() string {
 	return fmt.Sprintf("lastID: %v", p.lastID.Load())
 }
 
