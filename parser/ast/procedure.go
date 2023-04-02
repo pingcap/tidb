@@ -536,13 +536,12 @@ func (n *SimpleCaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if err != nil {
 		return err
 	}
-
+	ctx.WriteKeyWord(" ")
 	for _, stmt := range n.WhenCases {
 		err := stmt.Restore(ctx)
 		if err != nil {
 			return err
 		}
-		ctx.WriteKeyWord(";")
 	}
 
 	if n.ElseCases != nil {
@@ -555,6 +554,7 @@ func (n *SimpleCaseStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord(";")
 		}
 	}
+	ctx.WriteKeyWord(" END CASE")
 	return nil
 }
 
@@ -608,7 +608,6 @@ func (n *SearchCaseStmt) Restore(ctx *format.RestoreCtx) error {
 		if err != nil {
 			return err
 		}
-		ctx.WriteKeyWord(";")
 	}
 
 	if n.ElseCases != nil {
@@ -621,6 +620,7 @@ func (n *SearchCaseStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord(";")
 		}
 	}
+	ctx.WriteKeyWord(" END CASE")
 	return nil
 }
 
@@ -866,7 +866,7 @@ type ProcedureErrorVal struct {
 
 // Restore implements Node interface.
 func (n *ProcedureErrorVal) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteString(strconv.FormatUint(n.ErrorNum, 10))
+	ctx.WritePlain(strconv.FormatUint(n.ErrorNum, 10))
 	return nil
 }
 

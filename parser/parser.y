@@ -15141,20 +15141,26 @@ ElseCaseOpt:
 ProcedureSimpleCase:
 	"CASE" Expression SimpleWhenCaseList ElseCaseOpt "END" "CASE"
 	{
-		$$ = &ast.SimpleCaseStmt{
+		caseStmt := &ast.SimpleCaseStmt{
 			Condition: $2.(ast.ExprNode),
 			WhenCases: $3.([]*ast.SimpleWhenCaseStmt),
-			ElseCases: $4.([]ast.StmtNode),
 		}
+		if $4 != nil {
+			caseStmt.ElseCases = $4.([]ast.StmtNode)
+		}
+		$$ = caseStmt
 	}
 
 ProcedureSearchedCase:
 	"CASE" SimpleWhenCaseList ElseCaseOpt "END" "CASE"
 	{
-		$$ = &ast.SearchCaseStmt{
+		caseStmt := &ast.SearchCaseStmt{
 			WhenCases: $2.([]*ast.SimpleWhenCaseStmt),
-			ElseCases: $3.([]ast.StmtNode),
 		}
+		if $3 != nil {
+			caseStmt.ElseCases = $3.([]ast.StmtNode)
+		}
+		$$ = caseStmt
 	}
 
 ProcedureStmtUnlabeled:

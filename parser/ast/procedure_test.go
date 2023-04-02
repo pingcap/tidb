@@ -14,6 +14,7 @@
 package ast_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/parser"
@@ -83,12 +84,25 @@ func TestProcedure(t *testing.T) {
 		`create procedure proc_2() begin declare a int;declare exit handler for 1111,1112 select 1 ; end;`,
 		`create procedure proc_2() begin declare a int;declare exit handler for SQLWARNING,NOT FOUND,SQLEXCEPTION select 1 ; end;`,
 		`create procedure proc_2() begin declare a int;declare continue handler for SQLWARNING,NOT FOUND,SQLEXCEPTION select 1 ; end;`,
+		`create procedure proc_2() begin declare a int;declare continue handler for sqlstate 'ssss' select 1 ; end;`,
+		`create procedure proc_2() begin declare a int;declare continue handler for sqlstate 'ssss' begin select 1; end; end;`,
+		`create procedure proc_2() begin declare a int;declare continue handler for sqlstate 'ssss' while id < 10 do set id = id + 1; select 1; end while; end;`,
+		`create procedure proc_2() begin declare a int;declare continue handler for sqlstate 'ssss' if i > 1 then select 2; elseif i = 3 then select 4;end if; end;`,
+		`create procedure proc_2() case now() when "1980-10-01" Then select 1; end case;`,
+		`create procedure proc_2() case now() when "1980-10-01" Then select 1; when "1980-10-01" then select 2; end case;`,
+		`create procedure proc_2() case now() when "1980-10-01" Then select 1; when "1980-10-01" then select 2; else select 3; end case;`,
+		`create procedure proc_2(id int) case when id = 1 Then select 1; end case;`,
+		`create procedure proc_2(id int) case when id = 1 Then select 1; when id = 2 then select 2; end case;`,
+		`create procedure proc_2(id int) case when id = 1 Then select 1; when id = 2 then select 2; else select 3; end case;`,
 	}
 	for _, testcase := range testcases {
 		stmt, _, err := p.Parse(testcase, "", "")
+		if err != nil {
+			fmt.Println(testcase)
+		}
 		require.NoError(t, err)
 		_, ok := stmt[0].(*ast.ProcedureInfo)
-		require.True(t, ok)
+		require.True(t, ok, testcase)
 	}
 }
 
@@ -124,10 +138,23 @@ func TestProcedureVisitor(t *testing.T) {
 func TestProcedureRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"CREATE PROCEDURE `proc_2`( IN `id` BIGINT(20), IN `id2` VARCHAR(100), IN `id3` DECIMAL(30,2)) BEGIN DECLARE `s` VARCHAR(100) DEFAULT FROM_UNIXTIME(1447430881);SELECT `s`;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111); END;",
-			"CREATE PROCEDURE `proc_2`( IN `id` BIGINT(20), IN `id2` VARCHAR(100), IN `id3` DECIMAL(30,2)) BEGIN DECLARE `s` VARCHAR(100) DEFAULT FROM_UNIXTIME(1447430881);SELECT `s`;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111); END;"},
+			"CREATE PROCEDURE `proc_2`( IN `id` BIGINT(20), IN `id2` VARCHAR(100), IN `id3` DECIMAL(30,2)) BEGIN DECLARE `s` VARCHAR(100) DEFAULT FROM_UNIXTIME(1447430881);SELECT `s`;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111); END;",
+		},
 		{
 			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;ELSE SELECT 5;END IF; END;",
 			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;ELSE SELECT 5;END IF; END;",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;END IF; END;",
+			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;END IF; END;",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;END IF; END;",
+			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;END IF; END;",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSE SELECT 5;END IF; END;",
+			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSE SELECT 5;END IF; END;",
 		},
 		{
 			"CREATE PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END;",
@@ -140,6 +167,38 @@ func TestProcedureRestore(t *testing.T) {
 		{
 			"CREATE PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END;",
 			"CREATE PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END;",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`( INOUT `id` BIGINT(20), OUT `id1` BIGINT(20)) BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR 1211, SQLSTATE 'xdw' SELECT 1; END;",
+			"CREATE PROCEDURE `proc_2`( INOUT `id` BIGINT(20), OUT `id1` BIGINT(20)) BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR 1211, SQLSTATE 'xdw' SELECT 1; END;",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLSTATE 'ssss' WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END;",
+			"CREATE PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLSTATE 'ssss' WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END;",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
+			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
+			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
+			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
+			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
+			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
+		},
+		{
+			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
+			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
 		},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
