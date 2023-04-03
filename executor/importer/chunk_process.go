@@ -124,6 +124,17 @@ type chunkProcessor struct {
 }
 
 func (p *chunkProcessor) process(ctx context.Context) error {
+	if p.chunkInfo.FileMeta.Compression == mydump.CompressionNone {
+		if err := p.parser.SetPos(p.chunkInfo.Chunk.Offset, p.chunkInfo.Chunk.PrevRowIDMax); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		if err := mydump.ReadUntil(p.parser, p.chunkInfo.Chunk.Offset); err != nil {
+			return errors.Trace(err)
+		}
+		p.parser.SetRowID(p.chunkInfo.Chunk.PrevRowIDMax)
+	}
+
 	deliverCompleteCh := make(chan deliverResult)
 	go func() {
 		defer close(deliverCompleteCh)

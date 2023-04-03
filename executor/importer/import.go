@@ -801,8 +801,8 @@ func (e *LoadDataController) GetParser(
 
 // PhysicalImport do physical import.
 func (e *LoadDataController) PhysicalImport(ctx context.Context) (int64, error) {
-	// todo: implement it
-	return 0, nil
+	// todo: implement job
+	return 0, e.import0(ctx)
 }
 
 // GetMsgFromBRError get msg from BR error.

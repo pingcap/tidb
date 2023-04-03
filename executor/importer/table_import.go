@@ -128,7 +128,7 @@ func (e *LoadDataController) import0(ctx context.Context) error {
 		ConnCompressType:        config.CompressionNone,
 		WorkerConcurrency:       config.DefaultRangeConcurrency * 2,
 		KVWriteBatchSize:        config.KVWriteBatchSize,
-		CheckpointEnabled:       false,
+		CheckpointEnabled:       true,
 		MemTableSize:            int(config.DefaultEngineMemCacheSize),
 		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:         true,
@@ -151,7 +151,6 @@ func (e *LoadDataController) import0(ctx context.Context) error {
 		MaxChunkSize:      int64(config.MaxRegionSize),
 		Concurrency:       int(e.threadCnt),
 		EngineConcurrency: config.DefaultTableConcurrency,
-		BatchImportRatio:  config.DefaultBatchImportRatio,
 		IOWorkers:         nil,
 		Store:             e.dataStore,
 		TableMeta:         tableMeta,
@@ -207,7 +206,6 @@ type tableImporterImpl struct {
 
 	store           storage.ExternalStorage
 	kvStore         tidbkv.Storage
-	cfg             *config.Config
 	logger          *zap.Logger
 	regionSplitSize int64
 	regionSplitKeys int64
@@ -243,6 +241,11 @@ func (d *tableImporterImpl) GetKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KV
 }
 
 func (ti *tableImporterImpl) importTable(ctx context.Context) error {
+	// todo: pause GC if we need duplicate detection
+	// todo: register task to pd?
+	// no need to pause all schedulers, since we can pause them by key range
+	// todo: if add index by sql, drop all index first
+	// todo: tikv enter into import mode
 	if err := ti.populateChunks(ctx); err != nil {
 		return err
 	}
