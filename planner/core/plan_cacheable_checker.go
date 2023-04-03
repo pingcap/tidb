@@ -231,7 +231,7 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 	}
 	from := selectStmt.From
 	if from == nil || selectStmt.From.TableRefs == nil {
-		return false, "queries that have sub-queries are not supported zzzz"
+		return false, "queries that have sub-queries are not supported"
 	}
 	tableRefs := from.TableRefs
 
