@@ -480,6 +480,10 @@ bazel_addindextest: failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest/...
 
+bazel_loaddatatest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+		-- //tests/realtikvtest/loaddatatest/...
+
 bazel_lint: bazel_prepare
 	bazel build //... --//build:with_nogo_flag=true
 

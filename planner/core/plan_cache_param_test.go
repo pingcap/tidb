@@ -70,7 +70,7 @@ func TestParameterize(t *testing.T) {
 		},
 		{
 			"select a+1, sum(b) from t where a<10 group by a+1",
-			"SELECT `a`+1,SUM(`b`) FROM `t` WHERE `a`<? GROUP BY `a`+1",
+			"SELECT `a`+1,sum(`b`) FROM `t` WHERE `a`<? GROUP BY `a`+1",
 			[]interface{}{int64(10)},
 			"SELECT `a`+1,SUM(`b`) FROM `t` WHERE `a`<10 GROUP BY `a`+1",
 		},
