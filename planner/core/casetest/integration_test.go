@@ -3219,9 +3219,9 @@ func TestIssue32632(t *testing.T) {
 
 	h := dom.StatsHandle()
 	statsTbl1 := h.GetTableStats(tbl1.Meta())
-	statsTbl1.Count = 800000
+	statsTbl1.RealtimeCount = 800000
 	statsTbl2 := h.GetTableStats(tbl2.Meta())
-	statsTbl2.Count = 10000
+	statsTbl2.RealtimeCount = 10000
 	var input []string
 	var output []struct {
 		SQL  string

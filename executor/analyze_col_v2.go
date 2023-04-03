@@ -73,10 +73,10 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.A
 	} else {
 		statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
 	}
-	if statsTbl == nil || statsTbl.Count <= 0 {
+	if statsTbl == nil || statsTbl.RealtimeCount <= 0 {
 		return analyzeResult
 	}
-	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.Count))
+	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.RealtimeCount))
 	if newSampleRate >= *e.analyzePB.ColReq.SampleRate {
 		return analyzeResult
 	}

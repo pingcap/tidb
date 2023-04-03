@@ -463,7 +463,7 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 		return nil, err
 	}
 	table.ModifyCount = rows[0].GetInt64(0)
-	table.Count = rows[0].GetInt64(1)
+	table.RealtimeCount = rows[0].GetInt64(1)
 
 	rows, _, err = reader.Read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
 	// Check deleted table.

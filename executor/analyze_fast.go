@@ -116,7 +116,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	var historyRowCount uint64
 	hasBeenAnalyzed := len(rows) != 0 && rows[0].GetInt64(0) == statistics.AnalyzeFlag
 	if hasBeenAnalyzed {
-		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()).Count)
+		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()).RealtimeCount)
 	} else {
 		dbInfo, ok := domain.GetDomain(e.ctx).InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
@@ -564,7 +564,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	var rowCount int64 = 0
 	if stats.Lease() > 0 {
 		if t := stats.GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()); !t.Pseudo {
-			rowCount = t.Count
+			rowCount = t.RealtimeCount
 		}
 	}
 	hists, cms, topNs, fms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length), make([]*statistics.TopN, length), make([]*statistics.FMSketch, length)

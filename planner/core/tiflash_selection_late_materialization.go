@@ -203,7 +203,7 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 // @param: physicalTableScan: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
 	// When the table is small, there is no need to push down the conditions.
-	if physicalTableScan.tblColHists.Count <= tiflashDataPackSize {
+	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize {
 		return
 	}
 	conds := physicalSelection.Conditions

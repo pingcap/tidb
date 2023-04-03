@@ -169,7 +169,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl2.Pseudo)
-	require.Equal(t, int64(recordCount), statsTbl2.Count)
+	require.Equal(t, int64(recordCount), statsTbl2.RealtimeCount)
 	internal.AssertTableEqual(t, statsTbl1, statsTbl2)
 }
 
@@ -243,39 +243,39 @@ func TestAvgColLen(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	require.Equal(t, 1.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeChunkFormat(statsTbl.Count))
+	require.Equal(t, 1.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
 
 	// The size of varchar type is LEN + BYTE, here is 1 + 7 = 8
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0-3, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, 8.0-3+8, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, 0.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeListInDisk(statsTbl.Count))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0-3, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, 8.0-3+8, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, 0.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
 	testKit.MustExec("insert into t values(132, '123456789112', 1232.3, '2018-03-07 19:17:29', NULL)")
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.Equal(t, 1.5, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 10.5, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, math.Round((10.5-math.Log2(10.5))*100)/100, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, math.Round((10.5-math.Log2(10.5))*100)/100+8, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, 0.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeListInDisk(statsTbl.Count))
+	require.Equal(t, 1.5, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 10.5, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, math.Round((10.5-math.Log2(10.5))*100)/100, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, math.Round((10.5-math.Log2(10.5))*100)/100+8, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, 0.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
 }
 
 func TestDurationToTS(t *testing.T) {
@@ -328,7 +328,7 @@ func TestVersion(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	require.Equal(t, offset+uint64(4), h.LastUpdateVersion())
 	statsTbl1 = h.GetTableStats(tableInfo1)
-	require.Equal(t, int64(1), statsTbl1.Count)
+	require.Equal(t, int64(1), statsTbl1.RealtimeCount)
 
 	testKit.MustExec("insert t2 values(1,2)")
 	testKit.MustExec("analyze table t2")
@@ -337,7 +337,7 @@ func TestVersion(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	require.Equal(t, offset+uint64(4), h.LastUpdateVersion())
 	statsTbl2 = h.GetTableStats(tableInfo2)
-	require.Equal(t, int64(1), statsTbl2.Count)
+	require.Equal(t, int64(1), statsTbl2.RealtimeCount)
 
 	testKit.MustExec("insert t2 values(1,2)")
 	testKit.MustExec("analyze table t2")
@@ -346,7 +346,7 @@ func TestVersion(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	require.Equal(t, offset+uint64(4), h.LastUpdateVersion())
 	statsTbl2 = h.GetTableStats(tableInfo2)
-	require.Equal(t, int64(1), statsTbl2.Count)
+	require.Equal(t, int64(1), statsTbl2.RealtimeCount)
 
 	// We add an index and analyze it, but DDL doesn't load.
 	testKit.MustExec("alter table t2 add column c3 int")
@@ -1659,14 +1659,14 @@ partition by range (a) (
 	globalStats := h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(2)
 	// modify count is 2 because we didn't analyze p1 after the second insert
-	require.Equal(t, int64(9), globalStats.Count)
+	require.Equal(t, int64(9), globalStats.RealtimeCount)
 	require.Equal(t, int64(2), globalStats.ModifyCount)
 
 	tk.MustExec("analyze table t partition p1;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(4)
 	// The value of modify count is 0 now.
-	require.Equal(t, int64(9), globalStats.Count)
+	require.Equal(t, int64(9), globalStats.RealtimeCount)
 	require.Equal(t, int64(0), globalStats.ModifyCount)
 
 	tk.MustExec("alter table t drop partition p2;")
@@ -1674,7 +1674,7 @@ partition by range (a) (
 	tk.MustExec("analyze table t;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
-	require.Equal(t, int64(7), globalStats.Count)
+	require.Equal(t, int64(7), globalStats.RealtimeCount)
 }
 
 func TestDDLPartition4GlobalStats(t *testing.T) {
@@ -1710,7 +1710,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	globalStats := h.GetTableStats(tableInfo)
-	require.Equal(t, int64(15), globalStats.Count)
+	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t drop partition p3, p5;")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
@@ -1720,7 +1720,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.Len(t, result, 5)
 	// The value of global.count will be updated automatically after we drop the table partition.
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(11), globalStats.Count)
+	require.Equal(t, int64(11), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
@@ -1729,7 +1729,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	// The value of global.count will not be updated automatically when we truncate the table partition.
 	// Because the partition-stats in the partition table which have been truncated has not been updated.
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(11), globalStats.Count)
+	require.Equal(t, int64(11), globalStats.RealtimeCount)
 
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
@@ -1737,7 +1737,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.Len(t, result, 5)
 	// The result for the globalStats.count will be right now
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(7), globalStats.Count)
+	require.Equal(t, int64(7), globalStats.RealtimeCount)
 }
 
 func TestMergeGlobalTopN(t *testing.T) {
@@ -3437,7 +3437,7 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 
 	tk.MustExec("analyze table test.t")
 	tblStats2 := handle.GetTableStats(tbl.Meta())
-	require.Equal(t, int64(2), tblStats2.Count)
+	require.Equal(t, int64(2), tblStats2.RealtimeCount)
 }
 
 func TestStatsLockAndUnlockTables(t *testing.T) {
@@ -3501,9 +3501,9 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 
 	tk.MustExec("analyze table test.t1, test.t2")
 	tbl1Stats2 := handle.GetTableStats(tbl1.Meta())
-	require.Equal(t, int64(2), tbl1Stats2.Count)
+	require.Equal(t, int64(2), tbl1Stats2.RealtimeCount)
 	tbl2Stats2 := handle.GetTableStats(tbl2.Meta())
-	require.Equal(t, int64(2), tbl2Stats2.Count)
+	require.Equal(t, int64(2), tbl2Stats2.RealtimeCount)
 }
 
 func TestIssue39336(t *testing.T) {
