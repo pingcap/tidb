@@ -329,6 +329,7 @@ import (
 	block                 "BLOCK"
 	booleanType           "BOOLEAN"
 	boolType              "BOOL"
+	br                    "BR"
 	btree                 "BTREE"
 	byteType              "BYTE"
 	cache                 "CACHE"
@@ -416,7 +417,9 @@ import (
 	following             "FOLLOWING"
 	format                "FORMAT"
 	full                  "FULL"
+	fullBackupStorage     "FULL_BACKUP_STORAGE"
 	function              "FUNCTION"
+	gcTTL                 "GC_TTL"
 	general               "GENERAL"
 	global                "GLOBAL"
 	grants                "GRANTS"
@@ -454,6 +457,7 @@ import (
 	local                 "LOCAL"
 	locked                "LOCKED"
 	location              "LOCATION"
+	log                   "LOG"
 	logs                  "LOGS"
 	master                "MASTER"
 	max_idxnum            "MAX_IDXNUM"
@@ -467,6 +471,7 @@ import (
 	member                "MEMBER"
 	memory                "MEMORY"
 	merge                 "MERGE"
+	metadata              "METADATA"
 	microsecond           "MICROSECOND"
 	minRows               "MIN_ROWS"
 	minute                "MINUTE"
@@ -511,6 +516,7 @@ import (
 	per_table             "PER_TABLE"
 	pipesAsOr
 	plugins               "PLUGINS"
+	point                 "POINT"
 	policy                "POLICY"
 	preSplitRegions       "PRE_SPLIT_REGIONS"
 	preceding             "PRECEDING"
@@ -544,6 +550,7 @@ import (
 	respect               "RESPECT"
 	restart               "RESTART"
 	restore               "RESTORE"
+	restoredTS            "RESTORED_TS"
 	restores              "RESTORES"
 	resume                "RESUME"
 	reuse                 "REUSE"
@@ -593,6 +600,7 @@ import (
 	sqlTsiWeek            "SQL_TSI_WEEK"
 	sqlTsiYear            "SQL_TSI_YEAR"
 	start                 "START"
+	startTS               "START_TS"
 	statsAutoRecalc       "STATS_AUTO_RECALC"
 	statsPersistent       "STATS_PERSISTENT"
 	statsSamplePages      "STATS_SAMPLE_PAGES"
@@ -632,6 +640,7 @@ import (
 	undefined             "UNDEFINED"
 	unicodeSym            "UNICODE"
 	unknown               "UNKNOWN"
+	untilTS                "UNTIL_TS"
 	user                  "USER"
 	validation            "VALIDATION"
 	value                 "VALUE"
@@ -5106,10 +5115,94 @@ BRIEStmt:
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
+|	"BACKUP" "LOG" "TO"	stringLit BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindLogStart
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"STOP" "BACKUP" "LOG"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindLogStop
+		$$ = stmt
+	}
+|	"PAUSE" "BACKUP" "LOG" BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindLogPause
+		stmt.Options = $4.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"RESUME" "BACKUP" "LOG"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindLogResume
+		$$ = stmt
+	}
+|	"PURGE" "BACKUP" "LOG" "FROM" stringLit BRIEOptions
+    	{
+    		stmt := &ast.BRIEStmt{}
+    		stmt.Kind = ast.BRIEKindLogPurge
+    		stmt.Storage = $5
+    		stmt.Options = $6.([]*ast.BRIEOption)
+            $$ = stmt
+    	}
+|	"SHOW" "BACKUP" "LOG" "STATUS"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindLogStatus
+		$$ = stmt
+	}
+|   "SHOW" "BACKUP" "LOG" "METADATA" "FROM" stringLit
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindLogMetaData
+		stmt.Storage = $6
+		$$ = stmt
+	}
+|   "SHOW" "BR" "JOB" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowJob
+		stmt.JobID = $4.(int64)
+		$$ = stmt
+	}
+|   "SHOW" "BR" "JOB" "QUERY" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowQuery
+		stmt.JobID = $5.(int64)
+		$$ = stmt
+	}
+|   "CANCEL" "BR" "JOB" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindCancelJob
+		stmt.JobID = $4.(int64)
+		$$ = stmt
+	}
+|   "SHOW" "BACKUP" "METADATA" "FROM" stringLit
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowBackupMeta
+		stmt.Storage = $5
+		$$ = stmt
+	}
 |	"RESTORE" BRIETables "FROM" stringLit BRIEOptions
 	{
 		stmt := $2.(*ast.BRIEStmt)
 		stmt.Kind = ast.BRIEKindRestore
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"RESTORE" "POINT" "FROM" stringLit BRIEOptions
+	{
+		stmt :=  &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindRestorePoint
 		stmt.Storage = $4
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
@@ -5359,7 +5452,41 @@ BRIEOption:
 			UintValue: uint64($3.(ast.BRIEOptionLevel)),
 		}
 	}
-
+|	"FULL_BACKUP_STORAGE" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionFullBackupStorage,
+			StrValue: $3,
+		}
+	}
+|	"RESTORED_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionRestoredTS,
+			StrValue: $3,
+        }
+	}
+|	"START_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionStartTS,
+			StrValue: $3,
+        }
+	}
+| 	"UNTIL_TS" EqOpt stringLit
+    	{
+    		$$ = &ast.BRIEOption{
+    			Tp:       ast.BRIEOptionUntilTS,
+    			StrValue: $3,
+            }
+    	}
+|	"GC_TTL" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionGCTTL,
+			StrValue: $3,
+        }
+	}
 LengthNum:
 	NUM
 	{
@@ -6141,6 +6268,7 @@ UnReservedKeyword:
 |	"FOLLOWING"
 |	"FORMAT"
 |	"FULL"
+|	"FULL_BACKUP_STORAGE"
 |	"GENERAL"
 |	"GLOBAL"
 |	"HASH"
@@ -6165,6 +6293,7 @@ UnReservedKeyword:
 |	"REORGANIZE"
 |	"RESOURCE"
 |	"RESTART"
+|	"RESTORED_TS"
 |	"ROLE"
 |	"ROLLBACK"
 |	"SESSION"
@@ -6357,6 +6486,7 @@ UnReservedKeyword:
 |	"REPLICA"
 |	"LOCATION"
 |	"LABELS"
+|   "LOG"
 |	"LOGS"
 |	"HOSTS"
 |	"AGAINST"
@@ -6430,6 +6560,7 @@ UnReservedKeyword:
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
 |	"CALIBRATE"
+|	"POINT"
 
 TiDBKeyword:
 	"ADMIN"
