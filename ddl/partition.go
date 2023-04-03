@@ -429,10 +429,14 @@ func checkListPartitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition
 	for _, def := range defs {
 		valIn, ok := def.Clause.(*ast.PartitionDefinitionClauseIn)
 		if !ok {
-			if _, ok := def.Clause.(*ast.PartitionDefinitionClauseLessThan); ok {
+			switch def.Clause.(type) {
+			case *ast.PartitionDefinitionClauseLessThan:
 				return ast.ErrPartitionWrongValues.GenWithStackByArgs("RANGE", "LESS THAN")
+			case *ast.PartitionDefinitionClauseNone:
+				return ast.ErrPartitionRequiresValues.GenWithStackByArgs("LIST", "IN")
+			default:
+				return dbterror.ErrUnsupportedCreatePartition.GenWithStack("Only VALUES IN () is supported for LIST partitioning")
 			}
-			return dbterror.ErrUnsupportedCreatePartition.GenWithStack("Only VALUES IN () is supported for LIST partitioning")
 		}
 		if !ctx.GetSessionVars().EnableDefaultListPartition {
 			for _, val := range valIn.Values {
