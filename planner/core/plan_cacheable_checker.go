@@ -246,6 +246,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 				return false, "not a select statement"
 			}
 			tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(selectStmt)
+			if !ok {
+				return ok, reason
+			}
 			tableNames, ok, reason = extractTableNames(x.Table.TableRefs, tableNames)
 			if !ok {
 				return ok, reason
