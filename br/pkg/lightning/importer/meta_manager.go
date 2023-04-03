@@ -487,6 +487,7 @@ func (m *dbTableMetaMgr) FinishTable(ctx context.Context) error {
 	return exec.Exec(ctx, "clean up metas", query, m.tr.tableInfo.ID)
 }
 
+// RemoveTableMetaByTableName remove table meta by table name
 func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tableName string) error {
 	exec := &common.SQLWithRetry{
 		DB:     db,

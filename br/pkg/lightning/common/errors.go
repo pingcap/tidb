@@ -23,6 +23,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
+// error definitions
 var (
 	ErrUnknown         = errors.Normalize("unknown error", errors.RFCCodeText("Lightning:Common:ErrUnknown"))
 	ErrInvalidArgument = errors.Normalize("invalid argument", errors.RFCCodeText("Lightning:Common:ErrInvalidArgument"))
