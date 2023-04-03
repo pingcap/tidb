@@ -1620,11 +1620,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
 		"select * from t1 limit 1",                                     // limit
 		"select * from (select * from t1) t",                           // sub-query
-		"insert into t1 values(1, 1)",                                  // insert
-		"insert into t1(a, b) select a, b from t1",                     // insert into select
-		"update t1 set a = 1 where b = 2",                              // update
-		"delete from t1 where b = 1",                                   // delete
-		"select * from t1 for update",                                  // lock
 		"select * from t1 where a in (select a from t)",                // uncorrelated sub-query
 		"select * from t1 where a in (select a from t where a > t1.a)", // correlated sub-query
 		"select * from t where j < 1",                                  // json
@@ -1653,11 +1648,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
-		"skip non-prepared plan-cache: not a select statement",
-		"skip non-prepared plan-cache: not a select statement",
-		"skip non-prepared plan-cache: not a select statement",
-		"skip non-prepared plan-cache: not a select statement",
-		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
 		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
@@ -1738,6 +1728,35 @@ func TestIssue42150(t *testing.T) {
 	tk.MustExec("execute st")
 	tk.MustExec("execute st")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec("create table t (a int default 0, b int default 0)")
+
+	for _, sql := range []string{
+		`select a from t for update`,
+		`select a from t where a<10 for update`,
+		`insert into t values (1, 1)`,
+		`insert into t (a, b) values (1, 1)`,
+		`insert into t (a) values (1)`,
+		`insert into t (b) values (1)`,
+		`insert into t select * from t`,
+		`insert into t select * from t where a>10`,
+		`update t set a=1`,
+		`update t set a=1 where a>10`,
+		`update t set a=1, b=1`,
+		`update t set a=a+1 where a>10`,
+		`delete from t`,
+		`delete from t where a>10`,
+	} {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
 }
 
 func TestNonPreparedPlanCachePanic(t *testing.T) {
@@ -1928,5 +1947,20 @@ func BenchmarkPlanCacheInsert(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		tk.MustExec("execute st")
+	}
+}
+
+func BenchmarkNonPreparedPlanCacheDML(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tk.MustExec("insert into t values (1)")
+		tk.MustExec("update t set a = 2 where a = 1")
+		tk.MustExec("delete from t where a = 2")
 	}
 }
