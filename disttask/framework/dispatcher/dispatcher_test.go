@@ -134,8 +134,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	// test parallelism control
 	var originalConcurrency int
 	if taskCnt == 1 {
-		originalConcurrency = dispatcher.DefaultDispatchConcurrency
-		dispatcher.DefaultDispatchConcurrency = 1
+		originalConcurrency = int(dispatcher.DefaultDispatchConcurrency.Swap(1))
 	}
 
 	dsp, gTaskMgr, subTaskMgr, store := MockDispatcher(t)
@@ -144,7 +143,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		dsp.Stop()
 		// make data race happy
 		if taskCnt == 1 {
-			dispatcher.DefaultDispatchConcurrency = originalConcurrency
+			dispatcher.DefaultDispatchConcurrency.Store(int32(originalConcurrency))
 		}
 	}()
 

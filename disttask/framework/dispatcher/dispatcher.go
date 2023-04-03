@@ -29,6 +29,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -41,7 +42,7 @@ const (
 
 var (
 	// DefaultDispatchConcurrency is the default concurrency for handling global task.
-	DefaultDispatchConcurrency = 4
+	DefaultDispatchConcurrency = *atomicutil.NewInt32(4)
 	checkTaskFinishedInterval  = 500 * time.Millisecond
 	checkTaskRunningInterval   = 300 * time.Millisecond
 	nonRetrySQLTime            = 1
@@ -111,9 +112,9 @@ func NewDispatcher(ctx context.Context, globalTaskTable *storage.GlobalTaskManag
 	dispatcher := &dispatcher{
 		gTaskMgr:             globalTaskTable,
 		subTaskMgr:           subtaskTable,
-		detectPendingGTaskCh: make(chan *proto.Task, DefaultDispatchConcurrency),
+		detectPendingGTaskCh: make(chan *proto.Task, DefaultDispatchConcurrency.Load()),
 	}
-	pool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
+	pool, err := spool.NewPool("dispatch_pool", DefaultDispatchConcurrency.Load(), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +150,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 			return
 		case <-ticker.C:
 			cnt := d.getRunningGTaskCnt()
-			if cnt >= DefaultDispatchConcurrency {
+			if cnt >= int(DefaultDispatchConcurrency.Load()) {
 				break
 			}
 
@@ -174,7 +175,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 					cnt++
 					continue
 				}
-				if cnt >= DefaultDispatchConcurrency {
+				if cnt >= int(DefaultDispatchConcurrency.Load()) {
 					break
 				}
 
