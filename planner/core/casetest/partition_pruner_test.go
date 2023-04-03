@@ -145,6 +145,7 @@ func TestListDefaultPartitionPruner(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database default_partition")
 	tk.MustExec("use default_partition")
+	tk.MustExec(`set tidb_enable_default_list_partition=1`)
 	tk.MustExec("create table t (a int, b varchar(255), key (b)) partition by list (a) (partition p0 values in (0, 10), partition p1 values in (1,2,4,8,9), partition p2 values in (3,5,default))")
 	tk.MustExec(`insert into t values (-22, "-22"), (0, "0"), (2, "2"), (3,"3"), (7,"7")`)
 	tk.MustExec(`analyze table t`)
