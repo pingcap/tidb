@@ -5102,3 +5102,12 @@ partition p1 values less than maxvalue)`)
 		"(PARTITION `p0` VALUES LESS THAN (1998),\n" +
 		" PARTITION `p1` VALUES LESS THAN (MAXVALUE))"))
 }
+
+func TestListRangeError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ListRange")
+	tk.MustExec("use ListRange")
+	tk.MustExec(`create table t (a int) partition by list (a) (partition p1 values in (1))`)
+	tk.MustContainErrMsg(`alter table t add partition (partition p2 values less than (2))`, "[ddl:1480]Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition")
+}
