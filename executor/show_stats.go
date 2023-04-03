@@ -140,7 +140,7 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 		partitionName,
 		e.versionToTime(statsTbl.Version),
 		statsTbl.ModifyCount,
-		statsTbl.Count,
+		statsTbl.RealtimeCount,
 	})
 }
 
@@ -223,7 +223,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		if !col.IsStatsInitialized() {
 			continue
 		}
-		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count, false),
+		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.RealtimeCount, false),
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
