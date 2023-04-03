@@ -1740,6 +1740,8 @@ func TestNonPreparedPlanCacheDML(t *testing.T) {
 	tk.MustExec("create table t (a int default 0, b int default 0)")
 
 	for _, sql := range []string{
+		`select a from t for update`,
+		`select a from t where a<10 for update`,
 		`insert into t values (1, 1)`,
 		`insert into t (a, b) values (1, 1)`,
 		`insert into t (a) values (1)`,

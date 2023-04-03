@@ -288,7 +288,7 @@ func isSelectStmtNonPrepCacheableFastCheck(selectStmt *ast.SelectStmt) (names []
 		selectStmt.Having != nil || // having
 		selectStmt.WindowSpecs != nil || // window function
 		selectStmt.Limit != nil || // limit
-		selectStmt.LockInfo != nil || selectStmt.SelectIntoOpt != nil { // lock info
+		selectStmt.SelectIntoOpt != nil { // select-into statement
 		return nil, false, "queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
 	}
 	from := selectStmt.From
