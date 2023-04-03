@@ -188,14 +188,14 @@ func (*sortedSelectResults) NextRaw(context.Context) ([]byte, error) {
 
 func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err error) {
 	c.Reset()
-	r := make([]int, c.NumCols()-1)
-	for i := range r {
-		r[i] = i
-	}
 	for i := range ssr.cachedChunks {
 		if ssr.cachedChunks[i] == nil {
 			ssr.cachedChunks[i] = c.CopyConstruct()
 			if len(ssr.pids) != 0 {
+				r := make([]int, c.NumCols()-1)
+				for i := range r {
+					r[i] = i
+				}
 				ssr.cachedChunks[i] = ssr.cachedChunks[i].Prune(r)
 			}
 			ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage())

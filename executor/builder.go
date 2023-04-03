@@ -3827,7 +3827,6 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 		}
 		indexReq.OutputOffsets = append(offset, indexReq.OutputOffsets...)
 	}
-
 	return indexReq, err
 }
 
@@ -3843,7 +3842,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		// Should output pid col.
 		handleLen++
 	}
-
 	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
 	if err != nil {
 		return nil, err
@@ -3959,9 +3957,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return ret
 	}
 
-	indexScanPlan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-
-	if is.Index.Global || len(indexScanPlan.ByItems) != 0 {
+	if is.Index.Global || len(is.ByItems) != 0 {
 		tmp, ok := b.is.TableByID(ts.Table.ID)
 		if !ok {
 			b.err = err
