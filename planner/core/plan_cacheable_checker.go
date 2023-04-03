@@ -210,6 +210,7 @@ func NonPreparedPlanCacheable(node ast.Node, is infoschema.InfoSchema) bool {
 
 var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPlanCacheableChecker{} }}
 
+// NonPreparedPlanCacheableWithCtx checks whether this SQL is cacheable for non-prepared plan cache.
 func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (ok bool, reason string) {
 	var tableNames []*ast.TableName
 	switch x := node.(type) {
