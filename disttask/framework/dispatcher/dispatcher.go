@@ -180,7 +180,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 
 				err = d.processNormalFlow(gTask)
 				logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
-					zap.String("state", gTask.State), zap.Uint64("con", gTask.Concurrency), zap.Error(err))
+					zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Error(err))
 				if err != nil || gTask.IsFinished() {
 					continue
 				}
@@ -371,7 +371,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		return err
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),
-		zap.String("state", gTask.State), zap.Uint64("con", gTask.Concurrency), zap.Int("subtasks", len(metas)))
+		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", len(metas)))
 
 	// Adjust the global task's concurrency.
 	if gTask.Concurrency == 0 {

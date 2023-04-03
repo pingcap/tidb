@@ -188,6 +188,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	checkGetRunningGTaskCnt()
 	// Clean the task.
 	deleteTasks(t, store, taskID)
+	dsp.(dispatcher.DispatcherForTest).DelRunningGTask(taskID)
 
 	// test DetectTaskLoop
 	checkGetGTaskState := func(expectedState string) {
