@@ -22,7 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -76,6 +76,7 @@ func makeLogger(logger log.Logger, tag string, engineUUID uuid.UUID) log.Logger 
 	)
 }
 
+// MakeUUID generates a UUID for the engine and a tag for the engine.
 func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
 	tag := makeTag(tableName, engineID)
 	engineUUID := uuid.NewSHA1(engineNamespace, []byte(tag))
@@ -84,6 +85,7 @@ func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
 
 var engineNamespace = uuid.MustParse("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf")
 
+// EngineFileSize represents the size of an engine on disk and in memory.
 type EngineFileSize struct {
 	// UUID is the engine's UUID.
 	UUID uuid.UUID
@@ -145,20 +147,10 @@ type TargetInfoGetter interface {
 	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
 }
 
-// EncodingBuilder consists of operations to handle encoding backend row data formats from source.
-type EncodingBuilder interface {
-	// NewEncoder creates an encoder of a TiDB table.
-	NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error)
-	// MakeEmptyRows creates an empty collection of encoded rows.
-	MakeEmptyRows() kv.Rows
-}
-
 // AbstractBackend is the abstract interface behind Backend.
 // Implementations of this interface must be goroutine safe: you can share an
 // instance and execute any method anywhere.
 type AbstractBackend interface {
-	EncodingBuilder
-	TargetInfoGetter
 	// Close the connection to the backend.
 	Close()
 
@@ -206,11 +198,11 @@ type AbstractBackend interface {
 
 	// CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 	//  may be repeated with other keys in local data source.
-	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
+	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error)
 
 	// CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 	//  the data import by other lightning.
-	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
+	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error)
 
 	// ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 	// according to the required algorithm.
@@ -256,43 +248,33 @@ type ClosedEngine struct {
 	engine
 }
 
+// LocalEngineWriter is a thread-local writer for writing rows into a single engine.
 type LocalEngineWriter struct {
 	writer    EngineWriter
 	tableName string
 }
 
+// MakeBackend creates a new Backend from an AbstractBackend.
 func MakeBackend(ab AbstractBackend) Backend {
 	return Backend{abstract: ab}
 }
 
+// Close the connection to the backend.
 func (be Backend) Close() {
 	be.abstract.Close()
 }
 
-func (be Backend) MakeEmptyRows() kv.Rows {
-	return be.abstract.MakeEmptyRows()
-}
-
-func (be Backend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return be.abstract.NewEncoder(ctx, tbl, options)
-}
-
+// ShouldPostProcess returns whether KV-specific post-processing should be
 func (be Backend) ShouldPostProcess() bool {
 	return be.abstract.ShouldPostProcess()
 }
 
-func (be Backend) CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error {
-	return be.abstract.CheckRequirements(ctx, checkCtx)
-}
-
-func (be Backend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return be.abstract.FetchRemoteTableModels(ctx, schemaName)
-}
-
+// FlushAll flushes all opened engines.
 func (be Backend) FlushAll(ctx context.Context) error {
 	return be.abstract.FlushAllEngines(ctx)
 }
 
+// TotalMemoryConsume returns the total memory consumed by the backend.
 func (be Backend) TotalMemoryConsume() int64 {
 	return be.abstract.TotalMemoryConsume()
 }
@@ -388,14 +370,17 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 	}, nil
 }
 
-func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+// CollectLocalDuplicateRows collects duplicate rows from the local backend.
+func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	return be.abstract.CollectLocalDuplicateRows(ctx, tbl, tableName, opts)
 }
 
-func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+// CollectRemoteDuplicateRows collects duplicate rows from the remote backend.
+func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl, tableName, opts)
 }
 
+// ResolveDuplicateRows resolves duplicate rows from the backend.
 func (be Backend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
 	return be.abstract.ResolveDuplicateRows(ctx, tbl, tableName, algorithm)
 }
@@ -416,6 +401,7 @@ func (engine *OpenedEngine) Flush(ctx context.Context) error {
 	return engine.backend.FlushEngine(ctx, engine.uuid)
 }
 
+// LocalWriter returns a writer that writes to the local backend.
 func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (*LocalEngineWriter, error) {
 	w, err := engine.backend.LocalWriter(ctx, cfg, engine.uuid)
 	if err != nil {
@@ -424,19 +410,22 @@ func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterCon
 	return &LocalEngineWriter{writer: w, tableName: engine.tableName}, nil
 }
 
+// TotalMemoryConsume returns the total memory consumed by the engine.
 func (engine *OpenedEngine) TotalMemoryConsume() int64 {
 	return engine.engine.backend.TotalMemoryConsume()
 }
 
 // WriteRows writes a collection of encoded rows into the engine.
-func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows kv.Rows) error {
+func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
 	return w.writer.AppendRows(ctx, w.tableName, columnNames, rows)
 }
 
+// Close closes the engine and returns the status of the engine.
 func (w *LocalEngineWriter) Close(ctx context.Context) (ChunkFlushStatus, error) {
 	return w.writer.Close(ctx)
 }
 
+// IsSynced returns whether the engine is synced.
 func (w *LocalEngineWriter) IsSynced() bool {
 	return w.writer.IsSynced()
 }
@@ -506,25 +495,29 @@ func (engine *ClosedEngine) Cleanup(ctx context.Context) error {
 	return err
 }
 
+// Logger returns the logger for the engine.
 func (engine *ClosedEngine) Logger() log.Logger {
 	return engine.logger
 }
 
+// ChunkFlushStatus is the status of a chunk flush.
 type ChunkFlushStatus interface {
 	Flushed() bool
 }
 
+// EngineWriter is the interface for writing data to an engine.
 type EngineWriter interface {
 	AppendRows(
 		ctx context.Context,
 		tableName string,
 		columnNames []string,
-		rows kv.Rows,
+		rows encode.Rows,
 	) error
 	IsSynced() bool
 	Close(ctx context.Context) (ChunkFlushStatus, error)
 }
 
+// GetEngineUUID returns the engine UUID.
 func (engine *OpenedEngine) GetEngineUUID() uuid.UUID {
 	return engine.uuid
 }

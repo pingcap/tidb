@@ -20,15 +20,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 )
 
+// NewNoopBackend creates a new backend that does nothing.
 func NewNoopBackend() backend.Backend {
 	return backend.MakeBackend(noopBackend{})
 }
@@ -37,13 +37,14 @@ type noopBackend struct{}
 
 type noopRows struct{}
 
-func (r noopRows) SplitIntoChunks(int) []kv.Rows {
-	return []kv.Rows{r}
+// SplitIntoChunks implements the Rows interface.
+func (r noopRows) SplitIntoChunks(int) []encode.Rows {
+	return []encode.Rows{r}
 }
 
 // Clear returns a new collection with empty content. It may share the
 // capacity with the current instance. The typical usage is `x = x.Clear()`.
-func (r noopRows) Clear() kv.Rows {
+func (r noopRows) Clear() encode.Rows {
 	return r
 }
 
@@ -51,7 +52,7 @@ func (r noopRows) Clear() kv.Rows {
 func (b noopBackend) Close() {}
 
 // MakeEmptyRows creates an empty collection of encoded rows.
-func (b noopBackend) MakeEmptyRows() kv.Rows {
+func (b noopBackend) MakeEmptyRows() encode.Rows {
 	return noopRows{}
 }
 
@@ -67,22 +68,26 @@ func (b noopBackend) ShouldPostProcess() bool {
 }
 
 // NewEncoder creates an encoder of a TiDB table.
-func (b noopBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+func (b noopBackend) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	return noopEncoder{}, nil
 }
 
+// OpenEngine creates a new engine file for the given table.
 func (b noopBackend) OpenEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
 	return nil
 }
 
+// CloseEngine closes the engine file, flushing any remaining data.
 func (b noopBackend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	return nil
 }
 
+// ImportEngine imports a closed engine file.
 func (b noopBackend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	return nil
 }
 
+// CleanupEngine removes all data related to the engine.
 func (b noopBackend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	return nil
 }
@@ -143,18 +148,22 @@ func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uu
 	return Writer{}, nil
 }
 
-func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+// CollectLocalDuplicateRows collects duplicate rows from local backend.
+func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+// CollectRemoteDuplicateRows collects duplicate rows from remote backend.
+func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
+// ResolveDuplicateRows resolves duplicate rows.
 func (b noopBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
 	return nil
 }
 
+// TotalMemoryConsume returns the total memory usage of the backend.
 func (b noopBackend) TotalMemoryConsume() int64 {
 	return 0
 }
@@ -165,36 +174,42 @@ type noopEncoder struct{}
 func (e noopEncoder) Close() {}
 
 // Encode encodes a row of SQL values into a backend-friendly format.
-func (e noopEncoder) Encode(log.Logger, []types.Datum, int64, []int, string, int64) (kv.Row, error) {
+func (e noopEncoder) Encode([]types.Datum, int64, []int, int64) (encode.Row, error) {
 	return noopRow{}, nil
 }
 
 type noopRow struct{}
 
+// Size returns the size of the encoded row.
 func (r noopRow) Size() uint64 {
 	return 0
 }
 
-func (r noopRow) ClassifyAndAppend(*kv.Rows, *verification.KVChecksum, *kv.Rows, *verification.KVChecksum) {
+// ClassifyAndAppend classifies the row into the corresponding collection.
+func (r noopRow) ClassifyAndAppend(*encode.Rows, *verification.KVChecksum, *encode.Rows, *verification.KVChecksum) {
 }
 
 // Writer define a local writer that do nothing.
 type Writer struct{}
 
-func (w Writer) AppendRows(context.Context, string, []string, kv.Rows) error {
+// AppendRows implements the EngineWriter interface.
+func (w Writer) AppendRows(context.Context, string, []string, encode.Rows) error {
 	return nil
 }
 
+// IsSynced implements the EngineWriter interface.
 func (w Writer) IsSynced() bool {
 	return true
 }
 
+// Close implements the EngineWriter interface.
 func (w Writer) Close(context.Context) (backend.ChunkFlushStatus, error) {
 	return trueStatus{}, nil
 }
 
 type trueStatus struct{}
 
+// Flushed implements the ChunkFlushStatus interface.
 func (s trueStatus) Flushed() bool {
 	return true
 }

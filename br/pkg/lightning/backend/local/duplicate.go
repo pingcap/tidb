@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
@@ -116,6 +117,7 @@ func (indexHandles *pendingIndexHandles) Swap(i, j int) {
 
 type pendingKeyRange tidbkv.KeyRange
 
+// Less implements btree.Item.
 func (kr pendingKeyRange) Less(other btree.Item) bool {
 	return bytes.Compare(kr.EndKey, other.(pendingKeyRange).EndKey) < 0
 }
@@ -235,26 +237,27 @@ type DupKVStream interface {
 	Close() error
 }
 
-// LocalDupKVStream implements the interface of DupKVStream.
+// DupKVStreamImpl implements the interface of DupKVStream.
 // It collects duplicate key-value pairs from a pebble.DB.
 //
 //goland:noinspection GoNameStartsWithPackageName
-type LocalDupKVStream struct {
+type DupKVStreamImpl struct {
 	iter Iter
 }
 
-// NewLocalDupKVStream creates a new LocalDupKVStream with the given duplicate db and key range.
-func NewLocalDupKVStream(dupDB *pebble.DB, keyAdapter KeyAdapter, keyRange tidbkv.KeyRange) *LocalDupKVStream {
+// NewLocalDupKVStream creates a new DupKVStreamImpl with the given duplicate db and key range.
+func NewLocalDupKVStream(dupDB *pebble.DB, keyAdapter KeyAdapter, keyRange tidbkv.KeyRange) *DupKVStreamImpl {
 	opts := &pebble.IterOptions{
 		LowerBound: keyRange.StartKey,
 		UpperBound: keyRange.EndKey,
 	}
 	iter := newDupDBIter(dupDB, keyAdapter, opts)
 	iter.First()
-	return &LocalDupKVStream{iter: iter}
+	return &DupKVStreamImpl{iter: iter}
 }
 
-func (s *LocalDupKVStream) Next() (key, val []byte, err error) {
+// Next implements the interface of DupKVStream.
+func (s *DupKVStreamImpl) Next() (key, val []byte, err error) {
 	if !s.iter.Valid() {
 		err = s.iter.Error()
 		if err == nil {
@@ -268,7 +271,8 @@ func (s *LocalDupKVStream) Next() (key, val []byte, err error) {
 	return
 }
 
-func (s *LocalDupKVStream) Close() error {
+// Close implements the interface of DupKVStream.
+func (s *DupKVStreamImpl) Close() error {
 	return s.iter.Close()
 }
 
@@ -276,6 +280,7 @@ type regionError struct {
 	inner *errorpb.Error
 }
 
+// Error implements the interface of error.
 func (r regionError) Error() string {
 	return r.inner.String()
 }
@@ -361,6 +366,7 @@ func (s *RemoteDupKVStream) tryRecv() error {
 	return nil
 }
 
+// Next implements the interface of DupKVStream.
 func (s *RemoteDupKVStream) Next() (key, val []byte, err error) {
 	for len(s.kvs) == 0 {
 		if s.atEOF {
@@ -375,6 +381,7 @@ func (s *RemoteDupKVStream) Next() (key, val []byte, err error) {
 	return
 }
 
+// Close implements the interface of DupKVStream.
 func (s *RemoteDupKVStream) Close() error {
 	s.cancel()
 	return nil
@@ -404,7 +411,7 @@ func NewDuplicateManager(
 	tikvCli *tikv.KVStore,
 	tikvCodec tikv.Codec,
 	errMgr *errormanager.ErrorManager,
-	sessOpts *kv.SessionOptions,
+	sessOpts *encode.SessionOptions,
 	concurrency int,
 	hasDupe *atomic.Bool,
 	logger log.Logger,
