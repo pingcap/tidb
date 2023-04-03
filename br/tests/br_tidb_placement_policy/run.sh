@@ -75,7 +75,7 @@ run_sql "DROP PLACEMENT POLICY tworeplicas;"
 
 # restore without tidb-placement-policy
 echo "restore without tidb-placement start..."
-db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --with-tidb-placement-mode "ignore"
+run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --with-tidb-placement-mode "ignore"
 
 policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY" | wc -l)
 if [ "$policy_count" -ne "0" ];then
