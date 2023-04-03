@@ -344,9 +344,6 @@ func TestNonPreparedPlanCacheReason(t *testing.T) {
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a=1`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(`explain format = 'plan_cache' select * from t t1, t t2`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: queries that access multiple tables are not supported`))
-
 	tk.MustExec(`explain format = 'plan_cache' select * from (select * from t) tx`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: queries that have sub-queries are not supported`))
 
