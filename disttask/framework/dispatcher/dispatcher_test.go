@@ -150,7 +150,8 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 
 	dispatcher.RegisterTaskFlowHandle(taskTypeExample, NumberExampleHandle{})
 
-	cnt := 20
+	// 2s
+	cnt := 40
 	checkGetRunningGTaskCnt := func() {
 		var retCnt int
 		for i := 0; i < cnt; i++ {
@@ -158,7 +159,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 			if retCnt == taskCnt {
 				break
 			}
-			time.Sleep(time.Millisecond * 30)
+			time.Sleep(time.Millisecond * 50)
 		}
 		require.Equal(t, retCnt, taskCnt)
 	}
