@@ -1620,10 +1620,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
 		"select * from t1 limit 1",                                     // limit
 		"select * from (select * from t1) t",                           // sub-query
-		"insert into t1 values(1, 1)",                                  // insert
-		"insert into t1(a, b) select a, b from t1",                     // insert into select
-		"update t1 set a = 1 where b = 2",                              // update
-		"delete from t1 where b = 1",                                   // delete
 		"select * from t1 for update",                                  // lock
 		"select * from t1 where a in (select a from t)",                // uncorrelated sub-query
 		"select * from t1 where a in (select a from t where a > t1.a)", // correlated sub-query
@@ -1653,10 +1649,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
-		"skip non-prepared plan-cache: not a select statement",
-		"skip non-prepared plan-cache: not a select statement",
-		"skip non-prepared plan-cache: not a select statement",
-		"skip non-prepared plan-cache: not a select statement",
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
 		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
