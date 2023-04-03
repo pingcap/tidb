@@ -683,7 +683,7 @@ func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
 
 type noopStoreWriteLimiter struct{}
 
-func (noopStoreWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) error {
+func (noopStoreWriteLimiter) WaitN(_ context.Context, _ uint64, _ int) error {
 	return nil
 }
 

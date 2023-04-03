@@ -181,18 +181,18 @@ func (w Writer) AppendRows(context.Context, string, []string, encode.Rows) error
 }
 
 // IsSynced implements the EngineWriter interface.
-func (w Writer) IsSynced() bool {
+func (Writer) IsSynced() bool {
 	return true
 }
 
 // Close implements the EngineWriter interface.
-func (w Writer) Close(context.Context) (backend.ChunkFlushStatus, error) {
+func (Writer) Close(context.Context) (backend.ChunkFlushStatus, error) {
 	return trueStatus{}, nil
 }
 
 type trueStatus struct{}
 
 // Flushed implements the ChunkFlushStatus interface.
-func (s trueStatus) Flushed() bool {
+func (trueStatus) Flushed() bool {
 	return true
 }

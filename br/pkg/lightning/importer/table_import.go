@@ -269,7 +269,7 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.
-func (tr *TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
+func (*TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
 	}
@@ -1297,7 +1297,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	return nil
 }
 
-func (tr *TableImporter) executeDDL(
+func (*TableImporter) executeDDL(
 	ctx context.Context,
 	db *sql.DB,
 	ddl string,

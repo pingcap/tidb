@@ -393,7 +393,7 @@ func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, _ *ta
 		//		return errors.Trace(err)
 		//	}
 		//	datum = &d
-		// }
+		// }
 
 		enc.appendSQLBytes(sb, datum.GetBytes())
 	case types.KindBytes:
