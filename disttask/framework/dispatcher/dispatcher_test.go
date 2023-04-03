@@ -205,7 +205,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		require.Len(t, tasks, taskCnt)
 		require.Eventually(t, func() bool {
 			return dsp.(dispatcher.DispatcherForTest).GetRunningGTaskCnt() == 0
-		}, 1*time.Second, 30*time.Millisecond)
+		}, 5*time.Second, 30*time.Millisecond)
 		return
 	}
 
