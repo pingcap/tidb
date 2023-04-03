@@ -8,7 +8,6 @@ go_test(
         "pessimistic_test.go",
     ],
     flaky = True,
-    race = "on",
     deps = [
         "//config",
         "//domain",

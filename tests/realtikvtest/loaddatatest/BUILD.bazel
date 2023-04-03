@@ -8,6 +8,7 @@ go_test(
         "util_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         "//config",
         "//kv",
