@@ -434,6 +434,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 			if _, ok := correlatedAggMap[aggFunc]; ok {
 				b.correlatedAggMapper[aggFunc] = &expression.CorrelatedColumn{
 					Column: column,
+					Data:   new(types.Datum),
 				}
 			}
 		}
