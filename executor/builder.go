@@ -3802,16 +3802,11 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	if err != nil {
 		return nil, err
 	}
-	schemaLen := len(columns)
-	indexReq.OutputOffsets = []uint32{}
-	for i := 0; i < handleLen; i++ {
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen+i))
-	}
 
+	indexReq.OutputOffsets = []uint32{}
 	if len(plans[0].(*plannercore.PhysicalIndexScan).ByItems) != 0 {
 		idxScan := plans[0].(*plannercore.PhysicalIndexScan)
 		tblInfo := idxScan.Table
-		offset := make([]uint32, 0, len(idxScan.ByItems))
 		for _, item := range idxScan.ByItems {
 			c, ok := item.Expr.(*expression.Column)
 			if !ok {
@@ -3820,12 +3815,15 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 			column := model.FindColumnInfoByID(tblInfo.Columns, c.ID)
 			for i, idxColumn := range columns {
 				if idxColumn.Name.L == column.Name.L {
-					offset = append(offset, uint32(i))
+					indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
 					break
 				}
 			}
 		}
-		indexReq.OutputOffsets = append(offset, indexReq.OutputOffsets...)
+	}
+
+	for i := 0; i < handleLen; i++ {
+		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
 	}
 	return indexReq, err
 }
