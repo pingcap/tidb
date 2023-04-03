@@ -612,10 +612,12 @@ func handleOneResult(result *backfillResult, scheduler backfillScheduler, consum
 				time.Sleep(50 * time.Millisecond)
 			}
 		})
-		err = reorgInfo.UpdateReorgMeta(keeper.nextKey, consumer.sessPool)
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] update reorg meta failed",
-				zap.Int64("job ID", reorgInfo.ID), zap.Error(err))
+		if consumer.sessPool != nil {
+			err = reorgInfo.UpdateReorgMeta(keeper.nextKey, consumer.sessPool)
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] update reorg meta failed",
+					zap.Int64("job ID", reorgInfo.ID), zap.Error(err))
+			}
 		}
 		// We try to adjust the worker size regularly to reduce
 		// the overhead of loading the DDL related global variables.

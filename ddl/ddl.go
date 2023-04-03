@@ -1769,3 +1769,6 @@ func addHistoryDDLJob2Table(sess *session, job *model.Job, updateRawArgs bool) e
 		"insert_history")
 	return errors.Trace(err)
 }
+
+// GetDDL gets the DDL.
+var GetDDL func() DDL
