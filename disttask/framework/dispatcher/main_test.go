@@ -17,23 +17,28 @@ package dispatcher
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
 // DispatcherForTest exports for testing.
 type DispatcherForTest interface {
-	GetRunningGlobalTasks() map[int64]*proto.Task
+	GetRunningGTaskCnt() int
 }
 
-// GetRunningGlobalTasks implements Dispatcher.GetRunningGlobalTasks interface.
-func (d *dispatcher) GetRunningGlobalTasks() map[int64]*proto.Task {
-	return d.getRunningGlobalTasks()
+// GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
+func (d *dispatcher) GetRunningGTaskCnt() int {
+	return d.getRunningGTaskCnt()
 }
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+
+	// Make test more fast.
+	checkTaskRunningInterval = checkTaskRunningInterval / 10
+	checkTaskFinishedInterval = checkTaskFinishedInterval / 10
+	retrySQLInterval = retrySQLInterval / 20
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),

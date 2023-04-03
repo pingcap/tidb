@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -165,6 +166,11 @@ func (stm *GlobalTaskManager) GetNewTask() (task *proto.Task, err error) {
 
 // UpdateTask updates the global task.
 func (stm *GlobalTaskManager) UpdateTask(task *proto.Task) error {
+	failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("updateTaskErr"))
+		}
+	})
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
