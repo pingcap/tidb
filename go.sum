@@ -718,6 +718,8 @@ github.com/nishanths/predeclared v0.2.2 h1:V2EPdZPliZymNAn79T8RkNApBjMmVKh5XRpLm
 github.com/nishanths/predeclared v0.2.2/go.mod h1:RROzoN6TnGQupbC+lqggsOlcgysk3LMK/HI84Mp280c=
 github.com/nxadm/tail v1.4.4/go.mod h1:kenIhsEOeOJmVchQTgglprH7qJGnHDVpk1VPCcaMI8A=
 github.com/nxadm/tail v1.4.8 h1:nPr65rt6Y5JFSKQO7qToXr7pePgD6Gwiw05lkbyAQTE=
+github.com/oh-my-tidb/client-go/v2 v2.0.0-alpha.0.20230403092851-6a5bce0e26b5 h1:3Qo6y/XM7KDVgbTDfYoPrO8zJ/bly5hecuLT0TVyQ8E=
+github.com/oh-my-tidb/client-go/v2 v2.0.0-alpha.0.20230403092851-6a5bce0e26b5/go.mod h1:Vrew3RmzFPLC66jcncV9ItNBEJWoRane1PN/bw5YLXI=
 github.com/oklog/run v1.0.0/go.mod h1:dlhp/R75TPv97u0XWUtDeV/lRKWPKSdTuV0TZvrmrQA=
 github.com/oklog/ulid v1.3.1 h1:EGfNDEx6MqHz8B3uNV6QAib1UR2Lm97sHi3ocA6ESJ4=
 github.com/oklog/ulid v1.3.1/go.mod h1:CirwcVhetQ6Lv90oh/F+FBtV6XMibvdAFo93nm5qn4U=

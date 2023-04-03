@@ -283,3 +283,7 @@ replace (
 	github.com/pingcap/tidb/parser => ./parser
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
+
+replace (
+	github.com/tikv/client-go/v2 => github.com/oh-my-tidb/client-go/v2 v2.0.0-alpha.0.20230403092851-6a5bce0e26b5
+)
