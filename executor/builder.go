@@ -3797,6 +3797,9 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tbl, err
 }
 
+// buildIndexReq is designed to create a DAG for index request.
+// If len(ByItems) != 0 means index request should return related columns
+// to sort result rows in TiDB side for parition tables.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := constructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {

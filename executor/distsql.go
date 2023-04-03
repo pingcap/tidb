@@ -584,11 +584,15 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
+func (e *IndexLookUpExecutor) hasExtralPidCol() bool {
+	return e.index.Global || len(e.byItems) > 0
+}
+
 func (e *IndexLookUpExecutor) isCommonHandle() bool {
 	return !(len(e.handleCols) == 1 && e.handleCols[0].ID == model.ExtraHandleID) && e.table.Meta() != nil && e.table.Meta().IsCommonHandle
 }
 
-func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
+func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	var tps []*types.FieldType
 	if len(e.byItems) != 0 {
 		for _, item := range e.byItems {
@@ -630,7 +634,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		e.dagPB.OutputOffsets = e.dagPB.OutputOffsets[len(e.byItems):]
 		e.byItems = nil
 	}
-	tps := e.getRetTpsByHandle()
+	tps := e.getRetTpsForIndexReader()
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
 	go func() {
@@ -699,18 +703,17 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				pids = append(pids, e.prunedPartitions[partTblIdx].GetPhysicalID())
 			}
 		}
-		r := results
 		if len(results) > 1 && len(e.byItems) != 0 {
 			ssr := distsql.NewSortedSelectResults(results, pids, e.byItems, e.memTracker)
-			r = []distsql.SelectResult{ssr}
+			results = []distsql.SelectResult{ssr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)
-		fetchErr := worker.fetchHandles(ctx1, r)
+		fetchErr := worker.fetchHandles(ctx1, results)
 		if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
 			e.feedback.Invalidate()
 		}
 		cancel()
-		for _, result := range r {
+		for _, result := range results {
 			if err := result.Close(); err != nil {
 				logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
 			}
@@ -946,7 +949,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			}
 		}
 	}()
-	retTps := w.idxLookup.getRetTpsByHandle()
+	retTps := w.idxLookup.getRetTpsForIndexReader()
 	// for sortedSelectResult, add pids in last column
 	if !w.idxLookup.index.Global && len(w.idxLookup.byItems) > 0 {
 		retTps = append(retTps, types.NewFieldType(mysql.TypeLonglong))
@@ -1190,7 +1193,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
 	}
-	if e.index.Global || len(e.byItems) > 0 {
+	if e.hasExtralPidCol() {
 		pidOffset := row.Len() - 1
 		pid := row.GetInt64(pidOffset)
 		handle = kv.NewPartitionHandle(pid, handle)
