@@ -22,6 +22,7 @@ PROGRESS_FILE="$TEST_DIR/progress_file"
 BACKUPMETAV1_LOG="$TEST_DIR/backup.log"
 BACKUPMETAV2_LOG="$TEST_DIR/backupv2.log"
 RESTORE_LOG="$TEST_DIR/restore.log"
+export BR_LOG_TO_TERM=1
 rm -rf $PROGRESS_FILE
 
 run_sql "create schema $DB;"
@@ -74,7 +75,7 @@ run_sql "DROP PLACEMENT POLICY tworeplicas;"
 
 # restore without tidb-placement-policy
 echo "restore without tidb-placement start..."
-run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --with-tidb-placement-mode "ignore"
+db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --with-tidb-placement-mode "ignore"
 
 policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY" | wc -l)
 if [ "$policy_count" -ne "0" ];then
