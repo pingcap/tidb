@@ -829,8 +829,10 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 	}
 
 	sstDir := engineSSTDir(local.localStoreDir, engineUUID)
-	if err := os.RemoveAll(sstDir); err != nil {
-		return errors.Trace(err)
+	if !cfg.KeepSortDir {
+		if err := os.RemoveAll(sstDir); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	if !common.IsDirExists(sstDir) {
 		if err := os.Mkdir(sstDir, 0o750); err != nil {

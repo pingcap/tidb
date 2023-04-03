@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -733,6 +735,39 @@ func pickBackfillType(job *model.Job) model.ReorgType {
 	return model.ReorgTypeTxn
 }
 
+// cleanupSortPath is used to clean up the temp data of the previous jobs.
+// Because we don't remove all the files after the support of checkpoint,
+// there maybe some stale files in the sort path if TiDB is killed during the backfill process.
+func cleanupSortPath(currentJobID int64) {
+	sortPath := ingest.ConfigSortPath()
+	entries, err := os.ReadDir(sortPath)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		jobID, err := ingest.DecodeBackendTag(entry.Name())
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
+			continue
+		}
+		// For now, there is only one task using ingest at the same time,
+		// so we can remove all the temp data of the previous jobs.
+		if jobID < currentJobID {
+			logutil.BgLogger().Info("[ddl-ingest] remove stale temp index data",
+				zap.Int64("jobID", jobID), zap.Int64("currentJobID", currentJobID))
+			err := os.RemoveAll(filepath.Join(sortPath, entry.Name()))
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
+				return
+			}
+		}
+	}
+}
+
 // canUseIngest indicates whether it can use ingest way to backfill index.
 func canUseIngest() bool {
 	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
@@ -851,12 +886,6 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 	if ok && bc.Done() {
 		return true, 0, nil
-	}
-	if !ok && job.SnapshotVer != 0 {
-		// The owner is crashed or changed, we need to restart the backfill.
-		job.SnapshotVer = 0
-		job.RowCount = 0
-		return false, ver, nil
 	}
 	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
 	if err != nil {
@@ -1674,6 +1703,7 @@ type addIndexIngestWorker struct {
 	index            table.Index
 	writerCtx        *ingest.WriterContext
 	copReqSenderPool *copReqSenderPool
+	checkpointMgr    CheckpointManager
 
 	resultCh chan *backfillResult
 	jobID    int64
@@ -1681,7 +1711,7 @@ type addIndexIngestWorker struct {
 
 func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.EngineInfo,
 	resultCh chan *backfillResult, jobID int64, schemaName string, indexID int64, writerID int,
-	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context) (*addIndexIngestWorker, error) {
+	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context, checkpointMgr CheckpointManager) (*addIndexIngestWorker, error) {
 	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	lwCtx, err := ei.NewWriterCtx(writerID, indexInfo.Unique)
@@ -1700,6 +1730,7 @@ func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.Engine
 		copReqSenderPool: copReqSenderPool,
 		resultCh:         resultCh,
 		jobID:            jobID,
+		checkpointMgr:    checkpointMgr,
 	}, nil
 }
 

@@ -65,8 +65,9 @@ type chunkSender interface {
 }
 
 type copReqSenderPool struct {
-	tasksCh     chan *reorgBackfillTask
-	chunkSender chunkSender
+	tasksCh       chan *reorgBackfillTask
+	chunkSender   chunkSender
+	checkpointMgr CheckpointManager
 
 	ctx    context.Context
 	copCtx *copContext
@@ -101,6 +102,9 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
+		if p.checkpointMgr.CanSkip(task.id, task.endKey) {
+			continue
+		}
 		curTaskID = task.id
 		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
 			zap.Int("id", task.id), zap.String("task", task.String()))
@@ -129,6 +133,7 @@ func (c *copReqSender) run() {
 				terror.Call(rs.Close)
 				return
 			}
+			p.checkpointMgr.OnTaskSent(task.id, task.endKey, srcChk.NumRows(), done)
 			p.chunkSender.AddTask(idxRecResult{id: task.id, chunk: srcChk, done: done})
 		}
 		terror.Call(rs.Close)
@@ -136,20 +141,21 @@ func (c *copReqSender) run() {
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
-	taskCh chan *reorgBackfillTask) *copReqSenderPool {
+	taskCh chan *reorgBackfillTask, checkpointMgr CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
 	}
 	return &copReqSenderPool{
-		tasksCh:    taskCh,
-		ctx:        ctx,
-		copCtx:     copCtx,
-		store:      store,
-		senders:    make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
-		wg:         sync.WaitGroup{},
-		srcChkPool: srcChkPool,
+		tasksCh:       taskCh,
+		ctx:           ctx,
+		copCtx:        copCtx,
+		store:         store,
+		senders:       make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
+		wg:            sync.WaitGroup{},
+		srcChkPool:    srcChkPool,
+		checkpointMgr: checkpointMgr,
 	}
 }
 

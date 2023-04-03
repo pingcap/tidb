@@ -110,6 +110,9 @@ type EngineConfig struct {
 	TableInfo *checkpoints.TidbTableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
+	// KeepSortDir indicates whether to keep the temporary sort directory
+	// when opening the engine, instead of removing it.
+	KeepSortDir bool
 }
 
 // LocalEngineConfig is the configuration used for local backend in OpenEngine.

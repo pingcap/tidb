@@ -1,0 +1,303 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ddl
+
+import (
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+)
+
+type CheckpointManager interface {
+	CanSkip(taskID int, taskEnd kv.Key) bool
+
+	OnTaskSent(taskID int, taskEnd kv.Key, batchCnt int, lastBatch bool)
+	OnTaskSyncLocal(taskID int, writtenKeys int)
+	OnTaskSyncGlobal()
+
+	Close()
+}
+
+type SingleCheckpointManager struct {
+	ctx      context.Context
+	sessPool *sessionPool
+	jobID    int64
+	indexID  int64
+
+	// Derived and unchanged after the initialization.
+	instanceAddr     string
+	localDataIsValid bool
+
+	// Live in memory.
+	checkpoints     map[int]*TaskCheckpoint // task ID -> checkpoint
+	mu              sync.Mutex
+	minTaskIDSynced int
+	dirty           bool
+
+	// Persisted to the storage.
+	minKeySyncLocal  kv.Key
+	minKeySyncGlobal kv.Key
+
+	// For persisting the checkpoint periodically.
+	updateInterval time.Duration
+	updating       bool
+	updaterWg      sync.WaitGroup
+	updaterExitCh  chan struct{}
+}
+
+type TaskCheckpoint struct {
+	totalKeys     int
+	currentKeys   int
+	checksum      int64
+	endKey        kv.Key
+	lastBatchSent bool
+}
+
+func NewSingleCheckpointManager(ctx context.Context, sessPool *sessionPool,
+	jobID, indexID int64) (*SingleCheckpointManager, error) {
+	instanceAddr := initInstanceAddr()
+	cm := &SingleCheckpointManager{
+		ctx:            ctx,
+		sessPool:       sessPool,
+		jobID:          jobID,
+		indexID:        indexID,
+		checkpoints:    make(map[int]*TaskCheckpoint, 16),
+		mu:             sync.Mutex{},
+		instanceAddr:   instanceAddr,
+		updateInterval: 3 * time.Second,
+		updaterWg:      sync.WaitGroup{},
+		updaterExitCh:  make(chan struct{}),
+	}
+	err := cm.resumeCheckpoint()
+	cm.updaterWg.Add(1)
+	go func() {
+		defer cm.updaterWg.Done()
+		if cm.updateInterval == 0 {
+			logutil.BgLogger().Info("checkpoint update loop is disabled")
+			return
+		}
+		cm.updateCheckpointLoop()
+	}()
+	return cm, err
+}
+
+func initInstanceAddr() string {
+	cfg := config.GetGlobalConfig()
+	dsn := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
+}
+
+func (s *SingleCheckpointManager) CanSkip(_ int, taskEnd kv.Key) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.minKeySyncGlobal) > 0 && taskEnd.Cmp(s.minKeySyncGlobal) <= 0 {
+		return true
+	}
+	return s.localDataIsValid && len(s.minKeySyncLocal) > 0 && taskEnd.Cmp(s.minKeySyncLocal) <= 0
+}
+
+func (s *SingleCheckpointManager) OnTaskSent(taskID int, taskEnd kv.Key, batchCnt int, lastBatch bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp, ok := s.checkpoints[taskID]
+	if !ok {
+		s.checkpoints[taskID] = &TaskCheckpoint{
+			totalKeys: batchCnt,
+			endKey:    taskEnd,
+		}
+		return
+	}
+	cp.totalKeys += batchCnt
+	cp.lastBatchSent = lastBatch
+}
+
+func (s *SingleCheckpointManager) OnTaskSyncLocal(taskID int, writtenKeys int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := s.checkpoints[taskID]
+	cp.currentKeys += writtenKeys
+	if !cp.lastBatchSent || cp.currentKeys < cp.totalKeys {
+		return
+	}
+	// Try to progress the minimum synced key.
+	if taskID == s.minTaskIDSynced+1 {
+		nextTaskID := taskID
+		nextKey := cp.endKey
+		for {
+			cp = s.checkpoints[nextTaskID+1]
+			if cp == nil || cp.currentKeys < cp.totalKeys {
+				break
+			}
+			nextTaskID++
+			nextKey = cp.endKey
+			delete(s.checkpoints, nextTaskID)
+		}
+		s.minTaskIDSynced = nextTaskID
+		s.minKeySyncLocal = nextKey
+		s.dirty = true
+	}
+}
+
+func (s *SingleCheckpointManager) OnTaskSyncGlobal() {
+	s.mu.Lock()
+	s.minKeySyncGlobal = s.minKeySyncLocal
+	s.dirty = true
+	s.mu.Unlock()
+}
+
+func (s *SingleCheckpointManager) Close() {
+	s.updaterExitCh <- struct{}{}
+	s.updaterWg.Wait()
+}
+
+type JobReorgMeta struct {
+	Checkpoint *JobCheckpoint `json:"checkpoint"`
+}
+
+type JobCheckpoint struct {
+	LocalSyncKey  kv.Key `json:"local_sync_key"`
+	GlobalSyncKey kv.Key `json:"global_sync_key"`
+	InstanceAddr  string `json:"instance_addr"`
+	Version       int64  `json:"version"`
+}
+
+const (
+	JobCheckpointVersion1       = 1
+	JobCheckpointVersionCurrent = JobCheckpointVersion1
+)
+
+func (s *SingleCheckpointManager) resumeCheckpoint() error {
+	sessCtx, err := s.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer s.sessPool.put(sessCtx)
+	ddlSess := session{Context: sessCtx}
+	return ddlSess.runInTxn(func(sess *session) error {
+		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = '%s';"
+		sql := fmt.Sprintf(template, s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
+		ctx := kv.WithInternalSourceType(s.ctx, getDDLRequestSource(model.ActionAddIndex))
+		rows, err := sess.execute(ctx, sql, "get_checkpoint")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		rawReorgMeta := rows[0].GetBytes(0)
+		var reorgMeta JobReorgMeta
+		err = json.Unmarshal(rawReorgMeta, &reorgMeta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cp := reorgMeta.Checkpoint; cp != nil {
+			s.minKeySyncGlobal = cp.GlobalSyncKey
+			if s.instanceAddr == cp.InstanceAddr {
+				s.localDataIsValid = true
+				s.minKeySyncLocal = cp.LocalSyncKey
+			}
+			logutil.BgLogger().Info("[ddl-ingest] resume checkpoint",
+				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
+				zap.String("local checkpoint", hex.EncodeToString(s.minKeySyncLocal)),
+				zap.String("global checkpoint", hex.EncodeToString(s.minKeySyncGlobal)),
+				zap.String("previous instance", cp.InstanceAddr),
+				zap.String("current instance", s.instanceAddr))
+			return nil
+		}
+		logutil.BgLogger().Info("[ddl-ingest] checkpoint is empty",
+			zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID))
+		return nil
+	})
+}
+
+func (s *SingleCheckpointManager) updateCheckpoint() error {
+	s.mu.Lock()
+	currentLocalKey := s.minKeySyncLocal
+	currentGlobalKey := s.minKeySyncGlobal
+	s.updating = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.updating = false
+		s.mu.Unlock()
+	}()
+
+	sessCtx, err := s.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer s.sessPool.put(sessCtx)
+	ddlSess := session{Context: sessCtx}
+	logutil.BgLogger().Info("[ddl-ingest] update checkpoint",
+		zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID))
+	return ddlSess.runInTxn(func(sess *session) error {
+		template := "update mysql.tidb_ddl_reorg set reorg_meta = '%s' where job_id = %d and ele_id = %d and ele_type = '%s';"
+		cp := &JobCheckpoint{
+			LocalSyncKey:  currentLocalKey,
+			GlobalSyncKey: currentGlobalKey,
+			InstanceAddr:  s.instanceAddr,
+			Version:       JobCheckpointVersionCurrent,
+		}
+		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		sql := fmt.Sprintf(template, wrapKey2String(rawReorgMeta), s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
+		ctx := kv.WithInternalSourceType(s.ctx, getDDLRequestSource(model.ActionAddIndex))
+		_, err = sess.execute(ctx, sql, "update_checkpoint")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.mu.Lock()
+		s.dirty = false
+		s.mu.Unlock()
+		return nil
+	})
+}
+
+func (s *SingleCheckpointManager) updateCheckpointLoop() {
+	ticker := time.NewTicker(s.updateInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.mu.Lock()
+			if s.updating || !s.dirty {
+				s.mu.Unlock()
+				continue
+			}
+			s.mu.Unlock()
+			err := s.updateCheckpoint()
+			if err != nil {
+				logutil.BgLogger().Error("[ddl-ingest] update checkpoint failed", zap.Error(err))
+			}
+		case <-s.updaterExitCh:
+			return
+		}
+	}
+}

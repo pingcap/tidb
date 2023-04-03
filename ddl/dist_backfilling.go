@@ -269,7 +269,7 @@ func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult
 				}
 
 				if ingestBackendCtx != nil && i%workerCnt == 0 {
-					err := ingestBackendCtx.Flush(eleID)
+					_, err := ingestBackendCtx.Flush(eleID)
 					if err != nil {
 						bwm.unsyncErr = err
 						return
