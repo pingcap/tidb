@@ -27,6 +27,26 @@ const (
 	IndexEngineID = -1
 )
 
+// DefaultImportantVariables is used in ObtainImportantVariables to retrieve the system
+// variables from downstream which may affect KV encode result. The values record the default
+// values if missing.
+var DefaultImportantVariables = map[string]string{
+	"max_allowed_packet":      "67108864",
+	"div_precision_increment": "4",
+	"time_zone":               "SYSTEM",
+	"lc_time_names":           "en_US",
+	"default_week_format":     "0",
+	"block_encryption_mode":   "aes-128-ecb",
+	"group_concat_max_len":    "1024",
+}
+
+// DefaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system
+// variables from downstream in local/importer backend. The values record the default
+// values if missing.
+var DefaultImportVariablesTiDB = map[string]string{
+	"tidb_row_format_version": "1",
+}
+
 func AllocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
 	alloc, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
 	if err != nil {

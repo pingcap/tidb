@@ -14,7 +14,11 @@
 
 package asyncloaddata
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"go.uber.org/atomic"
+)
 
 // Progress is the progress of the LOAD DATA task.
 type Progress struct {
@@ -24,21 +28,33 @@ type Progress struct {
 	// SimpleSeekerOnReadCloser on MySQL client connection which doesn't support
 	// it.
 	SourceFileSize int64
-	// LoadedFileSize is the size of the data that has been loaded in bytes.
-	LoadedFileSize int64
+	// LoadedFileSize is the size of the data that will be loaded in bytes. It's
+	// larger than the actual loaded data size, but due to the fact that reading
+	// is once-a-block and a block may generate multiple tasks that are
+	// concurrently executed, we can't know the actual loaded data size easily.
+	LoadedFileSize *atomic.Int64
 	// LoadedRowCnt is the number of rows that has been loaded.
-	LoadedRowCnt uint64
+	LoadedRowCnt *atomic.Uint64
+}
+
+// NewProgress creates a new Progress.
+func NewProgress() *Progress {
+	return &Progress{
+		SourceFileSize: -1,
+		LoadedFileSize: atomic.NewInt64(0),
+		LoadedRowCnt:   atomic.NewUint64(0),
+	}
 }
 
 // String implements the fmt.Stringer interface.
-func (p Progress) String() string {
+func (p *Progress) String() string {
 	bs, _ := json.Marshal(p)
 	return string(bs)
 }
 
 // ProgressFromJSON creates a Progress from a JSON string.
-func ProgressFromJSON(bs []byte) (Progress, error) {
+func ProgressFromJSON(bs []byte) (*Progress, error) {
 	var p Progress
 	err := json.Unmarshal(bs, &p)
-	return p, err
+	return &p, err
 }

@@ -39,26 +39,6 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-// defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
-// variables from downstream which may affect KV encode result. The values record the default
-// values if missing.
-var defaultImportantVariables = map[string]string{
-	"max_allowed_packet":      "67108864",
-	"div_precision_increment": "4",
-	"time_zone":               "SYSTEM",
-	"lc_time_names":           "en_US",
-	"default_week_format":     "0",
-	"block_encryption_mode":   "aes-128-ecb",
-	"group_concat_max_len":    "1024",
-}
-
-// defaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system
-// variables from downstream in local/importer backend. The values record the default
-// values if missing.
-var defaultImportVariablesTiDB = map[string]string{
-	"tidb_row_format_version": "1",
-}
-
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
@@ -275,7 +255,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 	var query strings.Builder
 	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
 	first := true
-	for k := range defaultImportantVariables {
+	for k := range common.DefaultImportantVariables {
 		if first {
 			first = false
 		} else {
@@ -284,7 +264,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 		query.WriteString(k)
 	}
 	if needTiDBVars {
-		for k := range defaultImportVariablesTiDB {
+		for k := range common.DefaultImportVariablesTiDB {
 			query.WriteString("','")
 			query.WriteString(k)
 		}
@@ -297,7 +277,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 	}
 
 	// convert result into a map. fill in any missing variables with default values.
-	result := make(map[string]string, len(defaultImportantVariables)+len(defaultImportVariablesTiDB))
+	result := make(map[string]string, len(common.DefaultImportantVariables)+len(common.DefaultImportVariablesTiDB))
 	for _, kv := range kvs {
 		result[kv[0]] = kv[1]
 	}
@@ -309,9 +289,9 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 			}
 		}
 	}
-	setDefaultValue(result, defaultImportantVariables)
+	setDefaultValue(result, common.DefaultImportantVariables)
 	if needTiDBVars {
-		setDefaultValue(result, defaultImportVariablesTiDB)
+		setDefaultValue(result, common.DefaultImportVariablesTiDB)
 	}
 
 	return result

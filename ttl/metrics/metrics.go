@@ -112,6 +112,9 @@ func InitMetricsVars() {
 
 	ScanningTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "scanning"})
 	DeletingTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "deleting"})
+
+	scanWorkerPhases = initWorkerPhases("scan_worker")
+	deleteWorkerPhases = initWorkerPhases("delete_worker")
 }
 
 func initWorkerPhases(workerType string) map[string]prometheus.Counter {
@@ -128,8 +131,8 @@ func initWorkerPhases(workerType string) map[string]prometheus.Counter {
 	}
 }
 
-var scanWorkerPhases = initWorkerPhases("scan_worker")
-var deleteWorkerPhases = initWorkerPhases("delete_worker")
+var scanWorkerPhases map[string]prometheus.Counter
+var deleteWorkerPhases map[string]prometheus.Counter
 
 // PhaseTracer is used to tracer the phases duration
 type PhaseTracer struct {

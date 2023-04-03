@@ -733,10 +733,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 }
 
 func TestGetTasks(t *testing.T) {
-	// TODO: update the variable of `enableDistReorg`
-	isDistReorg := variable.DDLEnableDistributeReorg.Load()
-	variable.DDLEnableDistributeReorg.Store(false)
-	defer func() { variable.DDLEnableDistributeReorg.Store(isDistReorg) }()
+	// TODO: update the variable of `EnableDistTask`
+	isDistReorg := variable.EnableDistTask.Load()
+	variable.EnableDistTask.Store(false)
+	defer func() { variable.EnableDistTask.Store(isDistReorg) }()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

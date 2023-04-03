@@ -17,6 +17,7 @@ package kv
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -28,10 +29,10 @@ import (
 
 type TableKVDecoder struct {
 	tbl table.Table
-	se  *session
+	se  *Session
 	// tableName is the unique table name in the form "`db`.`tbl`".
 	tableName string
-	genCols   []genCol
+	genCols   []GeneratedCol
 }
 
 func (t *TableKVDecoder) Name() string {
@@ -76,7 +77,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 				row[i] = types.GetMinValue(&col.FieldType)
 			}
 		}
-		if _, err := evaluateGeneratedColumns(t.se, row, t.tbl.Cols(), t.genCols); err != nil {
+		if _, err := evalGeneratedColumns(t.se, row, t.tbl.Cols(), t.genCols); err != nil {
 			return err
 		}
 	}
@@ -90,7 +91,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 		if err != nil {
 			return err
 		}
-		iter := index.GenIndexKVIter(t.se.vars.StmtCtx, indexValues, h, nil)
+		iter := index.GenIndexKVIter(t.se.Vars.StmtCtx, indexValues, h, nil)
 		for iter.Valid() {
 			indexKey, _, _, err := iter.Next(indexBuffer)
 			if err != nil {
@@ -111,16 +112,16 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 func NewTableKVDecoder(
 	tbl table.Table,
 	tableName string,
-	options *SessionOptions,
+	options *encode.SessionOptions,
 	logger log.Logger,
 ) (*TableKVDecoder, error) {
-	se := newSession(options, logger)
+	se := NewSession(options, logger)
 	cols := tbl.Cols()
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
 	recordCtx := tables.NewCommonAddRecordCtx(len(cols))
 	tables.SetAddRecordCtx(se, recordCtx)
 
-	genCols, err := collectGeneratedColumns(se, tbl.Meta(), cols)
+	genCols, err := CollectGeneratedColumns(se, tbl.Meta(), cols)
 	if err != nil {
 		return nil, err
 	}
