@@ -1001,6 +1001,7 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 	return location[0].PartIdx, nil
 }
 
+// GetDefaultIdx return the Default partitions index.
 func (lp *ForListPruning) GetDefaultIdx() int {
 	return lp.defaultPartitionIdx
 }
@@ -1018,6 +1019,7 @@ func (lp *ForListColumnPruning) buildPartitionValueMapAndSorted(p *parser.Parser
 	return lp.buildListPartitionValueMapAndSorted(p, defs)
 }
 
+// HasDefault return true if the partition has the DEFAULT value
 func (lp *ForListColumnPruning) HasDefault() bool {
 	return lp.defaultPartID > 0
 }
