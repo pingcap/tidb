@@ -70,9 +70,7 @@ func NewBackfillSchedulerHandle(taskMeta []byte, step int64) (scheduler.Schedule
 
 	d.newReorgCtx(jobMeta.ID, nil, &meta.Element{ID: bgm.EleID, TypeKey: bgm.EleTypeKey}, 0)
 
-	var physicalTable table.PhysicalTable
-
-	physicalTable = tbl.(table.PhysicalTable)
+	physicalTable := tbl.(table.PhysicalTable)
 	bh.ptbl = physicalTable
 
 	d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
