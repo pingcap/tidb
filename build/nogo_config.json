@@ -325,6 +325,7 @@
       "errno/errname.go": "ignore errname code",
       "planner/funcdep/fd_graph.go": "ignore fd_graph code",
       "planner/funcdep/doc.go": "ignore funcdep code",
+      "planner/util/path.go:" : "ignore path code",
       "ddl/placement/": "ignore placement code"
     },
      "only_files": {
