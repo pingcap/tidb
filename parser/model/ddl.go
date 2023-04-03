@@ -344,6 +344,8 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
+		Charset:         parentJob.Charset,
+		Collate:         parentJob.Collate,
 	}
 }
 
