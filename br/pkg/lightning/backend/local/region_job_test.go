@@ -17,6 +17,7 @@ package local
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -180,4 +181,41 @@ func TestIsIngestRetryable(t *testing.T) {
 	require.Equal(t, regionScanned, clone.stage)
 	require.Nil(t, clone.writeResult)
 	require.Error(t, clone.lastRetryableErr)
+}
+
+func TestRegionJobRetryQueue(t *testing.T) {
+	putBackCh := make(chan *regionJob, 10)
+	queue := newRegionJobRetryQueue(putBackCh)
+	require.Len(t, putBackCh, 0)
+
+	for i := 0; i < 8; i++ {
+		go func() {
+			job := &regionJob{
+				waitUntil: time.Now().Add(time.Hour),
+			}
+			queue.push(job)
+		}()
+	}
+	select {
+	case <-putBackCh:
+		require.Fail(t, "should not put back so soon")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	job := &regionJob{
+		keyRange: Range{
+			start: []byte("123"),
+		},
+		waitUntil: time.Now().Add(-time.Second),
+	}
+	queue.push(job)
+	select {
+	case j := <-putBackCh:
+		require.Equal(t, job, j)
+	case <-time.After(500 * time.Millisecond):
+		require.Fail(t, "should put back very quickly")
+	}
+
+	remainCnt := queue.close()
+	require.Equal(t, 8, remainCnt)
 }

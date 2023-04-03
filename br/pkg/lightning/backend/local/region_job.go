@@ -15,8 +15,10 @@
 package local
 
 import (
+	"container/heap"
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -41,12 +43,26 @@ import (
 
 type jobStageTp string
 
-// nil -> regionScanned: create a new region job
-// regionScanned -> wrote: write the data to TiKV
-// wrote -> ingested: ingest the data to TiKV
-// ingested -> nil: finish the job
-// regionScanned / wrote -> needRescan: need to rescan the data, maybe region is expanded.
-// needRescan -> nil: discard the job. caller will create a new job from unfinishedRanges.
+// nil -> regionScanned: create a new region job initially
+//
+// regionScanned -> wrote: successfully wrote some or all the data to TiKV.
+// regionScanned -> ingested: if the keyRange has no data, the job is directly
+// jumped to ingested.
+// regionScanned -> needRescan: meet error during writing the data, maybe region
+// is changed
+//
+// wrote -> ingested: successfully ingested the written data to TiKV, note that
+// the remaining data still needs to be written.
+// wrote -> needRescan: meet error during ingesting, maybe region is changed
+//
+// ingested -> nil: if all the data is processed, finish the job
+// ingested -> wrote: if last time only part of the data is written, continue to
+// write the remaining data and succeed
+// ingested -> needRescan: if last time only part of the data is written,
+// continue to write the remaining data and meet error
+//
+// needRescan -> regionScanned(+regionScanned...): rescan the corresponding
+// region, may output multiple jobs when region split
 const (
 	regionScanned jobStageTp = "regionScanned"
 	wrote         jobStageTp = "wrote"
@@ -58,20 +74,22 @@ func (j jobStageTp) String() string {
 	return string(j)
 }
 
-// regionJob is dedicated to import the data in [keyRange.start, keyRange.end) to a region.
+// regionJob is dedicated to import the data in [keyRange.start, keyRange.end)
+// to a region. The keyRange may be changed when processing because of writing
+// partial data to TiKV or region split.
 type regionJob struct {
 	keyRange Range
 	// TODO: check the keyRange so that it's always included in region
 	region *split.RegionInfo
 	// stage should be updated only by convertStageTo
 	stage jobStageTp
+	// writeResult is available only in wrote and ingested stage
+	writeResult *tikvWriteResult
 
 	engine          *Engine
 	regionSplitSize int64
 	regionSplitKeys int64
 	metrics         *metric.Metrics
-	// below fields are available after wrote stage
-	writeResult *tikvWriteResult
 
 	retryCount       int
 	waitUntil        time.Time
@@ -79,8 +97,9 @@ type regionJob struct {
 }
 
 type tikvWriteResult struct {
-	sstMeta    []*sst.SSTMeta
-	rangeStats rangeStats
+	sstMeta           []*sst.SSTMeta
+	rangeStats        rangeStats
+	remainingStartKey []byte
 }
 
 type rangeStats struct {
@@ -94,9 +113,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 	case regionScanned:
 		j.writeResult = nil
 	case ingested:
-		j.engine.finishedRanges.add(j.keyRange)
-
-		// when writing is skipped because range is empty
+		// when writing is skipped because key range is empty
 		if j.writeResult == nil {
 			return
 		}
@@ -107,11 +124,13 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 			j.metrics.BytesCounter.WithLabelValues(metric.StateImported).
 				Add(float64(j.writeResult.rangeStats.totalBytes))
 		}
+	case needRescan:
+		j.region = nil
 	}
 }
 
 // writeToTiKV writes the data to TiKV and mark this job as wrote stage.
-// if any write logic has error, writeToTiKV will set job to a proper stage and return nil.
+// if any write logic has error, writeToTiKV will set job to a proper stage and return nil. TODO: <-check this
 // if any underlying logic has error, writeToTiKV will return an error.
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will take the responsibility to do so.
@@ -216,7 +235,6 @@ func (j *regionJob) writeToTiKV(
 			if err := writeLimiter.WaitN(ctx, storeIDs[i], int(size)); err != nil {
 				return errors.Trace(err)
 			}
-			// TODO: concurrent write?
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
 				return errors.Trace(err)
@@ -230,6 +248,7 @@ func (j *regionJob) writeToTiKV(
 	//nolint: errcheck
 	defer iter.Close()
 
+	var remainingStartKey []byte
 	for iter.First(); iter.Valid(); iter.Next() {
 		kvSize := int64(len(iter.Key()) + len(iter.Value()))
 		// here we reuse the `*sst.Pair`s to optimize object allocation
@@ -259,16 +278,13 @@ func (j *regionJob) writeToTiKV(
 		if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
 			// we will shrink the key range of this job to real written range
 			if iter.Valid() && iter.Next() {
-				firstKey := append([]byte{}, iter.Key()...)
-				oldEndKey := j.keyRange.end
-				j.keyRange.end = firstKey
+				remainingStartKey = append([]byte{}, iter.Key()...)
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
 					logutil.Key("startKey", j.keyRange.start),
-					logutil.Key("endKey", oldEndKey),
-					logutil.Key("remainStart", firstKey),
-					logutil.Key("remainEnd", oldEndKey),
+					logutil.Key("endKey", j.keyRange.end),
+					logutil.Key("remainStart", remainingStartKey),
 					logutil.Region(region),
 					logutil.Leader(j.region.Leader))
 			}
@@ -324,8 +340,9 @@ func (j *regionJob) writeToTiKV(
 	stats.count = totalCount
 	stats.totalBytes = totalSize
 	j.writeResult = &tikvWriteResult{
-		sstMeta:    leaderPeerMetas,
-		rangeStats: stats,
+		sstMeta:           leaderPeerMetas,
+		rangeStats:        stats,
+		remainingStartKey: remainingStartKey,
 	}
 	j.convertStageTo(wrote)
 	return nil
@@ -343,10 +360,8 @@ func (j *regionJob) ingest(
 	supportMultiIngest bool,
 	shouldCheckWriteStall bool,
 ) error {
-	switch j.stage {
-	case regionScanned, ingested:
+	if j.stage != wrote {
 		return nil
-	case wrote:
 	}
 
 	if len(j.writeResult.sstMeta) == 0 {
@@ -625,4 +640,116 @@ func (j *regionJob) fixIngestError(
 	j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
 	j.convertStageTo(regionScanned)
 	return false, nil
+}
+
+type regionJobRetryHeap []*regionJob
+
+func (h regionJobRetryHeap) Len() int {
+	return len(h)
+}
+
+func (h regionJobRetryHeap) Less(i, j int) bool {
+	return h[i].waitUntil.Before(h[j].waitUntil)
+}
+
+func (h regionJobRetryHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *regionJobRetryHeap) Push(x any) {
+	*h = append(*h, x.(*regionJob))
+}
+
+func (h *regionJobRetryHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
+// regionJobRetryQueue is a concurrent-safe queue holding jobs that need to put
+// back later, and put back when the regionJob.waitUntil is reached. It maintains
+// a heap of jobs internally based on the regionJob.waitUntil field.
+type regionJobRetryQueue struct {
+	q         regionJobRetryHeap
+	qMu       sync.Mutex
+	wg        sync.WaitGroup
+	putBackCh chan<- *regionJob
+	reload    chan struct{}
+	done      chan struct{}
+}
+
+func newRegionJobRetryQueue(putBackCh chan<- *regionJob) *regionJobRetryQueue {
+	ret := &regionJobRetryQueue{
+		q:         make([]*regionJob, 0, 16),
+		putBackCh: putBackCh,
+		reload:    make(chan struct{}, 1),
+		done:      make(chan struct{}),
+	}
+	ret.wg.Add(1)
+	go ret.run()
+	return ret
+}
+
+func (q *regionJobRetryQueue) run() {
+	defer q.wg.Done()
+	var (
+		front     *regionJob
+		toPutBack *regionJob
+	)
+
+	for {
+		q.qMu.Lock()
+		if len(q.q) > 0 {
+			front = q.q[0]
+		} else {
+			front = nil
+		}
+		q.qMu.Unlock()
+
+		switch {
+		case toPutBack != nil:
+			select {
+			case <-q.done:
+				return
+			case q.putBackCh <- toPutBack:
+				toPutBack = nil
+			}
+		case front != nil:
+			select {
+			case <-q.done:
+				return
+			case <-q.reload:
+			case <-time.After(front.waitUntil.Sub(time.Now())):
+				q.qMu.Lock()
+				toPutBack = heap.Pop(&q.q).(*regionJob)
+				q.qMu.Unlock()
+			}
+		default:
+			// len(q.q) == 0 && q.toPutBack == nil
+			select {
+			case <-q.done:
+				return
+			case <-q.reload:
+			}
+		}
+	}
+}
+
+func (q *regionJobRetryQueue) push(job *regionJob) {
+	q.qMu.Lock()
+	heap.Push(&q.q, job)
+	q.qMu.Unlock()
+
+	select {
+	case q.reload <- struct{}{}:
+	default:
+	}
+}
+
+func (q *regionJobRetryQueue) close() int {
+	close(q.done)
+	q.wg.Wait()
+	return len(q.q)
 }
