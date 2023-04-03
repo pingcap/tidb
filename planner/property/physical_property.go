@@ -291,7 +291,8 @@ func (p *PhysicalProperty) IsSortItemAllForPartition() bool {
 		return false
 	}
 	for i := range p.SortItemsForPartition {
-		if !p.SortItemsForPartition[i].Col.Equal(nil, p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
+		if !p.SortItemsForPartition[i].Col.Equal(nil,
+			p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
 			return false
 		}
 	}
