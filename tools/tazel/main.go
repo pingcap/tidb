@@ -23,9 +23,11 @@ import (
 	"github.com/bazelbuild/buildtools/build"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
+	"golang.org/x/tools/go/analysis/singlechecker"
 )
 
 func main() {
+	singlechecker.Main(Analyzer)
 	if _, err := os.Stat("WORKSPACE"); errors.Is(err, os.ErrNotExist) {
 		log.Fatal("It should run from the project root")
 	}
