@@ -721,7 +721,7 @@ func (q *regionJobRetryQueue) run() {
 			case <-q.done:
 				return
 			case <-q.reload:
-			case <-time.After(front.waitUntil.Sub(time.Now())):
+			case <-time.After(time.Until(front.waitUntil)):
 				q.qMu.Lock()
 				toPutBack = heap.Pop(&q.q).(*regionJob)
 				q.qMu.Unlock()
