@@ -43,6 +43,7 @@ var (
 		buf := new(strings.Builder)
 		buf.Reset()
 		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+		restoreCtx.Flags ^= format.RestoreKeyWordUppercase
 		return restoreCtx
 	}}
 )
