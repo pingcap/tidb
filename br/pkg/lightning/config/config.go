@@ -766,6 +766,8 @@ const (
 	UTF8MB4
 	GB18030
 	GBK
+	Latin1
+	ASCII
 )
 
 // String return the string value of charset
@@ -779,6 +781,10 @@ func (c Charset) String() string {
 		return "gb18030"
 	case GBK:
 		return "gbk"
+	case Latin1:
+		return "latin1"
+	case ASCII:
+		return "ascii"
 	default:
 		return "unknown_charset"
 	}
@@ -789,12 +795,16 @@ func ParseCharset(dataCharacterSet string) (Charset, error) {
 	switch strings.ToLower(dataCharacterSet) {
 	case "", "binary":
 		return Binary, nil
-	case "utf8mb4":
+	case "utf8", "utf8mb4":
 		return UTF8MB4, nil
 	case "gb18030":
 		return GB18030, nil
 	case "gbk":
 		return GBK, nil
+	case "latin1":
+		return Latin1, nil
+	case "ascii":
+		return ASCII, nil
 	default:
 		return Binary, errors.Errorf("found unsupported data-character-set: %s", dataCharacterSet)
 	}
