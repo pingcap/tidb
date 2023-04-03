@@ -279,6 +279,7 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 	return cacheable, reason
 }
 
+// isSelectStmtNonPrepCacheableFastCheck checks whether the input select statement is cacheable for non-prepared plan cache.
 func isSelectStmtNonPrepCacheableFastCheck(selectStmt *ast.SelectStmt) (names []*ast.TableName, ok bool, reason string) {
 	if selectStmt.Kind != ast.SelectStmtKindSelect {
 		return nil, false, "not a select statement"
