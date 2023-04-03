@@ -152,15 +152,13 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 
 	cnt := 20
 	checkGetRunningGTaskCnt := func() {
-		var retCnt int
-		for i := 0; i < cnt; i++ {
-			retCnt = dsp.(dispatcher.DispatcherForTest).GetRunningGTaskCnt()
+		require.Eventually(t, func() bool {
+			retCnt := dsp.(dispatcher.DispatcherForTest).GetRunningGTaskCnt()
 			if retCnt == taskCnt {
-				break
+				return true
 			}
-			time.Sleep(time.Millisecond * 30)
-		}
-		require.Equal(t, retCnt, taskCnt)
+			return false
+		}, 1*time.Second, 30*time.Millisecond)
 	}
 
 	// Mock add tasks.
