@@ -626,6 +626,15 @@ func (n *BeginStmt) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
+
+	if n.AsOf != nil {
+		node, ok := n.AsOf.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.AsOf = node.(*AsOfClause)
+	}
+
 	n = newNode.(*BeginStmt)
 	return v.Leave(n)
 }
