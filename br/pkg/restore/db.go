@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -350,7 +351,22 @@ func (db *DB) ensurePlacementPolicy(ctx context.Context, policyName model.CIStr,
 	return nil
 }
 
+type dumpSyncMap struct { inner *sync.Map }
+
+func (d dumpSyncMap) String() string {
+    res := &strings.Builder{}
+    res.WriteRune('[')
+    m := d.inner
+    m.Range(func(key any, value any) bool {
+        _, _ = fmt.Fprintf(res, "%s => %s", key, value)
+        return true
+    })
+    res.WriteRune(']')
+    return res.String()
+}
+
 func (db *DB) ensureTablePlacementPolicies(ctx context.Context, tableInfo *model.TableInfo, policies *sync.Map) error {
+    log.Info("debug info: ensure table placement rules", zap.Stringer("ref", tableInfo.PlacementPolicyRef.Name), zap.Stringer("polices", dumpSyncMap{policies}))
 	if tableInfo.PlacementPolicyRef != nil {
 		if err := db.ensurePlacementPolicy(ctx, tableInfo.PlacementPolicyRef.Name, policies); err != nil {
 			return err

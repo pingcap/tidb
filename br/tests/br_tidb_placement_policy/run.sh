@@ -24,6 +24,15 @@ BACKUPMETAV2_LOG="$TEST_DIR/backupv2.log"
 RESTORE_LOG="$TEST_DIR/restore.log"
 rm -rf $PROGRESS_FILE
 
+block() {
+    echo "ERROR: BLOCKING"
+    while true; do
+        sleep 100
+    done
+}
+
+trap 'if [ $? -ne 0 ]; then block; fi' EXIT
+
 run_sql "create schema $DB;"
 run_sql "create placement policy fivereplicas followers=4;"
 run_sql "create placement policy tworeplicas followers=1;"
