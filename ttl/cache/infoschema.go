@@ -74,7 +74,9 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 				par := par
 				ttlTable, err := isc.newTable(db.Name, tblInfo, &par)
 				if err != nil {
-					logger.Warn("fail to build info schema cache", zap.Int64("partitionID", par.ID), zap.String("partition", par.Name.L), zap.Error(err))
+					logger.Warn("fail to build info schema cache",
+						zap.Int64("partitionID", par.ID),
+						zap.String("partition", par.Name.L), zap.Error(err))
 					continue
 				}
 				newTables[par.ID] = ttlTable

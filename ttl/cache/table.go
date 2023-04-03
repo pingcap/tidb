@@ -321,9 +321,11 @@ func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storag
 	return scanRanges, nil
 }
 
-func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage, startKey, endKey kv.Key, splitCnt int) ([]kv.KeyRange, error) {
+func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage,
+	startKey, endKey kv.Key, splitCnt int) ([]kv.KeyRange, error) {
 	regionCache := store.GetRegionCache()
-	regionIDs, err := regionCache.ListRegionIDsInKeyRange(tikv.NewBackofferWithVars(ctx, 20000, nil), startKey, endKey)
+	regionIDs, err := regionCache.ListRegionIDsInKeyRange(
+		tikv.NewBackofferWithVars(ctx, 20000, nil), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +376,8 @@ func init() {
 	emptyBytesHandleKey = key
 }
 
-// GetNextIntHandle is used for int handle tables. It returns the min handle whose encoded key is or after argument `key`
+// GetNextIntHandle is used for int handle tables.
+// It returns the min handle whose encoded key is or after argument `key`
 // If it cannot find a valid value, a null datum will be returned.
 func GetNextIntHandle(key kv.Key, recordPrefix []byte) kv.Handle {
 	if key.Cmp(recordPrefix) > 0 && !key.HasPrefix(recordPrefix) {
