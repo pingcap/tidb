@@ -83,6 +83,7 @@ type dupDetectIter struct {
 	option         DupDetectOpt
 }
 
+// DupDetectOpt is the option for duplicate detection.
 type DupDetectOpt struct {
 	ReportErrOnDup bool
 }

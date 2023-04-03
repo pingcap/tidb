@@ -74,6 +74,7 @@ func makeLogger(logger log.Logger, tag string, engineUUID uuid.UUID) log.Logger 
 	)
 }
 
+// MakeUUID generates a UUID for the engine and a tag for the engine.
 func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
 	tag := makeTag(tableName, engineID)
 	engineUUID := uuid.NewSHA1(engineNamespace, []byte(tag))
@@ -82,6 +83,7 @@ func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
 
 var engineNamespace = uuid.MustParse("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf")
 
+// EngineFileSize represents the size of an engine on disk and in memory.
 type EngineFileSize struct {
 	// UUID is the engine's UUID.
 	UUID uuid.UUID
@@ -232,27 +234,33 @@ type ClosedEngine struct {
 	engine
 }
 
+// LocalEngineWriter is a thread-local writer for writing rows into a single engine.
 type LocalEngineWriter struct {
 	writer    EngineWriter
 	tableName string
 }
 
+// MakeBackend creates a new Backend from an AbstractBackend.
 func MakeBackend(ab AbstractBackend) Backend {
 	return Backend{abstract: ab}
 }
 
+// Close the connection to the backend.
 func (be Backend) Close() {
 	be.abstract.Close()
 }
 
+// ShouldPostProcess returns whether KV-specific post-processing should be
 func (be Backend) ShouldPostProcess() bool {
 	return be.abstract.ShouldPostProcess()
 }
 
+// FlushAll flushes all opened engines.
 func (be Backend) FlushAll(ctx context.Context) error {
 	return be.abstract.FlushAllEngines(ctx)
 }
 
+// TotalMemoryConsume returns the total memory consumed by the backend.
 func (be Backend) TotalMemoryConsume() int64 {
 	return be.abstract.TotalMemoryConsume()
 }
@@ -369,6 +377,7 @@ func (engine *OpenedEngine) Flush(ctx context.Context) error {
 	return engine.backend.FlushEngine(ctx, engine.uuid)
 }
 
+// LocalWriter returns a writer that writes to the local backend.
 func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (*LocalEngineWriter, error) {
 	w, err := engine.backend.LocalWriter(ctx, cfg, engine.uuid)
 	if err != nil {
@@ -377,6 +386,7 @@ func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterCon
 	return &LocalEngineWriter{writer: w, tableName: engine.tableName}, nil
 }
 
+// TotalMemoryConsume returns the total memory consumed by the engine.
 func (engine *OpenedEngine) TotalMemoryConsume() int64 {
 	return engine.engine.backend.TotalMemoryConsume()
 }
@@ -386,10 +396,12 @@ func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string,
 	return w.writer.AppendRows(ctx, w.tableName, columnNames, rows)
 }
 
+// Close closes the engine and returns the status of the engine.
 func (w *LocalEngineWriter) Close(ctx context.Context) (ChunkFlushStatus, error) {
 	return w.writer.Close(ctx)
 }
 
+// IsSynced returns whether the engine is synced.
 func (w *LocalEngineWriter) IsSynced() bool {
 	return w.writer.IsSynced()
 }
@@ -459,14 +471,17 @@ func (engine *ClosedEngine) Cleanup(ctx context.Context) error {
 	return err
 }
 
+// Logger returns the logger for the engine.
 func (engine *ClosedEngine) Logger() log.Logger {
 	return engine.logger
 }
 
+// ChunkFlushStatus is the status of a chunk flush.
 type ChunkFlushStatus interface {
 	Flushed() bool
 }
 
+// EngineWriter is the interface for writing data to an engine.
 type EngineWriter interface {
 	AppendRows(
 		ctx context.Context,
@@ -478,6 +493,7 @@ type EngineWriter interface {
 	Close(ctx context.Context) (ChunkFlushStatus, error)
 }
 
+// GetEngineUUID returns the engine UUID.
 func (engine *OpenedEngine) GetEngineUUID() uuid.UUID {
 	return engine.uuid
 }

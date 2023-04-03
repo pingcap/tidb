@@ -45,6 +45,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// constants for config items
 const (
 	// ImportMode defines mode of import for tikv.
 	ImportMode = "import"
@@ -120,6 +121,7 @@ func GetDefaultFilter() []string {
 	return append([]string{}, defaultFilter...)
 }
 
+// DBStore is the database connection information.
 type DBStore struct {
 	Host       string    `toml:"host" json:"host"`
 	Port       int       `toml:"port" json:"port"`
@@ -144,6 +146,7 @@ type DBStore struct {
 	UUID         string         `toml:"-" json:"-"`
 }
 
+// Config is the configuration.
 type Config struct {
 	TaskID int64 `toml:"-" json:"id"`
 
@@ -161,6 +164,7 @@ type Config struct {
 	BWList filter.MySQLReplicationRules `toml:"black-white-list" json:"black-white-list"`
 }
 
+// String implements fmt.Stringer interface.
 func (cfg *Config) String() string {
 	bytes, err := json.Marshal(cfg)
 	if err != nil {
@@ -169,6 +173,7 @@ func (cfg *Config) String() string {
 	return string(bytes)
 }
 
+// ToTLS creates a common.TLS from the config.
 func (cfg *Config) ToTLS() (*common.TLS, error) {
 	hostPort := net.JoinHostPort(cfg.TiDB.Host, strconv.Itoa(cfg.TiDB.StatusPort))
 	return common.NewTLS(
@@ -182,6 +187,7 @@ func (cfg *Config) ToTLS() (*common.TLS, error) {
 	)
 }
 
+// Lightning is the root configuration of lightning.
 type Lightning struct {
 	TableConcurrency  int    `toml:"table-concurrency" json:"table-concurrency"`
 	IndexConcurrency  int    `toml:"index-concurrency" json:"index-concurrency"`
@@ -194,14 +200,17 @@ type Lightning struct {
 	TaskInfoSchemaName string   `toml:"task-info-schema-name" json:"task-info-schema-name"`
 }
 
+// PostOpLevel represents the level of post-operation.
 type PostOpLevel int
 
+// PostOpLevel constants.
 const (
 	OpLevelOff PostOpLevel = iota
 	OpLevelOptional
 	OpLevelRequired
 )
 
+// UnmarshalTOML implements toml.Unmarshaler interface.
 func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
 	switch val := v.(type) {
 	case bool:
@@ -218,6 +227,7 @@ func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
 	return nil
 }
 
+// MarshalText implements encoding.TextMarshaler interface.
 func (t PostOpLevel) MarshalText() ([]byte, error) {
 	return []byte(t.String()), nil
 }
@@ -238,14 +248,17 @@ func (t *PostOpLevel) FromStringValue(s string) error {
 	return nil
 }
 
+// MarshalJSON implements json.Marshaler interface.
 func (t *PostOpLevel) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + t.String() + `"`), nil
 }
 
+// UnmarshalJSON implements json.Unmarshaler interface.
 func (t *PostOpLevel) UnmarshalJSON(data []byte) error {
 	return t.FromStringValue(strings.Trim(string(data), `"`))
 }
 
+// String returns the string representation of the level.
 func (t PostOpLevel) String() string {
 	switch t {
 	case OpLevelOff:
@@ -259,17 +272,19 @@ func (t PostOpLevel) String() string {
 	}
 }
 
+// CheckpointKeepStrategy represents the strategy to keep checkpoint data.
 type CheckpointKeepStrategy int
 
 const (
-	// remove checkpoint data
+	// CheckpointRemove remove checkpoint data
 	CheckpointRemove CheckpointKeepStrategy = iota
-	// keep by rename checkpoint file/db according to task id
+	// CheckpointRename keep by rename checkpoint file/db according to task id
 	CheckpointRename
-	// keep checkpoint data unchanged
+	// CheckpointOrigin keep checkpoint data unchanged
 	CheckpointOrigin
 )
 
+// UnmarshalTOML implements toml.Unmarshaler interface.
 func (t *CheckpointKeepStrategy) UnmarshalTOML(v interface{}) error {
 	switch val := v.(type) {
 	case bool:
@@ -286,11 +301,12 @@ func (t *CheckpointKeepStrategy) UnmarshalTOML(v interface{}) error {
 	return nil
 }
 
+// MarshalText implements encoding.TextMarshaler interface.
 func (t CheckpointKeepStrategy) MarshalText() ([]byte, error) {
 	return []byte(t.String()), nil
 }
 
-// parser command line parameter
+// FromStringValue parser command line parameter.
 func (t *CheckpointKeepStrategy) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
 	//nolint:goconst // This 'false' and other 'false's aren't the same.
@@ -306,14 +322,17 @@ func (t *CheckpointKeepStrategy) FromStringValue(s string) error {
 	return nil
 }
 
+// MarshalJSON implements json.Marshaler interface.
 func (t *CheckpointKeepStrategy) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + t.String() + `"`), nil
 }
 
+// UnmarshalJSON implements json.Unmarshaler interface.
 func (t *CheckpointKeepStrategy) UnmarshalJSON(data []byte) error {
 	return t.FromStringValue(strings.Trim(string(data), `"`))
 }
 
+// String implements fmt.Stringer interface.
 func (t CheckpointKeepStrategy) String() string {
 	switch t {
 	case CheckpointRemove:
@@ -360,6 +379,7 @@ type MaxError struct {
 	Conflict atomic.Int64 `toml:"conflict" json:"conflict"`
 }
 
+// UnmarshalTOML implements toml.Unmarshaler interface.
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	defaultValMap := map[string]int64{
 		"syntax":   0,
@@ -426,6 +446,7 @@ const (
 	DupeResAlgErr
 )
 
+// UnmarshalTOML implements the toml.Unmarshaler interface.
 func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
 	if val, ok := v.(string); ok {
 		return dra.FromStringValue(val)
@@ -433,10 +454,12 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
 	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['record', 'none', 'remove']", v)
 }
 
+// MarshalText implements the encoding.TextMarshaler interface.
 func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
 	return []byte(dra.String()), nil
 }
 
+// FromStringValue parses the string value to the DuplicateResolutionAlgorithm.
 func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
 	case "record":
@@ -451,14 +474,17 @@ func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	return nil
 }
 
+// MarshalJSON implements the json.Marshaler interface.
 func (dra *DuplicateResolutionAlgorithm) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + dra.String() + `"`), nil
 }
 
+// UnmarshalJSON implements the json.Unmarshaler interface.
 func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
 	return dra.FromStringValue(strings.Trim(string(data), `"`))
 }
 
+// String implements the fmt.Stringer interface.
 func (dra DuplicateResolutionAlgorithm) String() string {
 	switch dra {
 	case DupeResAlgRecord:
@@ -482,6 +508,7 @@ const (
 	CompressionGzip
 )
 
+// UnmarshalTOML implements toml.Unmarshaler.
 func (t *CompressionType) UnmarshalTOML(v interface{}) error {
 	if val, ok := v.(string); ok {
 		return t.FromStringValue(val)
@@ -489,10 +516,12 @@ func (t *CompressionType) UnmarshalTOML(v interface{}) error {
 	return errors.Errorf("invalid compression-type '%v', please choose valid option between ['gzip']", v)
 }
 
+// MarshalText implements encoding.TextMarshaler.
 func (t CompressionType) MarshalText() ([]byte, error) {
 	return []byte(t.String()), nil
 }
 
+// FromStringValue parses a string to CompressionType.
 func (t *CompressionType) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
 	case "":
@@ -505,14 +534,17 @@ func (t *CompressionType) FromStringValue(s string) error {
 	return nil
 }
 
+// MarshalJSON implements json.Marshaler.
 func (t *CompressionType) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + t.String() + `"`), nil
 }
 
+// UnmarshalJSON implements json.Unmarshaler.
 func (t *CompressionType) UnmarshalJSON(data []byte) error {
 	return t.FromStringValue(strings.Trim(string(data), `"`))
 }
 
+// String implements fmt.Stringer.
 func (t CompressionType) String() string {
 	switch t {
 	case CompressionGzip:
@@ -536,6 +568,7 @@ type PostRestore struct {
 // StringOrStringSlice can unmarshal a TOML string as string slice with one element.
 type StringOrStringSlice []string
 
+// UnmarshalTOML implements the toml.Unmarshaler interface.
 func (s *StringOrStringSlice) UnmarshalTOML(in interface{}) error {
 	switch v := in.(type) {
 	case string:
@@ -555,6 +588,7 @@ func (s *StringOrStringSlice) UnmarshalTOML(in interface{}) error {
 	return nil
 }
 
+// CSVConfig is the config for CSV files.
 type CSVConfig struct {
 	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.
 	Separator         string              `toml:"separator" json:"separator"`
@@ -586,6 +620,7 @@ type CSVConfig struct {
 	UnescapedQuote bool `toml:"-" json:"-"`
 }
 
+// MydumperRuntime is the runtime config for mydumper.
 type MydumperRuntime struct {
 	ReadBlockSize    ByteSize         `toml:"read-block-size" json:"read-block-size"`
 	BatchSize        ByteSize         `toml:"batch-size" json:"batch-size"`
@@ -615,8 +650,10 @@ type MydumperRuntime struct {
 	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
 }
 
+// AllIgnoreColumns is a slice of IgnoreColumns.
 type AllIgnoreColumns []*IgnoreColumns
 
+// IgnoreColumns is the config for ignoring columns.
 type IgnoreColumns struct {
 	DB          string   `toml:"db" json:"db"`
 	Table       string   `toml:"table" json:"table"`
@@ -624,6 +661,7 @@ type IgnoreColumns struct {
 	Columns     []string `toml:"columns" json:"columns"`
 }
 
+// ColumnsMap returns a map of columns.
 func (ic *IgnoreColumns) ColumnsMap() map[string]struct{} {
 	columnMap := make(map[string]struct{}, len(ic.Columns))
 	for _, c := range ic.Columns {
@@ -653,6 +691,7 @@ func (igCols AllIgnoreColumns) GetIgnoreColumns(db string, table string, caseSen
 	return &IgnoreColumns{Columns: make([]string, 0)}, nil
 }
 
+// FileRouteRule is the rule for routing files.
 type FileRouteRule struct {
 	Pattern     string `json:"pattern" toml:"pattern" yaml:"pattern"`
 	Path        string `json:"path" toml:"path" yaml:"path"`
@@ -669,6 +708,7 @@ type FileRouteRule struct {
 	// DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
 }
 
+// TikvImporter is the config for tikv-importer.
 type TikvImporter struct {
 	// Deprecated: only used to keep the compatibility.
 	Addr                string                       `toml:"addr" json:"addr"`
@@ -692,6 +732,7 @@ type TikvImporter struct {
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
 }
 
+// Checkpoint is the config for checkpoint.
 type Checkpoint struct {
 	Schema           string                    `toml:"schema" json:"schema"`
 	DSN              string                    `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
@@ -701,12 +742,14 @@ type Checkpoint struct {
 	KeepAfterSuccess CheckpointKeepStrategy    `toml:"keep-after-success" json:"keep-after-success"`
 }
 
+// Cron is the config for cron.
 type Cron struct {
 	SwitchMode     Duration `toml:"switch-mode" json:"switch-mode"`
 	LogProgress    Duration `toml:"log-progress" json:"log-progress"`
 	CheckDiskQuota Duration `toml:"check-disk-quota" json:"check-disk-quota"`
 }
 
+// Security is the config for security.
 type Security struct {
 	CAPath   string `toml:"ca-path" json:"ca-path"`
 	CertPath string `toml:"cert-path" json:"cert-path"`
@@ -742,22 +785,25 @@ func (sec *Security) BuildTLSConfig() error {
 	return nil
 }
 
-// A duration which can be deserialized from a TOML string.
+// Duration which can be deserialized from a TOML string.
 // Implemented as https://github.com/BurntSushi/toml#using-the-encodingtextunmarshaler-interface
 type Duration struct {
 	time.Duration
 }
 
+// UnmarshalText implements encoding.TextUnmarshaler.
 func (d *Duration) UnmarshalText(text []byte) error {
 	var err error
 	d.Duration, err = time.ParseDuration(string(text))
 	return errors.Trace(err)
 }
 
+// MarshalText implements encoding.TextMarshaler.
 func (d Duration) MarshalText() ([]byte, error) {
 	return []byte(d.String()), nil
 }
 
+// MarshalJSON implements json.Marshaler.
 func (d *Duration) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
 }
@@ -765,11 +811,14 @@ func (d *Duration) MarshalJSON() ([]byte, error) {
 // Charset defines character set
 type Charset int
 
+// Charset constants
 const (
 	Binary Charset = iota
 	UTF8MB4
 	GB18030
 	GBK
+	Latin1
+	ASCII
 )
 
 // String return the string value of charset
@@ -783,6 +832,10 @@ func (c Charset) String() string {
 		return "gb18030"
 	case GBK:
 		return "gbk"
+	case Latin1:
+		return "latin1"
+	case ASCII:
+		return "ascii"
 	default:
 		return "unknown_charset"
 	}
@@ -793,17 +846,22 @@ func ParseCharset(dataCharacterSet string) (Charset, error) {
 	switch strings.ToLower(dataCharacterSet) {
 	case "", "binary":
 		return Binary, nil
-	case "utf8mb4":
+	case "utf8", "utf8mb4":
 		return UTF8MB4, nil
 	case "gb18030":
 		return GB18030, nil
 	case "gbk":
 		return GBK, nil
+	case "latin1":
+		return Latin1, nil
+	case "ascii":
+		return ASCII, nil
 	default:
 		return Binary, errors.Errorf("found unsupported data-character-set: %s", dataCharacterSet)
 	}
 }
 
+// NewConfig creates a new Config.
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
@@ -1072,6 +1130,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	return cfg.CheckAndAdjustFilePath()
 }
 
+// AdjustCommon adjusts the common configurations.
 func (cfg *Config) AdjustCommon() (bool, error) {
 	if cfg.TikvImporter.Backend == "" {
 		return false, common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
@@ -1134,6 +1193,7 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 	return mustHaveInternalConnections, err
 }
 
+// CheckAndAdjustForLocalBackend checks and adjusts the configurations for local backend.
 func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 	if cfg.TikvImporter.IncrementalImport && cfg.TikvImporter.AddIndexBySQL {
 		return common.ErrInvalidConfig.
@@ -1162,6 +1222,7 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 	return nil
 }
 
+// DefaultVarsForTiDBBackend sets the default values for TiDB backend.
 func (cfg *Config) DefaultVarsForTiDBBackend() {
 	if cfg.App.TableConcurrency == 0 {
 		cfg.App.TableConcurrency = cfg.App.RegionConcurrency
@@ -1171,6 +1232,7 @@ func (cfg *Config) DefaultVarsForTiDBBackend() {
 	}
 }
 
+// DefaultVarsForImporterAndLocalBackend sets the default values for importer and local backend.
 func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
 	if cfg.App.IndexConcurrency == 0 {
 		cfg.App.IndexConcurrency = defaultIndexConcurrency
@@ -1196,6 +1258,7 @@ func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
 	}
 }
 
+// CheckAndAdjustTiDBPort checks and adjusts the TiDB port and PD address.
 func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalConnections bool) error {
 	// automatically determine the TiDB port & PD address from TiDB settings
 	if mustHaveInternalConnections && (cfg.TiDB.Port <= 0 || len(cfg.TiDB.PdAddr) == 0) {
@@ -1228,6 +1291,7 @@ func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalC
 	return nil
 }
 
+// CheckAndAdjustFilePath checks and adjusts the file path.
 func (cfg *Config) CheckAndAdjustFilePath() error {
 	var u *url.URL
 
@@ -1281,6 +1345,7 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 	return nil
 }
 
+// AdjustCheckPoint adjusts the checkpoint.
 func (cfg *Config) AdjustCheckPoint() {
 	if len(cfg.Checkpoint.Schema) == 0 {
 		cfg.Checkpoint.Schema = "tidb_lightning_checkpoint"
@@ -1316,6 +1381,7 @@ func (cfg *Config) AdjustCheckPoint() {
 	}
 }
 
+// AdjustMydumper adjusts the mydumper config.
 func (cfg *Config) AdjustMydumper() {
 	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
 		cfg.Mydumper.BatchImportRatio = DefaultBatchImportRatio
@@ -1339,6 +1405,7 @@ func (cfg *Config) AdjustMydumper() {
 	}
 }
 
+// CheckAndAdjustSecurity checks and adjusts the security config.
 func (cfg *Config) CheckAndAdjustSecurity() error {
 	if cfg.TiDB.Security == nil {
 		cfg.TiDB.Security = &cfg.Security

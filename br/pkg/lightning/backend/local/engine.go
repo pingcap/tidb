@@ -93,6 +93,7 @@ func (r *syncedRanges) reset() {
 	r.Unlock()
 }
 
+// Engine is a local engine.
 type Engine struct {
 	engineMeta
 	closed       atomic.Bool
@@ -148,6 +149,7 @@ func (e *Engine) setError(err error) {
 	}
 }
 
+// Close closes the engine and release all resources.
 func (e *Engine) Close() error {
 	e.logger.Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
 	if e.db == nil {
@@ -238,6 +240,7 @@ func (e *Engine) unlock() {
 	e.mutex.Unlock()
 }
 
+// TotalMemorySize returns the total memory size of the engine.
 func (e *Engine) TotalMemorySize() int64 {
 	var memSize int64 = 0
 	e.localWriters.Range(func(k, v interface{}) bool {
@@ -262,6 +265,7 @@ type rangeProperty struct {
 	rangeOffsets
 }
 
+// Less implements btree.Item interface.
 func (r *rangeProperty) Less(than btree.Item) bool {
 	ta := than.(*rangeProperty)
 	return bytes.Compare(r.Key, ta.Key) < 0
@@ -271,6 +275,7 @@ var _ btree.Item = &rangeProperty{}
 
 type rangeProperties []rangeProperty
 
+// Encode encodes the range properties into a byte slice.
 func (r rangeProperties) Encode() []byte {
 	b := make([]byte, 0, 1024)
 	idx := 0
@@ -292,6 +297,7 @@ func (r rangeProperties) Encode() []byte {
 	return b
 }
 
+// RangePropertiesCollector collects range properties for each range.
 type RangePropertiesCollector struct {
 	props               rangeProperties
 	lastOffsets         rangeOffsets
@@ -338,6 +344,7 @@ func (c *RangePropertiesCollector) Add(key pebble.InternalKey, value []byte) err
 	return nil
 }
 
+// Finish implements `pebble.TablePropertyCollector`.
 func (c *RangePropertiesCollector) Finish(userProps map[string]string) error {
 	if c.sizeInLastRange() > 0 || c.keysInLastRange() > 0 {
 		c.insertNewPoint(c.lastKey)
@@ -347,6 +354,7 @@ func (c *RangePropertiesCollector) Finish(userProps map[string]string) error {
 	return nil
 }
 
+// Name implements `pebble.TablePropertyCollector`.
 func (c *RangePropertiesCollector) Name() string {
 	return propRangeIndex
 }
@@ -500,22 +508,27 @@ type metaSeqHeap struct {
 	arr []metaSeq
 }
 
+// Len returns the number of items in the priority queue.
 func (h *metaSeqHeap) Len() int {
 	return len(h.arr)
 }
 
+// Less reports whether the item in the priority queue with
 func (h *metaSeqHeap) Less(i, j int) bool {
 	return h.arr[i].flushSeq < h.arr[j].flushSeq
 }
 
+// Swap swaps the items at the passed indices.
 func (h *metaSeqHeap) Swap(i, j int) {
 	h.arr[i], h.arr[j] = h.arr[j], h.arr[i]
 }
 
+// Push pushes the item onto the priority queue.
 func (h *metaSeqHeap) Push(x interface{}) {
 	h.arr = append(h.arr, x.(metaSeq))
 }
 
+// Pop removes the minimum item (according to Less) from the priority queue
 func (h *metaSeqHeap) Pop() interface{} {
 	item := h.arr[len(h.arr)-1]
 	h.arr = h.arr[:len(h.arr)-1]
@@ -1035,6 +1048,7 @@ type sstMeta struct {
 	seq      int32
 }
 
+// Writer is used to write data into a SST file.
 type Writer struct {
 	sync.Mutex
 	engine            *Engine
@@ -1131,8 +1145,9 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	return nil
 }
 
+// AppendRows appends rows to the SST file.
 func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
-	kvs := kv.KvPairsFromRows(rows)
+	kvs := kv.Rows2KvPairs(rows)
 	if len(kvs) == 0 {
 		return nil
 	}
@@ -1196,10 +1211,12 @@ type flushStatus struct {
 	seq   int32
 }
 
+// Flushed implements backend.ChunkFlushStatus.
 func (f flushStatus) Flushed() bool {
 	return f.seq <= f.local.finishedMetaSeq.Load()
 }
 
+// Close implements backend.ChunkFlushStatus.
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	defer w.kvBuffer.Destroy()
 	defer w.engine.localWriters.Delete(w)
@@ -1211,6 +1228,7 @@ func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	return flushStatus{local: w.engine, seq: w.lastMetaSeq}, err
 }
 
+// IsSynced implements backend.ChunkFlushStatus.
 func (w *Writer) IsSynced() bool {
 	return w.batchCount == 0 && w.lastMetaSeq <= w.engine.finishedMetaSeq.Load()
 }
@@ -1349,6 +1367,7 @@ type sstIter struct {
 	valid  bool
 }
 
+// Close implements common.Iterator.
 func (i *sstIter) Close() error {
 	if err := i.iter.Close(); err != nil {
 		return errors.Trace(err)
@@ -1361,28 +1380,34 @@ type sstIterHeap struct {
 	iters []*sstIter
 }
 
+// Len implements heap.Interface.
 func (h *sstIterHeap) Len() int {
 	return len(h.iters)
 }
 
+// Less implements heap.Interface.
 func (h *sstIterHeap) Less(i, j int) bool {
 	return bytes.Compare(h.iters[i].key, h.iters[j].key) < 0
 }
 
+// Swap implements heap.Interface.
 func (h *sstIterHeap) Swap(i, j int) {
 	h.iters[i], h.iters[j] = h.iters[j], h.iters[i]
 }
 
+// Push implements heap.Interface.
 func (h *sstIterHeap) Push(x interface{}) {
 	h.iters = append(h.iters, x.(*sstIter))
 }
 
+// Pop implements heap.Interface.
 func (h *sstIterHeap) Pop() interface{} {
 	item := h.iters[len(h.iters)-1]
 	h.iters = h.iters[:len(h.iters)-1]
 	return item
 }
 
+// Next implements common.Iterator.
 func (h *sstIterHeap) Next() ([]byte, []byte, error) {
 	for {
 		if len(h.iters) == 0 {

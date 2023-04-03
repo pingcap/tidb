@@ -208,6 +208,7 @@ func (f *importClientFactoryImpl) getGrpcConn(ctx context.Context, storeID uint6
 		})
 }
 
+// Create creates a new import client for specific store.
 func (f *importClientFactoryImpl) Create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	conn, err := f.getGrpcConn(ctx, storeID)
 	if err != nil {
@@ -216,6 +217,7 @@ func (f *importClientFactoryImpl) Create(ctx context.Context, storeID uint64) (s
 	return sst.NewImportSSTClient(conn), nil
 }
 
+// Close closes the factory.
 func (f *importClientFactoryImpl) Close() {
 	f.conns.Close()
 }
@@ -224,6 +226,7 @@ type loggingConn struct {
 	net.Conn
 }
 
+// Write implements net.Conn.Write
 func (c loggingConn) Write(b []byte) (int, error) {
 	log.L().Debug("import write", zap.Int("bytes", len(b)))
 	return c.Conn.Write(b)
@@ -321,6 +324,7 @@ type tblName struct {
 
 type tblNames []tblName
 
+// String implements fmt.Stringer
 func (t tblNames) String() string {
 	var b strings.Builder
 	b.WriteByte('[')
@@ -375,6 +379,7 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 	return nil
 }
 
+// BackendConfig is the config for local backend.
 type BackendConfig struct {
 	// comma separated list of PD endpoints.
 	PDAddr        string
@@ -409,6 +414,7 @@ type BackendConfig struct {
 	KeyspaceName string
 }
 
+// NewBackendConfig creates a new BackendConfig.
 func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string) BackendConfig {
 	return BackendConfig{
 		PDAddr:                  cfg.TiDB.PdAddr,
@@ -434,6 +440,7 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = mathutil.Max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
+// Local is a local backend.
 type Local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
@@ -581,6 +588,7 @@ func NewLocalBackend(
 	return backend.MakeBackend(local), nil
 }
 
+// TotalMemoryConsume returns the total memory usage of the local backend.
 func (local *Local) TotalMemoryConsume() int64 {
 	var memConsume int64 = 0
 	local.engines.Range(func(k, v interface{}) bool {
@@ -659,8 +667,8 @@ func (local *Local) checkMultiIngestSupport(ctx context.Context) error {
 }
 
 // rlock read locks a local file and returns the Engine instance if it exists.
-func (local *Local) rLockEngine(engineId uuid.UUID) *Engine {
-	if e, ok := local.engines.Load(engineId); ok {
+func (local *Local) rLockEngine(engineID uuid.UUID) *Engine {
+	if e, ok := local.engines.Load(engineID); ok {
 		engine := e.(*Engine)
 		engine.rLock()
 		return engine
@@ -777,6 +785,7 @@ func (local *Local) FlushEngine(ctx context.Context, engineID uuid.UUID) error {
 	return engine.flushEngineWithoutLock(ctx)
 }
 
+// FlushAllEngines flush all engines.
 func (local *Local) FlushAllEngines(parentCtx context.Context) (err error) {
 	allEngines := local.tryRLockAllEngines()
 	defer func() {
@@ -795,10 +804,12 @@ func (local *Local) FlushAllEngines(parentCtx context.Context) (err error) {
 	return eg.Wait()
 }
 
+// RetryImportDelay returns the delay time before retrying to import a file.
 func (local *Local) RetryImportDelay() time.Duration {
 	return defaultRetryBackoffTime
 }
 
+// ShouldPostProcess returns true if the backend should post process the data.
 func (local *Local) ShouldPostProcess() bool {
 	return true
 }
@@ -1278,6 +1289,7 @@ func (local *Local) executeJob(
 	return nil
 }
 
+// ImportEngine imports an engine to TiKV.
 func (local *Local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
@@ -1459,6 +1471,7 @@ func (local *Local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return workGroup.Wait()
 }
 
+// ResetEngine reset the engine and reclaim the space.
 func (local *Local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
@@ -1492,6 +1505,7 @@ func (local *Local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	return err
 }
 
+// CleanupEngine cleanup the engine and reclaim the space.
 func (local *Local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	// release this engine after import success
@@ -1519,6 +1533,7 @@ func (local *Local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	return nil
 }
 
+// GetDupeController returns a new dupe controller.
 func (local *Local) GetDupeController(dupeConcurrency int, errorMgr *errormanager.ErrorManager) *DupeController {
 	return &DupeController{
 		splitCli:            local.splitCli,
@@ -1536,6 +1551,7 @@ func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
 	return filepath.Join(storeDir, engineUUID.String()+".sst")
 }
 
+// LocalWriter returns a new local writer.
 func (local *Local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
 	e, ok := local.engines.Load(engineUUID)
 	if !ok {
@@ -1590,6 +1606,7 @@ func nextKey(key []byte) []byte {
 	return res
 }
 
+// EngineFileSizes returns the file size of each engine.
 func (local *Local) EngineFileSizes() (res []backend.EngineFileSize) {
 	local.engines.Range(func(k, v interface{}) bool {
 		engine := v.(*Engine)

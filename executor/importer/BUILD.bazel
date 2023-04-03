@@ -38,6 +38,7 @@ go_test(
     srcs = ["import_test.go"],
     embed = [":importer"],
     flaky = True,
+    race = "on",
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/config",

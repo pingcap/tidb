@@ -392,6 +392,7 @@ func (local *Local) SplitAndScatterRegionByRanges(
 	return nil
 }
 
+// BatchSplitRegions splits the region into multiple regions by given split keys.
 func (local *Local) BatchSplitRegions(
 	ctx context.Context,
 	region *split.RegionInfo,
@@ -617,6 +618,7 @@ func intersectRange(region *metapb.Region, rg Range) Range {
 	return Range{start: startKey, end: endKey}
 }
 
+// StoreWriteLimiter is used to limit the write rate of a store.
 type StoreWriteLimiter interface {
 	WaitN(ctx context.Context, storeID uint64, n int) error
 	Limit() int
@@ -689,6 +691,7 @@ func (noopStoreWriteLimiter) Limit() int {
 	return math.MaxInt
 }
 
+// compaction threshold
 const (
 	CompactionLowerThreshold = 512 * units.MiB
 	CompactionUpperThreshold = 32 * units.GiB
