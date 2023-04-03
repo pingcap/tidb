@@ -323,6 +323,8 @@
       "parser/consistent_test.go": "ignore consistent code",
       "parser/bench_test.go": "ignore bench code",
       "parser/parser_test.go": "ignore parser_test code",
+      "parser/digester_test.go": "ignore digester_test code",
+      "parser/hintparser_test.go": "ignore hintparser_test code",
       "errno/errname.go": "ignore errname code",
       "planner/funcdep/fd_graph.go": "ignore fd_graph code",
       "planner/funcdep/doc.go": "ignore funcdep code",
