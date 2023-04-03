@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "loaddatatest_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    flaky = True,
+    deps = [
+        "//config",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
