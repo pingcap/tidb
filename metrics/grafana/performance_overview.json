@@ -3702,7 +3702,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tiflash_coprocessor_request_error{k8s_cluster=\"$k8s_cluster\", cluster_id=~\".*$tidb_cluster\"}[2m]))",
+              "expr": "sum(rate(tiflash_coprocessor_request_error{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[2m]))",
               "hide": false,
               "interval": "",
               "legendFormat": "Failed",
@@ -4344,7 +4344,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.999, sum(rate(tiflash_coprocessor_request_memory_usage_bucket{k8s_cluster=\"$k8s_cluster\", cluster_id=~\".*$tidb_cluster\"}[2m])) by (le, type))",
+              "expr": "histogram_quantile(0.999, sum(rate(tiflash_coprocessor_request_memory_usage_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[2m])) by (le, type))",
               "interval": "",
               "legendFormat": "999-{{type}}",
               "queryType": "randomWalk",
@@ -4352,7 +4352,7 @@
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(tiflash_coprocessor_request_memory_usage_bucket{k8s_cluster=\"$k8s_cluster\", cluster_id=~\".*$tidb_cluster\"}[2m])) by (le, type))",
+              "expr": "histogram_quantile(0.99, sum(rate(tiflash_coprocessor_request_memory_usage_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[2m])) by (le, type))",
               "hide": false,
               "interval": "",
               "legendFormat": "99-{{type}}",
@@ -4361,7 +4361,7 @@
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.80, sum(rate(tiflash_coprocessor_request_memory_usage_bucket{k8s_cluster=\"$k8s_cluster\", cluster_id=~\".*$tidb_cluster\"}[2m])) by (le, type))",
+              "expr": "histogram_quantile(0.80, sum(rate(tiflash_coprocessor_request_memory_usage_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[2m])) by (le, type))",
               "hide": false,
               "interval": "",
               "legendFormat": "80-{{type}}",
@@ -4459,7 +4459,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tiflash_coprocessor_response_bytes{k8s_cluster=\"$k8s_cluster\", cluster_id=~\".*$tidb_cluster\"}[2m])) by (type)",
+              "expr": "sum(rate(tiflash_coprocessor_response_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[2m])) by (type)",
               "interval": "",
               "legendFormat": "{{type}}",
               "queryType": "randomWalk",

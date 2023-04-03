@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -165,6 +166,11 @@ func (stm *GlobalTaskManager) GetNewTask() (task *proto.Task, err error) {
 
 // UpdateTask updates the global task.
 func (stm *GlobalTaskManager) UpdateTask(task *proto.Task) error {
+	failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("updateTaskErr"))
+		}
+	})
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -203,6 +209,22 @@ func (stm *GlobalTaskManager) GetTaskByID(taskID int64) (task *proto.Task, err e
 	defer stm.mu.Unlock()
 
 	rs, err := execSQL(stm.ctx, stm.se, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where id = %?", taskID)
+	if err != nil {
+		return task, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	return row2GlobeTask(rs[0]), nil
+}
+
+// GetTaskByKey gets the task by the task key
+func (stm *GlobalTaskManager) GetTaskByKey(key string) (task *proto.Task, err error) {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	rs, err := execSQL(stm.ctx, stm.se, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where task_key = %?", key)
 	if err != nil {
 		return task, err
 	}

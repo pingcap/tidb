@@ -62,6 +62,7 @@ type RemoteChecksum struct {
 	TotalBytes uint64
 }
 
+// ChecksumManager is a manager that manages checksums.
 type ChecksumManager interface {
 	Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error)
 }

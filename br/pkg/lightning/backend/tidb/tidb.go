@@ -475,7 +475,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, rowID int64, columnPermutation
 		// 1. if len(row) < enc.columnCnt: data in row cannot populate the insert statement, because
 		// there are enc.columnCnt elements to insert but fewer columns in row
 		enc.logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
-			zap.Array("data", kv.RowArrayMarshaler(row)))
+			zap.Array("data", kv.RowArrayMarshaller(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
 	}
 
@@ -483,7 +483,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, rowID int64, columnPermutation
 		// 2. if len(row) > len(columnIdx): raw row data has more columns than those
 		// in the table
 		enc.logger.Error("column count mismatch", zap.Ints("column_count", enc.columnIdx),
-			zap.Array("data", kv.RowArrayMarshaler(row)))
+			zap.Array("data", kv.RowArrayMarshaller(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, at most %d but got %d", len(enc.columnIdx), len(row))
 	}
 
@@ -501,7 +501,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, rowID int64, columnPermutation
 		datum := field
 		if err := enc.appendSQL(&encoded, &datum, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
 			enc.logger.Error("tidb encode failed",
-				zap.Array("original", kv.RowArrayMarshaler(row)),
+				zap.Array("original", kv.RowArrayMarshaller(row)),
 				zap.Int("originalCol", i),
 				log.ShortError(err),
 			)
@@ -736,22 +736,27 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 	return nil
 }
 
+// EngineFileSizes returns the size of each engine file.
 func (be *tidbBackend) EngineFileSizes() []backend.EngineFileSize {
 	return nil
 }
 
+// FlushEngine flushes the data in the engine to the underlying storage.
 func (be *tidbBackend) FlushEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
+// FlushAllEngines flushes all the data in the engines to the underlying storage.
 func (be *tidbBackend) FlushAllEngines(context.Context) error {
 	return nil
 }
 
+// ResetEngine resets the engine.
 func (be *tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
 	return errors.New("cannot reset an engine in TiDB backend")
 }
 
+// LocalWriter returns a writer that writes data to local storage.
 func (be *tidbBackend) LocalWriter(
 	ctx context.Context,
 	cfg *backend.LocalWriterConfig,
@@ -760,28 +765,34 @@ func (be *tidbBackend) LocalWriter(
 	return &Writer{be: be}, nil
 }
 
+// Writer is a writer that writes data to local storage.
 type Writer struct {
 	be *tidbBackend
 }
 
+// Close implements the EngineWriter interface.
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	return nil, nil
 }
 
+// AppendRows implements the EngineWriter interface.
 func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
 	return w.be.WriteRows(ctx, tableName, columnNames, rows)
 }
 
+// IsSynced implements the EngineWriter interface.
 func (w *Writer) IsSynced() bool {
 	return true
 }
 
+// TableAutoIDInfo is the auto id information of a table.
 type TableAutoIDInfo struct {
 	Column string
 	NextID int64
 	Type   string
 }
 
+// FetchTableAutoIDInfos fetches the auto id information of a table.
 func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableName string) ([]*TableAutoIDInfo, error) {
 	rows, e := exec.QueryContext(ctx, fmt.Sprintf("SHOW TABLE %s NEXT_ROW_ID", tableName))
 	if e != nil {

@@ -70,7 +70,7 @@ func (s *mockGCSSuite) TestFilenameAsterisk() {
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
-		INTO TABLE multi_load.t;`, gcsEndpoint)
+		INTO TABLE multi_load.t WITH thread=2;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"1 test1", "2 test2", "3 test3", "4 test4", "5 test5", "6 test6",
@@ -78,7 +78,7 @@ func (s *mockGCSSuite) TestFilenameAsterisk() {
 
 	s.tk.MustExec("TRUNCATE TABLE multi_load.t;")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
-		INTO TABLE multi_load.t IGNORE 1 LINES;`, gcsEndpoint)
+		INTO TABLE multi_load.t IGNORE 1 LINES WITH thread=20;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"2 test2", "4 test4", "6 test6",

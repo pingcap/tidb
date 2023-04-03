@@ -89,7 +89,9 @@ func (bc *BackendContext) Flush(indexID int64) error {
 		return err
 	}
 
-	if bc.diskRoot.CurrentUsage() >= uint64(importThreshold*float64(bc.diskRoot.MaxQuota())) {
+	release := ei.AcquireFlushLock()
+	if release != nil && bc.diskRoot.CurrentUsage() >= uint64(importThreshold*float64(bc.diskRoot.MaxQuota())) {
+		defer release()
 		// TODO: it should be changed according checkpoint solution.
 		// Flush writer cached data into local disk for engine first.
 		err := ei.Flush()

@@ -88,10 +88,11 @@ type MemBuf struct {
 	kv.MemBuffer
 	buf           *BytesBuf
 	availableBufs []*BytesBuf
-	kvPairs       *KvPairs
+	kvPairs       *Pairs
 	size          int
 }
 
+// Recycle recycles the byte buffer.
 func (mb *MemBuf) Recycle(buf *BytesBuf) {
 	buf.idx = 0
 	buf.cap = len(buf.buf)
@@ -106,6 +107,7 @@ func (mb *MemBuf) Recycle(buf *BytesBuf) {
 	mb.Unlock()
 }
 
+// AllocateBuf allocates a byte buffer.
 func (mb *MemBuf) AllocateBuf(size int) {
 	mb.Lock()
 	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
@@ -130,6 +132,7 @@ func (mb *MemBuf) AllocateBuf(size int) {
 	mb.Unlock()
 }
 
+// Set sets the key-value pair.
 func (mb *MemBuf) Set(k kv.Key, v []byte) error {
 	kvPairs := mb.kvPairs
 	size := len(k) + len(v)
@@ -147,10 +150,12 @@ func (mb *MemBuf) Set(k kv.Key, v []byte) error {
 	return nil
 }
 
+// SetWithFlags implements the kv.MemBuffer interface.
 func (mb *MemBuf) SetWithFlags(k kv.Key, v []byte, ops ...kv.FlagsOp) error {
 	return mb.Set(k, v)
 }
 
+// Delete implements the kv.MemBuffer interface.
 func (mb *MemBuf) Delete(k kv.Key) error {
 	return errors.New("unsupported operation")
 }
@@ -159,6 +164,7 @@ func (mb *MemBuf) Delete(k kv.Key) error {
 func (mb *MemBuf) Release(h kv.StagingHandle) {
 }
 
+// Staging creates a new staging buffer.
 func (mb *MemBuf) Staging() kv.StagingHandle {
 	return 0
 }
@@ -181,17 +187,21 @@ type kvUnionStore struct {
 	MemBuf
 }
 
+// GetMemBuffer implements the kv.UnionStore interface.
 func (s *kvUnionStore) GetMemBuffer() kv.MemBuffer {
 	return &s.MemBuf
 }
 
+// GetIndexName implements the kv.UnionStore interface.
 func (s *kvUnionStore) GetIndexName(tableID, indexID int64) string {
 	panic("Unsupported Operation")
 }
 
+// CacheIndexName implements the kv.UnionStore interface.
 func (s *kvUnionStore) CacheIndexName(tableID, indexID int64, name string) {
 }
 
+// CacheTableInfo implements the kv.UnionStore interface.
 func (s *kvUnionStore) CacheTableInfo(id int64, info *model.TableInfo) {
 }
 
@@ -202,14 +212,17 @@ type transaction struct {
 	kvUnionStore
 }
 
+// GetMemBuffer implements the kv.Transaction interface.
 func (t *transaction) GetMemBuffer() kv.MemBuffer {
 	return &t.kvUnionStore.MemBuf
 }
 
+// Discard implements the kv.Transaction interface.
 func (t *transaction) Discard() {
 	// do nothing
 }
 
+// Flush implements the kv.Transaction interface.
 func (t *transaction) Flush() (int, error) {
 	// do nothing
 	return 0, nil
@@ -263,6 +276,7 @@ func NewSessionCtx(options *encode.SessionOptions, logger log.Logger) sessionctx
 	return NewSession(options, logger)
 }
 
+// NewSession creates a new trimmed down Session matching the options.
 func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	s := &Session{
 		values: make(map[fmt.Stringer]interface{}, 1),
@@ -304,18 +318,19 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
-	s.txn.kvPairs = &KvPairs{}
+	s.txn.kvPairs = &Pairs{}
 
 	return s
 }
 
-func (se *Session) TakeKvPairs() *KvPairs {
+// TakeKvPairs returns the current Pairs and resets the buffer.
+func (se *Session) TakeKvPairs() *Pairs {
 	memBuf := &se.txn.MemBuf
 	pairs := memBuf.kvPairs
 	if pairs.BytesBuf != nil {
 		pairs.MemBuf = memBuf
 	}
-	memBuf.kvPairs = &KvPairs{Pairs: make([]common.KvPair, 0, len(pairs.Pairs))}
+	memBuf.kvPairs = &Pairs{Pairs: make([]common.KvPair, 0, len(pairs.Pairs))}
 	memBuf.size = 0
 	return pairs
 }
@@ -363,6 +378,7 @@ func (se *Session) GetStmtStats() *stmtstats.StatementStats {
 	return nil
 }
 
+// Close implements the sessionctx.Context interface
 func (se *Session) Close() {
 	memBuf := &se.txn.MemBuf
 	if memBuf.buf != nil {

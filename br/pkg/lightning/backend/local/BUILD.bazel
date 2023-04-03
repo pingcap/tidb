@@ -102,6 +102,7 @@ go_test(
     ],
     embed = [":local"],
     flaky = True,
+    race = "on",
     shard_count = 48,
     deps = [
         "//br/pkg/lightning/backend",
