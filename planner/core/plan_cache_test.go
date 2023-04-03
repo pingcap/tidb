@@ -1740,6 +1740,33 @@ func TestIssue42150(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestNonPreparedPlanCacheDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec("create table t (a int default 0, b int default 0)")
+
+	for _, sql := range []string{
+		`insert into t values (1, 1)`,
+		`insert into t (a, b) values (1, 1)`,
+		`insert into t (a) values (1)`,
+		`insert into t (b) values (1)`,
+		`insert into t select * from t`,
+		`insert into t select * from t where a>10`,
+		`update t set a=1`,
+		`update t set a=1 where a>10`,
+		`update t set a=1, b=1`,
+		`update t set a=a+1 where a>10`,
+		`delete from t`,
+		`delete from t where a>10`,
+	} {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
+}
+
 func TestNonPreparedPlanCachePanic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1928,5 +1955,20 @@ func BenchmarkPlanCacheInsert(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		tk.MustExec("execute st")
+	}
+}
+
+func BenchmarkNonPreparedPlanCacheDML(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tk.MustExec("insert into t values (1)")
+		tk.MustExec("update t set a = 2 where a = 1")
+		tk.MustExec("delete from t where a = 2")
 	}
 }
