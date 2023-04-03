@@ -6700,6 +6700,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -6715,6 +6716,8 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
+		Charset:  charset,
+		Collate:  collate,
 	}
 
 	err = d.DoDDLJob(ctx, job)
