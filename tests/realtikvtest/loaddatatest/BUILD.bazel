@@ -3,10 +3,18 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 go_test(
     name = "loaddatatest_test",
     timeout = "short",
-    srcs = ["main_test.go"],
+    srcs = [
+        "main_test.go",
+        "util_test.go",
+    ],
     flaky = True,
     deps = [
         "//config",
+        "//kv",
+        "//testkit",
+        "//tests/realtikvtest",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_stretchr_testify//suite",
         "@org_uber_go_goleak//:goleak",
     ],
 )
