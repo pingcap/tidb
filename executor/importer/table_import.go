@@ -89,7 +89,7 @@ func (e *LoadDataController) prepareSortDir() (string, error) {
 	return sortPath, nil
 }
 
-func (e *LoadDataController) import0(ctx context.Context) error {
+func (e *LoadDataController) import0(ctx context.Context) (err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -116,6 +116,7 @@ func (e *LoadDataController) import0(ctx context.Context) error {
 
 	// Disable GC because TiDB enables GC already.
 	keySpaceName := tidb.GetGlobalKeyspaceName()
+	// the kv store we get is a cached store, so we can't close it.
 	kvStore, err := GetKVStore(fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", tidbCfg.Path, keySpaceName), tls.ToTiKVSecurityConfig())
 	if err != nil {
 		return errors.Trace(err)
@@ -149,7 +150,7 @@ func (e *LoadDataController) import0(ctx context.Context) error {
 		ColumnCnt:         len(e.Table.Meta().Columns),
 		EngineDataSize:    int64(config.DefaultBatchSize),
 		MaxChunkSize:      int64(config.MaxRegionSize),
-		Concurrency:       int(e.threadCnt),
+		Concurrency:       int(e.ThreadCnt),
 		EngineConcurrency: config.DefaultTableConcurrency,
 		IOWorkers:         nil,
 		Store:             e.dataStore,
@@ -162,6 +163,8 @@ func (e *LoadDataController) import0(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer localBackend.Close()
+
 	tblImporter := &tableImporterImpl{
 		LoadDataController: e,
 		backend:            localBackend,

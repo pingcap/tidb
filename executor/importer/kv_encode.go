@@ -31,7 +31,7 @@ import (
 )
 
 type KVEncoder interface {
-	Encode(row []types.Datum, rowID int64) (*kv.KvPairs, error)
+	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
 }
 
 // tableKVEncoder encodes a row of data into a KV pair.
@@ -68,7 +68,7 @@ func newTableKVEncoder(
 }
 
 // Encode a row of data into KV pairs.
-func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.KvPairs, error) {
+func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
 	record, err := en.parserData2TableData(row, rowID)
 	if err != nil {
 		return nil, err

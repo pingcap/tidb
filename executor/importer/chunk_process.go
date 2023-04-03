@@ -43,7 +43,7 @@ var (
 )
 
 type deliveredKVs struct {
-	kvs    *kv.KvPairs // if kvs is nil, this indicated we've got the last message.
+	kvs    *kv.Pairs // if kvs is nil, this indicated we've got the last message.
 	offset int64
 	rowID  int64
 }
@@ -54,8 +54,8 @@ type deliverResult struct {
 }
 
 type deliverKVBatch struct {
-	dataKVs  kv.KvPairs
-	indexKVs kv.KvPairs
+	dataKVs  kv.Pairs
+	indexKVs kv.Pairs
 
 	dataChecksum  *verify.KVChecksum
 	indexChecksum *verify.KVChecksum
@@ -82,7 +82,7 @@ func (b *deliverKVBatch) size() uint64 {
 	return b.dataChecksum.SumSize() + b.indexChecksum.SumSize()
 }
 
-func (b *deliverKVBatch) add(kvs *kv.KvPairs) {
+func (b *deliverKVBatch) add(kvs *kv.Pairs) {
 	for _, pair := range kvs.Pairs {
 		if pair.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
 			b.dataKVs.Pairs = append(b.dataKVs.Pairs, pair)
