@@ -42,17 +42,17 @@ func TestGlobalTaskTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	gm := storage.NewGlobalTaskManager(context.Background(), tk.Session())
+	gm := storage.NewTaskManager(context.Background(), tk.Session())
 
-	storage.SetGlobalTaskManager(gm)
-	gm, err := storage.GetGlobalTaskManager()
+	storage.SetTaskManager(gm)
+	gm, err := storage.GetTaskManager()
 	require.NoError(t, err)
 
-	id, err := gm.AddNewTask("key1", "test", 4, []byte("test"))
+	id, err := gm.AddNewGlobalTask("key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
-	task, err := gm.GetNewTask()
+	task, err := gm.GetNewGlobalTask()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "key1", task.Key)
@@ -61,35 +61,35 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.Equal(t, uint64(4), task.Concurrency)
 	require.Equal(t, []byte("test"), task.Meta)
 
-	task2, err := gm.GetTaskByID(1)
+	task2, err := gm.GetGlobalTaskByID(1)
 	require.NoError(t, err)
 	require.Equal(t, task, task2)
 
-	task3, err := gm.GetTasksInStates(proto.TaskStatePending)
+	task3, err := gm.GetGlobalTasksInStates(proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Len(t, task3, 1)
 	require.Equal(t, task, task3[0])
 
-	task4, err := gm.GetTasksInStates(proto.TaskStatePending, proto.TaskStateRunning)
+	task4, err := gm.GetGlobalTasksInStates(proto.TaskStatePending, proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, task4, 1)
 	require.Equal(t, task, task4[0])
 
 	task.State = proto.TaskStateRunning
-	err = gm.UpdateTask(task)
+	err = gm.UpdateGlobalTask(task)
 	require.NoError(t, err)
 
-	task5, err := gm.GetTasksInStates(proto.TaskStateRunning)
+	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, task5, 1)
 	require.Equal(t, task, task5[0])
 
-	task6, err := gm.GetTaskByKey("key1")
+	task6, err := gm.GetGlobalTaskByKey("key1")
 	require.NoError(t, err)
 	require.Equal(t, task, task6)
 
 	// test cannot insert task with dup key
-	_, err = gm.AddNewTask("key1", "test2", 4, []byte("test2"))
+	_, err = gm.AddNewGlobalTask("key1", "test2", 4, []byte("test2"))
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")
 }
 
@@ -98,13 +98,13 @@ func TestSubTaskTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	sm := storage.NewSubTaskManager(context.Background(), tk.Session())
+	sm := storage.NewTaskManager(context.Background(), tk.Session())
 
-	storage.SetSubTaskManager(sm)
-	sm, err := storage.GetSubTaskManager()
+	storage.SetTaskManager(sm)
+	sm, err := storage.GetTaskManager()
 	require.NoError(t, err)
 
-	err = sm.AddNewTask(1, "tidb1", []byte("test"), proto.TaskTypeExample, false)
+	err = sm.AddNewSubTask(1, "tidb1", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
 
 	nilTask, err := sm.GetSubtaskInStates("tidb2", 1, proto.TaskStatePending)
@@ -123,12 +123,12 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, task, task2)
 
-	ids, err := sm.GetSchedulerIDs(1)
+	ids, err := sm.GetSchedulerIDsUnderGlobalTask(1)
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
 	require.Equal(t, "tidb1", ids[0])
 
-	ids, err = sm.GetSchedulerIDs(3)
+	ids, err = sm.GetSchedulerIDsUnderGlobalTask(3)
 	require.NoError(t, err)
 	require.Len(t, ids, 0)
 
@@ -144,7 +144,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	err = sm.UpdateHeartbeat("tidb1", 1, time.Now())
+	err = sm.UpdateSubtaskHeartbeat("tidb1", 1, time.Now())
 	require.NoError(t, err)
 
 	err = sm.UpdateSubtaskState(1, proto.TaskStateRunning)
@@ -170,14 +170,14 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = sm.DeleteTasks(1)
+	err = sm.DeleteSubtasksUnderGlobalTask(1)
 	require.NoError(t, err)
 
 	ok, err = sm.HasSubtasksInStates("tidb1", 1, proto.TaskStatePending, proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = sm.AddNewTask(2, "tidb1", []byte("test"), proto.TaskTypeExample, true)
+	err = sm.AddNewSubTask(2, "tidb1", []byte("test"), proto.TaskTypeExample, true)
 	require.NoError(t, err)
 
 	cnt, err = sm.GetSubtaskInStatesCnt(2, proto.TaskStateRevertPending)

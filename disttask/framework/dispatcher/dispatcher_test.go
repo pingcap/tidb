@@ -34,18 +34,15 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-func MockDispatcher(t *testing.T) (dispatcher.Dispatch, *storage.GlobalTaskManager, *storage.SubTaskManager, kv.Storage) {
+func MockDispatcher(t *testing.T) (dispatcher.Dispatch, *storage.TaskManager, kv.Storage) {
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
-	stk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
-	gm := storage.NewGlobalTaskManager(util.WithInternalSourceType(ctx, "globalTaskManager"), gtk.Session())
-	storage.SetGlobalTaskManager(gm)
-	sm := storage.NewSubTaskManager(util.WithInternalSourceType(ctx, "subTaskManager"), stk.Session())
-	storage.SetSubTaskManager(sm)
-	dsp, err := dispatcher.NewDispatcher(util.WithInternalSourceType(ctx, "dispatcher"), gm, sm)
+	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), gtk.Session())
+	storage.SetTaskManager(mgr)
+	dsp, err := dispatcher.NewDispatcher(util.WithInternalSourceType(ctx, "dispatcher"), mgr)
 	require.NoError(t, err)
-	return dsp, gm, sm, store
+	return dsp, mgr, store
 }
 
 func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
@@ -55,7 +52,7 @@ func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
 
 func TestGetInstance(t *testing.T) {
 	ctx := context.Background()
-	dsp, _, subTaskMgr, _ := MockDispatcher(t)
+	dsp, mgr, _ := MockDispatcher(t)
 
 	makeFailpointRes := func(v interface{}) string {
 		bytes, err := json.Marshal(v)
@@ -103,7 +100,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID:      gTaskID,
 		SchedulerID: uuids[1],
 	}
-	err = subTaskMgr.AddNewTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
@@ -115,7 +112,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID:      gTaskID,
 		SchedulerID: uuids[0],
 	}
-	err = subTaskMgr.AddNewTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
@@ -138,7 +135,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		dispatcher.DefaultDispatchConcurrency = 1
 	}
 
-	dsp, gTaskMgr, subTaskMgr, store := MockDispatcher(t)
+	dsp, mgr, store := MockDispatcher(t)
 	dsp.Start()
 	defer func() {
 		dsp.Stop()
@@ -166,23 +163,23 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
-		taskID, err := gTaskMgr.AddNewTask(fmt.Sprintf("%d", i), taskTypeExample, 0, nil)
+		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", i), taskTypeExample, 0, nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
 	// test normal flow
 	checkGetRunningGTaskCnt()
-	tasks, err := gTaskMgr.GetTasksInStates(proto.TaskStateRunning)
+	tasks, err := mgr.GetGlobalTasksInStates(proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, tasks, taskCnt)
 	for i, taskID := range taskIDs {
 		require.Equal(t, int64(i+1), tasks[i].ID)
-		subtasks, err := subTaskMgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
+		subtasks, err := mgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
 		require.NoError(t, err)
 		require.Equal(t, subtasks, int64(subtaskCnt))
 	}
 	// test parallelism control
-	taskID, err := gTaskMgr.AddNewTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
+	taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
 	require.NoError(t, err)
 	checkGetRunningGTaskCnt()
 	// Clean the task.
@@ -191,7 +188,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	// test DetectTaskLoop
 	checkGetGTaskState := func(expectedState string) {
 		for i := 0; i < cnt; i++ {
-			tasks, err = gTaskMgr.GetTasksInStates(expectedState)
+			tasks, err = mgr.GetGlobalTasksInStates(expectedState)
 			require.NoError(t, err)
 			if len(tasks) == taskCnt {
 				break
@@ -203,7 +200,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = subTaskMgr.UpdateSubtaskState(int64(i), proto.TaskStateSucceed)
+			err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateSucceed)
 			require.NoError(t, err)
 		}
 		checkGetGTaskState(proto.TaskStateSucceed)
@@ -219,7 +216,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	}()
 	// Mock a subtask fails.
 	for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-		err = subTaskMgr.UpdateSubtaskState(int64(i), proto.TaskStateFailed)
+		err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateFailed)
 		require.NoError(t, err)
 	}
 	checkGetGTaskState(proto.TaskStateReverting)
@@ -227,7 +224,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = subTaskMgr.UpdateSubtaskState(int64(i), proto.TaskStateReverted)
+		err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateReverted)
 		require.NoError(t, err)
 	}
 	checkGetGTaskState(proto.TaskStateReverted)

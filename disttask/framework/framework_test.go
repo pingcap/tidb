@@ -92,8 +92,8 @@ func TestFrameworkStartUp(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	gm := storage.NewGlobalTaskManager(context.TODO(), tk.Session())
-	taskID, err := gm.AddNewTask("key1", "type1", 8, nil)
+	gm := storage.NewTaskManager(context.TODO(), tk.Session())
+	taskID, err := gm.AddNewGlobalTask("key1", "type1", 8, nil)
 	require.NoError(t, err)
 	start := time.Now()
 
@@ -104,7 +104,7 @@ func TestFrameworkStartUp(t *testing.T) {
 		}
 
 		time.Sleep(time.Second)
-		task, err = gm.GetTaskByID(taskID)
+		task, err = gm.GetGlobalTaskByID(taskID)
 		require.NoError(t, err)
 		require.NotNil(t, task)
 		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning {
