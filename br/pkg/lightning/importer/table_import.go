@@ -57,6 +57,7 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+// TableImporter is a helper struct to import a table.
 type TableImporter struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
@@ -71,6 +72,7 @@ type TableImporter struct {
 	ignoreColumns map[string]struct{}
 }
 
+// NewTableImporter creates a new TableImporter.
 func NewTableImporter(
 	tableName string,
 	tableMeta *mydump.MDTableMeta,
@@ -209,6 +211,7 @@ func (tr *TableImporter) importTable(
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
 }
 
+// Close implements the Importer interface.
 func (tr *TableImporter) Close() {
 	tr.encTable = nil
 	tr.logger.Info("restore done")
@@ -264,6 +267,7 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 	return err
 }
 
+// RebaseChunkRowIDs rebase the row id of the chunks.
 func (tr *TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
 		return

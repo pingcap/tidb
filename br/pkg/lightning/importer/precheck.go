@@ -10,8 +10,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 )
 
+// CheckItemID is the ID of a precheck item
 type CheckItemID string
 
+// CheckItemID constants
 const (
 	CheckLargeDataFile            CheckItemID = "CHECK_LARGE_DATA_FILES"
 	CheckSourcePermission         CheckItemID = "CHECK_SOURCE_PERMISSION"
@@ -28,6 +30,7 @@ const (
 	CheckTargetUsingCDCPITR       CheckItemID = "CHECK_TARGET_USING_CDC_PITR"
 )
 
+// CheckResult is the result of a precheck item
 type CheckResult struct {
 	Item     CheckItemID
 	Severity CheckType
@@ -35,6 +38,7 @@ type CheckResult struct {
 	Message  string
 }
 
+// PrecheckItem is the interface for precheck items
 type PrecheckItem interface {
 	// Check checks whether it meet some prerequisites for importing
 	// If the check is skipped, the returned `CheckResult` is nil
@@ -46,10 +50,12 @@ type precheckContextKey string
 
 const taskManagerKey precheckContextKey = "PRECHECK/TASK_MANAGER"
 
+// WithPrecheckKey returns a new context with the given key and value.
 func WithPrecheckKey(ctx context.Context, key precheckContextKey, val any) context.Context {
 	return context.WithValue(ctx, key, val)
 }
 
+// PrecheckItemBuilder is used to build precheck items
 type PrecheckItemBuilder struct {
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
@@ -57,6 +63,7 @@ type PrecheckItemBuilder struct {
 	checkpointsDB checkpoints.DB
 }
 
+// NewPrecheckItemBuilderFromConfig creates a new PrecheckItemBuilder from config
 func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
 	var gerr error
 	builderCfg := new(ropts.PrecheckItemBuilderConfig)
@@ -100,6 +107,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb), gerr
 }
 
+// NewPrecheckItemBuilder creates a new PrecheckItemBuilder
 func NewPrecheckItemBuilder(
 	cfg *config.Config,
 	dbMetas []*mydump.MDDatabaseMeta,
@@ -114,6 +122,7 @@ func NewPrecheckItemBuilder(
 	}
 }
 
+// BuildPrecheckItem builds a PrecheckItem by the given checkID
 func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckItem, error) {
 	switch checkID {
 	case CheckLargeDataFile:

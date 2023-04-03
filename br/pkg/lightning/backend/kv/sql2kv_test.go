@@ -190,7 +190,7 @@ type LocalKvPairs struct {
 }
 
 func fromRow(r encode.Row) (l LocalKvPairs) {
-	l.pairs = lkv.KvPairsFromRow(r)
+	l.pairs = lkv.Row2KvPairs(r)
 	return l
 }
 

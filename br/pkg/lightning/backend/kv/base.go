@@ -174,7 +174,7 @@ func (e *BaseKVEncoder) GetOrCreateRecord() []types.Datum {
 }
 
 // Record2KV converts a row into a KV pair.
-func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64) (*KvPairs, error) {
+func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64) (*Pairs, error) {
 	_, err := e.Table.AddRecord(e.SessionCtx, record)
 	if err != nil {
 		e.logger.Error("kv encode failed",

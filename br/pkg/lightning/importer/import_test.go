@@ -335,7 +335,7 @@ func TestFilterColumns(t *testing.T) {
 		columnNames    []string
 		extendData     mydump.ExtendColumnData
 		ignoreColsMap  map[string]struct{}
-		createTableSql string
+		createTableSQL string
 
 		expectedFilteredColumns []string
 		expectedExtendValues    []string
@@ -362,7 +362,7 @@ func TestFilterColumns(t *testing.T) {
 				Columns: []string{"c_source", "c_schema", "c_table"},
 				Values:  []string{"01", "1", "1"},
 			},
-			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			createTableSQL:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
 			expectedFilteredColumns: []string{"a", "b", "c_source", "c_schema", "c_table"},
 			expectedExtendValues:    []string{"01", "1", "1"},
 		},
@@ -372,7 +372,7 @@ func TestFilterColumns(t *testing.T) {
 				Columns: []string{"c_source", "c_schema", "c_table"},
 				Values:  []string{"01", "1", "1"},
 			},
-			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			createTableSQL:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
 			expectedFilteredColumns: []string{"a", "b", "c_source", "c_schema", "c_table"},
 			expectedExtendValues:    []string{"01", "1", "1"},
 		},
@@ -399,14 +399,14 @@ func TestFilterColumns(t *testing.T) {
 				Values:  []string{"01", "1", "1"},
 			},
 			ignoreColsMap:           map[string]struct{}{"a": {}},
-			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			createTableSQL:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
 			expectedFilteredColumns: []string{"b", "c_source", "c_schema", "c_table"},
 			expectedExtendValues:    []string{"01", "1", "1"},
 		},
 	}
 	for i, tc := range testCases {
 		t.Logf("test case #%d", i)
-		node, err := p.ParseOneStmt(tc.createTableSql, "utf8mb4", "utf8mb4_bin")
+		node, err := p.ParseOneStmt(tc.createTableSQL, "utf8mb4", "utf8mb4_bin")
 		require.NoError(t, err)
 		tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(i+1))
 		require.NoError(t, err)

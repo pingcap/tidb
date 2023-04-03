@@ -67,6 +67,7 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+// Lightning is the main struct of the lightning package.
 type Lightning struct {
 	globalCfg *config.GlobalConfig
 	globalTLS *common.TLS
@@ -95,6 +96,7 @@ func initEnv(cfg *config.GlobalConfig) error {
 	return log.InitLogger(&cfg.App.Config, cfg.TiDB.LogLevel)
 }
 
+// New creates a new Lightning instance.
 func New(globalCfg *config.GlobalConfig) *Lightning {
 	if err := initEnv(globalCfg); err != nil {
 		fmt.Println("Failed to initialize environment:", err)
@@ -129,6 +131,7 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 	}
 }
 
+// GoServe starts the HTTP server in a goroutine. The server will be closed
 func (l *Lightning) GoServe() error {
 	handleSigUsr1(func() {
 		l.serverLock.Lock()
@@ -171,11 +174,13 @@ func newLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
 	return &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 }
 
+// WriteHeader implements http.ResponseWriter.
 func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.statusCode = code
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
+// Write implements http.ResponseWriter.
 func (lrw *loggingResponseWriter) Write(d []byte) (int, error) {
 	// keep first part of the response for logging, max 1K
 	if lrw.body == "" && len(d) > 0 {
@@ -295,6 +300,7 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 	return l.run(taskCtx, taskCfg, o)
 }
 
+// RunServer is used by binary lightning to start a HTTP server to receive import tasks.
 func (l *Lightning) RunServer() error {
 	l.serverLock.Lock()
 	l.taskCfgs = config.NewConfigList()
@@ -613,6 +619,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	return errors.Trace(err)
 }
 
+// Stop stops the lightning server.
 func (l *Lightning) Stop() {
 	l.cancelLock.Lock()
 	if l.cancel != nil {
@@ -989,7 +996,7 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 		maxDBFiles := topNTotalSize / int64(cfg.TikvImporter.LocalWriterMemCacheSize) * 2
 		// the pebble db and all import routine need upto maxDBFiles fds for read and write.
 		maxOpenDBFiles := maxDBFiles * (1 + int64(cfg.TikvImporter.RangeConcurrency))
-		estimateMaxFiles := local.Rlim_t(cfg.App.RegionConcurrency) + local.Rlim_t(maxOpenDBFiles)
+		estimateMaxFiles := local.RlimT(cfg.App.RegionConcurrency) + local.RlimT(maxOpenDBFiles)
 		if err := local.VerifyRLimit(estimateMaxFiles); err != nil {
 			return err
 		}
@@ -1013,6 +1020,8 @@ func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) e
 	}
 	return nil
 }
+
+// CheckpointRemove removes the checkpoint of the given table.
 func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
 	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
@@ -1037,6 +1046,7 @@ func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string)
 	return errors.Trace(cpdb.RemoveCheckpoint(ctx, tableName))
 }
 
+// CleanupMetas removes the table metas of the given table.
 func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
 	if tableName == "all" {
 		tableName = ""
@@ -1065,6 +1075,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 	return errors.Trace(importer.MaybeCleanupAllMetas(ctx, log.L(), db, cfg.App.MetaSchemaName, tableMetaExist))
 }
 
+// SwitchMode switches the mode of the TiKV cluster.
 func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
 	var m import_sstpb.SwitchMode
 	switch mode {
