@@ -77,11 +77,11 @@ func TestCreateNonUniqueIndexDis(t *testing.T) {
 	}
 
 	gmeta := ddl.BackfillGlobalMeta{
-		Job:        *jobMeta,
+		Job:        *jobMeta.Clone(),
 		EleID:      idxMeta.ID,
 		EleTypeKey: meta.IndexElementKey,
 	}
-	gmetaByte, err := json.Marshal(gmeta)
+	gmetaByte, err := json.Marshal(&gmeta)
 	require.NoError(t, err)
 
 	smetas := make([]ddl.BackfillSubTaskMeta, 0)
