@@ -2970,3 +2970,19 @@ func TestSkipGrantTable(t *testing.T) {
 	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test2'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test2'@'%';`)
 }
+
+func TestIssue37488(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER dba_test@'%';")
+	tk.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'dba_test'@'%';")
+	tk.MustExec("CREATE USER dba_test@'192.168.%';")
+	tk.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,ALTER ON test.* TO 'dba_test'@'192.168.%';")
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "dba_test", Hostname: "192.168.13.15"}, nil, nil))
+	tk.MustQuery("select current_user()").Check(testkit.Rows("dba_test@192.168.%"))
+	tk.MustExec("DROP TABLE IF EXISTS a;") // succ
+}
