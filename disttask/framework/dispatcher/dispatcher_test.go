@@ -154,10 +154,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	checkGetRunningGTaskCnt := func() {
 		require.Eventually(t, func() bool {
 			retCnt := dsp.(dispatcher.DispatcherForTest).GetRunningGTaskCnt()
-			if retCnt == taskCnt {
-				return true
-			}
-			return false
+			return retCnt == taskCnt
 		}, 1*time.Second, 30*time.Millisecond)
 	}
 
