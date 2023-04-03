@@ -310,6 +310,9 @@ func (e *LoadDataWorker) Load(
 	return jobID, e.doLoad(ctx, readerInfos, jobID)
 }
 
+// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
+var TestSyncCh = make(chan struct{})
+
 func (e *LoadDataWorker) doLoad(
 	ctx context.Context,
 	readerInfos []importer.LoadDataReaderInfo,
@@ -359,6 +362,10 @@ func (e *LoadDataWorker) doLoad(
 	}()
 
 	failpoint.Inject("AfterCreateLoadDataJob", nil)
+	failpoint.Inject("SyncAfterCreateLoadDataJob", func() {
+		TestSyncCh <- struct{}{}
+		<-TestSyncCh
+	})
 
 	totalFilesize := int64(0)
 	hasErr := false
@@ -380,6 +387,10 @@ func (e *LoadDataWorker) doLoad(
 	}
 
 	failpoint.Inject("AfterStartJob", nil)
+	failpoint.Inject("SyncAfterStartJob", func() {
+		TestSyncCh <- struct{}{}
+		<-TestSyncCh
+	})
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	// done is used to let commitWork goroutine notify UpdateJobProgress
@@ -698,6 +709,10 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 				zap.Uint64("taskCnt processed", taskCnt),
 			)
 			failpoint.Inject("AfterCommitOneTask", nil)
+			failpoint.Inject("SyncAfterCommitOneTask", func() {
+				TestSyncCh <- struct{}{}
+				<-TestSyncCh
+			})
 		}
 	}
 }
