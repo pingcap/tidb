@@ -682,7 +682,6 @@ func sendTasks(scheduler backfillScheduler, consumer *resultConsumer, t table.Ph
 		}
 		scheduler.sendTask(task)
 	}
-	return
 }
 
 var (
@@ -813,9 +812,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			zap.String("endKey", hex.EncodeToString(endKey)))
 
 		sendTasks(scheduler, consumer, t, kvRanges, reorgInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
 		if consumer.shouldAbort() {
 			break
 		}
