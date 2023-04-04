@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package session
 
 import (
 	"fmt"
@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-// sessionPool is used to new session.
-type sessionPool struct {
+// Pool is used to new session.
+type Pool struct {
 	mu struct {
 		sync.Mutex
 		closed bool
@@ -37,13 +37,13 @@ type sessionPool struct {
 	store   kv.Storage
 }
 
-func newSessionPool(resPool *pools.ResourcePool, store kv.Storage) *sessionPool {
-	return &sessionPool{resPool: resPool, store: store}
+func NewSessionPool(resPool *pools.ResourcePool, store kv.Storage) *Pool {
+	return &Pool{resPool: resPool, store: store}
 }
 
-// get gets sessionctx from context resource pool.
-// Please remember to call put after you finished using sessionctx.
-func (sg *sessionPool) get() (sessionctx.Context, error) {
+// Get gets sessionCtx from context resource pool.
+// Please remember to call Put after you finished using sessionCtx.
+func (sg *Pool) Get() (sessionctx.Context, error) {
 	if sg.resPool == nil {
 		ctx := mock.NewContext()
 		ctx.Store = sg.store
@@ -53,7 +53,7 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 	sg.mu.Lock()
 	if sg.mu.closed {
 		sg.mu.Unlock()
-		return nil, errors.Errorf("sessionPool is closed")
+		return nil, errors.Errorf("session pool is closed")
 	}
 	sg.mu.Unlock()
 
@@ -65,33 +65,33 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 
 	ctx, ok := resource.(sessionctx.Context)
 	if !ok {
-		return nil, fmt.Errorf("sessionPool resource get %v", ctx)
+		return nil, fmt.Errorf("session pool resource get %v", ctx)
 	}
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
 	return ctx, nil
 }
 
-// put returns sessionctx to context resource pool.
-func (sg *sessionPool) put(ctx sessionctx.Context) {
+// Put returns sessionCtx to context resource pool.
+func (sg *Pool) Put(ctx sessionctx.Context) {
 	if sg.resPool == nil {
 		return
 	}
 
 	// no need to protect sg.resPool, even the sg.resPool is closed, the ctx still need to
-	// put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
+	// Put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
 	sg.resPool.Put(ctx.(pools.Resource))
 }
 
-// close clean up the sessionPool.
-func (sg *sessionPool) close() {
+// Close clean up the Pool.
+func (sg *Pool) Close() {
 	sg.mu.Lock()
 	defer sg.mu.Unlock()
 	// prevent closing resPool twice.
 	if sg.mu.closed || sg.resPool == nil {
 		return
 	}
-	logutil.BgLogger().Info("[ddl] closing sessionPool")
+	logutil.BgLogger().Info("[ddl] closing session pool")
 	sg.resPool.Close()
 	sg.mu.closed = true
 }
