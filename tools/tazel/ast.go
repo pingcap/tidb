@@ -44,10 +44,7 @@ func Walk() {
 		if d.IsDir() || !strings.HasSuffix(d.Name(), "_test.go") {
 			return nil
 		}
-		if err := scan(path); err != nil {
-			return err
-		}
-		return nil
+		return scan(path)
 	})
 	if err != nil {
 		log.Fatal("fail to walk", zap.Error(err))
