@@ -698,7 +698,7 @@ var tokenMap = map[string]int{
 	"SQL_TSI_WEEK":             sqlTsiWeek,
 	"SQL_TSI_YEAR":             sqlTsiYear,
 	"SQL":                      sql,
-	"SQLEXCEPTION":             sqlexeption,
+	"SQLEXCEPTION":             sqlexception,
 	"SQLSTATE":                 sqlstate,
 	"SQLWARNING":               sqlwarning,
 	"SSL":                      ssl,
