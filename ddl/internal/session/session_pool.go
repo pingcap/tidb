@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-// Pool is used to new session.
+// Pool is used to new Session.
 type Pool struct {
 	mu struct {
 		sync.Mutex
@@ -37,7 +37,7 @@ type Pool struct {
 	store   kv.Storage
 }
 
-// NewSessionPool creates a new session pool.
+// NewSessionPool creates a new Session pool.
 func NewSessionPool(resPool *pools.ResourcePool, store kv.Storage) *Pool {
 	return &Pool{resPool: resPool, store: store}
 }
@@ -54,7 +54,7 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 	sg.mu.Lock()
 	if sg.mu.closed {
 		sg.mu.Unlock()
-		return nil, errors.Errorf("session pool is closed")
+		return nil, errors.Errorf("Session pool is closed")
 	}
 	sg.mu.Unlock()
 
@@ -66,7 +66,7 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 
 	ctx, ok := resource.(sessionctx.Context)
 	if !ok {
-		return nil, fmt.Errorf("session pool resource get %v", ctx)
+		return nil, fmt.Errorf("Session pool resource get %v", ctx)
 	}
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
@@ -92,7 +92,7 @@ func (sg *Pool) Close() {
 	if sg.mu.closed || sg.resPool == nil {
 		return
 	}
-	logutil.BgLogger().Info("[ddl] closing session pool")
+	logutil.BgLogger().Info("[ddl] closing Session pool")
 	sg.resPool.Close()
 	sg.mu.closed = true
 }

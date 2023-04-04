@@ -766,14 +766,14 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error
 	}
 	defer pool.Put(sctx)
 
-	se := newSession(sctx)
-	err = se.begin()
+	se := sess.NewSession(sctx)
+	err = se.Begin()
 	if err != nil {
 		return
 	}
 	rh := newReorgHandler(se)
 	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
-	err1 := se.commit()
+	err1 := se.Commit()
 	if err == nil {
 		err = err1
 	}
@@ -782,15 +782,15 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error
 
 // reorgHandler is used to handle the reorg information duration reorganization DDL job.
 type reorgHandler struct {
-	s *session
+	s *sess.Session
 }
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
-func NewReorgHandlerForTest(sess sessionctx.Context) *reorgHandler {
-	return newReorgHandler(newSession(sess))
+func NewReorgHandlerForTest(se sessionctx.Context) *reorgHandler {
+	return newReorgHandler(sess.NewSession(se))
 }
 
-func newReorgHandler(sess *session) *reorgHandler {
+func newReorgHandler(sess *sess.Session) *reorgHandler {
 	return &reorgHandler{s: sess}
 }
 
@@ -810,7 +810,7 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 }
 
 // CleanupDDLReorgHandles removes the job reorganization related handles.
-func CleanupDDLReorgHandles(job *model.Job, s *session) {
+func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 	if job != nil && !job.IsFinished() && !job.IsSynced() {
 		// Job is given, but it is neither finished nor synced; do nothing
 		return

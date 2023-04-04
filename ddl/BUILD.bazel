@@ -221,6 +221,7 @@ go_test(
         "//autoid_service",
         "//config",
         "//ddl/internal/callback",
+        "//ddl/internal/session",
         "//ddl/placement",
         "//ddl/schematracker",
         "//ddl/testutil",

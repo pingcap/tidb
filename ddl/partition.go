@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
@@ -1827,7 +1828,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				return ver, err1
 			}
 			defer w.sessPool.Put(sctx)
-			rh := newReorgHandler(newSession(sctx))
+			rh := newReorgHandler(sess.NewSession(sctx))
 			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
@@ -2146,13 +2147,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	failpoint.Inject("exchangePartitionAutoID", func(val failpoint.Value) {
 		if val.(bool) {
-			se, err := w.sessPool.Get()
-			defer w.sessPool.Put(se)
+			seCtx, err := w.sessPool.Get()
+			defer w.sessPool.Put(seCtx)
 			if err != nil {
 				failpoint.Return(ver, err)
 			}
-			sess := newSession(se)
-			_, err = sess.execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
+			se := sess.NewSession(seCtx)
+			_, err = se.Execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
 			if err != nil {
 				failpoint.Return(ver, err)
 			}
@@ -2534,7 +2535,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 		return done, ver, err1
 	}
 	defer w.sessPool.Put(sctx)
-	rh := newReorgHandler(newSession(sctx))
+	rh := newReorgHandler(sess.NewSession(sctx))
 	elements := BuildElements(tbl.Meta().Columns[0], tbl.Meta().Indices)
 	partTbl, ok := tbl.(table.PartitionedTable)
 	if !ok {
