@@ -11,6 +11,7 @@ go_library(
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/mydump",
         "//br/pkg/storage",
+        "//kv",
         "//parser/ast",
         "//parser/mysql",
         "//parser/terror",
@@ -26,6 +27,7 @@ go_library(
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//config",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -36,6 +38,7 @@ go_test(
     srcs = ["import_test.go"],
     embed = [":importer"],
     flaky = True,
+    race = "on",
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/config",

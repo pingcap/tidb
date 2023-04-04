@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/types"
@@ -107,7 +108,7 @@ func NewMockDomain() *Domain {
 	do := &Domain{
 		infoCache: infoschema.NewCache(1),
 	}
-	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 1)
+	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 0)
 	return do
 }
 
@@ -202,6 +203,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
+	// fetch the commit timestamp of the schema diff
+	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
+		schemaTs = 0
+	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		return is, true, 0, nil, nil
@@ -223,7 +230,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < 100 {
 		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
 		if err == nil {
-			do.infoCache.Insert(is, startTS)
+			do.infoCache.Insert(is, uint64(schemaTs))
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
@@ -262,8 +269,25 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		zap.Duration("start time", time.Since(startTime)))
 
 	is := newISBuilder.Build()
-	do.infoCache.Insert(is, startTS)
+	do.infoCache.Insert(is, uint64(schemaTs))
 	return is, false, currentSchemaVersion, nil, nil
+}
+
+// Returns the timestamp of a schema version, which is the commit timestamp of the schema diff
+func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, version int64) (int64, error) {
+	tikvStore, ok := do.Store().(helper.Storage)
+	if ok {
+		helper := helper.NewHelper(tikvStore)
+		data, err := helper.GetMvccByEncodedKey(m.EncodeSchemaDiffKey(version))
+		if err != nil {
+			return 0, err
+		}
+		if data == nil || data.Info == nil || len(data.Info.Writes) == 0 {
+			return 0, errors.Errorf("There is no Write MVCC info for the schema version")
+		}
+		return int64(data.Info.Writes[0].CommitTs), nil
+	}
+	return 0, errors.Errorf("cannot get store from domain")
 }
 
 func (do *Domain) sysFacHack() (pools.Resource, error) {
@@ -1322,41 +1346,35 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 }
 
 func (do *Domain) initDistTaskLoop(ctx context.Context) error {
-	se1, err := do.sysExecutorFactory(do)
+	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil)
+		}
+	})
+	se, err := do.sysExecutorFactory(do)
 	if err != nil {
 		return err
 	}
 
-	se2, err := do.sysExecutorFactory(do)
+	taskManager := storage.NewTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se.(sessionctx.Context))
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
 	if err != nil {
-		se1.Close()
+		se.Close()
 		return err
 	}
 
-	gm := storage.NewGlobalTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se1.(sessionctx.Context))
-	sm := storage.NewSubTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se2.(sessionctx.Context))
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), gm, sm)
-	if err != nil {
-		se1.Close()
-		se2.Close()
-		return err
-	}
-
-	storage.SetGlobalTaskManager(gm)
-	storage.SetSubTaskManager(sm)
+	storage.SetTaskManager(taskManager)
 	do.wg.Run(func() {
 		defer func() {
-			storage.SetGlobalTaskManager(nil)
-			storage.SetSubTaskManager(nil)
-			se1.Close()
-			se2.Close()
+			storage.SetTaskManager(nil)
+			se.Close()
 		}()
-		do.distTaskFrameworkLoop(ctx, gm, sm, schedulerManager)
+		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, globalTaskManager *storage.GlobalTaskManager, subtaskManager *storage.SubTaskManager, schedulerManager *scheduler.Manager) {
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
 	defer func() {
@@ -1371,7 +1389,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, globalTaskManager *
 			return
 		}
 
-		newDispatch, err := dispatcher.NewDispatcher(ctx, globalTaskManager, subtaskManager)
+		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return

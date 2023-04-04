@@ -65,6 +65,25 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 	}
 }
 
+func TestHintInWrongPos(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+
+	tk.MustExec("select /*+ stream_agg() */ count(*) from t where a > 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("select count(*) /*+ stream_agg() */ from t where a > 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc."))
+
+	tk.MustExec("select count(*) from (select count(*) as a /*+ stream_agg() */ from t where b > 1 group by b) t1 where a > 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc."))
+}
+
 func TestAggColumnPrune(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3203,9 +3222,9 @@ func TestIssue32632(t *testing.T) {
 
 	h := dom.StatsHandle()
 	statsTbl1 := h.GetTableStats(tbl1.Meta())
-	statsTbl1.Count = 800000
+	statsTbl1.RealtimeCount = 800000
 	statsTbl2 := h.GetTableStats(tbl2.Meta())
-	statsTbl2.Count = 10000
+	statsTbl2.RealtimeCount = 10000
 	var input []string
 	var output []struct {
 		SQL  string

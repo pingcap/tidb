@@ -648,7 +648,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 type mockEncoder struct{}
 
 func (mockEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
-	return &kv.KvPairs{}, nil
+	return &kv.Pairs{}, nil
 }
 
 func (mockEncoder) Close() {}
