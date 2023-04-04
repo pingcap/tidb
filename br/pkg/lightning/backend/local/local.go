@@ -1017,6 +1017,10 @@ func (local *local) readAndSplitIntoRange(
 
 // prepareAndSendJob will read the engine to get estimated key range,
 // then split and scatter regions for these range and send region jobs to jobToWorkerCh.
+// NOTE when ctx is Done, this function will NOT return error even if it hasn't sent
+// all the jobs to jobToWorkerCh. This is because the "first error" can only be
+// found by checking the work group LATER, we don't want to return an error to
+// seize the "first" error.
 func (local *local) prepareAndSendJob(
 	ctx context.Context,
 	engine *Engine,
@@ -1103,9 +1107,9 @@ func (local *local) generateAndSendJob(
 			case <-ctx.Done():
 				// this job is not put into jobToWorkerCh
 				jobWg.Done()
-				// if the context is canceled, it means worker has error, the
-				// error can be found by worker's error group. Here we just
-				// need to stop generateAndSendJob.
+				// if the context is canceled, it means worker has error, the first error can be
+				// found by worker's error group LATER. if this function returns an error it will
+				// seize the "first error".
 				return nil
 			case jobToWorkerCh <- job:
 			}
@@ -1114,13 +1118,15 @@ func (local *local) generateAndSendJob(
 	return nil
 }
 
+// generateJobForRange will scan the region in `keyRange` and generate region jobs.
+// It will retry internally when scan region meet error.
 func (local *local) generateJobForRange(
 	ctx context.Context,
 	engine *Engine,
-	ranges Range,
+	keyRange Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
-	start, end := ranges.start, ranges.end
+	start, end := keyRange.start, keyRange.end
 	pairStart, pairEnd, err := engine.getFirstAndLastKey(start, end)
 	if err != nil {
 		return nil, err
@@ -1171,8 +1177,7 @@ func (local *local) generateJobForRange(
 // startWorker will return nil if it's expected to stop, which means the context
 // is canceled or channel is closed. It will return not nil error when it actively
 // stops.
-// this function must send the job back to jobOutCh after read it from jobInCh,
-// even if any error happens.
+// startWorker must Done the jobWg if it does not put the job into jobOutCh.
 func (local *local) startWorker(
 	ctx context.Context,
 	jobInCh, jobOutCh chan *regionJob,
@@ -1200,10 +1205,14 @@ func (local *local) startWorker(
 					job.regionSplitKeys,
 				)
 				if err2 != nil {
+					// Don't need to put the job back to retry, because generateJobForRange
+					// has done the retry internally. Here just done for the "needRescan"
+					// job and exit directly.
+					jobWg.Done()
 					return err2
 				}
 				// TODO: do we need to keep retry counter?
-				// the old job will not be sent again, so reduce 1 in-fly job.
+				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
 				jobWg.Add(len(jobs) - 1)
 				for _, j := range jobs {
 					jobOutCh <- j
@@ -1393,39 +1402,52 @@ func (e *firstError) save(err error) {
 	}
 }
 
-func (e *firstError) saveThenLoad(err error) error {
+func (e *firstError) load() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.err == nil {
-		e.err = err
-	}
 	return e.err
 }
 
 func (local *local) doImport(ctx context.Context, engine *Engine, regionRanges []Range, regionSplitSize, regionSplitKeys int64) error {
+	/*
+	   [prepareAndSendJob]-----jobToWorkerCh--->[workers]
+	                        ^                       |
+	                        |                jobFromWorkerCh
+	                        |                       |
+	                        |                       v
+	               [regionJobRetryQueue]<--[dispatchJobGoroutine]-->done
+	*/
+
 	var (
-		ctx2, workerCancel   = context.WithCancel(ctx)
+		ctx2, workerCancel = context.WithCancel(ctx)
+		// workerCtx.Done() means workflow is canceled by error. It may be caused
+		// by calling workerCancel() or workers in workGroup meets error.
 		workGroup, workerCtx = errgroup.WithContext(ctx2)
-		// jobToWorkerCh is unbuffered so when we finished sending all jobs, we can make sure all jobs have been
-		// received by workers.
+		firstErr             = new(firstError)
+		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
+		// owned by them.
 		jobToWorkerCh   = make(chan *regionJob)
 		jobFromWorkerCh = make(chan *regionJob)
-		// jobWg is the number of jobs that need to be processed by worker in this round.
-		jobWg              sync.WaitGroup
-		firstErr           = new(firstError)
-		retryGoroutineDone = make(chan struct{})
+		// jobWg tracks the number of jobs in this workflow.
+		// prepareAndSendJob, workers and regionJobRetryQueue can own jobs.
+		// When cancel on error, the goroutine of above three components have
+		// responsibility to Done jobWg of their owning jobs.
+		jobWg                sync.WaitGroup
+		dispatchJobGoroutine = make(chan struct{})
 	)
 
 	retryQueue := newRegionJobRetryQueue(jobToWorkerCh)
 
-	// handle processed job from worker, it will only exit when jobFromWorkerCh
-	// is closed to avoid send to jobFromWorkerCh is blocked.
+	// dispatchJobGoroutine handles processed job from worker, it will only exit
+	// when jobFromWorkerCh is closed to avoid worker is blocked on sending to
+	// jobFromWorkerCh.
 	defer func() {
+		// use defer to close jobFromWorkerCh after all workers are exited
 		close(jobFromWorkerCh)
-		<-retryGoroutineDone
+		<-dispatchJobGoroutine
 	}()
 	go func() {
-		defer close(retryGoroutineDone)
+		defer close(dispatchJobGoroutine)
 		for {
 			job, ok := <-jobFromWorkerCh
 			if !ok {
@@ -1477,16 +1499,16 @@ func (local *local) doImport(ctx context.Context, engine *Engine, regionRanges [
 		&jobWg,
 	)
 	if err != nil {
+		firstErr.save(err)
 		workerCancel()
 		_ = workGroup.Wait()
-		// TODO: save first?
-		return firstErr.saveThenLoad(err)
+		return firstErr.load()
 	}
 
 	jobWg.Wait()
 	close(jobToWorkerCh)
-	err = workGroup.Wait()
-	return firstErr.saveThenLoad(err)
+	firstErr.save(workGroup.Wait())
+	return firstErr.load()
 }
 
 func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error) {
