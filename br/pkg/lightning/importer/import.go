@@ -369,7 +369,7 @@ func NewImportControllerWithPauser(
 			DB: db,
 		}
 		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName)
-		backendObj, err = local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter)
+		backendObj, err = local.NewBackendWrapper(ctx, tls, backendConfig, regionSizeGetter)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -1989,6 +1989,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 		return
 	}
 
+	localBackend := rc.backend.Inner().(*local.Local)
 	go func() {
 		// locker is assigned when we detect the disk quota is exceeded.
 		// before the disk quota is confirmed exceeded, we keep the diskQuotaLock
@@ -2016,7 +2017,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			}
 
 			quota := int64(rc.cfg.TikvImporter.DiskQuota)
-			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := rc.backend.CheckDiskQuota(quota)
+			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := local.CheckDiskQuota(localBackend, quota)
 			if m, ok := metric.FromContext(ctx); ok {
 				m.LocalStorageUsageBytesGauge.WithLabelValues("disk").Set(float64(totalDiskSize))
 				m.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
@@ -2060,7 +2061,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			var importErr error
 			for _, engine := range largeEngines {
 				// Use a larger split region size to avoid split the same region by many times.
-				if err := rc.backend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
+				if err := localBackend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
 					importErr = multierr.Append(importErr, err)
 				}
 			}

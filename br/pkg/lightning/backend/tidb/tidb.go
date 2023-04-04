@@ -724,11 +724,6 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 	return nil
 }
 
-// EngineFileSizes returns the size of each engine file.
-func (*tidbBackend) EngineFileSizes() []backend.EngineFileSize {
-	return nil
-}
-
 // FlushEngine flushes the data in the engine to the underlying storage.
 func (*tidbBackend) FlushEngine(context.Context, uuid.UUID) error {
 	return nil

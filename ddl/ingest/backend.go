@@ -17,7 +17,6 @@ package ingest
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -34,7 +33,7 @@ import (
 // BackendContext store a backend info for add index reorg task.
 type BackendContext struct {
 	jobID    int64
-	backend  *backend.Backend
+	backend  *local.Local
 	ctx      context.Context
 	cfg      *lightning.Config
 	EngMgr   engineManager
@@ -62,7 +61,7 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 		// backend must be a local backend.
 		// todo: when we can separate local backend completely from tidb backend, will remove this cast.
 		//nolint:forcetypeassert
-		dupeController := bc.backend.Inner().(*local.Local).GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+		dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 		hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: bc.sysVars,

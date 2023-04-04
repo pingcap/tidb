@@ -129,13 +129,6 @@ func (noopBackend) FlushAllEngines(_ context.Context) error {
 	return nil
 }
 
-// EngineFileSizes obtains the size occupied locally of all engines managed
-// by this backend. This method is used to compute disk quota.
-// It can return nil if the content are all stored remotely.
-func (noopBackend) EngineFileSizes() []backend.EngineFileSize {
-	return nil
-}
-
 // ResetEngine clears all written KV pairs in this opened engine.
 func (noopBackend) ResetEngine(_ context.Context, _ uuid.UUID) error {
 	return nil

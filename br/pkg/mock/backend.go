@@ -79,20 +79,6 @@ func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1, arg2 interface{}) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloseEngine", reflect.TypeOf((*MockBackend)(nil).CloseEngine), arg0, arg1, arg2)
 }
 
-// EngineFileSizes mocks base method.
-func (m *MockBackend) EngineFileSizes() []backend.EngineFileSize {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EngineFileSizes")
-	ret0, _ := ret[0].([]backend.EngineFileSize)
-	return ret0
-}
-
-// EngineFileSizes indicates an expected call of EngineFileSizes.
-func (mr *MockBackendMockRecorder) EngineFileSizes() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EngineFileSizes", reflect.TypeOf((*MockBackend)(nil).EngineFileSizes))
-}
-
 // FlushAllEngines mocks base method.
 func (m *MockBackend) FlushAllEngines(arg0 context.Context) error {
 	m.ctrl.T.Helper()

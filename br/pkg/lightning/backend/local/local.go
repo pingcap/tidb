@@ -464,6 +464,8 @@ type Local struct {
 	logger       log.Logger
 }
 
+var _ DiskUsage = (*Local)(nil)
+
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
 	// TODO: Optimize the opts for better write.
@@ -482,17 +484,28 @@ var (
 	LastAlloc manual.Allocator
 )
 
-// NewLocalBackend creates new connections to tikv.
-func NewLocalBackend(
+// NewBackendWrapper creates a new BackendWrapper.
+func NewBackendWrapper(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
 	regionSizeGetter TableRegionSizeGetter,
 ) (backend.Backend, error) {
+	b, err := NewBackend(ctx, tls, config, regionSizeGetter)
+	return backend.MakeBackend(b), err
+}
+
+// NewBackend creates new connections to tikv.
+func NewBackend(
+	ctx context.Context,
+	tls *common.TLS,
+	config BackendConfig,
+	regionSizeGetter TableRegionSizeGetter,
+) (*Local, error) {
 	config.adjust()
 	pdCtl, err := pdutil.NewPdController(ctx, config.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
-		return backend.MakeBackend(nil), common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
+		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig(), false)
 
@@ -500,7 +513,7 @@ func NewLocalBackend(
 	if config.CheckpointEnabled {
 		if info, err := os.Stat(config.LocalStoreDir); err != nil {
 			if !os.IsNotExist(err) {
-				return backend.MakeBackend(nil), err
+				return nil, err
 			}
 		} else if info.IsDir() {
 			shouldCreate = false
@@ -510,7 +523,7 @@ func NewLocalBackend(
 	if shouldCreate {
 		err = os.Mkdir(config.LocalStoreDir, 0o700)
 		if err != nil {
-			return backend.MakeBackend(nil), common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
+			return nil, common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
 		}
 	}
 
@@ -518,14 +531,14 @@ func NewLocalBackend(
 	if config.DupeDetectEnabled {
 		duplicateDB, err = openDuplicateDB(config.LocalStoreDir)
 		if err != nil {
-			return backend.MakeBackend(nil), common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
+			return nil, common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
 	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
 	if err != nil {
-		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 
 	var pdCliForTiKV *tikvclient.CodecPDClient
@@ -534,7 +547,7 @@ func NewLocalBackend(
 	} else {
 		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCtl.GetPDClient(), config.KeyspaceName)
 		if err != nil {
-			return backend.MakeBackend(nil), common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
+			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
 		}
 	}
 
@@ -542,7 +555,7 @@ func NewLocalBackend(
 	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
 	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
-		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	keyAdapter := KeyAdapter(noopKeyAdapter{})
@@ -582,10 +595,10 @@ func NewLocalBackend(
 		local.metrics = m
 	}
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
-		return backend.MakeBackend(nil), common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
+		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
-	return backend.MakeBackend(local), nil
+	return local, nil
 }
 
 // TotalMemoryConsume returns the total memory usage of the local backend.
@@ -1547,6 +1560,24 @@ func (local *Local) GetDupeController(dupeConcurrency int, errorMgr *errormanage
 	}
 }
 
+// UnsafeImportAndReset forces the backend to import the content of an engine
+// into the target and then reset the engine to empty. This method will not
+// close the engine. Make sure the engine is flushed manually before calling
+// this method.
+func (local *Local) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
+	// DO NOT call be.abstract.CloseEngine()! The engine should still be writable after
+	// calling UnsafeImportAndReset().
+	logger := log.FromContext(ctx).With(
+		zap.String("engineTag", "<import-and-reset>"),
+		zap.Stringer("engineUUID", engineUUID),
+	)
+	closedEngine := backend.NewClosedEngine(local, logger, engineUUID, 0)
+	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {
+		return err
+	}
+	return local.ResetEngine(ctx, engineUUID)
+}
+
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
 	return filepath.Join(storeDir, engineUUID.String()+".sst")
 }
@@ -1606,7 +1637,7 @@ func nextKey(key []byte) []byte {
 	return res
 }
 
-// EngineFileSizes returns the file size of each engine.
+// EngineFileSizes implements DiskUsage interface.
 func (local *Local) EngineFileSizes() (res []backend.EngineFileSize) {
 	local.engines.Range(func(k, v interface{}) bool {
 		engine := v.(*Engine)

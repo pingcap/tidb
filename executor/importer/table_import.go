@@ -147,7 +147,7 @@ func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImpo
 
 	// todo: use a real region size getter
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
-	localBackend, err := local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter)
+	localBackend, err := local.NewBackendWrapper(ctx, tls, backendConfig, regionSizeGetter)
 	if err != nil {
 		return nil, err
 	}

@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
@@ -55,8 +56,9 @@ func (m *engineManager) Register(bc *BackendContext, jobID, indexID int64, schem
 			return nil, genEngineAllocMemFailedErr(m.MemRoot, bc.jobID, indexID)
 		}
 
+		mgr := backend.MakeBackend(bc.backend)
 		cfg := generateLocalEngineConfig(jobID, schemaName, tableName)
-		openedEn, err := bc.backend.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
+		openedEn, err := mgr.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
 		if err != nil {
 			logutil.BgLogger().Warn(LitErrCreateEngineFail, zap.Int64("job ID", jobID),
 				zap.Int64("index ID", indexID), zap.Error(err))
