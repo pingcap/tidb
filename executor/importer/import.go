@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -803,7 +804,26 @@ func (e *LoadDataController) GetParser(
 // PhysicalImport do physical import.
 func (e *LoadDataController) PhysicalImport(ctx context.Context) (int64, error) {
 	// todo: implement job
-	return 0, e.import0(ctx)
+	importer, err := newTableImporter(ctx, e)
+	if err != nil {
+		return 0, err
+	}
+	return 0, importer.importTable(ctx)
+}
+
+func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
+	tbl := filter.Table{
+		Schema: e.DBName,
+		Name:   e.Table.Meta().Name.O,
+	}
+	res := []mydump.FileInfo{}
+	for _, f := range e.dataFiles {
+		res = append(res, mydump.FileInfo{
+			TableName: tbl,
+			FileMeta:  *f,
+		})
+	}
+	return res
 }
 
 // GetMsgFromBRError get msg from BR error.

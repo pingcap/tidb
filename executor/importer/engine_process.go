@@ -35,7 +35,7 @@ type engineProcessor struct {
 	backend       backend.Backend
 	tableInfo     *checkpoints.TidbTableInfo
 	logger        *zap.Logger
-	tableImporter tableImporter
+	tableImporter *tableImporter
 	kvSorted      bool
 	rowOrdered    bool
 	indexEngine   *backend.OpenedEngine
@@ -92,12 +92,12 @@ func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.Op
 			dataWriter, indexWriter *backend.LocalEngineWriter
 		)
 		closer.reset()
-		parser, err = ep.tableImporter.GetParser(ctx, chunk)
+		parser, err = ep.tableImporter.getParser(ctx, chunk)
 		if err != nil {
 			return err
 		}
 		closer.add(parser)
-		encoder, err = ep.tableImporter.GetKVEncoder(chunk)
+		encoder, err = ep.tableImporter.getKVEncoder(chunk)
 		if err != nil {
 			return err
 		}
