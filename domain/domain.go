@@ -1346,6 +1346,11 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 }
 
 func (do *Domain) initDistTaskLoop(ctx context.Context) error {
+	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil)
+		}
+	})
 	se1, err := do.sysExecutorFactory(do)
 	if err != nil {
 		return err
