@@ -181,11 +181,8 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	if common.TableHasAutoRowID(en.Table.Meta()) {
 		// todo: we assume there's no such column in input data, will handle it later
 		rowValue := rowID
-		rowID := en.AutoIDFn(rowID)
-		value, err = types.NewIntDatum(rowID), nil
-		if err != nil {
-			return nil, en.LogKVConvertFailed(row, len(record), kv.ExtraHandleColumnInfo, err)
-		}
+		newRowID := en.AutoIDFn(rowID)
+		value = types.NewIntDatum(newRowID)
 		record = append(record, value)
 		alloc := en.Table.Allocators(en.SessionCtx).Get(autoid.RowIDAllocType)
 		if err := alloc.Rebase(context.Background(), rowValue, false); err != nil {
