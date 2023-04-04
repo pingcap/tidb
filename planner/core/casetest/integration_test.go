@@ -967,7 +967,7 @@ func TestKeepOrderHint(t *testing.T) {
 	require.NoError(t, err)
 
 	err = tk.ExecToErr("select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1;")
-	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	require.NoError(t, err)
 
 	var input []string
 	var output []struct {

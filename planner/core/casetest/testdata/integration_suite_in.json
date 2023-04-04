@@ -710,7 +710,8 @@
       "explain select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1",
       "explain select /*+ no_order_index(th, a) */ a from th where a<1 order by a limit 1",
       "explain select /*+ order_index(thp, primary) */ a from thp where a<1 order by a limit 1",
-      "explain select /*+ no_order_index(thp, primary) */ a from thp where a<1 order by a limit 1"
+      "explain select /*+ no_order_index(thp, primary) */ a from thp where a<1 order by a limit 1",
+      "explain select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1"
     ]
   },
   {
