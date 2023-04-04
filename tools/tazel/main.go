@@ -72,8 +72,8 @@ func main() {
 							return err
 						}
 					}
+					toWrite = true
 					if old != int64(mathutil.Min(cnt, MaxShardCount)) {
-						toWrite = true
 						if cnt > 20 {
 							gotest[0].SetAttr("shard_count",
 								&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, MaxShardCount)), 10)})
