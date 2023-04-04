@@ -23,6 +23,7 @@ go_test(
     ],
     embed = [":cteutil"],
     flaky = True,
+    shard_count = 6,
     deps = [
         "//parser/mysql",
         "//testkit/testsetup",

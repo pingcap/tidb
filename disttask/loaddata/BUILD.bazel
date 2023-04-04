@@ -37,6 +37,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":loaddata"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/mydump",

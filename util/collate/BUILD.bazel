@@ -41,6 +41,7 @@ go_test(
     ],
     embed = [":collate"],
     flaky = True,
+    shard_count = 5,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

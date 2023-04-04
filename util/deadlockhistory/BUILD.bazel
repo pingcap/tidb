@@ -24,6 +24,7 @@ go_test(
     ],
     embed = [":deadlockhistory"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//parser",
         "//parser/model",

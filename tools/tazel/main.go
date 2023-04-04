@@ -48,43 +48,27 @@ func main() {
 			log.Fatal("fail to parser BUILD.bazel", zap.Error(err), zap.String("path", path))
 		}
 		gotest := buildfile.Rules("go_test")
-		toWrite := false
 		if len(gotest) != 0 {
 			if gotest[0].AttrString("timeout") == "" {
 				gotest[0].SetAttr("timeout", &build.StringExpr{Value: "short"})
-				toWrite = true
 			}
 			if !skipFlaky(path) && gotest[0].AttrLiteral("flaky") == "" {
 				gotest[0].SetAttr("flaky", &build.LiteralExpr{Token: "True"})
-				toWrite = true
 			}
 			abspath, err := filepath.Abs(path)
 			if err != nil {
 				return err
 			}
 			if cnt, ok := testMap[filepath.Dir(abspath)]; ok {
-				if !skipFlaky(path) {
-					old := int64(0)
-					value := gotest[0].AttrLiteral("shard_count")
-					if value != "" {
-						old, err = strconv.ParseInt(value, 10, 64)
-						if err != nil {
-							return err
-						}
-					}
-					toWrite = true
-					if old != int64(mathutil.Min(cnt, MaxShardCount)) {
-						if cnt > 20 {
-							gotest[0].SetAttr("shard_count",
-								&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, MaxShardCount)), 10)})
-						}
-					}
+				if cnt > 3 {
+					gotest[0].SetAttr("shard_count",
+						&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, MaxShardCount)), 10)})
+				} else {
+					gotest[0].DelAttr("shard_count")
 				}
 			}
 		}
-		if toWrite {
-			write(path, buildfile)
-		}
+		write(path, buildfile)
 		return nil
 	})
 	if err != nil {

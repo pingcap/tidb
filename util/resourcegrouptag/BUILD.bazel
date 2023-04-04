@@ -25,6 +25,7 @@ go_test(
     ],
     embed = [":resourcegrouptag"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//parser",
         "//testkit/testsetup",

@@ -22,6 +22,7 @@ go_test(
     ],
     embed = [":stringutil"],
     flaky = True,
+    shard_count = 6,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

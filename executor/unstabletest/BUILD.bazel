@@ -8,7 +8,6 @@ go_test(
         "unstable_test.go",
     ],
     flaky = True,
-    shard_count = 3,
     deps = [
         "//config",
         "//meta/autoid",

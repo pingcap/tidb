@@ -16,6 +16,7 @@ go_test(
     ],
     embed = [":checksum"],
     flaky = True,
+    shard_count = 10,
     deps = [
         "//testkit/testsetup",
         "//util/encrypt",
