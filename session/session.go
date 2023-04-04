@@ -3597,8 +3597,6 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 	// check in memory
 	_, ok := storeBootstrapped[store.UUID()]
 	if ok {
-		logutil.BgLogger().Info("DEBUG=== got bootstrapped flag from memory",
-			zap.Int64("ver", currentBootstrapVersion), zap.String("store", store.UUID()))
 		return currentBootstrapVersion
 	}
 
@@ -3620,8 +3618,6 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		// here mean memory is not ok, but other server has already finished it
 		storeBootstrapped[store.UUID()] = true
 	}
-	logutil.BgLogger().Info("DEBUG=== got bootstrapped flag from kv",
-		zap.Int64("ver", currentBootstrapVersion), zap.String("store", store.UUID()))
 
 	return ver
 }
