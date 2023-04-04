@@ -32,7 +32,7 @@ func TestSchedulerRun(t *testing.T) {
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
-	mockSubtaskTable := &MockSubtaskTable{}
+	mockSubtaskTable := &MockTaskTable{}
 	mockPool := &MockPool{}
 	mockScheduler := &MockScheduler{}
 	mockSubtaskExecutor := &MockSubtaskExecutor{}
@@ -159,7 +159,7 @@ func TestSchedulerRollback(t *testing.T) {
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
-	mockSubtaskTable := &MockSubtaskTable{}
+	mockSubtaskTable := &MockTaskTable{}
 	mockPool := &MockPool{}
 	mockScheduler := &MockScheduler{}
 
@@ -222,7 +222,7 @@ func TestScheduler(t *testing.T) {
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
-	mockSubtaskTable := &MockSubtaskTable{}
+	mockSubtaskTable := &MockTaskTable{}
 	mockPool := &MockPool{}
 	mockScheduler := &MockScheduler{}
 	mockSubtaskExecutor := &MockSubtaskExecutor{}

@@ -29,7 +29,7 @@ import (
 
 func TestManageTask(t *testing.T) {
 	b := NewManagerBuilder()
-	m, err := b.BuildManager(context.Background(), "test", nil, nil)
+	m, err := b.BuildManager(context.Background(), "test", nil)
 	require.NoError(t, err)
 	tasks := []*proto.Task{{ID: 1}, {ID: 2}}
 	newTasks := m.filterAlreadyHandlingTasks(tasks)
@@ -67,12 +67,11 @@ func TestManageTask(t *testing.T) {
 
 func TestOnRunnableTasks(t *testing.T) {
 	mockTaskTable := &MockTaskTable{}
-	mockSubtaskTable := &MockSubtaskTable{}
 	mockInternalScheduler := &MockInternalScheduler{}
 	mockPool := &MockPool{}
 
 	b := NewManagerBuilder()
-	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler {
+	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
 		return mockInternalScheduler
 	})
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
@@ -82,7 +81,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	taskID := int64(1)
 	task := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: 0, Type: "type"}
 
-	m, err := b.BuildManager(context.Background(), id, mockTaskTable, mockSubtaskTable)
+	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
 
 	// no task
@@ -94,57 +93,56 @@ func TestOnRunnableTasks(t *testing.T) {
 	m.subtaskExecutorPools["type"] = mockPool
 
 	// get subtask failed
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, errors.New("get subtask failed")).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, errors.New("get subtask failed")).Once()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// no subtask
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil).Once()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// pool error
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockPool.On("Run", mock.Anything).Return(errors.New("pool error")).Once()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// step 0 succeed
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockPool.On("Run", mock.Anything).Return(nil).Once()
 	mockInternalScheduler.On("Start").Once()
-	mockTaskTable.On("GetTaskByID", taskID).Return(task, nil).Once()
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("GetGlobalTaskByID", taskID).Return(task, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockInternalScheduler.On("Run", mock.Anything, task).Return(nil).Once()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// step 1 canceled
 	task1 := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: 1}
-	mockTaskTable.On("GetTaskByID", taskID).Return(task1, nil).Once()
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("GetGlobalTaskByID", taskID).Return(task1, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockInternalScheduler.On("Run", mock.Anything, task1).Return(errors.New("run errr")).Once()
 
 	task2 := &proto.Task{ID: taskID, State: proto.TaskStateReverting, Step: 1}
-	mockTaskTable.On("GetTaskByID", taskID).Return(task2, nil).Once()
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("GetGlobalTaskByID", taskID).Return(task2, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockInternalScheduler.On("Rollback", mock.Anything, task2).Return(nil).Once()
 
 	task3 := &proto.Task{ID: taskID, State: proto.TaskStateReverted, Step: 1}
-	mockTaskTable.On("GetTaskByID", taskID).Return(task3, nil).Once()
+	mockTaskTable.On("GetGlobalTaskByID", taskID).Return(task3, nil).Once()
 	mockInternalScheduler.On("Stop").Return(nil).Once()
 
 	time.Sleep(5 * time.Second)
 	mockTaskTable.AssertExpectations(t)
-	mockSubtaskTable.AssertExpectations(t)
+	mockTaskTable.AssertExpectations(t)
 	mockInternalScheduler.AssertExpectations(t)
 	mockPool.AssertExpectations(t)
 }
 
 func TestManager(t *testing.T) {
-	mockTaskTable := &MockTaskTable{}
 	// TODO(gmhdbjd): use real subtask table instead of mock
-	mockSubtaskTable := &MockSubtaskTable{}
+	mockTaskTable := &MockTaskTable{}
 	mockInternalScheduler := &MockInternalScheduler{}
 	mockPool := &MockPool{}
 	b := NewManagerBuilder()
-	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler {
+	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
 		return mockInternalScheduler
 	})
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
@@ -161,25 +159,25 @@ func TestManager(t *testing.T) {
 	task1 := &proto.Task{ID: taskID1, State: proto.TaskStateRunning, Step: 0, Type: "type"}
 	task2 := &proto.Task{ID: taskID2, State: proto.TaskStateReverting, Step: 0, Type: "type"}
 
-	mockTaskTable.On("GetTasksInStates", proto.TaskStateRunning, proto.TaskStateReverting).Return([]*proto.Task{task1, task2}, nil)
-	mockTaskTable.On("GetTasksInStates", proto.TaskStateReverting).Return([]*proto.Task{task2}, nil)
+	mockTaskTable.On("GetGlobalTasksInStates", proto.TaskStateRunning, proto.TaskStateReverting).Return([]*proto.Task{task1, task2}, nil)
+	mockTaskTable.On("GetGlobalTasksInStates", proto.TaskStateReverting).Return([]*proto.Task{task2}, nil)
 	// task1
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID1, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID1, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockPool.On("Run", mock.Anything).Return(nil).Once()
 	mockInternalScheduler.On("Start").Once()
-	mockTaskTable.On("GetTaskByID", taskID1).Return(task1, nil)
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID1, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("GetGlobalTaskByID", taskID1).Return(task1, nil)
+	mockTaskTable.On("HasSubtasksInStates", id, taskID1, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockInternalScheduler.On("Run", mock.Anything, task1).Return(nil).Once()
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID1, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil)
+	mockTaskTable.On("HasSubtasksInStates", id, taskID1, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil)
 	mockInternalScheduler.On("Stop").Once()
 	// task2
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID2, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("HasSubtasksInStates", id, taskID2, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockPool.On("Run", mock.Anything).Return(nil).Once()
 	mockInternalScheduler.On("Start").Once()
-	mockTaskTable.On("GetTaskByID", taskID2).Return(task2, nil)
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID2, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
+	mockTaskTable.On("GetGlobalTaskByID", taskID2).Return(task2, nil)
+	mockTaskTable.On("HasSubtasksInStates", id, taskID2, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(true, nil).Once()
 	mockInternalScheduler.On("Rollback", mock.Anything, task2).Return(nil).Once()
-	mockSubtaskTable.On("HasSubtasksInStates", id, taskID2, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil)
+	mockTaskTable.On("HasSubtasksInStates", id, taskID2, []interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).Return(false, nil)
 	mockInternalScheduler.On("Stop").Once()
 	mockPool.On("ReleaseAndWait").Twice()
 	RegisterSubtaskExectorConstructor("type", func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
@@ -187,14 +185,14 @@ func TestManager(t *testing.T) {
 	}, func(opts *subtaskExecutorRegisterOptions) {
 		opts.PoolSize = 1
 	})
-	m, err := b.BuildManager(context.Background(), id, mockTaskTable, mockSubtaskTable)
+	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
 	m.Start()
 	time.Sleep(5 * time.Second)
 	m.Stop()
 	time.Sleep(5 * time.Second)
 	mockTaskTable.AssertExpectations(t)
-	mockSubtaskTable.AssertExpectations(t)
+	mockTaskTable.AssertExpectations(t)
 	mockInternalScheduler.AssertExpectations(t)
 	mockPool.AssertExpectations(t)
 }
