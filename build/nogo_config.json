@@ -369,6 +369,7 @@
       "ddl/ttl.go": "ddl/ttl.go",
       "ddl/ttl_test.go": "ddl/ttl_test.go",
       "ddl/ingest/": "ddl/ingest/",
+      "ddl/internal/": "ddl/internal/",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
