@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -33,18 +34,21 @@ import (
 	"go.uber.org/zap"
 )
 
+// CheckpointManager is an interface to manage checkpoints.
 type CheckpointManager interface {
-	CanSkip(taskID int, taskEnd kv.Key) bool
+	Checked(taskID int, start, end kv.Key) bool
 
-	OnTaskSent(taskID int, taskEnd kv.Key, batchCnt int, lastBatch bool)
-	OnTaskSyncLocal(taskID int, writtenKeys int)
-	OnTaskSyncGlobal()
+	Register(taskID int, start, end kv.Key)
+	UpdateTotal(taskID int, added int, last bool)
+	UpdateCurrent(taskID int, added int) error
 
 	Close()
 }
 
-type SingleCheckpointManager struct {
+// CentralizedCheckpointManager is a checkpoint manager implementation that used by non-distributed reorganization.
+type CentralizedCheckpointManager struct {
 	ctx      context.Context
+	bcCtx    *ingest.BackendContext
 	sessPool *sessionPool
 	jobID    int64
 	indexID  int64
@@ -64,10 +68,11 @@ type SingleCheckpointManager struct {
 	minKeySyncGlobal kv.Key
 
 	// For persisting the checkpoint periodically.
-	updateInterval time.Duration
-	updating       bool
-	updaterWg      sync.WaitGroup
-	updaterExitCh  chan struct{}
+	timeOfLastFlush time.Time
+	updateInterval  time.Duration
+	updating        bool
+	updaterWg       sync.WaitGroup
+	updaterExitCh   chan struct{}
 }
 
 type TaskCheckpoint struct {
@@ -78,11 +83,12 @@ type TaskCheckpoint struct {
 	lastBatchSent bool
 }
 
-func NewSingleCheckpointManager(ctx context.Context, sessPool *sessionPool,
-	jobID, indexID int64) (*SingleCheckpointManager, error) {
+func NewCentralizedCheckpointManager(ctx context.Context, bcCtx *ingest.BackendContext,
+	sessPool *sessionPool, jobID, indexID int64) (*CentralizedCheckpointManager, error) {
 	instanceAddr := initInstanceAddr()
-	cm := &SingleCheckpointManager{
+	cm := &CentralizedCheckpointManager{
 		ctx:            ctx,
+		bcCtx:          bcCtx,
 		sessPool:       sessPool,
 		jobID:          jobID,
 		indexID:        indexID,
@@ -94,6 +100,9 @@ func NewSingleCheckpointManager(ctx context.Context, sessPool *sessionPool,
 		updaterExitCh:  make(chan struct{}),
 	}
 	err := cm.resumeCheckpoint()
+	if err != nil {
+		return nil, err
+	}
 	cm.updaterWg.Add(1)
 	go func() {
 		defer cm.updaterWg.Done()
@@ -103,7 +112,7 @@ func NewSingleCheckpointManager(ctx context.Context, sessPool *sessionPool,
 		}
 		cm.updateCheckpointLoop()
 	}()
-	return cm, err
+	return cm, nil
 }
 
 func initInstanceAddr() string {
@@ -112,65 +121,64 @@ func initInstanceAddr() string {
 	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
 }
 
-func (s *SingleCheckpointManager) CanSkip(_ int, taskEnd kv.Key) bool {
+func (s *CentralizedCheckpointManager) Checked(_ int, _, end kv.Key) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.minKeySyncGlobal) > 0 && taskEnd.Cmp(s.minKeySyncGlobal) <= 0 {
+	if len(s.minKeySyncGlobal) > 0 && end.Cmp(s.minKeySyncGlobal) <= 0 {
 		return true
 	}
-	return s.localDataIsValid && len(s.minKeySyncLocal) > 0 && taskEnd.Cmp(s.minKeySyncLocal) <= 0
+	return s.localDataIsValid && len(s.minKeySyncLocal) > 0 && end.Cmp(s.minKeySyncLocal) <= 0
 }
 
-func (s *SingleCheckpointManager) OnTaskSent(taskID int, taskEnd kv.Key, batchCnt int, lastBatch bool) {
+func (s *CentralizedCheckpointManager) Register(taskID int, start, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cp, ok := s.checkpoints[taskID]
-	if !ok {
-		s.checkpoints[taskID] = &TaskCheckpoint{
-			totalKeys: batchCnt,
-			endKey:    taskEnd,
-		}
-		return
+	s.checkpoints[taskID] = &TaskCheckpoint{
+		endKey: end,
 	}
-	cp.totalKeys += batchCnt
-	cp.lastBatchSent = lastBatch
 }
 
-func (s *SingleCheckpointManager) OnTaskSyncLocal(taskID int, writtenKeys int) {
+func (s *CentralizedCheckpointManager) UpdateTotal(taskID int, added int, last bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := s.checkpoints[taskID]
-	cp.currentKeys += writtenKeys
-	if !cp.lastBatchSent || cp.currentKeys < cp.totalKeys {
-		return
+	cp.totalKeys += added
+	cp.lastBatchSent = last
+}
+
+func (s *CentralizedCheckpointManager) UpdateCurrent(taskID int, added int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := s.checkpoints[taskID]
+	cp.currentKeys += added
+
+	if time.Since(s.timeOfLastFlush) < s.updateInterval {
+		return nil
 	}
-	// Try to progress the minimum synced key.
-	if taskID == s.minTaskIDSynced+1 {
-		nextTaskID := taskID
-		nextKey := cp.endKey
-		for {
-			cp = s.checkpoints[nextTaskID+1]
-			if cp == nil || cp.currentKeys < cp.totalKeys {
-				break
-			}
-			nextTaskID++
-			nextKey = cp.endKey
-			delete(s.checkpoints, nextTaskID)
+	s.timeOfLastFlush = time.Now()
+	imported, err := s.bcCtx.Flush(s.indexID)
+	if err != nil {
+		return err
+	}
+	// Progress the minimum synced key.
+	for {
+		cp := s.checkpoints[s.minTaskIDSynced+1]
+		if cp == nil || !cp.lastBatchSent || cp.currentKeys < cp.totalKeys {
+			break
 		}
-		s.minTaskIDSynced = nextTaskID
-		s.minKeySyncLocal = nextKey
+		s.minTaskIDSynced++
+		s.minKeySyncLocal = cp.endKey
+		delete(s.checkpoints, s.minTaskIDSynced)
 		s.dirty = true
 	}
+	if imported && s.minKeySyncGlobal.Cmp(s.minKeySyncLocal) != 0 {
+		s.minKeySyncGlobal = s.minKeySyncLocal
+		s.dirty = true
+	}
+	return nil
 }
 
-func (s *SingleCheckpointManager) OnTaskSyncGlobal() {
-	s.mu.Lock()
-	s.minKeySyncGlobal = s.minKeySyncLocal
-	s.dirty = true
-	s.mu.Unlock()
-}
-
-func (s *SingleCheckpointManager) Close() {
+func (s *CentralizedCheckpointManager) Close() {
 	s.updaterExitCh <- struct{}{}
 	s.updaterWg.Wait()
 }
@@ -191,7 +199,7 @@ const (
 	JobCheckpointVersionCurrent = JobCheckpointVersion1
 )
 
-func (s *SingleCheckpointManager) resumeCheckpoint() error {
+func (s *CentralizedCheckpointManager) resumeCheckpoint() error {
 	sessCtx, err := s.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
@@ -199,14 +207,14 @@ func (s *SingleCheckpointManager) resumeCheckpoint() error {
 	defer s.sessPool.put(sessCtx)
 	ddlSess := session{Context: sessCtx}
 	return ddlSess.runInTxn(func(sess *session) error {
-		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = '%s';"
+		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = %s;"
 		sql := fmt.Sprintf(template, s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, getDDLRequestSource(model.ActionAddIndex))
 		rows, err := sess.execute(ctx, sql, "get_checkpoint")
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if len(rows) == 0 {
+		if len(rows) == 0 || rows[0].IsNull(0) {
 			return nil
 		}
 		rawReorgMeta := rows[0].GetBytes(0)
@@ -235,7 +243,7 @@ func (s *SingleCheckpointManager) resumeCheckpoint() error {
 	})
 }
 
-func (s *SingleCheckpointManager) updateCheckpoint() error {
+func (s *CentralizedCheckpointManager) updateCheckpoint() error {
 	s.mu.Lock()
 	currentLocalKey := s.minKeySyncLocal
 	currentGlobalKey := s.minKeySyncGlobal
@@ -253,10 +261,8 @@ func (s *SingleCheckpointManager) updateCheckpoint() error {
 	}
 	defer s.sessPool.put(sessCtx)
 	ddlSess := session{Context: sessCtx}
-	logutil.BgLogger().Info("[ddl-ingest] update checkpoint",
-		zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID))
-	return ddlSess.runInTxn(func(sess *session) error {
-		template := "update mysql.tidb_ddl_reorg set reorg_meta = '%s' where job_id = %d and ele_id = %d and ele_type = '%s';"
+	err = ddlSess.runInTxn(func(sess *session) error {
+		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_id = %d and ele_type = %s;"
 		cp := &JobCheckpoint{
 			LocalSyncKey:  currentLocalKey,
 			GlobalSyncKey: currentGlobalKey,
@@ -278,9 +284,15 @@ func (s *SingleCheckpointManager) updateCheckpoint() error {
 		s.mu.Unlock()
 		return nil
 	})
+	logutil.BgLogger().Info("[ddl-ingest] update checkpoint",
+		zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
+		zap.String("local checkpoint", hex.EncodeToString(currentLocalKey)),
+		zap.String("global checkpoint", hex.EncodeToString(currentGlobalKey)),
+		zap.Error(err))
+	return err
 }
 
-func (s *SingleCheckpointManager) updateCheckpointLoop() {
+func (s *CentralizedCheckpointManager) updateCheckpointLoop() {
 	ticker := time.NewTicker(s.updateInterval)
 	defer ticker.Stop()
 	for {

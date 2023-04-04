@@ -76,7 +76,7 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 const importThreshold = 0.85
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *BackendContext) Flush(indexID int64) (synced bool, err error) {
+func (bc *BackendContext) Flush(indexID int64) (imported bool, err error) {
 	ei, exist := bc.EngMgr.Load(indexID)
 	if !exist {
 		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))

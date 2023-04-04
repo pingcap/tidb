@@ -288,7 +288,7 @@ func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 	}
 }
 
-func (b *ingestBackfillScheduler) setupWorkers() (err error) {
+func (b *ingestBackfillScheduler) setupWorkers() error {
 	job := b.reorgInfo.Job
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 	if !ok {
@@ -296,10 +296,11 @@ func (b *ingestBackfillScheduler) setupWorkers() (err error) {
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	b.backendCtx = bc
-	b.checkpointMgr, err = NewSingleCheckpointManager(b.ctx, b.sessPool, job.ID, b.reorgInfo.currElement.ID)
+	mgr, err := NewCentralizedCheckpointManager(b.ctx, bc, b.sessPool, job.ID, b.reorgInfo.currElement.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	b.checkpointMgr = mgr
 	copReqSenderPool, err := b.createCopReqSenderPool()
 	if err != nil {
 		return errors.Trace(err)
@@ -323,8 +324,12 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		return
 	}
 	close(b.taskCh)
-	b.copReqSenderPool.close(force)
-	b.writerPool.ReleaseAndWait()
+	if b.copReqSenderPool != nil {
+		b.copReqSenderPool.close(force)
+	}
+	if b.writerPool != nil {
+		b.writerPool.ReleaseAndWait()
+	}
 	close(b.resultCh)
 	if !force {
 		jobID := b.reorgInfo.ID
@@ -333,7 +338,9 @@ func (b *ingestBackfillScheduler) close(force bool) {
 			bc.EngMgr.ResetWorkers(bc, jobID, indexID)
 		}
 	}
-	b.checkpointMgr.Close()
+	if b.checkpointMgr != nil {
+		b.checkpointMgr.Close()
+	}
 	b.closed = true
 }
 
@@ -390,7 +397,8 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 		return nil
 	}
 	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
-		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, b.writerMaxID, b.copReqSenderPool, sessCtx, b.checkpointMgr)
+		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, b.writerMaxID,
+		b.copReqSenderPool, sessCtx, b.checkpointMgr)
 	if err != nil {
 		// Return an error only if it is the first worker.
 		if b.writerMaxID == 0 {
@@ -462,16 +470,6 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 	}
 	if count == 0 {
 		logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task", zap.Int("id", rs.id))
-		if bc, ok := ingest.LitBackCtxMgr.Load(w.jobID); ok {
-			synced, err := bc.Flush(w.index.Meta().ID)
-			if err != nil {
-				result.err = err
-				w.resultCh <- result
-			}
-			if synced {
-				w.checkpointMgr.OnTaskSyncGlobal()
-			}
-		}
 		return
 	}
 	result.scanCount = count
@@ -481,8 +479,8 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)
 	}
+	result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
 	w.resultCh <- result
-	w.checkpointMgr.OnTaskSyncLocal(rs.id, count)
 }
 
 func (w *addIndexIngestWorker) Close() {}

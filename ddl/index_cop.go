@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -102,7 +103,10 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
-		if p.checkpointMgr.CanSkip(task.id, task.endKey) {
+		if p.checkpointMgr.Checked(task.id, task.startKey, task.endKey) {
+			logutil.BgLogger().Info("[ddl-ingest] checkpoint detected, skip a cop-request task",
+				zap.Int("task ID", task.id),
+				zap.String("task end key", hex.EncodeToString(task.endKey)))
 			continue
 		}
 		curTaskID = task.id
@@ -123,6 +127,7 @@ func (c *copReqSender) run() {
 				panic("mock panic")
 			}
 		})
+		p.checkpointMgr.Register(task.id, task.startKey, task.endKey)
 		var done bool
 		for !done {
 			srcChk := p.getChunk()
@@ -133,7 +138,7 @@ func (c *copReqSender) run() {
 				terror.Call(rs.Close)
 				return
 			}
-			p.checkpointMgr.OnTaskSent(task.id, task.endKey, srcChk.NumRows(), done)
+			p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			p.chunkSender.AddTask(idxRecResult{id: task.id, chunk: srcChk, done: done})
 		}
 		terror.Call(rs.Close)
