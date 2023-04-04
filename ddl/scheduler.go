@@ -173,24 +173,18 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
 
-		remains, err := sendTasks(ingestScheduler, consumer, parTbl.GetPartition(pid), kvRanges, mockReorgInfo)
-		if err != nil {
-			return nil, err
-		}
+		sendTasks(ingestScheduler, consumer, parTbl.GetPartition(pid), kvRanges, mockReorgInfo)
 		if consumer.shouldAbort() {
 			break
 		}
-		if len(remains) > 0 {
-			startKey = remains[0].StartKey
-		} else {
-			rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
-			startKey = rangeEndKey.Next()
-		}
+		rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
+		startKey = rangeEndKey.Next()
 		if startKey.Cmp(endKey) >= 0 {
 			break
 		}
 	}
 	ingestScheduler.close(false)
+	// TODO: unsafe import.
 	return nil, consumer.getResult()
 }
 
