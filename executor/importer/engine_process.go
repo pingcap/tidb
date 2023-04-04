@@ -32,7 +32,7 @@ import (
 type engineProcessor struct {
 	engineID      int32
 	fullTableName string
-	backend       *local.Local
+	backend       *local.Backend
 	tableInfo     *checkpoints.TidbTableInfo
 	logger        *zap.Logger
 	tableImporter *tableImporter

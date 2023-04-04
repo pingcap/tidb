@@ -77,7 +77,7 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 	return bc, nil
 }
 
-func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (*local.Local, error) {
+func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (*local.Backend, error) {
 	tls, err := cfg.Lightning.ToTLS()
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Error(err))
@@ -96,7 +96,7 @@ func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (*loca
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 
-func newBackendContext(ctx context.Context, jobID int64, be *local.Local,
+func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
 	cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot) *BackendContext {
 	bc := &BackendContext{
 		jobID:    jobID,

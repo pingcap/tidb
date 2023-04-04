@@ -177,7 +177,7 @@ func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImpo
 
 type tableImporter struct {
 	*LoadDataController
-	backend   *local.Local
+	backend   *local.Backend
 	tableCp   *checkpoints.TableCheckpoint
 	tableInfo *checkpoints.TidbTableInfo
 	tableMeta *mydump.MDTableMeta

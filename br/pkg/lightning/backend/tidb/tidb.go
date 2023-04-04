@@ -256,6 +256,8 @@ type tidbBackend struct {
 	errorMgr    *errormanager.ErrorManager
 }
 
+var _ backend.Backend = (*tidbBackend)(nil)
+
 // NewTiDBBackend creates a new TiDB backend using the given database.
 //
 // The backend does not take ownership of `db`. Caller should close `db`

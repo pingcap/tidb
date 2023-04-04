@@ -33,7 +33,7 @@ import (
 // BackendContext store a backend info for add index reorg task.
 type BackendContext struct {
 	jobID    int64
-	backend  *local.Local
+	backend  *local.Backend
 	ctx      context.Context
 	cfg      *lightning.Config
 	EngMgr   engineManager
