@@ -6481,3 +6481,46 @@ from ssci right join csci on (ssci.customer_sk=csci.customer_sk
                                and ssci.item_sk = csci.item_sk)
 limit 100;`)
 }
+
+func TestIssue42662(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().ConnectionID = 12345
+	tk.Session().GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
+	tk.Session().GetSessionVars().MemTracker.SessionID = 12345
+	tk.Session().GetSessionVars().MemTracker.IsRootTrackerOfSess = true
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+	}
+	sm.Conn = make(map[uint64]session.Session)
+	sm.Conn[tk.Session().GetSessionVars().ConnectionID] = tk.Session()
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk.MustExec("use test")
+	tk.MustQuery("select connection_id()").Check(testkit.Rows("12345"))
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("create table t2 (a int, b int, c int)")
+	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	// set tidb_server_memory_limit to 1.6GB, tidb_server_memory_limit_sess_min_size to 128MB
+	tk.MustExec("set global tidb_server_memory_limit='1600MB'")
+	tk.MustExec("set global tidb_server_memory_limit_sess_min_size=128*1024*1024")
+	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/issue42662_1", `return(true)`))
+	// tk.Session() should be marked as MemoryTop1Tracker but not killed.
+	tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
+
+	// try to trigger the kill top1 logic
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/servermemorylimit/issue42662_2", `return(true)`))
+	time.Sleep(1 * time.Second)
+
+	// no error should be returned
+	tk.MustQuery("select count(*) from t1")
+	tk.MustQuery("select count(*) from t1")
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/issue42662_1"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/servermemorylimit/issue42662_2"))
+}

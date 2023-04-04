@@ -16,6 +16,7 @@ package servermemorylimit
 
 import (
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -124,6 +125,11 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 	if bt == 0 {
 		return
 	}
+	failpoint.Inject("issue42662_2", func(val failpoint.Value) {
+		if val.(bool) {
+			bt = 1
+		}
+	})
 	instanceStats := memory.ReadMemStats()
 	if instanceStats.HeapInuse > MemoryMaxUsed.Load() {
 		MemoryMaxUsed.Store(instanceStats.HeapInuse)
