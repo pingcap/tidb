@@ -71,6 +71,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// compact levels
 const (
 	FullLevelCompact = -1
 	Level1Compact    = 1
@@ -85,6 +86,7 @@ const (
 	compactStateDoing
 )
 
+// task related table names and create table statements.
 const (
 	TaskMetaTableName  = "task_meta_v2"
 	TableMetaTableName = "table_meta"
@@ -188,6 +190,7 @@ const (
 	diskQuotaStateImporting
 )
 
+// Controller controls the whole import process.
 type Controller struct {
 	taskCtx       context.Context
 	cfg           *config.Config
@@ -272,6 +275,7 @@ type ControllerParam struct {
 	KeyspaceName string
 }
 
+// NewImportController creates a new Controller instance.
 func NewImportController(
 	ctx context.Context,
 	cfg *config.Config,
@@ -281,6 +285,7 @@ func NewImportController(
 	return NewImportControllerWithPauser(ctx, cfg, param)
 }
 
+// NewImportControllerWithPauser creates a new Controller instance with a pauser.
 func NewImportControllerWithPauser(
 	ctx context.Context,
 	cfg *config.Config,
@@ -337,12 +342,12 @@ func NewImportControllerWithPauser(
 		encodingBuilder = tidb.NewEncodingBuilder()
 		backendObj = tidb.NewTiDBBackend(ctx, db, cfg.TikvImporter.OnDuplicate, errorMgr)
 	case config.BackendLocal:
-		var rLimit local.Rlim_t
+		var rLimit local.RlimT
 		rLimit, err = local.GetSystemRLimit()
 		if err != nil {
 			return nil, err
 		}
-		maxOpenFiles := int(rLimit / local.Rlim_t(cfg.App.TableConcurrency))
+		maxOpenFiles := int(rLimit / local.RlimT(cfg.App.TableConcurrency))
 		// check overflow
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
@@ -465,11 +470,13 @@ func NewImportControllerWithPauser(
 	return rc, nil
 }
 
+// Close closes the controller.
 func (rc *Controller) Close() {
 	rc.backend.Close()
 	rc.tidbGlue.GetSQLExecutor().Close()
 }
 
+// Run starts the restore task.
 func (rc *Controller) Run(ctx context.Context) error {
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
@@ -518,6 +525,7 @@ outside:
 
 type schemaStmtType int
 
+// String implements fmt.Stringer interface.
 func (stmtType schemaStmtType) String() string {
 	switch stmtType {
 	case schemaCreateDatabase:

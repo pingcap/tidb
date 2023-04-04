@@ -282,7 +282,7 @@ func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, ver
 		if err != nil {
 			return 0, err
 		}
-		if len(data.Info.Writes) == 0 {
+		if data == nil || data.Info == nil || len(data.Info.Writes) == 0 {
 			return 0, errors.Errorf("There is no Write MVCC info for the schema version")
 		}
 		return int64(data.Info.Writes[0].CommitTs), nil
@@ -1346,6 +1346,11 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 }
 
 func (do *Domain) initDistTaskLoop(ctx context.Context) error {
+	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil)
+		}
+	})
 	se, err := do.sysExecutorFactory(do)
 	if err != nil {
 		return err
