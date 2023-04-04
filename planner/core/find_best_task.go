@@ -1509,10 +1509,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	if candidate.isMatchProp {
 		cop.keepOrder = true
 		if ds.tableInfo.GetPartitionInfo() != nil {
-			// IndexLookup on partition table can't keep order.
-			if cop.tablePlan != nil {
-				return invalidTask, nil
-			}
 			// Add sort items for index scan for merge-sort operation between partitions.
 			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 			for _, si := range prop.SortItems {
