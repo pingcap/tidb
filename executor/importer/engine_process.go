@@ -101,6 +101,7 @@ func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.Op
 		if err != nil {
 			return err
 		}
+		closer.add(encoder)
 		// todo: on panic which will be recovered since we run in tidb, we need to make sure all opened fd is closed.
 		dataWriter, err = dataEngine.LocalWriter(ctx, dataWriterCfg)
 		if err != nil {
@@ -131,12 +132,11 @@ func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.Op
 		}
 		// todo: process in parallel
 		err = cp.process(ctx)
-		// chunk process is responsible to close data/index writer
-		cp.close(ctx)
 		if err != nil {
-			closer.reset()
 			return err
 		}
+		// chunk process is responsible to close data/index writer
+		cp.close(ctx)
 	}
 	return nil
 }

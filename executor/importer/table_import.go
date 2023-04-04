@@ -225,7 +225,22 @@ func (d *tableImporterImpl) GetParser(ctx context.Context, chunk *checkpoints.Ch
 		},
 		Remote: &chunk.FileMeta,
 	}
-	return d.LoadDataController.GetParser(ctx, info)
+	parser, err := d.LoadDataController.GetParser(ctx, info)
+	if err != nil {
+		return nil, err
+	}
+	if chunk.FileMeta.Compression == mydump.CompressionNone {
+		// todo: when support checkpoint, we should set pos too.
+		// WARN: parser.SetPos can only be set before we read anything now. should fix it before set pos.
+		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
+	} else {
+		// todo: chunk.Chunk.Offset is not set, if we ignore N lines, should set it.
+		if err := mydump.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
+			return nil, errors.Trace(err)
+		}
+		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
+	}
+	return parser, nil
 }
 
 func (d *tableImporterImpl) GetKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {

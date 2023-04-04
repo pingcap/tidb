@@ -124,17 +124,6 @@ type chunkProcessor struct {
 }
 
 func (p *chunkProcessor) process(ctx context.Context) error {
-	if p.chunkInfo.FileMeta.Compression == mydump.CompressionNone {
-		if err := p.parser.SetPos(p.chunkInfo.Chunk.Offset, p.chunkInfo.Chunk.PrevRowIDMax); err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		if err := mydump.ReadUntil(p.parser, p.chunkInfo.Chunk.Offset); err != nil {
-			return errors.Trace(err)
-		}
-		p.parser.SetRowID(p.chunkInfo.Chunk.PrevRowIDMax)
-	}
-
 	deliverCompleteCh := make(chan deliverResult)
 	go func() {
 		defer close(deliverCompleteCh)
@@ -303,6 +292,9 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 func (p *chunkProcessor) close(ctx context.Context) {
 	if err2 := p.parser.Close(); err2 != nil {
 		p.logger.Error("failed to close parser", zap.Error(err2))
+	}
+	if err2 := p.encoder.Close(); err2 != nil {
+		p.logger.Error("failed to close encoder", zap.Error(err2))
 	}
 	if _, err2 := p.dataWriter.Close(ctx); err2 != nil {
 		p.logger.Error("failed to close data writer", zap.Error(err2))

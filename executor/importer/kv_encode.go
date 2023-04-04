@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -26,12 +27,14 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql" //nolint: goimports
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 )
 
 type KVEncoder interface {
 	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
+	io.Closer
 }
 
 // tableKVEncoder encodes a row of data into a KV pair.
@@ -57,6 +60,8 @@ func newTableKVEncoder(
 	if err != nil {
 		return nil, err
 	}
+	// we need a non-nil TxnCtx to avoid panic when evaluating set clause
+	baseKVEncoder.SessionCtx.Vars.TxnCtx = new(variable.TransactionContext)
 
 	return &tableKVEncoder{
 		BaseKVEncoder:      baseKVEncoder,
@@ -120,7 +125,7 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 		// eval expression of `SET` clause
 		d, err := expression.EvalAstExpr(en.SessionCtx, en.columnAssignments[i].Expr)
 		if err != nil {
-			return nil, nil
+			return nil, err
 		}
 		row = append(row, d)
 	}
@@ -128,7 +133,7 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 	// a new row buffer will be allocated in getRow
 	newRow, err := en.getRow(row, rowID)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 
 	return newRow, nil
@@ -197,6 +202,7 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	return record, nil
 }
 
-func (en *tableKVEncoder) Close() {
+func (en *tableKVEncoder) Close() error {
 	en.SessionCtx.Close()
+	return nil
 }
