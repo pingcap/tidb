@@ -1793,6 +1793,7 @@ func TestNonPreparedPlanCacheJoin(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, c int)")
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("create table t3 (a int, b int, c int)")
+	tk.MustExec("create table t4 (a int, x int)")
 
 	supported := []string{
 		"select * from t1, t2 where t1.a=t2.a and t1.b<10",
@@ -1805,6 +1806,8 @@ func TestNonPreparedPlanCacheJoin(t *testing.T) {
 		"select * from t1 inner join t2 on t1.a=t2.a and t2.c<10",
 		"select * from t1 left join t2 on t1.a=t2.a",
 		"select * from t1 left join t2 on t1.a=t2.a and t2.c<10",
+		"select * from t1, t4 where t1.a=t4.a and t4.x=10",
+		"select * from t1 inner join t4 on t1.a=t4.a and t4.x=10",
 	}
 	unsupported := []string{
 		"select * from t1, t2, t3",                // 3-way join
