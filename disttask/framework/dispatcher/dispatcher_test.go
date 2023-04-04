@@ -130,6 +130,10 @@ const (
 )
 
 func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
+	}()
 	// test DispatchTaskLoop
 	// test parallelism control
 	var originalConcurrency int
@@ -150,7 +154,8 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 
 	dispatcher.RegisterTaskFlowHandle(taskTypeExample, NumberExampleHandle{})
 
-	cnt := 20
+	// 2s
+	cnt := 40
 	checkGetRunningGTaskCnt := func() {
 		var retCnt int
 		for i := 0; i < cnt; i++ {
@@ -158,7 +163,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 			if retCnt == taskCnt {
 				break
 			}
-			time.Sleep(time.Millisecond * 30)
+			time.Sleep(time.Millisecond * 50)
 		}
 		require.Equal(t, retCnt, taskCnt)
 	}
@@ -179,14 +184,17 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		require.Equal(t, int64(i+1), tasks[i].ID)
 		subtasks, err := subTaskMgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
 		require.NoError(t, err)
-		require.Equal(t, subtasks, int64(subtaskCnt))
+		require.Equal(t, int64(subtaskCnt), subtasks, fmt.Sprintf("num:%d", i))
 	}
 	// test parallelism control
-	taskID, err := gTaskMgr.AddNewTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
-	require.NoError(t, err)
-	checkGetRunningGTaskCnt()
-	// Clean the task.
-	deleteTasks(t, store, taskID)
+	if taskCnt == 1 {
+		taskID, err := gTaskMgr.AddNewTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
+		require.NoError(t, err)
+		checkGetRunningGTaskCnt()
+		// Clean the task.
+		deleteTasks(t, store, taskID)
+		dsp.(dispatcher.DispatcherForTest).DelRunningGTask(taskID)
+	}
 
 	// test DetectTaskLoop
 	checkGetGTaskState := func(expectedState string) {

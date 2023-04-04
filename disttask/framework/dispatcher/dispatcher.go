@@ -150,6 +150,8 @@ func (d *dispatcher) DispatchTaskLoop() {
 		case <-ticker.C:
 			cnt := d.getRunningGTaskCnt()
 			if cnt >= DefaultDispatchConcurrency {
+				logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency",
+					zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
 				break
 			}
 
@@ -175,12 +177,14 @@ func (d *dispatcher) DispatchTaskLoop() {
 					continue
 				}
 				if cnt >= DefaultDispatchConcurrency {
+					logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency", zap.Int64("current task ID", gTask.ID),
+						zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
 					break
 				}
 
 				err = d.processNormalFlow(gTask)
 				logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
-					zap.String("state", gTask.State), zap.Uint64("con", gTask.Concurrency), zap.Error(err))
+					zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Error(err))
 				if err != nil || gTask.IsFinished() {
 					continue
 				}
@@ -265,6 +269,10 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 				logutil.BgLogger().Info("detect task, this task is finished",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 				return
+			}
+			if !d.isRunningGTask(gTask.ID) {
+				logutil.BgLogger().Info("detect task, this task can't run",
+					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 			}
 		}
 	}
@@ -371,7 +379,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		return err
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),
-		zap.String("state", gTask.State), zap.Uint64("con", gTask.Concurrency), zap.Int("subtasks", len(metas)))
+		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", len(metas)))
 
 	// Adjust the global task's concurrency.
 	if gTask.Concurrency == 0 {

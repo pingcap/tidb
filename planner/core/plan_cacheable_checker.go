@@ -210,35 +210,61 @@ func NonPreparedPlanCacheable(node ast.Node, is infoschema.InfoSchema) bool {
 
 var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPlanCacheableChecker{} }}
 
-// NonPreparedPlanCacheableWithCtx checks whether the input ast is cacheable for non-prepared plan cache.
-// Only support: select {field} from {single-table} where {cond} and {cond} ...
-// {cond}: {col} {op} {val}
-// {op}: >, <, =
+// NonPreparedPlanCacheableWithCtx checks whether this SQL is cacheable for non-prepared plan cache.
 func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (ok bool, reason string) {
-	selectStmt, isSelect := node.(*ast.SelectStmt)
-	if !isSelect { // only support select statement now
-		return false, "not a select statement"
-	}
-	if selectStmt.Kind != ast.SelectStmtKindSelect {
-		return false, "not a select statement"
-	}
-	if len(selectStmt.TableHints) > 0 || // hints
-		selectStmt.Having != nil || // having
-		selectStmt.WindowSpecs != nil || // window function
-		selectStmt.Limit != nil || // limit
-		selectStmt.LockInfo != nil || selectStmt.SelectIntoOpt != nil { // lock info
-		return false, "queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-	}
-	from := selectStmt.From
-	if from == nil || selectStmt.From.TableRefs == nil {
-		return false, "queries that have sub-queries are not supported"
-	}
-	tableRefs := from.TableRefs
-
-	// match table names, currently only support 2 tables(2-way join) at most.
-	tableNames, ok, reason := extractTableNames(tableRefs, nil)
-	if !ok {
-		return false, reason
+	var tableNames []*ast.TableName
+	switch x := node.(type) {
+	case *ast.SelectStmt:
+		tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(x)
+		if !ok {
+			return ok, reason
+		}
+	case *ast.UpdateStmt:
+		if x.MultipleTable {
+			return false, "not support multiple tables update statements"
+		}
+		tableNames, ok, reason = extractTableNames(x.TableRefs.TableRefs, tableNames)
+		if !ok {
+			return ok, reason
+		}
+	case *ast.InsertStmt:
+		if x.Select == nil { // `insert into t values (...)`
+			nRows := len(x.Lists)
+			nCols := 0
+			if len(x.Lists) > 0 { // avoid index-out-of-range
+				nCols = len(x.Lists[0])
+			}
+			if nRows*nCols > 200 { // to save memory
+				return false, "too many values (more than 200) in the insert statement"
+			}
+			tableNames, ok, reason = extractTableNames(x.Table.TableRefs, tableNames)
+			if !ok {
+				return ok, reason
+			}
+		} else { // `insert into t select ...`
+			selectStmt, ok := x.Select.(*ast.SelectStmt)
+			if !ok {
+				return false, "not a select statement"
+			}
+			tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(selectStmt)
+			if !ok {
+				return ok, reason
+			}
+			tableNames, ok, reason = extractTableNames(x.Table.TableRefs, tableNames)
+			if !ok {
+				return ok, reason
+			}
+		}
+	case *ast.DeleteStmt:
+		if x.IsMultiTable {
+			return false, "not support multiple tables delete statements"
+		}
+		tableNames, ok, reason = extractTableNames(x.TableRefs.TableRefs, tableNames)
+		if !ok {
+			return ok, reason
+		}
+	default:
+		return false, "not a SELECT/UPDATE/INSERT/DELETE statement"
 	}
 
 	// allocate and init the checker
@@ -250,8 +276,33 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 
 	// put the checker back
 	nonPrepCacheCheckerPool.Put(checker)
-
 	return cacheable, reason
+}
+
+// isSelectStmtNonPrepCacheableFastCheck checks whether the input select statement is cacheable for non-prepared plan cache.
+func isSelectStmtNonPrepCacheableFastCheck(selectStmt *ast.SelectStmt) (names []*ast.TableName, ok bool, reason string) {
+	if selectStmt.Kind != ast.SelectStmtKindSelect {
+		return nil, false, "not a select statement"
+	}
+	if len(selectStmt.TableHints) > 0 || // hints
+		selectStmt.Having != nil || // having
+		selectStmt.WindowSpecs != nil || // window function
+		selectStmt.Limit != nil || // limit
+		selectStmt.SelectIntoOpt != nil { // select-into statement
+		return nil, false, "queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
+	}
+	from := selectStmt.From
+	if from == nil || selectStmt.From.TableRefs == nil {
+		return nil, false, "queries that have sub-queries are not supported"
+	}
+	tableRefs := from.TableRefs
+
+	// match table names, currently only support 2 tables(2-way join) at most.
+	tableNames, ok, reason := extractTableNames(tableRefs, nil)
+	if !ok {
+		return nil, false, reason
+	}
+	return tableNames, true, ""
 }
 
 // extractTableNames extracts table names from the input node.
@@ -326,23 +377,28 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr, *ast.OnCondition,
+		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.Assignment,
 		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.ColumnName:
 		if checker.filterCnt > 0 {
 			// this column is appearing some filters, e.g. `col = 1`
+			colFound := false
 			for _, tableNode := range checker.tableNodes {
 				if tableNode == nil {
 					continue
 				}
-				colType, found := getColType(checker.schema, tableNode, node)
-				if !found {
-					checker.cacheable = false
-					checker.reason = "some column is not found in table schema"
-				} else if colType == mysql.TypeJSON || colType == mysql.TypeEnum || colType == mysql.TypeSet || colType == mysql.TypeBit {
-					checker.cacheable = false
-					checker.reason = "query has some filters with JSON, Enum, Set or Bit columns"
+				if colType, found := getColType(checker.schema, tableNode, node); found {
+					colFound = found
+					if colType == mysql.TypeJSON || colType == mysql.TypeEnum || colType == mysql.TypeSet || colType == mysql.TypeBit {
+						checker.cacheable = false
+						checker.reason = "query has some filters with JSON, Enum, Set or Bit columns"
+					}
 				}
+			}
+			if !colFound {
+				checker.cacheable = false
+				checker.reason = "some column is not found in table schema"
 			}
 		}
 		return in, !checker.cacheable
