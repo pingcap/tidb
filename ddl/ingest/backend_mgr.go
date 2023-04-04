@@ -24,9 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -88,9 +86,15 @@ func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (backe
 	}
 
 	logutil.BgLogger().Info("[ddl-ingest] create local backend for adding index", zap.String("keyspaceName", cfg.KeyspaceName))
-	errorMgr := errormanager.New(nil, cfg.Lightning, log.Logger{Logger: logutil.BgLogger()})
-	encodingBuilder := local.NewEncodingBuilder(ctx)
-	return local.NewLocalBackend(ctx, tls, cfg.Lightning, glue, int(LitRLimit), errorMgr, cfg.KeyspaceName, encodingBuilder)
+	db, err := glue.GetDB()
+	if err != nil {
+		return backend.Backend{}, err
+	}
+	regionSizeGetter := &local.TableRegionSizeGetterImpl{
+		DB: db,
+	}
+	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName)
+	return local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 
 func newBackendContext(ctx context.Context, jobID int64, be *backend.Backend,

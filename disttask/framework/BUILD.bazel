@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "framework_test",
+    timeout = "short",
+    srcs = ["framework_test.go"],
+    flaky = True,
+    deps = [
+        "//disttask/framework/dispatcher",
+        "//disttask/framework/proto",
+        "//disttask/framework/scheduler",
+        "//disttask/framework/storage",
+        "//testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

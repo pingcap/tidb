@@ -298,6 +298,19 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t where a in (1, 2) and b < 15",
 		"select * from test.t where a between 1 and 10",
 		"select * from test.t where a between 1 and 10 and b < 15",
+		"select * from test.t where a+b=13",      // '+'
+		"select * from test.t where mod(a, 3)=1", // mod
+		"select * from test.t where d>now()",     // now
+		"select a+1 from test.t where a<13",
+		"select mod(a, 10) from test.t where a<13",
+
+		// 2-way joins
+		"select * from test.t inner join test.t3 on test.t.a=test.t3.a",
+		"select * from test.t inner join test.t3 on test.t.a=test.t3.a where test.t.a<10",
+		"select * from test.t, test.t3",
+		"select * from test.t, test.t3 where test.t.a=test.t3.a",
+		"select * from test.t, test.t3 where test.t.a=test.t3.a and test.t.b=t3.b",
+		"select * from test.t, test.t3 where test.t.a=test.t3.a and test.t.a<10",
 	}
 
 	unsupported := []string{
@@ -307,7 +320,6 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select a, sum(b) as c from test.t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
 		"select * from test.t1 limit 1",                                                         // limit
 		"select * from test.t1 order by a",                                                      // order by
-		"select * from test.t1, test.t2",                                                        // join
 		"select * from (select * from test.t1) t",                                               // sub-query
 		"insert into test.t1 values(1, 1)",                                                      // insert
 		"insert into t1(a, b) select a, b from test.t1",                                         // insert into select
@@ -316,10 +328,6 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t1 for update",                                                      // lock
 		"select * from test.t1 where a in (select a from t)",                                    // uncorrelated sub-query
 		"select * from test.t1 where a in (select a from test.t where a > t1.a)",                // correlated sub-query
-
-		"select * from test.t where a+b=13",      // '+'
-		"select * from test.t where mod(a, 3)=1", // mod
-		"select * from test.t where d>now()",     // now
 	}
 
 	for _, q := range unsupported {

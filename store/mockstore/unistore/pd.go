@@ -58,7 +58,7 @@ func newResourceGroupManager() *resourceGroupManager {
 		RUSettings: &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate:   1000000,
+					FillRate:   math.MaxInt32,
 					BurstLimit: -1,
 				},
 			},

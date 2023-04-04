@@ -1111,6 +1111,19 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	return v, true
 }
 
+func initConstantRepertoire(c *expression.Constant) {
+	c.SetRepertoire(expression.ASCII)
+	if c.GetType().EvalType() == types.ETString {
+		for _, b := range c.Value.GetBytes() {
+			// if any character in constant is not ascii, set the repertoire to UNICODE.
+			if b >= 0x80 {
+				c.SetRepertoire(expression.UNICODE)
+				break
+			}
+		}
+	}
+}
+
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	if er.err != nil {
@@ -1134,23 +1147,15 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		v.Datum.SetValue(v.Datum.GetValue(), retType)
 		value := &expression.Constant{Value: v.Datum, RetType: retType}
-		value.SetRepertoire(expression.ASCII)
-		if retType.EvalType() == types.ETString {
-			for _, b := range v.Datum.GetBytes() {
-				// if any character in constant is not ascii, set the repertoire to UNICODE.
-				if b >= 0x80 {
-					value.SetRepertoire(expression.UNICODE)
-					break
-				}
-			}
-		}
+		initConstantRepertoire(value)
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
-		var value expression.Expression
+		var value *expression.Constant
 		value, er.err = expression.ParamMarkerExpression(er.sctx, v, false)
 		if er.err != nil {
 			return retNode, false
 		}
+		initConstantRepertoire(value)
 		er.ctxStackAppend(value, types.EmptyName)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)

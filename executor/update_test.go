@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -493,4 +494,106 @@ func TestIssue23553(t *testing.T) {
 	tk.MustExec(`create table tt (m0 varchar(64), status tinyint not null)`)
 	tk.MustExec(`insert into tt values('1',0),('1',0),('1',0)`)
 	tk.MustExec(`update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1`)
+}
+
+func TestLockUnchangedUniqueKeys(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	for _, tt := range []struct {
+		name   string
+		create string
+		insert string
+		update string
+	}{
+		{
+			// ref https://github.com/pingcap/tidb/issues/36438
+			"Issue36438",
+			"create table t (i varchar(10), unique key(i))",
+			"insert into t values ('a')",
+			"update t set i = 'a'",
+		},
+		{
+			"ClusteredAndRowUnchanged",
+			"create table t (k int, v int, primary key(k) clustered, key sk(k))",
+			"insert into t values (1, 10)",
+			"update t force index(sk) set v = 10 where k = 1",
+		},
+		{
+			"ClusteredAndRowUnchangedAndParted",
+			"create table t (k int, v int, primary key(k) clustered, key sk(k)) partition by hash(k) partitions 4",
+			"insert into t values (1, 10)",
+			"update t force index(sk) set v = 10 where k = 1",
+		},
+		{
+			"ClusteredAndRowChanged",
+			"create table t (k int, v int, primary key(k) clustered, key sk(k))",
+			"insert into t values (1, 10)",
+			"update t force index(sk) set v = 11 where k = 1",
+		},
+		{
+			"NonClusteredAndRowUnchanged",
+			"create table t (k int, v int, primary key(k) nonclustered, key sk(k))",
+			"insert into t values (1, 10)",
+			"update t force index(sk) set v = 10 where k = 1",
+		},
+		{
+			"NonClusteredAndRowUnchangedAndParted",
+			"create table t (k int, v int, primary key(k) nonclustered, key sk(k)) partition by hash(k) partitions 4",
+			"insert into t values (1, 10)",
+			"update t force index(sk) set v = 10 where k = 1",
+		},
+		{
+			"NonClusteredAndRowChanged",
+			"create table t (k int, v int, primary key(k) nonclustered, key sk(k))",
+			"insert into t values (1, 10)",
+			"update t force index(sk) set v = 11 where k = 1",
+		},
+		{
+			"UniqueAndRowUnchanged",
+			"create table t (k int, v int, unique key uk(k), key sk(k))",
+			"insert into t values (1, 10)",
+			"update t force index(sk) set v = 10 where k = 1",
+		},
+		{
+			"UniqueAndRowUnchangedAndParted",
+			"create table t (k int, v int, unique key uk(k), key sk(k)) partition by hash(k) partitions 4",
+			"insert into t values (1, 10)",
+			"update t force index(sk) set v = 10 where k = 1",
+		},
+		{
+			"UniqueAndRowChanged",
+			"create table t (k int, v int, unique key uk(k), key sk(k))",
+			"insert into t values (1, 10)",
+			"update t force index(sk) set v = 11 where k = 1",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk1.MustExec("drop table if exists t")
+			tk1.MustExec(tt.create)
+			tk1.MustExec(tt.insert)
+			tk1.MustExec("begin pessimistic")
+
+			tk1.MustExec(tt.update)
+
+			errCh := make(chan error, 1)
+			go func() {
+				_, err := tk2.Exec(tt.insert)
+				errCh <- err
+			}()
+
+			select {
+			case <-time.After(100 * time.Millisecond):
+				tk1.MustExec("rollback")
+				require.Error(t, <-errCh)
+			case err := <-errCh:
+				require.Error(t, err)
+				require.Fail(t, "insert is not blocked by update")
+			}
+		})
+	}
 }

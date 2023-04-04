@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !distributereorg
+package dispatcher
 
-package distributereorg
+import (
+	"context"
 
-// TiDBEnableDistributeReorg is a feature tag
-const TiDBEnableDistributeReorg bool = false
+	"github.com/stretchr/testify/mock"
+)
+
+// MockHandle is used to mock the Handle.
+type MockHandle struct {
+	mock.Mock
+}
+
+// GetAllSchedulerIDs implements the Handle.GetAllSchedulerIDs interface.
+func (m *MockHandle) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error) {
+	args := m.Called(ctx, gTaskID)
+	if args.Error(1) != nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), nil
+}

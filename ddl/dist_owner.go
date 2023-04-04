@@ -50,7 +50,7 @@ const (
 )
 
 func initDistReorg(reorgMeta *model.DDLReorgMeta) {
-	isDistReorg := variable.DDLEnableDistributeReorg.Load()
+	isDistReorg := variable.EnableDistTask.Load()
 	reorgMeta.IsDistReorg = isDistReorg
 	if isDistReorg {
 		metrics.TelemetryDistReorgCnt.Inc()
@@ -333,7 +333,7 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges, batchSize)
+		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges)
 		if len(batchTasks) == 0 {
 			break
 		}

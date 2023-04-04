@@ -1432,6 +1432,11 @@ func (index *IndexInfo) FindColumnByName(nameL string) *IndexColumn {
 	return ret
 }
 
+// IsPublic checks if the index state is public
+func (index *IndexInfo) IsPublic() bool {
+	return index.State == StatePublic
+}
+
 // FindIndexColumnByName finds IndexColumn by name. When IndexColumn is not found, returns (-1, nil).
 func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexColumn) {
 	for i, ic := range indexCols {
