@@ -515,3 +515,19 @@ func TestSpecificConstant(t *testing.T) {
 	require.Equal(t, null.RetType.GetFlen(), 1)
 	require.Equal(t, null.RetType.GetDecimal(), 0)
 }
+
+func TestParamMarkerGetUserVar(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewIntDatum(1),
+	}
+	con := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}}
+	typ := con.ParamMarker.GetUserVar()
+	require.Equal(t, typ, ctx.GetSessionVars().PreparedParams[0])
+
+	ctx = mock.NewContext()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{}
+	con = &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}}
+	typ = con.ParamMarker.GetUserVar()
+	require.Equal(t, typ, types.Datum{})
+}

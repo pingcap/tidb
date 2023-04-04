@@ -100,7 +100,10 @@ type ParamMarker struct {
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
 func (d *ParamMarker) GetUserVar() types.Datum {
 	sessionVars := d.ctx.GetSessionVars()
-	return sessionVars.PreparedParams[d.order]
+	if len(sessionVars.PreparedParams) > d.order {
+		return sessionVars.PreparedParams[d.order]
+	}
+	return types.Datum{}
 }
 
 // String implements fmt.Stringer interface.
