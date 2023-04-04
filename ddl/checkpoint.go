@@ -37,6 +37,7 @@ import (
 // CheckpointManager is an interface to manage checkpoints.
 type CheckpointManager interface {
 	IsComplete(taskID int, start, end kv.Key) bool
+	Status() (totalCount int, nextKey kv.Key)
 
 	Register(taskID int, start, end kv.Key)
 	UpdateTotal(taskID int, added int, last bool)
@@ -66,6 +67,8 @@ type CentralizedCheckpointManager struct {
 	// Persisted to the storage.
 	minKeySyncLocal  kv.Key
 	minKeySyncGlobal kv.Key
+	localCnt         int
+	globalCnt        int
 
 	// For persisting the checkpoint periodically.
 	timeOfLastFlush time.Time
@@ -133,6 +136,12 @@ func (s *CentralizedCheckpointManager) IsComplete(_ int, _, end kv.Key) bool {
 	return s.localDataIsValid && len(s.minKeySyncLocal) > 0 && end.Cmp(s.minKeySyncLocal) <= 0
 }
 
+func (s *CentralizedCheckpointManager) Status() (int, kv.Key) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.localCnt, s.minKeySyncGlobal
+}
+
 // Register registers a new task.
 func (s *CentralizedCheckpointManager) Register(taskID int, _, end kv.Key) {
 	s.mu.Lock()
@@ -174,11 +183,13 @@ func (s *CentralizedCheckpointManager) UpdateCurrent(taskID int, added int) erro
 		}
 		s.minTaskIDSynced++
 		s.minKeySyncLocal = cp.endKey
+		s.localCnt += cp.totalKeys
 		delete(s.checkpoints, s.minTaskIDSynced)
 		s.dirty = true
 	}
 	if imported && s.minKeySyncGlobal.Cmp(s.minKeySyncLocal) != 0 {
 		s.minKeySyncGlobal = s.minKeySyncLocal
+		s.globalCnt = s.localCnt
 		s.dirty = true
 	}
 	return nil
@@ -188,19 +199,26 @@ func (s *CentralizedCheckpointManager) UpdateCurrent(taskID int, added int) erro
 func (s *CentralizedCheckpointManager) Close() {
 	s.updaterExitCh <- struct{}{}
 	s.updaterWg.Wait()
+	for id, cp := range s.checkpoints {
+		s.localCnt += cp.totalKeys
+		s.globalCnt = s.localCnt
+		delete(s.checkpoints, id)
+	}
 }
 
 // JobReorgMeta is the metadata for a reorg job.
 type JobReorgMeta struct {
-	Checkpoint *JobCheckpoint `json:"checkpoint"`
+	Checkpoint *ReorgCheckpoint `json:"reorg_checkpoint"`
 }
 
-// JobCheckpoint is the checkpoint for a reorg job.
-type JobCheckpoint struct {
-	LocalSyncKey  kv.Key `json:"local_sync_key"`
-	GlobalSyncKey kv.Key `json:"global_sync_key"`
-	InstanceAddr  string `json:"instance_addr"`
-	Version       int64  `json:"version"`
+// ReorgCheckpoint is the checkpoint for a reorg job.
+type ReorgCheckpoint struct {
+	LocalSyncKey   kv.Key `json:"local_sync_key"`
+	LocalKeyCount  int    `json:"local_key_count"`
+	GlobalSyncKey  kv.Key `json:"global_sync_key"`
+	GlobalKeyCount int    `json:"global_key_count"`
+	InstanceAddr   string `json:"instance_addr"`
+	Version        int64  `json:"version"`
 }
 
 // JobCheckpointVersionCurrent is the current version of the checkpoint.
@@ -235,9 +253,11 @@ func (s *CentralizedCheckpointManager) resumeCheckpoint() error {
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
 			s.minKeySyncGlobal = cp.GlobalSyncKey
+			s.globalCnt = cp.GlobalKeyCount
 			if s.instanceAddr == cp.InstanceAddr {
 				s.localDataIsValid = true
 				s.minKeySyncLocal = cp.LocalSyncKey
+				s.localCnt = cp.LocalKeyCount
 			}
 			logutil.BgLogger().Info("[ddl-ingest] resume checkpoint",
 				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
@@ -257,6 +277,8 @@ func (s *CentralizedCheckpointManager) updateCheckpoint() error {
 	s.mu.Lock()
 	currentLocalKey := s.minKeySyncLocal
 	currentGlobalKey := s.minKeySyncGlobal
+	currentLocalCnt := s.localCnt
+	currentGlobalCnt := s.globalCnt
 	s.updating = true
 	s.mu.Unlock()
 	defer func() {
@@ -273,11 +295,13 @@ func (s *CentralizedCheckpointManager) updateCheckpoint() error {
 	ddlSess := session{Context: sessCtx}
 	err = ddlSess.runInTxn(func(sess *session) error {
 		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_id = %d and ele_type = %s;"
-		cp := &JobCheckpoint{
-			LocalSyncKey:  currentLocalKey,
-			GlobalSyncKey: currentGlobalKey,
-			InstanceAddr:  s.instanceAddr,
-			Version:       JobCheckpointVersionCurrent,
+		cp := &ReorgCheckpoint{
+			LocalSyncKey:   currentLocalKey,
+			GlobalSyncKey:  currentGlobalKey,
+			LocalKeyCount:  currentLocalCnt,
+			GlobalKeyCount: currentGlobalCnt,
+			InstanceAddr:   s.instanceAddr,
+			Version:        JobCheckpointVersionCurrent,
 		}
 		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})
 		if err != nil {

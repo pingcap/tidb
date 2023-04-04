@@ -330,6 +330,15 @@ func (b *ingestBackfillScheduler) close(force bool) {
 	if b.writerPool != nil {
 		b.writerPool.ReleaseAndWait()
 	}
+	if b.checkpointMgr != nil {
+		b.checkpointMgr.Close()
+	}
+	// Get the latest status after all workers are closed so that the result is more accurate.
+	cnt, nextKey := b.checkpointMgr.Status()
+	b.resultCh <- &backfillResult{
+		totalCount: cnt,
+		nextKey:    nextKey,
+	}
 	close(b.resultCh)
 	if !force {
 		jobID := b.reorgInfo.ID
@@ -337,9 +346,6 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		if bc, ok := ingest.LitBackCtxMgr.Load(jobID); ok {
 			bc.EngMgr.ResetWorkers(bc, jobID, indexID)
 		}
-	}
-	if b.checkpointMgr != nil {
-		b.checkpointMgr.Close()
 	}
 	b.closed = true
 }
@@ -462,7 +468,7 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		w.resultCh <- result
 		return
 	}
-	count, nextKey, err := w.WriteLocal(&rs)
+	count, err := w.WriteLocal(&rs)
 	if err != nil {
 		result.err = err
 		w.resultCh <- result
@@ -472,10 +478,10 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task", zap.Int("id", rs.id))
 		return
 	}
-	result.scanCount = count
-	result.addedCount = count
+	cnt, nextKey := w.checkpointMgr.Status()
+	result.totalCount = cnt
 	result.nextKey = nextKey
-	w.metricCounter.Add(float64(count))
+	w.metricCounter.Add(float64(cnt))
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)
 	}

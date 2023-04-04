@@ -184,6 +184,7 @@ type backfillResult struct {
 	taskID     int
 	addedCount int
 	scanCount  int
+	totalCount int
 	nextKey    kv.Key
 	err        error
 }
@@ -595,7 +596,11 @@ func handleOneResult(result *backfillResult, scheduler backfillScheduler, consum
 		scheduler.drainTasks() // Make it quit early.
 		return result.err
 	}
-	*totalAddedCount += int64(result.addedCount)
+	if result.totalCount > 0 {
+		*totalAddedCount = int64(result.totalCount)
+	} else {
+		*totalAddedCount += int64(result.addedCount)
+	}
 	reorgCtx := consumer.dc.getReorgCtx(reorgInfo.Job.ID)
 	reorgCtx.setRowCount(*totalAddedCount)
 	keeper.updateNextKey(result.taskID, result.nextKey)
