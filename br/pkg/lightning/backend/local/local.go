@@ -484,17 +484,6 @@ var (
 	LastAlloc manual.Allocator
 )
 
-// NewBackendWrapper creates a new BackendWrapper.
-func NewBackendWrapper(
-	ctx context.Context,
-	tls *common.TLS,
-	config BackendConfig,
-	regionSizeGetter TableRegionSizeGetter,
-) (backend.Backend, error) {
-	b, err := NewBackend(ctx, tls, config, regionSizeGetter)
-	return backend.MakeBackend(b), err
-}
-
 // NewBackend creates new connections to tikv.
 func NewBackend(
 	ctx context.Context,

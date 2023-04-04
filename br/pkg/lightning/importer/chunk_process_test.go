@@ -100,7 +100,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopCancel() {
 	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
 	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 
-	rc := &Controller{backend: backend.MakeBackend(mockBackend), encBuilder: mockEncBuilder}
+	rc := &Controller{backend: backend.MakeEngineManager(mockBackend), encBuilder: mockEncBuilder}
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan []deliveredKVs)
 	go cancel()
@@ -117,7 +117,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
 	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
-	importer := backend.MakeBackend(mockBackend)
+	importer := backend.MakeEngineManager(mockBackend)
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)
 	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
@@ -172,7 +172,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
-	importer := backend.MakeBackend(mockBackend)
+	importer := backend.MakeEngineManager(mockBackend)
 	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)
@@ -659,7 +659,7 @@ func (s *chunkRestoreSuite) TestRestore() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
-	importer := backend.MakeBackend(mockBackend)
+	importer := backend.MakeEngineManager(mockBackend)
 	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)

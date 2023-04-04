@@ -202,6 +202,7 @@ type Controller struct {
 	ioWorkers     *worker.Pool
 	checksumWorks *worker.Pool
 	pauser        *common.Pauser
+	engineMgr     backend.EngineManager
 	backend       backend.Backend
 	tidbGlue      glue.Glue
 
@@ -369,7 +370,7 @@ func NewImportControllerWithPauser(
 			DB: db,
 		}
 		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName)
-		backendObj, err = local.NewBackendWrapper(ctx, tls, backendConfig, regionSizeGetter)
+		backendObj, err = local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -439,6 +440,7 @@ func NewImportControllerWithPauser(
 		ioWorkers:     ioWorkers,
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        p.Pauser,
+		engineMgr:     backend.MakeEngineManager(backendObj),
 		backend:       backendObj,
 		tidbGlue:      p.Glue,
 		sysVars:       common.DefaultImportantVariables,
@@ -1989,7 +1991,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 		return
 	}
 
-	localBackend := rc.backend.Inner().(*local.Local)
+	localBackend := rc.backend.(*local.Local)
 	go func() {
 		// locker is assigned when we detect the disk quota is exceeded.
 		// before the disk quota is confirmed exceeded, we keep the diskQuotaLock
@@ -2048,7 +2050,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			}
 
 			// flush all engines so that checkpoints can be updated.
-			if err := rc.backend.FlushAll(ctx); err != nil {
+			if err := rc.backend.FlushAllEngines(ctx); err != nil {
 				logger.Error("flush engine for disk quota failed, check again later", log.ShortError(err))
 				return
 			}

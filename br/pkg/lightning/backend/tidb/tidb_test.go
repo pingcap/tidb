@@ -44,7 +44,7 @@ import (
 type mysqlSuite struct {
 	dbHandle   *sql.DB
 	mockDB     sqlmock.Sqlmock
-	backend    backend.Backend
+	backend    backend.EngineManager
 	encBuilder encode.EncodingBuilder
 	tbl        table.Table
 }
@@ -579,7 +579,7 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 	require.Nil(t, st)
 }
 
-func encodeRowsTiDB(t *testing.T, encBuilder encode.EncodingBuilder, b backend.Backend, tbl table.Table) encode.Rows {
+func encodeRowsTiDB(t *testing.T, encBuilder encode.EncodingBuilder, b backend.EngineManager, tbl table.Table) encode.Rows {
 	dataRows := encBuilder.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
 	indexRows := encBuilder.MakeEmptyRows()

@@ -36,32 +36,6 @@ const (
 	importMaxRetryTimes = 3 // tikv-importer has done retry internally. so we don't retry many times.
 )
 
-/*
-
-Usual workflow:
-
-1. Create a `Backend` for the whole process.
-
-2. For each table,
-
-	i. Split into multiple "batches" consisting of data files with roughly equal total size.
-
-	ii. For each batch,
-
-		a. Create an `OpenedEngine` via `backend.OpenEngine()`
-
-		b. For each chunk, deliver data into the engine via `engine.WriteRows()`
-
-		c. When all chunks are written, obtain a `ClosedEngine` via `engine.Close()`
-
-		d. Import data via `engine.Import()`
-
-		e. Cleanup via `engine.Cleanup()`
-
-3. Close the connection via `backend.Close()`
-
-*/
-
 func makeTag(tableName string, engineID int32) string {
 	return fmt.Sprintf("%s:%d", tableName, engineID)
 }
@@ -144,10 +118,21 @@ type TargetInfoGetter interface {
 	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
 }
 
-// AbstractBackend is the abstract interface behind Backend.
+// Backend defines the interface for a backend.
 // Implementations of this interface must be goroutine safe: you can share an
 // instance and execute any method anywhere.
-type AbstractBackend interface {
+// Usual workflow:
+//  1. Create a `Backend` for the whole process.
+//  2. For each table,
+//     i. Split into multiple "batches" consisting of data files with roughly equal total size.
+//     ii. For each batch,
+//     a. Create an `OpenedEngine` via `backend.OpenEngine()`
+//     b. For each chunk, deliver data into the engine via `engine.WriteRows()`
+//     c. When all chunks are written, obtain a `ClosedEngine` via `engine.Close()`
+//     d. Import data via `engine.Import()`
+//     e. Cleanup via `engine.Cleanup()`
+//  3. Close the connection via `backend.Close()`
+type Backend interface {
 	// Close the connection to the backend.
 	Close()
 
@@ -187,18 +172,15 @@ type AbstractBackend interface {
 
 	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
-
-	// TotalMemoryConsume counts total memory usage. This is only used for local backend.
-	TotalMemoryConsume() int64
 }
 
-// Backend is the delivery target for Lightning
-type Backend struct {
-	abstract AbstractBackend
+// EngineManager is the manager of engines.
+type EngineManager struct {
+	backend Backend
 }
 
 type engine struct {
-	backend AbstractBackend
+	backend Backend
 	logger  log.Logger
 	uuid    uuid.UUID
 	// id of the engine, used to generate uuid and stored in checkpoint
@@ -215,49 +197,23 @@ type OpenedEngine struct {
 	config    *EngineConfig
 }
 
-// // import_ the data written to the engine into the target.
-// import_(ctx context.Context) error
-
-// // cleanup deletes the imported data.
-// cleanup(ctx context.Context) error
-
 // LocalEngineWriter is a thread-local writer for writing rows into a single engine.
 type LocalEngineWriter struct {
 	writer    EngineWriter
 	tableName string
 }
 
-// MakeBackend creates a new Backend from an AbstractBackend.
-func MakeBackend(ab AbstractBackend) Backend {
-	return Backend{abstract: ab}
-}
-
-// Close the connection to the backend.
-func (be Backend) Close() {
-	be.abstract.Close()
-}
-
-// ShouldPostProcess returns whether KV-specific post-processing should be
-func (be Backend) ShouldPostProcess() bool {
-	return be.abstract.ShouldPostProcess()
-}
-
-// FlushAll flushes all opened engines.
-func (be Backend) FlushAll(ctx context.Context) error {
-	return be.abstract.FlushAllEngines(ctx)
-}
-
-// TotalMemoryConsume returns the total memory consumed by the backend.
-func (be Backend) TotalMemoryConsume() int64 {
-	return be.abstract.TotalMemoryConsume()
+// MakeEngineManager creates a new Backend from an Backend.
+func MakeEngineManager(ab Backend) EngineManager {
+	return EngineManager{backend: ab}
 }
 
 // OpenEngine opens an engine with the given table name and engine ID.
-func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableName string, engineID int32) (*OpenedEngine, error) {
+func (be EngineManager) OpenEngine(ctx context.Context, config *EngineConfig, tableName string, engineID int32) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, engineID)
 	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
 
-	if err := be.abstract.OpenEngine(ctx, config, engineUUID); err != nil {
+	if err := be.backend.OpenEngine(ctx, config, engineUUID); err != nil {
 		return nil, err
 	}
 
@@ -283,7 +239,7 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 
 	return &OpenedEngine{
 		engine: engine{
-			backend: be.abstract,
+			backend: be.backend,
 			logger:  logger,
 			uuid:    engineUUID,
 			id:      engineID,
@@ -291,11 +247,6 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 		tableName: tableName,
 		config:    config,
 	}, nil
-}
-
-// Inner returns the underlying abstract backend.
-func (be Backend) Inner() AbstractBackend {
-	return be.abstract
 }
 
 // Close the opened engine to prepare it for importing.
@@ -323,11 +274,6 @@ func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterCon
 	return &LocalEngineWriter{writer: w, tableName: engine.tableName}, nil
 }
 
-// TotalMemoryConsume returns the total memory consumed by the engine.
-func (engine *OpenedEngine) TotalMemoryConsume() int64 {
-	return engine.engine.backend.TotalMemoryConsume()
-}
-
 // WriteRows writes a collection of encoded rows into the engine.
 func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
 	return w.writer.AppendRows(ctx, w.tableName, columnNames, rows)
@@ -348,7 +294,7 @@ func (w *LocalEngineWriter) IsSynced() bool {
 // (Open -> Write -> Close -> Import). This method should only be used when one
 // knows via other ways that the engine has already been opened, e.g. when
 // resuming from a checkpoint.
-func (be Backend) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig, tableName string, engineID int32) (*ClosedEngine, error) {
+func (be EngineManager) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig, tableName string, engineID int32) (*ClosedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, engineID)
 	return be.UnsafeCloseEngineWithUUID(ctx, cfg, tag, engineUUID, engineID)
 }
@@ -358,9 +304,9 @@ func (be Backend) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig, tabl
 // (Open -> Write -> Close -> Import). This method should only be used when one
 // knows via other ways that the engine has already been opened, e.g. when
 // resuming from a checkpoint.
-func (be Backend) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *EngineConfig, tag string, engineUUID uuid.UUID, id int32) (*ClosedEngine, error) {
+func (be EngineManager) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *EngineConfig, tag string, engineUUID uuid.UUID, id int32) (*ClosedEngine, error) {
 	return engine{
-		backend: be.abstract,
+		backend: be.backend,
 		logger:  makeLogger(log.FromContext(ctx), tag, engineUUID),
 		uuid:    engineUUID,
 		id:      id,
@@ -390,7 +336,7 @@ type ClosedEngine struct {
 }
 
 // NewClosedEngine creates a new ClosedEngine.
-func NewClosedEngine(backend AbstractBackend, logger log.Logger, uuid uuid.UUID, id int32) *ClosedEngine {
+func NewClosedEngine(backend Backend, logger log.Logger, uuid uuid.UUID, id int32) *ClosedEngine {
 	return &ClosedEngine{
 		engine: engine{
 			backend: backend,

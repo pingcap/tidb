@@ -28,7 +28,7 @@ import (
 
 // NewNoopBackend creates a new backend that does nothing.
 func NewNoopBackend() backend.Backend {
-	return backend.MakeBackend(noopBackend{})
+	return noopBackend{}
 }
 
 type noopBackend struct{}
@@ -137,11 +137,6 @@ func (noopBackend) ResetEngine(_ context.Context, _ uuid.UUID) error {
 // LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 func (noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uuid.UUID) (backend.EngineWriter, error) {
 	return Writer{}, nil
-}
-
-// TotalMemoryConsume returns the total memory usage of the backend.
-func (noopBackend) TotalMemoryConsume() int64 {
-	return 0
 }
 
 type noopEncoder struct{}

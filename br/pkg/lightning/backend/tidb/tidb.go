@@ -267,11 +267,11 @@ func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMg
 		log.FromContext(ctx).Warn("unsupported action on duplicate, overwrite with `replace`")
 		onDuplicate = config.ReplaceOnDup
 	}
-	return backend.MakeBackend(&tidbBackend{
+	return &tidbBackend{
 		db:          db,
 		onDuplicate: onDuplicate,
 		errorMgr:    errorMgr,
-	})
+	}
 }
 
 func (row tidbRow) Size() uint64 {
@@ -598,10 +598,6 @@ rowLoop:
 		return errors.Annotatef(err, "[%s] batch write rows reach max retry %d and still failed", tableName, writeRowsMaxRetryTimes)
 	}
 	return nil
-}
-
-func (*tidbBackend) TotalMemoryConsume() int64 {
-	return 0
 }
 
 type stmtTask struct {

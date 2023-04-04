@@ -22,6 +22,7 @@ type backendSuite struct {
 	controller  *gomock.Controller
 	mockBackend *mock.MockBackend
 	encBuilder  *mock.MockEncodingBuilder
+	engineMgr   backend.EngineManager
 	backend     backend.Backend
 	ts          uint64
 }
@@ -32,7 +33,8 @@ func createBackendSuite(c gomock.TestReporter) *backendSuite {
 	return &backendSuite{
 		controller:  controller,
 		mockBackend: mockBackend,
-		backend:     backend.MakeBackend(mockBackend),
+		engineMgr:   backend.MakeEngineManager(mockBackend),
+		backend:     mockBackend,
 		encBuilder:  mock.NewMockEncodingBuilder(controller),
 		ts:          oracle.ComposeTS(time.Now().Unix()*1000, 0),
 	}
@@ -64,7 +66,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 		Return(nil).
 		After(importCall)
 
-	engine, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
+	engine, err := s.engineMgr.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
 	require.NoError(t, err)
 	closedEngine, err := engine.Close(ctx)
 	require.NoError(t, err)
@@ -89,7 +91,7 @@ func TestUnsafeCloseEngine(t *testing.T) {
 		Return(nil).
 		After(closeCall)
 
-	closedEngine, err := s.backend.UnsafeCloseEngine(ctx, nil, "`db`.`table`", -1)
+	closedEngine, err := s.engineMgr.UnsafeCloseEngine(ctx, nil, "`db`.`table`", -1)
 	require.NoError(t, err)
 	err = closedEngine.Cleanup(ctx)
 	require.NoError(t, err)
@@ -110,7 +112,7 @@ func TestUnsafeCloseEngineWithUUID(t *testing.T) {
 		Return(nil).
 		After(closeCall)
 
-	closedEngine, err := s.backend.UnsafeCloseEngineWithUUID(ctx, nil, "some_tag", engineUUID, 0)
+	closedEngine, err := s.engineMgr.UnsafeCloseEngineWithUUID(ctx, nil, "some_tag", engineUUID, 0)
 	require.NoError(t, err)
 	err = closedEngine.Cleanup(ctx)
 	require.NoError(t, err)
@@ -142,7 +144,7 @@ func TestWriteEngine(t *testing.T) {
 		AppendRows(ctx, "`db`.`table`", []string{"c1", "c2"}, rows2).
 		Return(nil)
 
-	engine, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
+	engine, err := s.engineMgr.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
 	require.NoError(t, err)
 	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(t, err)
@@ -167,7 +169,7 @@ func TestWriteToEngineWithNothing(t *testing.T) {
 	mockWriter.EXPECT().Close(ctx).Return(nil, nil)
 	s.mockBackend.EXPECT().LocalWriter(ctx, &backend.LocalWriterConfig{}, gomock.Any()).Return(mockWriter, nil)
 
-	engine, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
+	engine, err := s.engineMgr.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
 	require.NoError(t, err)
 	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(t, err)
@@ -186,7 +188,7 @@ func TestOpenEngineFailed(t *testing.T) {
 	s.mockBackend.EXPECT().OpenEngine(ctx, &backend.EngineConfig{}, gomock.Any()).
 		Return(errors.New("fake unrecoverable open error"))
 
-	_, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
+	_, err := s.engineMgr.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
 	require.EqualError(t, err, "fake unrecoverable open error")
 }
 
@@ -206,7 +208,7 @@ func TestWriteEngineFailed(t *testing.T) {
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable write error"))
 	mockWriter.EXPECT().Close(ctx).Return(nil, nil)
 
-	engine, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
+	engine, err := s.engineMgr.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
 	require.NoError(t, err)
 	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(t, err)
@@ -233,7 +235,7 @@ func TestWriteBatchSendFailedWithRetry(t *testing.T) {
 		MinTimes(1)
 	mockWriter.EXPECT().Close(ctx).Return(nil, nil).MinTimes(1)
 
-	engine, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
+	engine, err := s.engineMgr.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
 	require.NoError(t, err)
 	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(t, err)
@@ -255,7 +257,7 @@ func TestImportFailedNoRetry(t *testing.T) {
 		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable import error"))
 
-	closedEngine, err := s.backend.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
+	closedEngine, err := s.engineMgr.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
 	require.NoError(t, err)
 	err = closedEngine.Import(ctx, 1, 1)
 	require.Error(t, err)
@@ -275,7 +277,7 @@ func TestImportFailedWithRetry(t *testing.T) {
 		MinTimes(2)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
 
-	closedEngine, err := s.backend.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
+	closedEngine, err := s.engineMgr.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
 	require.NoError(t, err)
 	err = closedEngine.Import(ctx, 1, 1)
 	require.Error(t, err)
@@ -297,7 +299,7 @@ func TestImportFailedRecovered(t *testing.T) {
 		Return(nil)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
 
-	closedEngine, err := s.backend.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
+	closedEngine, err := s.engineMgr.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
 	require.NoError(t, err)
 	err = closedEngine.Import(ctx, 1, 1)
 	require.NoError(t, err)

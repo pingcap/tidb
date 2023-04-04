@@ -56,7 +56,7 @@ func (m *engineManager) Register(bc *BackendContext, jobID, indexID int64, schem
 			return nil, genEngineAllocMemFailedErr(m.MemRoot, bc.jobID, indexID)
 		}
 
-		mgr := backend.MakeBackend(bc.backend)
+		mgr := backend.MakeEngineManager(bc.backend)
 		cfg := generateLocalEngineConfig(jobID, schemaName, tableName)
 		openedEn, err := mgr.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
 		if err != nil {

@@ -140,7 +140,7 @@ func (s *restoreSchemaSuite) SetupTest() {
 		AnyTimes().
 		Return(s.tableInfos, nil)
 	mockBackend.EXPECT().Close()
-	theBackend := backend.MakeBackend(mockBackend)
+	theBackend := backend.MakeEngineManager(mockBackend)
 	s.rc.backend = theBackend
 	s.targetInfoGetter.backend = mockTargetInfoGetter
 
