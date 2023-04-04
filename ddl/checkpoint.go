@@ -36,7 +36,7 @@ import (
 
 // CheckpointManager is an interface to manage checkpoints.
 type CheckpointManager interface {
-	Checked(taskID int, start, end kv.Key) bool
+	IsComplete(taskID int, start, end kv.Key) bool
 
 	Register(taskID int, start, end kv.Key)
 	UpdateTotal(taskID int, added int, last bool)
@@ -75,6 +75,7 @@ type CentralizedCheckpointManager struct {
 	updaterExitCh   chan struct{}
 }
 
+// TaskCheckpoint is the checkpoint for a single task.
 type TaskCheckpoint struct {
 	totalKeys     int
 	currentKeys   int
@@ -83,6 +84,7 @@ type TaskCheckpoint struct {
 	lastBatchSent bool
 }
 
+// NewCentralizedCheckpointManager creates a new checkpoint manager.
 func NewCentralizedCheckpointManager(ctx context.Context, bcCtx *ingest.BackendContext,
 	sessPool *sessionPool, jobID, indexID int64) (*CentralizedCheckpointManager, error) {
 	instanceAddr := initInstanceAddr()
@@ -121,7 +123,8 @@ func initInstanceAddr() string {
 	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
 }
 
-func (s *CentralizedCheckpointManager) Checked(_ int, _, end kv.Key) bool {
+// IsComplete checks if the task is complete.
+func (s *CentralizedCheckpointManager) IsComplete(_ int, _, end kv.Key) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.minKeySyncGlobal) > 0 && end.Cmp(s.minKeySyncGlobal) <= 0 {
@@ -130,7 +133,8 @@ func (s *CentralizedCheckpointManager) Checked(_ int, _, end kv.Key) bool {
 	return s.localDataIsValid && len(s.minKeySyncLocal) > 0 && end.Cmp(s.minKeySyncLocal) <= 0
 }
 
-func (s *CentralizedCheckpointManager) Register(taskID int, start, end kv.Key) {
+// Register registers a new task.
+func (s *CentralizedCheckpointManager) Register(taskID int, _, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.checkpoints[taskID] = &TaskCheckpoint{
@@ -138,6 +142,7 @@ func (s *CentralizedCheckpointManager) Register(taskID int, start, end kv.Key) {
 	}
 }
 
+// UpdateTotal updates the total keys of the task.
 func (s *CentralizedCheckpointManager) UpdateTotal(taskID int, added int, last bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -146,6 +151,7 @@ func (s *CentralizedCheckpointManager) UpdateTotal(taskID int, added int, last b
 	cp.lastBatchSent = last
 }
 
+// UpdateCurrent updates the current keys of the task.
 func (s *CentralizedCheckpointManager) UpdateCurrent(taskID int, added int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -178,15 +184,18 @@ func (s *CentralizedCheckpointManager) UpdateCurrent(taskID int, added int) erro
 	return nil
 }
 
+// Close closes the checkpoint manager.
 func (s *CentralizedCheckpointManager) Close() {
 	s.updaterExitCh <- struct{}{}
 	s.updaterWg.Wait()
 }
 
+// JobReorgMeta is the metadata for a reorg job.
 type JobReorgMeta struct {
 	Checkpoint *JobCheckpoint `json:"checkpoint"`
 }
 
+// JobCheckpoint is the checkpoint for a reorg job.
 type JobCheckpoint struct {
 	LocalSyncKey  kv.Key `json:"local_sync_key"`
 	GlobalSyncKey kv.Key `json:"global_sync_key"`
@@ -194,9 +203,10 @@ type JobCheckpoint struct {
 	Version       int64  `json:"version"`
 }
 
+// JobCheckpointVersionCurrent is the current version of the checkpoint.
 const (
-	JobCheckpointVersion1       = 1
 	JobCheckpointVersionCurrent = JobCheckpointVersion1
+	JobCheckpointVersion1       = 1
 )
 
 func (s *CentralizedCheckpointManager) resumeCheckpoint() error {

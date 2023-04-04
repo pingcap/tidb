@@ -103,7 +103,7 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
-		if p.checkpointMgr.Checked(task.id, task.startKey, task.endKey) {
+		if p.checkpointMgr.IsComplete(task.id, task.startKey, task.endKey) {
 			logutil.BgLogger().Info("[ddl-ingest] checkpoint detected, skip a cop-request task",
 				zap.Int("task ID", task.id),
 				zap.String("task end key", hex.EncodeToString(task.endKey)))

@@ -51,7 +51,7 @@ func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endK
 	}
 	taskCh := make(chan *reorgBackfillTask, 5)
 	resultCh := make(chan idxRecResult, 5)
-	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh)
+	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, &dummyCheckpointMgr{})
 	pool.chunkSender = &resultChanForTest{ch: resultCh}
 	pool.adjustSize(1)
 	pool.tasksCh <- task
@@ -67,3 +67,19 @@ func ConvertRowToHandleAndIndexDatum(row chunk.Row, copCtx *copContext) (kv.Hand
 	handle, err := buildHandle(handleData, copCtx.tblInfo, copCtx.pkInfo, &stmtctx.StatementContext{TimeZone: time.Local})
 	return handle, idxData, err
 }
+
+type dummyCheckpointMgr struct{}
+
+func (d *dummyCheckpointMgr) IsComplete(_ int, _, _ kv.Key) bool {
+	return false
+}
+
+func (d *dummyCheckpointMgr) Register(_ int, _, _ kv.Key) {}
+
+func (d *dummyCheckpointMgr) UpdateTotal(_ int, _ int, _ bool) {}
+
+func (d *dummyCheckpointMgr) UpdateCurrent(_ int, _ int) error {
+	return nil
+}
+
+func (d *dummyCheckpointMgr) Close() {}
