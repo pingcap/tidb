@@ -4,6 +4,7 @@ package logutil
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -316,3 +317,14 @@ func StringifyMany[T fmt.Stringer](items []T) zapcore.ArrayMarshaler {
 		return nil
 	})
 }
+
+type HexBytes []byte
+
+func (b HexBytes) String() string {
+	return hex.EncodeToString(b)
+}
+
+func (b HexBytes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(hex.EncodeToString(b))
+}
+
