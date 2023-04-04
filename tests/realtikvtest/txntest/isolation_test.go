@@ -17,11 +17,27 @@ package txntest
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
+
+func TestGetCachedStore(t *testing.T) {
+	defer view.Stop()
+	var d driver.TiKVDriver
+	// when get the cached store, there should not have routine leak.
+	store1, err := d.Open(*realtikvtest.TiKVPath)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store1.Close())
+	}()
+	store2, err := d.Open(*realtikvtest.TiKVPath)
+	require.NoError(t, err)
+	require.Equal(t, store1, store2)
+}
 
 /*
 These test cases come from the paper <A Critique of ANSI SQL Isolation Levels>.
