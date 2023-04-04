@@ -652,12 +652,12 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	var totalRegions, completedRegions atomic.Uint64
 	totalRegions.Store(lockedRegions)
 
-	sess, err := w.sessPool.get()
+	sess, err := w.sessPool.Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	defer w.sessPool.put(sess)
+	defer w.sessPool.Put(sess)
 
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
@@ -792,11 +792,11 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue); err != nil {
 		return errors.Trace(err)
 	}
-	sess, err := w.sessPool.get()
+	sess, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.put(sess)
+	defer w.sessPool.Put(sess)
 
 	err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if err = recoverPDSchedule(pdScheduleValue); err != nil {
