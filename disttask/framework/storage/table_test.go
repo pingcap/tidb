@@ -123,12 +123,12 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, task, task2)
 
-	ids, err := sm.GetSchedulerIDsUnderGlobalTask(1)
+	ids, err := sm.GetSchedulerIDsByTaskID(1)
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
 	require.Equal(t, "tidb1", ids[0])
 
-	ids, err = sm.GetSchedulerIDsUnderGlobalTask(3)
+	ids, err = sm.GetSchedulerIDsByTaskID(3)
 	require.NoError(t, err)
 	require.Len(t, ids, 0)
 
@@ -170,7 +170,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = sm.DeleteSubtasksUnderGlobalTask(1)
+	err = sm.DeleteSubtasksByTaskID(1)
 	require.NoError(t, err)
 
 	ok, err = sm.HasSubtasksInStates("tidb1", 1, proto.TaskStatePending, proto.TaskStateRunning)

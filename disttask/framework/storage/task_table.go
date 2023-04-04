@@ -313,8 +313,8 @@ func (stm *TaskManager) UpdateSubtaskHeartbeat(instanceID string, taskID int64, 
 	return err
 }
 
-// DeleteSubtasksUnderGlobalTask deletes the subtask of the given global task ID.
-func (stm *TaskManager) DeleteSubtasksUnderGlobalTask(taskID int64) error {
+// DeleteSubtasksByTaskID deletes the subtask of the given global task ID.
+func (stm *TaskManager) DeleteSubtasksByTaskID(taskID int64) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -326,8 +326,8 @@ func (stm *TaskManager) DeleteSubtasksUnderGlobalTask(taskID int64) error {
 	return nil
 }
 
-// GetSchedulerIDsUnderGlobalTask gets the scheduler IDs of the given global task ID.
-func (stm *TaskManager) GetSchedulerIDsUnderGlobalTask(taskID int64) ([]string, error) {
+// GetSchedulerIDsByTaskID gets the scheduler IDs of the given global task ID.
+func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
