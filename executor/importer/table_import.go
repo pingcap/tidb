@@ -191,10 +191,10 @@ type tableImporter struct {
 
 var _ io.Closer = &tableImporter{}
 
-func (d *tableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
+func (ti *tableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, chunk.FileMeta, d.dataStore)
+			reader, err := mydump.OpenReader(ctx, chunk.FileMeta, ti.dataStore)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -202,7 +202,7 @@ func (d *tableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkC
 		},
 		Remote: &chunk.FileMeta,
 	}
-	parser, err := d.LoadDataController.GetParser(ctx, info)
+	parser, err := ti.LoadDataController.GetParser(ctx, info)
 	if err != nil {
 		return nil, err
 	}
@@ -220,19 +220,19 @@ func (d *tableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkC
 	return parser, nil
 }
 
-func (d *tableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEncoder, error) {
+func (ti *tableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
-			SQLMode:        d.sqlMode,
+			SQLMode:        ti.sqlMode,
 			Timestamp:      chunk.Timestamp,
-			SysVars:        d.importantSysVars,
+			SysVars:        ti.importantSysVars,
 			AutoRandomSeed: chunk.Chunk.PrevRowIDMax,
 		},
 		Path:   chunk.FileMeta.Path,
-		Table:  d.encTable,
-		Logger: log.Logger{Logger: d.logger.With(zap.String("path", chunk.FileMeta.Path))},
+		Table:  ti.encTable,
+		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
-	return newTableKVEncoder(cfg, d.ColumnAssignments, d.ColumnsAndUserVars, d.FieldMappings, d.InsertColumns)
+	return newTableKVEncoder(cfg, ti.ColumnAssignments, ti.ColumnsAndUserVars, ti.FieldMappings, ti.InsertColumns)
 }
 
 func (ti *tableImporter) importTable(ctx context.Context) error {
