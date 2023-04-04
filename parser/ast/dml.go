@@ -2865,11 +2865,11 @@ const (
 type ShowStmt struct {
 	dmlNode
 
-	Tp                ShowStmtType // Databases/Tables/Columns/....
-	DBName            string
-	Table             *TableName  // Used for showing columns.
-    // Procedure's naming method is consistent with the table name
-	Procedure         *TableName  
+	Tp     ShowStmtType // Databases/Tables/Columns/....
+	DBName string
+	Table  *TableName // Used for showing columns.
+	// Procedure's naming method is consistent with the table name
+	Procedure         *TableName
 	Partition         model.CIStr // Used for showing partition.
 	Column            *ColumnName // Used for `desc table column`.
 	IndexName         model.CIStr
