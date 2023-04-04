@@ -333,7 +333,7 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges, batchSize)
+		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges)
 		if len(batchTasks) == 0 {
 			break
 		}

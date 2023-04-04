@@ -21,13 +21,16 @@ import (
 	"github.com/jedib0t/go-pretty/v6/text"
 )
 
+// CheckType represents the check type.
 type CheckType string
 
+// CheckType constants.
 const (
 	Critical CheckType = "critical"
 	Warn     CheckType = "performance"
 )
 
+// Template is the interface for lightning check.
 type Template interface {
 	// Collect mainly collect performance related checks' results and critical level checks' results.
 	// If the performance is not as expect or one of critical check not passed. it will stop import task.
@@ -46,6 +49,7 @@ type Template interface {
 	FailedMsg() string
 }
 
+// SimpleTemplate is a simple template for lightning check.
 type SimpleTemplate struct {
 	count               int
 	warnFailedCount     int
@@ -55,6 +59,7 @@ type SimpleTemplate struct {
 	t                   table.Writer
 }
 
+// NewSimpleTemplate returns a simple template.
 func NewSimpleTemplate() Template {
 	t := table.NewWriter()
 	t.AppendHeader(table.Row{"#", "Check Item", "Type", "Passed"})
@@ -69,10 +74,12 @@ func NewSimpleTemplate() Template {
 	}
 }
 
+// FailedMsg returns the error msg for the failed check.
 func (c *SimpleTemplate) FailedMsg() string {
 	return strings.Join(c.criticalMsgs, ";\n")
 }
 
+// Collect mainly collect performance related checks' results and critical level checks' results.
 func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 	c.count++
 	if !passed {
@@ -92,10 +99,12 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 	c.t.AppendSeparator()
 }
 
+// Success represents the whole check has passed or not.
 func (c *SimpleTemplate) Success() bool {
 	return c.criticalFailedCount == 0
 }
 
+// FailedCount represents (the warn check failed count, the critical check failed count)
 func (c *SimpleTemplate) FailedCount(t CheckType) int {
 	if t == Warn {
 		return c.warnFailedCount
@@ -106,6 +115,7 @@ func (c *SimpleTemplate) FailedCount(t CheckType) int {
 	return 0
 }
 
+// Output print all checks results.
 func (c *SimpleTemplate) Output() string {
 	c.t.SetAllowedRowLength(170)
 	c.t.SetRowPainter(func(row table.Row) text.Colors {

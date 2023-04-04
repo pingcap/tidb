@@ -2657,25 +2657,25 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task pl
 		return defaultRate
 	}
 	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
-	if statsTbl.Count == 0 && !hasPD {
+	if statsTbl.RealtimeCount == 0 && !hasPD {
 		return 1
 	}
 	// we have issue https://github.com/pingcap/tidb/issues/29216.
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
 	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
 	// we think that we meet this issue and use the approximate count to calculate the sample rate.
-	if float64(statsTbl.Count*5) < approxiCount {
+	if float64(statsTbl.RealtimeCount*5) < approxiCount {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		return math.Min(1, 150000/approxiCount)
 	}
 	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
-	if statsTbl.Count == 0 {
+	if statsTbl.RealtimeCount == 0 {
 		return 1
 	}
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
-	return math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.Count))
+	return math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {

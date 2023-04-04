@@ -31,6 +31,7 @@ import (
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
+	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
 )
 
@@ -105,6 +107,10 @@ var (
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 )
 
+// GetKVStore returns a kv.Storage.
+// kv encoder of physical mode needs it.
+var GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
+
 // FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {
 	Column  *table.Column
@@ -161,7 +167,7 @@ type LoadDataController struct {
 	checksum          config.PostOpLevel
 	addIndex          bool
 	analyze           config.PostOpLevel
-	threadCnt         int64
+	ThreadCnt         int64
 	BatchSize         int64
 	maxWriteSpeed     config.ByteSize // per second
 	splitFile         bool
@@ -316,8 +322,13 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	return nil
 }
 
+var ignoreInTest = false
+
 func (e *LoadDataController) initDefaultOptions() {
 	threadCnt := runtime.NumCPU()
+	if intest.InTest && !ignoreInTest {
+		threadCnt = 1
+	}
 	if e.Format == LoadDataFormatParquet {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
@@ -327,7 +338,7 @@ func (e *LoadDataController) initDefaultOptions() {
 	e.checksum = config.OpLevelRequired
 	e.addIndex = true
 	e.analyze = config.OpLevelOptional
-	e.threadCnt = int64(threadCnt)
+	e.ThreadCnt = int64(threadCnt)
 	e.BatchSize = 1000
 	e.maxWriteSpeed = unlimitedWriteSpeed
 	e.splitFile = false
@@ -418,8 +429,8 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 	}
 	if opt, ok := specifiedOptions[threadOption]; ok {
 		// boolean true will be taken as 1
-		e.threadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || e.threadCnt <= 0 {
+		e.ThreadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || e.ThreadCnt <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -470,8 +481,8 @@ func (e *LoadDataController) adjustOptions() {
 	}
 	// max value is cpu-count
 	numCPU := int64(runtime.NumCPU())
-	if e.threadCnt > numCPU {
-		e.threadCnt = numCPU
+	if e.ThreadCnt > numCPU {
+		e.ThreadCnt = numCPU
 	}
 	if e.maxWriteSpeed < minWriteSpeed {
 		e.maxWriteSpeed = minWriteSpeed
@@ -708,8 +719,10 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 }
 
 // GetParser returns a parser for the data file.
-func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo LoadDataReaderInfo) (
-	parser mydump.Parser, err error) {
+func (e *LoadDataController) GetParser(
+	ctx context.Context,
+	dataFileInfo LoadDataReaderInfo,
+) (parser mydump.Parser, err error) {
 	reader, err2 := dataFileInfo.Opener(ctx)
 	if err2 != nil {
 		return nil, err2
