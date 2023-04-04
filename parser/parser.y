@@ -256,7 +256,7 @@ import (
 	sqlBigResult      "SQL_BIG_RESULT"
 	sqlCalcFoundRows  "SQL_CALC_FOUND_ROWS"
 	sqlSmallResult    "SQL_SMALL_RESULT"
-	sqlexeption       "SQLEXCEPTION"
+	sqlexception      "SQLEXCEPTION"
 	sqlstate          "SQLSTATE"
 	sqlwarning        "SQLWARNING"
 	ssl               "SSL"
