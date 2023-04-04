@@ -30,7 +30,7 @@ import (
 )
 
 func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
-	require.Equal(t, b.Count, a.Count)
+	require.Equal(t, b.RealtimeCount, a.RealtimeCount)
 	require.Equal(t, b.ModifyCount, a.ModifyCount)
 	require.Equal(t, len(b.Columns), len(a.Columns))
 	for i := range a.Columns {

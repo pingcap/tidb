@@ -82,6 +82,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
+		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
 		(stmtCtx.InExplainStmt && stmtCtx.ExplainFormat != types.ExplainFormatPlanCache) { // in explain internal
 		return nil, nil, false, nil
 	}
@@ -113,7 +114,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		if err := core.SetParameterValuesIntoSCtx(sctx, nil, paramExprs); err != nil {
 			return nil, nil, false, err
 		}
-		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, paramSQL, stmt)
+		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, paramSQL, stmt, is)
 		if err != nil {
 			return nil, nil, false, err
 		}

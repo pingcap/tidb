@@ -113,6 +113,7 @@ const (
 	preInfoGetterKeyDBMetas preInfoGetterKey = "PRE_INFO_GETTER/DB_METAS"
 )
 
+// WithPreInfoGetterDBMetas returns a new context with the specified dbMetas.
 func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) context.Context {
 	return context.WithValue(ctx, preInfoGetterKeyDBMetas, dbMetas)
 }
@@ -734,7 +735,7 @@ outloop:
 		}
 		if isRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
-			for _, kv := range kv.KvPairsFromRows(dataKVs) {
+			for _, kv := range kv.Rows2KvPairs(dataKVs) {
 				if len(lastKey) == 0 {
 					lastKey = kv.Key
 				} else if bytes.Compare(lastKey, kv.Key) > 0 {

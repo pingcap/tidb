@@ -376,6 +376,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	ctx := context.Background()
 	ctrl := gomock.NewController(s.T())
 	mockBackend := mock.NewMockBackend(ctrl)
+	mockEncBuilder := mock.NewMockEncodingBuilder(ctrl)
 	rc := &Controller{
 		cfg:            s.cfg,
 		pauser:         DeliverPauser,
@@ -385,6 +386,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 		backend:        backend.MakeBackend(mockBackend),
 		errorSummaries: makeErrorSummaries(log.L()),
 		saveCpCh:       make(chan saveCp, 1),
+		encBuilder:     mockEncBuilder,
 	}
 	defer close(rc.saveCpCh)
 	go func() {
@@ -403,14 +405,14 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
-	realBackend := tidb.NewTiDBBackend(ctx, nil, "replace", nil)
+	realEncBuilder := tidb.NewEncodingBuilder()
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
-		Return(realBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: tbl})).
+	mockEncBuilder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
+		Return(realEncBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: tbl})).
 		AnyTimes()
-	mockBackend.EXPECT().MakeEmptyRows().Return(realBackend.MakeEmptyRows()).AnyTimes()
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(realEncBuilder.MakeEmptyRows()).AnyTimes()
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(noop.Writer{}, nil)
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).
 		Return(nil, errors.New("mock open index local writer failed"))
@@ -986,6 +988,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		errorMgr:          errormanager.New(nil, cfg, log.L()),
 		taskMgr:           noopTaskMetaMgr{},
 		preInfoGetter:     preInfoGetter,
+		encBuilder:        tidb.NewEncodingBuilder(),
 	}
 	go func() {
 		for scp := range chptCh {
@@ -1420,13 +1423,13 @@ func (s *tableRestoreSuite) TestEstimate() {
 	ctx := context.Background()
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockBackend := mock.NewMockBackend(controller)
+	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
 	require.NoError(s.T(), err)
 
-	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(&encode.EncodingConfig{
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+	mockEncBuilder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(&encode.EncodingConfig{
 		Table: tbl,
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        s.cfg.TiDB.SQLMode,
@@ -1435,7 +1438,6 @@ func (s *tableRestoreSuite) TestEstimate() {
 		},
 		Logger: log.L(),
 	}, nil)).AnyTimes()
-	importer := backend.MakeBackend(mockBackend)
 
 	dbMetas := []*mydump.MDDatabaseMeta{
 		{
@@ -1447,12 +1449,12 @@ func (s *tableRestoreSuite) TestEstimate() {
 		"db1": s.dbInfo,
 	}
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
-	mockTarget := restoremock.NewMockTargetInfo()
+	mockTarget := restoremock.NewTargetInfo()
 
 	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              s.cfg,
 		srcStorage:       s.store,
-		encBuilder:       importer,
+		encBuilder:       mockEncBuilder,
 		ioWorkers:        ioWorkers,
 		dbMetas:          dbMetas,
 		targetInfoGetter: mockTarget,
