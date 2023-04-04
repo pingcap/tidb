@@ -3631,7 +3631,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		storeBootstrapped[store.UUID()] = true
 	}
 	logutil.BgLogger().Info("DEBUG=== got bootstrapped flag from kv",
-		zap.Int64("ver", ver), zap.String("store", store.UUID()))
+		zap.Int64("ver", currentBootstrapVersion), zap.String("store", store.UUID()))
 
 	return ver
 }
