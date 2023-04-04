@@ -266,6 +266,10 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 				return
 			}
+			if !d.isRunningGTask(gTask.ID) {
+				logutil.BgLogger().Info("detect task, this task can't run",
+					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
+			}
 		}
 	}
 }
