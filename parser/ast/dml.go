@@ -2868,7 +2868,7 @@ type ShowStmt struct {
 	Tp                ShowStmtType // Databases/Tables/Columns/....
 	DBName            string
 	Table             *TableName  // Used for showing columns.
-	Procedure         *TableName  // Procedure is not save as table and naming method is consistent with the table name
+	Procedure         *TableName  // Procedure is not saved as table and the naming method is consistent with the table name
 	Partition         model.CIStr // Used for showing partition.
 	Column            *ColumnName // Used for `desc table column`.
 	IndexName         model.CIStr
