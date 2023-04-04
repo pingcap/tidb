@@ -1785,6 +1785,26 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheMultiStmt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec("create table t (a int)")
+
+	tk.MustExec("update t set a=1 where a<10")
+	tk.MustExec("update t set a=2 where a<12")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// multi-stmt SQL cannot hit the cache
+	tk.MustExec("update t set a=1 where a<10; update t set a=2 where a<12")
+	tk.MustExec("update t set a=1 where a<10; update t set a=2 where a<12")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("update t set a=2 where a<12")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestNonPreparedPlanCacheJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
