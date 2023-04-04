@@ -155,6 +155,9 @@ func setStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	storeBootstrapped[storeUUID] = true
+
+	logutil.BgLogger().Info("DEBUG=== setStoreBootstrapped",
+		zap.Int64("ver", currentBootstrapVersion), zap.String("store", storeUUID))
 }
 
 // unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
@@ -163,6 +166,9 @@ func unsetStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	delete(storeBootstrapped, storeUUID)
+
+	logutil.BgLogger().Info("DEBUG=== unsetStoreBootstrapped",
+		zap.Int64("ver", currentBootstrapVersion), zap.String("store", storeUUID))
 }
 
 // SetSchemaLease changes the default schema lease time for DDL.
