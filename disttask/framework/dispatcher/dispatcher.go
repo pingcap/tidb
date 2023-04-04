@@ -150,6 +150,8 @@ func (d *dispatcher) DispatchTaskLoop() {
 		case <-ticker.C:
 			cnt := d.getRunningGTaskCnt()
 			if cnt >= DefaultDispatchConcurrency {
+				logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency",
+					zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
 				break
 			}
 
@@ -175,6 +177,8 @@ func (d *dispatcher) DispatchTaskLoop() {
 					continue
 				}
 				if cnt >= DefaultDispatchConcurrency {
+					logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency", zap.Int64("current task ID", gTask.ID),
+						zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
 					break
 				}
 

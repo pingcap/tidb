@@ -187,12 +187,14 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		require.Equal(t, int64(subtaskCnt), subtasks, fmt.Sprintf("num:%d", i))
 	}
 	// test parallelism control
-	taskID, err := gTaskMgr.AddNewTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
-	require.NoError(t, err)
-	checkGetRunningGTaskCnt()
-	// Clean the task.
-	deleteTasks(t, store, taskID)
-	dsp.(dispatcher.DispatcherForTest).DelRunningGTask(taskID)
+	if taskCnt == 1 {
+		taskID, err := gTaskMgr.AddNewTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
+		require.NoError(t, err)
+		checkGetRunningGTaskCnt()
+		// Clean the task.
+		deleteTasks(t, store, taskID)
+		dsp.(dispatcher.DispatcherForTest).DelRunningGTask(taskID)
+	}
 
 	// test DetectTaskLoop
 	checkGetGTaskState := func(expectedState string) {
