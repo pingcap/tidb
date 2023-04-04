@@ -147,7 +147,6 @@ func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImpo
 	if err != nil {
 		return nil, err
 	}
-	defer localBackend.Close()
 
 	return &tableImporter{
 		LoadDataController: e,
@@ -189,6 +188,8 @@ type tableImporter struct {
 	regionSplitSize int64
 	regionSplitKeys int64
 }
+
+var _ io.Closer = &tableImporter{}
 
 func (d *tableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
@@ -393,4 +394,9 @@ func (ti *tableImporter) importAndCleanup(ctx context.Context, closedEngine *bac
 	// todo: if we need support checkpoint, engine should not be cleanup if import failed.
 	cleanupErr := closedEngine.Cleanup(ctx)
 	return multierr.Combine(importErr, cleanupErr)
+}
+
+func (ti *tableImporter) Close() error {
+	ti.backend.Close()
+	return nil
 }

@@ -808,6 +808,9 @@ func (e *LoadDataController) PhysicalImport(ctx context.Context) (int64, error) 
 	if err != nil {
 		return 0, err
 	}
+	defer func() {
+		_ = importer.Close()
+	}()
 	return 0, importer.importTable(ctx)
 }
 
