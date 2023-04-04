@@ -393,9 +393,10 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	// Special handling for the new tasks.
 	if gTask.State == proto.TaskStatePending {
 		// TODO: Consider using TS.
-		gTask.StartTime = time.Now().UTC()
+		nowTime := time.Now().UTC()
+		gTask.StartTime = nowTime
 		gTask.State = proto.TaskStateRunning
-		gTask.StateUpdateTime = time.Now().UTC()
+		gTask.StateUpdateTime = nowTime
 		retryTimes = nonRetrySQLTime
 	}
 
