@@ -8,10 +8,8 @@ go_library(
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/encode",
-        "//br/pkg/lightning/config",
         "//br/pkg/lightning/verification",
         "//parser/model",
-        "//table",
         "//types",
         "@com_github_google_uuid//:uuid",
     ],

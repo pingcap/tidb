@@ -30,7 +30,6 @@ go_library(
         "//server",
         "//session",
         "//store/mockstore",
-        "//table",
         "//types",
         "//util/sqlexec",
         "@com_github_aws_aws_sdk_go//aws/request",

@@ -566,18 +566,6 @@ func (be *tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
-	panic("Unsupported Operation")
-}
-
-func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
-	panic("Unsupported Operation")
-}
-
-func (be *tidbBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
-	return nil
-}
-
 func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) error {
 	return nil
 }

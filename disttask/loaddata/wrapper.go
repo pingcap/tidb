@@ -80,7 +80,8 @@ func makeTableRegions(ctx context.Context, task *TaskMeta, concurrency int) ([]*
 		},
 	}
 
-	return mydump.MakeTableRegions(ctx, meta, len(task.Table.TargetColumns), cfg, nil, store)
+	dataDivideConfig := mydump.NewDataDivideConfig(cfg, len(task.Table.TargetColumns), nil, store, meta)
+	return mydump.MakeTableRegions(ctx, dataDivideConfig)
 }
 
 func transformSourceType(tp string) (mydump.SourceType, error) {
