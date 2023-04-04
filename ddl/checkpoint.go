@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -50,7 +51,7 @@ type CheckpointManager interface {
 type CentralizedCheckpointManager struct {
 	ctx      context.Context
 	bcCtx    *ingest.BackendContext
-	sessPool *sessionPool
+	sessPool *sess.Pool
 	jobID    int64
 	indexID  int64
 
@@ -89,7 +90,7 @@ type TaskCheckpoint struct {
 
 // NewCentralizedCheckpointManager creates a new checkpoint manager.
 func NewCentralizedCheckpointManager(ctx context.Context, bcCtx *ingest.BackendContext,
-	sessPool *sessionPool, jobID, indexID int64) (*CentralizedCheckpointManager, error) {
+	sessPool *sess.Pool, jobID, indexID int64) (*CentralizedCheckpointManager, error) {
 	instanceAddr := initInstanceAddr()
 	cm := &CentralizedCheckpointManager{
 		ctx:            ctx,
@@ -228,11 +229,11 @@ const (
 )
 
 func (s *CentralizedCheckpointManager) resumeCheckpoint() error {
-	sessCtx, err := s.sessPool.get()
+	sessCtx, err := s.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer s.sessPool.put(sessCtx)
+	defer s.sessPool.Put(sessCtx)
 	ddlSess := session{Context: sessCtx}
 	return ddlSess.runInTxn(func(sess *session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = %s;"
@@ -287,11 +288,11 @@ func (s *CentralizedCheckpointManager) updateCheckpoint() error {
 		s.mu.Unlock()
 	}()
 
-	sessCtx, err := s.sessPool.get()
+	sessCtx, err := s.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer s.sessPool.put(sessCtx)
+	defer s.sessPool.Put(sessCtx)
 	ddlSess := session{Context: sessCtx}
 	err = ddlSess.runInTxn(func(sess *session) error {
 		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_id = %d and ele_type = %s;"

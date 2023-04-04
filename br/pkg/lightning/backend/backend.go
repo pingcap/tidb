@@ -25,12 +25,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/table"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -199,18 +197,6 @@ type AbstractBackend interface {
 	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
 
-	// CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
-	//  may be repeated with other keys in local data source.
-	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error)
-
-	// CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
-	//  the data import by other lightning.
-	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error)
-
-	// ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
-	// according to the required algorithm.
-	ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error
-
 	// TotalMemoryConsume counts total memory usage. This is only used for local backend.
 	TotalMemoryConsume() int64
 }
@@ -373,19 +359,9 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 	}, nil
 }
 
-// CollectLocalDuplicateRows collects duplicate rows from the local backend.
-func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
-	return be.abstract.CollectLocalDuplicateRows(ctx, tbl, tableName, opts)
-}
-
-// CollectRemoteDuplicateRows collects duplicate rows from the remote backend.
-func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
-	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl, tableName, opts)
-}
-
-// ResolveDuplicateRows resolves duplicate rows from the backend.
-func (be Backend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
-	return be.abstract.ResolveDuplicateRows(ctx, tbl, tableName, algorithm)
+// Inner returns the underlying abstract backend.
+func (be Backend) Inner() AbstractBackend {
+	return be.abstract
 }
 
 // Close the opened engine to prepare it for importing.

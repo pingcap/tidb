@@ -31,10 +31,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -783,10 +783,10 @@ func canUseIngest() bool {
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
 func IngestJobsNotExisted(ctx sessionctx.Context) bool {
-	sess := session{ctx}
+	se := session{ctx}
 	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
 	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
-	rows, err := sess.execute(context.Background(), sql, "check-pitr")
+	rows, err := se.execute(context.Background(), sql, "check-pitr")
 	if err != nil {
 		logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
 		return false
@@ -998,12 +998,12 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 	})
 
-	sctx, err1 := w.sessPool.get()
+	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
 		err = err1
 		return
 	}
-	defer w.sessPool.put(sctx)
+	defer w.sessPool.Put(sctx)
 	rh := newReorgHandler(newSession(sctx))
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
@@ -1223,34 +1223,6 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 		return err
 	}
 
-	return nil
-}
-
-// CheckDropIndexOnAutoIncrementColumn checks if the index to drop is on auto_increment column.
-func CheckDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
-	cols := tblInfo.Columns
-	for _, idxCol := range indexInfo.Columns {
-		flag := cols[idxCol.Offset].GetFlag()
-		if !mysql.HasAutoIncrementFlag(flag) {
-			continue
-		}
-		// check the count of index on auto_increment column.
-		count := 0
-		for _, idx := range tblInfo.Indices {
-			for _, c := range idx.Columns {
-				if c.Name.L == idxCol.Name.L {
-					count++
-					break
-				}
-			}
-		}
-		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(flag) {
-			count++
-		}
-		if count < 2 {
-			return autoid.ErrWrongAutoKey
-		}
-	}
 	return nil
 }
 
@@ -1974,7 +1946,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 // updateReorgInfo will find the next partition according to current reorgInfo.
 // If no more partitions, or table t is not a partitioned table, returns true to
 // indicate that the reorganize work is finished.
-func updateReorgInfo(sessPool *sessionPool, t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
+func updateReorgInfo(sessPool *sess.Pool, t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
 	pid, startKey, endKey, err := getNextPartitionInfo(reorg, t, reorg.PhysicalTableID)
 	if err != nil {
 		return false, errors.Trace(err)

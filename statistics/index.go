@@ -380,7 +380,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 	l := len(singleColumnEstResults)
 	// Convert the first 4 to selectivity results.
 	for i := 0; i < l && i < 4; i++ {
-		singleColumnEstResults[i] = singleColumnEstResults[i] / float64(coll.Count)
+		singleColumnEstResults[i] = singleColumnEstResults[i] / float64(coll.RealtimeCount)
 	}
 	failpoint.Inject("cleanEstResults", func() {
 		singleColumnEstResults = singleColumnEstResults[:0]

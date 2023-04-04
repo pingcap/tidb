@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -40,10 +41,7 @@ import (
 )
 
 // CheckBackfillJobFinishInterval is export for test.
-var (
-	CheckBackfillJobFinishInterval = 300 * time.Millisecond
-	telemetryDistReorgUsage        = metrics.TelemetryDistReorgCnt
-)
+var CheckBackfillJobFinishInterval = 300 * time.Millisecond
 
 const (
 	distPhysicalTableConcurrency = 16
@@ -186,7 +184,7 @@ func (dc *ddlCtx) sendPhysicalTableMetas(reorgInfo *reorgInfo, t table.Table, sJ
 	}
 }
 
-func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
+func (dc *ddlCtx) controlWriteTableRecord(sessPool *sess.Pool, t table.Table, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	if startKey == nil && endKey == nil {
 		return nil
@@ -197,12 +195,12 @@ func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, 
 	logutil.BgLogger().Info("[ddl] control write table record start",
 		zap.Int64("jobID", ddlJobID), zap.Stringer("ele", currEle),
 		zap.Int64("tblID", t.Meta().ID), zap.Int64("currPID", reorgInfo.PhysicalTableID))
-	sCtx, err := sessPool.get()
+	sCtx, err := sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer sessPool.put(sCtx)
-	sess := newSession(sCtx)
+	defer sessPool.Put(sCtx)
+	se := newSession(sCtx)
 
 	if err := dc.isReorgRunnable(ddlJobID, true); err != nil {
 		return errors.Trace(err)
@@ -238,18 +236,18 @@ func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, 
 		sJobCtx.minBatchSize = minGenPhysicalTableTaskBatch
 	}
 
-	err = checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, currEle.ID, currEle.TypeKey)
+	err = checkAndHandleInterruptedBackfillJobs(se, ddlJobID, currEle.ID, currEle.TypeKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	phyTblMetas, err := getRunningPhysicalTableMetas(sess, sJobCtx, reorgInfo)
+	phyTblMetas, err := getRunningPhysicalTableMetas(se, sJobCtx, reorgInfo)
 	if err != nil {
 		return err
 	}
 
 	sCtxs := make([]sessionctx.Context, 0, concurrency)
 	for i := 0; i < concurrency; i++ {
-		sCtx, err := sessPool.get()
+		sCtx, err := sessPool.Get()
 		if err != nil {
 			return err
 		}
@@ -273,9 +271,9 @@ func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, 
 	}
 	wg.Wait()
 	for _, sCtx := range sCtxs {
-		sessPool.put(sCtx)
+		sessPool.Put(sCtx)
 	}
-	return checkReorgJobFinished(dc.ctx, sess, &dc.reorgCtx, ddlJobID, currEle)
+	return checkReorgJobFinished(dc.ctx, se, &dc.reorgCtx, ddlJobID, currEle)
 }
 
 func addBatchBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext, phyTblID int64, notDistTask bool,
@@ -333,7 +331,7 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges, batchSize)
+		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges)
 		if len(batchTasks) == 0 {
 			break
 		}

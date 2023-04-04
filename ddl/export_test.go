@@ -70,6 +70,10 @@ func ConvertRowToHandleAndIndexDatum(row chunk.Row, copCtx *copContext) (kv.Hand
 
 type dummyCheckpointMgr struct{}
 
+func (d *dummyCheckpointMgr) Status() (_ int, _ kv.Key) {
+	return 0, nil
+}
+
 func (d *dummyCheckpointMgr) IsComplete(_ int, _, _ kv.Key) bool {
 	return false
 }

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -60,7 +61,7 @@ const maxBackfillWorkerSize = 16
 type txnBackfillScheduler struct {
 	ctx          context.Context
 	reorgInfo    *reorgInfo
-	sessPool     *sessionPool
+	sessPool     *sess.Pool
 	tp           backfillerType
 	tbl          table.PhysicalTable
 	decodeColMap map[int64]decoder.Column
@@ -75,7 +76,7 @@ type txnBackfillScheduler struct {
 	closed    bool
 }
 
-func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
+func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -84,7 +85,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessio
 	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
 }
 
-func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
+func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
 	decColMap, err := makeupDecodeColMap(sessCtx, info.dbInfo.Name, tbl)
@@ -256,7 +257,7 @@ func (b *txnBackfillScheduler) close(force bool) {
 type ingestBackfillScheduler struct {
 	ctx       context.Context
 	reorgInfo *reorgInfo
-	sessPool  *sessionPool
+	sessPool  *sess.Pool
 	tbl       table.PhysicalTable
 
 	closed bool
@@ -276,7 +277,7 @@ type ingestBackfillScheduler struct {
 }
 
 func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
-	sessPool *sessionPool, tbl table.PhysicalTable) *ingestBackfillScheduler {
+	sessPool *sess.Pool, tbl table.PhysicalTable) *ingestBackfillScheduler {
 	return &ingestBackfillScheduler{
 		ctx:       ctx,
 		reorgInfo: info,
