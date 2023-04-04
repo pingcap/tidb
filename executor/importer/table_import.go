@@ -312,6 +312,7 @@ func (ti *tableImporterImpl) populateChunks(ctx context.Context) error {
 	}
 
 	if common.TableHasAutoID(ti.tableInfo.Core) {
+		// todo: the new base should be the max row id of the last Node if we support distributed import.
 		if err = common.RebaseGlobalAutoID(ctx, 0, ti.kvStore, ti.dbID, ti.tableInfo.Core); err != nil {
 			return errors.Trace(err)
 		}

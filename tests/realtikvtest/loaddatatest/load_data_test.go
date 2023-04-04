@@ -54,39 +54,35 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 	})
 	s.prepareAndUseDB("load_data")
 
-	//allData := []string{"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44", "5 test5 55", "6 test6 66"}
+	allData := []string{"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44", "5 test5 55", "6 test6 66"}
 	cases := []struct {
 		createTableSQL string
 		flags          string
 		res            []string
 		querySql       string
 	}{
-		//{"create table t (a bigint, b varchar(100), c int);", "", allData},
-		//{"create table t (a bigint primary key, b varchar(100), c int);", "", allData},
-		//{"create table t (a bigint primary key, b varchar(100), c int, key(b, a));", "", allData},
-		//{"create table t (a bigint auto_increment primary key, b varchar(100), c int);", "", allData},
-		//{"create table t (a bigint auto_random primary key, b varchar(100), c int);", "", allData},
-		//
-		//{
-		//	createTableSQL: "create table t (a bigint, b varchar(100) default 'a', c int);",
-		//	flags:          "(a, @1, c)",
-		//	res:            []string{"1 a 11", "2 a 22", "3 a 33", "4 a 44", "5 a 55", "6 a 66"},
-		//},
-		//{
-		//	createTableSQL: "create table t (a bigint, b varchar(100), c int);",
-		//	flags:          "(c, b, a)",
-		//	res:            []string{"11 test1 1", "22 test2 2", "33 test3 3", "44 test4 4", "55 test5 5", "66 test6 6"},
-		//},
-		//{
-		//	createTableSQL: "create table t (a bigint, b varchar(100), c int, d varchar(100));",
-		//	flags:          "(c, d, a)",
-		//	res:            []string{"11 <nil> 1 test1", "22 <nil> 2 test2", "33 <nil> 3 test3", "44 <nil> 4 test4", "55 <nil> 5 test5", "66 <nil> 6 test6"},
-		//},
-		//{
-		//	createTableSQL: "create table t (a bigint auto_increment primary key, b varchar(100), c int, d varchar(100));",
-		//	flags:          "(@1, @2, a) set c = @1+100, d=@2, b = concat(@2, '-aa')",
-		//	res:            []string{"11 test1-aa 101 test1", "22 test2-aa 102 test2", "33 test3-aa 103 test3", "44 test4-aa 104 test4", "55 test5-aa 105 test5", "66 test6-aa 106 test6"},
-		//},
+		{"create table t (a bigint, b varchar(100), c int);", "", allData, ""},
+		{"create table t (a bigint primary key, b varchar(100), c int);", "", allData, ""},
+		{"create table t (a bigint primary key, b varchar(100), c int, key(b, a));", "", allData, ""},
+		{"create table t (a bigint auto_increment primary key, b varchar(100), c int);", "", allData, ""},
+		{"create table t (a bigint auto_random primary key, b varchar(100), c int);", "", allData, ""},
+		{"create table t (a bigint, b varchar(100), c int, primary key(b,c));", "", allData, ""},
+
+		{
+			createTableSQL: "create table t (a bigint, b varchar(100), c int);",
+			flags:          "(c, b, a)",
+			res:            []string{"11 test1 1", "22 test2 2", "33 test3 3", "44 test4 4", "55 test5 5", "66 test6 6"},
+		},
+		{
+			createTableSQL: "create table t (a bigint, b varchar(100), c int, d varchar(100));",
+			flags:          "(c, d, a)",
+			res:            []string{"11 <nil> 1 test1", "22 <nil> 2 test2", "33 <nil> 3 test3", "44 <nil> 4 test4", "55 <nil> 5 test5", "66 <nil> 6 test6"},
+		},
+		{
+			createTableSQL: "create table t (a bigint auto_increment primary key, b varchar(100), c int, d varchar(100));",
+			flags:          "(@1, @2, a) set c = @1+100, d=@2, b = concat(@2, '-aa')",
+			res:            []string{"11 test1-aa 101 test1", "22 test2-aa 102 test2", "33 test3-aa 103 test3", "44 test4-aa 104 test4", "55 test5-aa 105 test5", "66 test6-aa 106 test6"},
+		},
 		// SHARD_ROW_ID_BITS
 		{
 			createTableSQL: "create table t (a bigint, b varchar(100), c int, d varchar(100)) SHARD_ROW_ID_BITS 10;",
