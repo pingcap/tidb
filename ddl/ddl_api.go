@@ -7276,11 +7276,11 @@ func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 		Args:       []interface{}{arg},
 	}
 
-	ctx, err := d.sessPool.get()
+	ctx, err := d.sessPool.Get()
 	if err != nil {
 		return err
 	}
-	defer d.sessPool.put(ctx)
+	defer d.sessPool.Put(ctx)
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)

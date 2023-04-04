@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -78,12 +79,6 @@ type reorgCtx struct {
 	}
 
 	references atomicutil.Int32
-}
-
-// nullableKey can store <nil> kv.Key.
-// Storing a nil object to atomic.Value can lead to panic. This is a workaround.
-type nullableKey struct {
-	key kv.Key
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -323,11 +318,11 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 
 func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	var ctx sessionctx.Context
-	ctx, err := w.sessPool.get()
+	ctx, err := w.sessPool.Get()
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
-	defer w.sessPool.put(ctx)
+	defer w.sessPool.Put(ctx)
 
 	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
 	// `mock.Context` is used in tests, which doesn't implement RestrictedSQLExecutor
@@ -761,24 +756,24 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 
 // UpdateReorgMeta creates a new transaction and updates tidb_ddl_reorg table,
 // so the reorg can restart in case of issues.
-func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err error) {
+func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error) {
 	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
-	sctx, err := pool.get()
+	sctx, err := pool.Get()
 	if err != nil {
 		return
 	}
-	defer pool.put(sctx)
+	defer pool.Put(sctx)
 
-	sess := newSession(sctx)
-	err = sess.begin()
+	se := newSession(sctx)
+	err = se.begin()
 	if err != nil {
 		return
 	}
-	rh := newReorgHandler(sess)
+	rh := newReorgHandler(se)
 	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
-	err1 := sess.commit()
+	err1 := se.commit()
 	if err == nil {
 		err = err1
 	}

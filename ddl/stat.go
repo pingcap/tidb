@@ -50,11 +50,11 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	m[serverID] = d.uuid
 	var ddlInfo *Info
 
-	s, err := d.sessPool.get()
+	s, err := d.sessPool.Get()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer d.sessPool.put(s)
+	defer d.sessPool.Put(s)
 	ddlInfo, err = GetDDLInfoWithNewTxn(s)
 	if err != nil {
 		return nil, errors.Trace(err)

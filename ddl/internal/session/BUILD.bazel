@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "session",
+    srcs = ["session_pool.go"],
+    importpath = "github.com/pingcap/tidb/ddl/internal/session",
+    visibility = ["//ddl:__subpackages__"],
+    deps = [
+        "//kv",
+        "//parser/mysql",
+        "//sessionctx",
+        "//util/logutil",
+        "//util/mock",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

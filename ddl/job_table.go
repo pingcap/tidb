@@ -172,11 +172,11 @@ func (d *ddl) getReorgJob(sess *session) (*model.Job, error) {
 }
 
 func (d *ddl) startDispatchLoop() {
-	se, err := d.sessPool.get()
+	se, err := d.sessPool.Get()
 	if err != nil {
 		logutil.BgLogger().Fatal("dispatch loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
-	defer d.sessPool.put(se)
+	defer d.sessPool.Put(se)
 	sess := newSession(se)
 	var notifyDDLJobByEtcdCh clientv3.WatchChan
 	if d.etcdCli != nil {
@@ -378,7 +378,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 	if !isDistReorg {
 		return
 	}
-	se, err := d.sessPool.get()
+	se, err := d.sessPool.Get()
 	if err != nil {
 		logutil.BgLogger().Fatal("dispatch backfill jobs loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
@@ -386,7 +386,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 
 	runningJobIDs := d.backfillCtxJobIDs()
 	if len(runningJobIDs) >= reorgWorkerCnt {
-		d.sessPool.put(se)
+		d.sessPool.Put(se)
 		return
 	}
 
@@ -399,14 +399,14 @@ func (d *ddl) loadBackfillJobAndRun() {
 		} else {
 			logutil.BgLogger().Debug("[ddl] get no backfill job in this instance")
 		}
-		d.sessPool.put(se)
+		d.sessPool.Put(se)
 		return
 	}
 
 	jobCtx, existent := d.setBackfillCtxJobContext(bfJob.JobID, bfJob.Meta.Query, bfJob.Meta.Type)
 	if existent {
 		logutil.BgLogger().Warn("[ddl] get the type of backfill job is running in this instance", zap.String("backfill job", bfJob.AbbrStr()))
-		d.sessPool.put(se)
+		d.sessPool.Put(se)
 		return
 	}
 	// TODO: Adjust how the non-owner uses ReorgCtx.
@@ -416,7 +416,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 			tidbutil.Recover(metrics.LabelDistReorg, "runBackfillJobs", nil, false)
 			d.removeBackfillCtxJobCtx(bfJob.JobID)
 			d.removeReorgCtx(genBackfillJobReorgCtxID(bfJob.JobID))
-			d.sessPool.put(se)
+			d.sessPool.Put(se)
 		}()
 
 		if bfJob.Meta.ReorgTp == model.ReorgTypeLitMerge {
@@ -816,12 +816,12 @@ func GetBackfillMetas(sess *session, tblName, condition string, label string) ([
 
 	metas := make([]*model.BackfillMeta, 0, len(rows))
 	for _, r := range rows {
-		meta := &model.BackfillMeta{}
-		err = meta.Decode(r.GetBytes(0))
+		m := &model.BackfillMeta{}
+		err = m.Decode(r.GetBytes(0))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		metas = append(metas, meta)
+		metas = append(metas, m)
 	}
 
 	return metas, nil
@@ -848,15 +848,15 @@ func GetBackfillIDAndMetas(sess *session, tblName, condition string, label strin
 		if err != nil {
 			return nil, err
 		}
-		meta := &model.BackfillMeta{}
-		err = meta.Decode(r.GetBytes(1))
+		m := &model.BackfillMeta{}
+		err = m.Decode(r.GetBytes(1))
 		if err != nil {
 			return nil, err
 		}
 		pTblMeta := BackfillJobRangeMeta{
 			ID:       id,
-			StartKey: meta.StartKey,
-			EndKey:   meta.EndKey,
+			StartKey: m.StartKey,
+			EndKey:   m.EndKey,
 			PhyTblID: r.GetInt64(2),
 		}
 		pTblMetas = append(pTblMetas, &pTblMeta)

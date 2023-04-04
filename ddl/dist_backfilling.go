@@ -142,7 +142,7 @@ func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, worker
 
 	for i := 0; i < workerCnt; i++ {
 		var se sessionctx.Context
-		se, err = d.sessPool.get()
+		se, err = d.sessPool.Get()
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] new backfill worker context, get a session failed", zap.Int64("jobID", jobID), zap.Error(err))
 			return nil, errors.Trace(err)
@@ -228,7 +228,7 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 
 func (bwCtx *backfillWorkerContext) close(d *ddl) {
 	for _, s := range bwCtx.sessCtxs {
-		d.sessPool.put(s)
+		d.sessPool.Put(s)
 	}
 	for _, w := range bwCtx.backfillWorkers {
 		d.backfillCtxPool.put(w)

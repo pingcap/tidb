@@ -697,11 +697,11 @@ func (w *worker) doModifyColumnTypeWithData(
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
-				sctx, err := w.sessPool.get()
+				sctx, err := w.sessPool.Get()
 				if err != nil {
 					failpoint.Return(ver, err)
 				}
-				defer w.sessPool.put(sctx)
+				defer w.sessPool.Put(sctx)
 
 				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 				//nolint:forcetypeassert
@@ -810,12 +810,12 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, j
 func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
-	sctx, err1 := w.sessPool.get()
+	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
 		err = errors.Trace(err1)
 		return
 	}
-	defer w.sessPool.put(sctx)
+	defer w.sessPool.Put(sctx)
 	rh := newReorgHandler(newSession(sctx))
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
@@ -1826,11 +1826,11 @@ func rollbackModifyColumnJob(d *ddlCtx, t *meta.Meta, tblInfo *model.TableInfo, 
 func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, cols []*model.ColumnInfo, newCol *model.ColumnInfo, isDataTruncated bool) error {
 	// Get sessionctx from context resource pool.
 	var sctx sessionctx.Context
-	sctx, err := w.sessPool.get()
+	sctx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.put(sctx)
+	defer w.sessPool.Put(sctx)
 
 	skipCheck := false
 	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {

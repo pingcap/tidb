@@ -584,7 +584,7 @@ func (d *ddl) PollTiFlashRoutine() {
 				}
 			}
 
-			sctx, err := d.sessPool.get()
+			sctx, err := d.sessPool.Get()
 			if err == nil {
 				if d.ownerManager.IsOwner() {
 					err := d.refreshTiFlashTicker(sctx, pollTiflashContext)
@@ -599,10 +599,10 @@ func (d *ddl) PollTiFlashRoutine() {
 				} else {
 					infosync.CleanTiFlashProgressCache()
 				}
-				d.sessPool.put(sctx)
+				d.sessPool.Put(sctx)
 			} else {
 				if sctx != nil {
-					d.sessPool.put(sctx)
+					d.sessPool.Put(sctx)
 				}
 				logutil.BgLogger().Error("failed to get session for pollTiFlashReplicaStatus", zap.Error(err))
 			}
