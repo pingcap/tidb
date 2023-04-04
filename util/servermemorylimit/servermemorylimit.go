@@ -16,12 +16,12 @@ package servermemorylimit
 
 import (
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
