@@ -35,7 +35,7 @@ type engineProcessor struct {
 	backend       backend.Backend
 	tableInfo     *checkpoints.TidbTableInfo
 	logger        *zap.Logger
-	tableImporter TableImporter
+	tableImporter tableImporter
 	kvSorted      bool
 	rowOrdered    bool
 	indexEngine   *backend.OpenedEngine
@@ -88,7 +88,7 @@ func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.Op
 	for _, chunk := range ep.chunks {
 		var (
 			parser                  mydump.Parser
-			encoder                 KVEncoder
+			encoder                 kvEncoder
 			dataWriter, indexWriter *backend.LocalEngineWriter
 		)
 		closer.reset()
@@ -124,7 +124,7 @@ func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.Op
 			parser:      parser,
 			chunkInfo:   chunk,
 			logger:      ep.logger.With(zap.String("key", chunk.GetKey())),
-			kvsCh:       make(chan []deliveredKVs, maxKVQueueSize),
+			kvsCh:       make(chan []deliveredRow, maxKVQueueSize),
 			dataWriter:  dataWriter,
 			indexWriter: indexWriter,
 			encoder:     encoder,

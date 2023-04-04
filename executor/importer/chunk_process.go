@@ -35,14 +35,15 @@ import (
 	"go.uber.org/zap"
 )
 
+// constants, make it a variable for test
 var (
 	maxKVQueueSize         = 32             // Cache at most this number of rows before blocking the encode loop
-	minDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
+	MinDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
 	// see default for tikv-importer.max-kv-pairs
-	minDeliverKVPairCnt = 4096
+	MinDeliverRowCnt = 4096
 )
 
-type deliveredKVs struct {
+type deliveredRow struct {
 	kvs    *kv.Pairs // if kvs is nil, this indicated we've got the last message.
 	offset int64
 	rowID  int64
@@ -114,12 +115,12 @@ type chunkProcessor struct {
 	parser      mydump.Parser
 	chunkInfo   *checkpoints.ChunkCheckpoint
 	logger      *zap.Logger
-	kvsCh       chan []deliveredKVs
+	kvsCh       chan []deliveredRow
 	dataWriter  *backend.LocalEngineWriter
 	indexWriter *backend.LocalEngineWriter
 
 	checksum verify.KVChecksum
-	encoder  KVEncoder
+	encoder  kvEncoder
 	kvStore  tidbkv.Storage
 }
 
@@ -155,7 +156,7 @@ func (p *chunkProcessor) process(ctx context.Context) error {
 func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-chan deliverResult) error {
 	defer close(p.kvsCh)
 
-	send := func(kvs []deliveredKVs) error {
+	send := func(kvs []deliveredRow) error {
 		select {
 		case p.kvsCh <- kvs:
 			return nil
@@ -178,7 +179,7 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 	for !reachEOF {
 		var readDur, encodeDur time.Duration
 		canDeliver := false
-		kvPacket := make([]deliveredKVs, 0, minDeliverKVPairCnt)
+		rowBatch := make([]deliveredRow, 0, MinDeliverRowCnt)
 		var newOffset, rowID int64
 		var kvSize uint64
 	outLoop:
@@ -212,19 +213,19 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 				return err
 			}
 
-			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, offset: newOffset, rowID: rowID})
+			rowBatch = append(rowBatch, deliveredRow{kvs: kvs, offset: newOffset, rowID: rowID})
 			kvSize += kvs.Size()
 			// pebble cannot allow > 4.0G kv in one batch.
 			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
 			// so add this check.
-			if kvSize >= minDeliverBytes || len(kvPacket) >= minDeliverKVPairCnt {
+			if kvSize >= MinDeliverBytes || len(rowBatch) >= MinDeliverRowCnt {
 				canDeliver = true
 				kvSize = 0
 			}
 		}
 
-		if len(kvPacket) > 0 {
-			if err = send(kvPacket); err != nil {
+		if len(rowBatch) > 0 {
+			if err = send(rowBatch); err != nil {
 				return err
 			}
 		}
@@ -242,7 +243,7 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 
 	for {
 	outer:
-		for kvBatch.size() < minDeliverBytes {
+		for kvBatch.size() < MinDeliverBytes {
 			select {
 			case kvPacket, ok := <-p.kvsCh:
 				if !ok {

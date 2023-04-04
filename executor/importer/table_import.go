@@ -189,12 +189,12 @@ func (e *LoadDataController) import0(ctx context.Context) (err error) {
 	return tblImporter.importTable(ctx)
 }
 
-type TableImporter interface {
+type tableImporter interface {
 	GetParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error)
-	GetKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error)
+	GetKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEncoder, error)
 }
 
-var _ TableImporter = &tableImporterImpl{}
+var _ tableImporter = &tableImporterImpl{}
 
 type tableImporterImpl struct {
 	*LoadDataController
@@ -243,7 +243,7 @@ func (d *tableImporterImpl) GetParser(ctx context.Context, chunk *checkpoints.Ch
 	return parser, nil
 }
 
-func (d *tableImporterImpl) GetKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {
+func (d *tableImporterImpl) GetKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        d.sqlMode,
@@ -285,7 +285,7 @@ func (ti *tableImporterImpl) populateChunks(ctx context.Context) error {
 		return err
 	}
 
-	var maxRowId int64
+	var maxRowID int64
 	timestamp := time.Now().Unix()
 	for _, region := range tableRegions {
 		engine, found := ti.tableCp.Engines[region.EngineID]
@@ -306,8 +306,8 @@ func (ti *tableImporterImpl) populateChunks(ctx context.Context) error {
 			Timestamp:         timestamp,
 		}
 		engine.Chunks = append(engine.Chunks, ccp)
-		if region.Chunk.RowIDMax > maxRowId {
-			maxRowId = region.Chunk.RowIDMax
+		if region.Chunk.RowIDMax > maxRowID {
+			maxRowID = region.Chunk.RowIDMax
 		}
 	}
 
@@ -316,11 +316,11 @@ func (ti *tableImporterImpl) populateChunks(ctx context.Context) error {
 		if err = common.RebaseGlobalAutoID(ctx, 0, ti.kvStore, ti.dbID, ti.tableInfo.Core); err != nil {
 			return errors.Trace(err)
 		}
-		newMinRowId, _, err := common.AllocGlobalAutoID(ctx, maxRowId, ti.kvStore, ti.dbID, ti.tableInfo.Core)
+		newMinRowID, _, err := common.AllocGlobalAutoID(ctx, maxRowID, ti.kvStore, ti.dbID, ti.tableInfo.Core)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		ti.rebaseChunkRowID(newMinRowId)
+		ti.rebaseChunkRowID(newMinRowID)
 	}
 
 	// Add index engine checkpoint

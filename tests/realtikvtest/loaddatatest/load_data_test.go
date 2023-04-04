@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
 )
 
@@ -59,7 +60,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 		createTableSQL string
 		flags          string
 		res            []string
-		querySql       string
+		querySQL       string
 	}{
 		{"create table t (a bigint, b varchar(100), c int);", "", allData, ""},
 		{"create table t (a bigint primary key, b varchar(100), c int);", "", allData, ""},
@@ -88,7 +89,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 			createTableSQL: "create table t (a bigint, b varchar(100), c int, d varchar(100)) SHARD_ROW_ID_BITS 10;",
 			flags:          "(@1, @2, a) set c = @1+100, d=@2, b = concat(@2, '-aa')",
 			res:            []string{"11 test1-aa 101 test1", "22 test2-aa 102 test2", "33 test3-aa 103 test3", "44 test4-aa 104 test4", "55 test5-aa 105 test5", "66 test6-aa 106 test6"},
-			querySql:       "select * from t order by a",
+			querySQL:       "select * from t order by a",
 		},
 		// default value for auto_increment
 		{
@@ -110,7 +111,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 				"6052837899185946632 6 test6 66",
 			},
 			// auto_random id contains shard bit.
-			querySql: "select * from t order by b",
+			querySQL: "select * from t order by b",
 		},
 	}
 
@@ -121,11 +122,11 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 		s.tk.MustExec(c.createTableSQL)
 		sql := fmt.Sprintf(loadDataSQL, c.flags)
 		s.tk.MustExec(sql)
-		querySql := "SELECT * FROM t;"
-		if c.querySql != "" {
-			querySql = c.querySql
+		querySQL := "SELECT * FROM t;"
+		if c.querySQL != "" {
+			querySQL = c.querySQL
 		}
-		s.tk.MustQuery(querySql).Check(testkit.Rows(c.res...))
+		s.tk.MustQuery(querySQL).Check(testkit.Rows(c.res...))
 	}
 }
 
@@ -251,4 +252,47 @@ func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
 		INTO TABLE t fields terminated by ',' (a,b,@1) set c=COALESCE(@1, 100) with import_mode='physical'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 test1 100", "2 test2 22"}...))
+}
+
+func (s *mockGCSSuite) TestDeliverBytesRows() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-multi-load",
+			Name:       "min-deliver-bytes-rows.csv",
+		},
+		Content: []byte(`1,test1,11
+2,test2,22
+3,test3,33
+4,test4,44
+5,test5,55
+6,test6,66
+7,test7,77
+8,test8,88
+9,test9,99`),
+	})
+	s.prepareAndUseDB("load_data")
+	s.tk.MustExec("drop table if exists t;")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	bak := importer.MinDeliverBytes
+	importer.MinDeliverBytes = 10
+	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/min-deliver-bytes-rows.csv?endpoint=%s'
+		INTO TABLE t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
+		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
+		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
+	}...))
+	importer.MinDeliverBytes = bak
+
+	s.tk.MustExec("truncate table t")
+	bakCnt := importer.MinDeliverRowCnt
+	importer.MinDeliverRowCnt = 2
+	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/min-deliver-bytes-rows.csv?endpoint=%s'
+		INTO TABLE t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
+		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
+		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
+	}...))
+	importer.MinDeliverRowCnt = bakCnt
 }
