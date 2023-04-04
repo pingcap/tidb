@@ -81,6 +81,7 @@ const (
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
+	flagPushDownSequence
 )
 
 var optRuleList = []logicalOptRule{
@@ -105,6 +106,7 @@ var optRuleList = []logicalOptRule{
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&pushDownSequenceSolver{},
 }
 
 type logicalOptimizeOp struct {
