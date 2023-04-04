@@ -187,7 +187,7 @@ start_services_impl() {
     TIDB_CONFIG="tests/config/tidb.toml"
     TIKV_CONFIG="tests/config/tikv.toml"
     PD_CONFIG="tests/config/pd.toml"
-    RUN_TIFLASH=1
+    RUN_TIFLASH=true
 
     while [[ $# -gt 0 ]]
     do
@@ -221,8 +221,8 @@ start_services_impl() {
     ensure_tikv
     start_tidb
 
-    if [ "$RUN_TIFLASH" -ne 0 ]; then :
-        # start_tiflash
+    if $RUN_TIFLASH; then
+        start_tiflash
     fi
 
     i=0

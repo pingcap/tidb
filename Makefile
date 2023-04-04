@@ -373,14 +373,14 @@ br_bins:
 	@which bin/tikv-server
 	@which bin/pd-server
 	@which bin/pd-ctl
-	# @which bin/go-ycsb
+	@which bin/go-ycsb
 	@which bin/minio
-	# @which bin/tiflash
-	# @which bin/libtiflash_proxy.so
-	# @which bin/cdc
-	# @which bin/fake-gcs-server
-	# @which bin/tikv-importer
-	# if [ ! -d bin/flash_cluster_manager ]; then echo "flash_cluster_manager not exist"; exit 1; fi
+	@which bin/tiflash
+	@which bin/libtiflash_proxy.so
+	@which bin/cdc
+	@which bin/fake-gcs-server
+	@which bin/tikv-importer
+	if [ ! -d bin/flash_cluster_manager ]; then echo "flash_cluster_manager not exist"; exit 1; fi
 
 %_generated.go: %.rl
 	ragel -Z -G2 -o tmp_parser.go $<
