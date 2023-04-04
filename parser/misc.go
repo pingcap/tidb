@@ -29,8 +29,18 @@ func isIdentExtend(ch byte) bool {
 	return ch >= 0x80
 }
 
+// Initialize a lookup table for isUserVarChar
+var isUserVarCharTable [256]bool
+
+func init() {
+	for i := 0; i < 256; i++ {
+		ch := byte(i)
+		isUserVarCharTable[i] = isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
+	}
+}
+
 func isUserVarChar(ch byte) bool {
-	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
+	return isUserVarCharTable[ch]
 }
 
 type trieNode struct {
@@ -1004,33 +1014,30 @@ var hintTokenMap = map[string]int{
 func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	// An identifier before or after '.' means it is part of a qualified identifier.
 	// We do not parse it as keyword.
-	if s.r.peek() == '.' {
+	if s.r.peek() == '.' || (offset > 0 && s.r.s[offset-1] == '.') {
 		return 0
 	}
-	if offset > 0 && s.r.s[offset-1] == '.' {
-		return 0
-	}
+
 	buf := &s.buf
 	buf.Reset()
 	buf.Grow(len(lit))
 	data := buf.Bytes()[:len(lit)]
+
 	for i := 0; i < len(lit); i++ {
-		if lit[i] >= 'a' && lit[i] <= 'z' {
-			data[i] = lit[i] + 'A' - 'a'
+		c := lit[i]
+		if c >= 'a' && c <= 'z' {
+			data[i] = c + 'A' - 'a'
 		} else {
-			data[i] = lit[i]
+			data[i] = c
 		}
 	}
 
-	checkBtFuncToken := false
-	if s.r.peek() == '(' {
-		checkBtFuncToken = true
-	} else if s.sqlMode.HasIgnoreSpaceMode() {
+	checkBtFuncToken := s.r.peek() == '('
+	if !checkBtFuncToken && s.sqlMode.HasIgnoreSpaceMode() {
 		s.skipWhitespace()
-		if s.r.peek() == '(' {
-			checkBtFuncToken = true
-		}
+		checkBtFuncToken = s.r.peek() == '('
 	}
+
 	if checkBtFuncToken {
 		if tok := btFuncTokenMap[string(data)]; tok != 0 {
 			return tok
