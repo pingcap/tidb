@@ -67,7 +67,7 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 
 func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	c := make(chan struct{})
-	p, _ := NewPool("TestPoolTuneScaleUp", 2, util.UNKNOWN, WithBlocking(false))
+	p, _ := NewPool("TestPoolTuneScaleUp", 2, util.UNKNOWN, WithBlocking(true))
 	for i := 0; i < 2; i++ {
 		_ = p.Run(func() {
 			<-c
@@ -94,7 +94,7 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	}
 	p.Tune(8)
 	wg.Wait()
-	require.Equal(t, int32(8), p.Running())
+	require.Eventually(t, func() bool { return p.Running() == 8 }, 1*time.Second, 200*time.Millisecond)
 	// test pool tune scale down
 	p.Tune(2)
 	for i := 0; i < 6; i++ {
