@@ -130,6 +130,10 @@ const (
 )
 
 func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
+	}()
 	// test DispatchTaskLoop
 	// test parallelism control
 	var originalConcurrency int
@@ -180,7 +184,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		require.Equal(t, int64(i+1), tasks[i].ID)
 		subtasks, err := subTaskMgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
 		require.NoError(t, err)
-		require.Equal(t, subtasks, int64(subtaskCnt))
+		require.Equal(t, int64(subtaskCnt), subtasks, fmt.Sprintf("num:%d", i))
 	}
 	// test parallelism control
 	taskID, err := gTaskMgr.AddNewTask(fmt.Sprintf("%d", taskCnt), taskTypeExample, 0, nil)
