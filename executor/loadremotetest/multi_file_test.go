@@ -151,20 +151,20 @@ func (s *mockGCSSuite) TestMixedCompression() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
-			Name:       "db.tbl.001.tsv.gz",
+			Name:       "compress.001.tsv.gz",
 		},
 		Content: buf.Bytes(),
 	})
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
-			Name:       "db.tbl.002.tsv",
+			Name:       "compress.002.tsv",
 		},
 		Content: []byte("3\ttest3\n" +
 			"4\ttest4"),
 	})
 
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*?endpoint=%s'
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/compress.*?endpoint=%s'
 		INTO TABLE multi_load.t WITH thread=1;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
