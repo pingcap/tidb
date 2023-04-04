@@ -26,25 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 )
 
-const (
-	// FlowHandleLitBackfillType is the task type to handle backfill for inject step.
-	FlowHandleLitBackfillType = "FlowHandleLitBackfillType"
-	// FlowHandleLitMergeType is the task type to handle backfill for merge step.
-	FlowHandleLitMergeType = "FlowHandleLitMergeType"
-)
-
-// LitBackfillGlobalTaskMeta is the global task meta for lightning backfill.
-type LitBackfillGlobalTaskMeta struct {
-	Job        model.Job `json:"job"`
-	EleID      int64     `json:"ele_id"`
-	EleTypeKey []byte    `json:"ele_type_key"`
-}
-
-// LitBackfillSubTaskMeta is the subtask meta for lightning backfill.
-type LitBackfillSubTaskMeta struct {
-	PhysicalTableID int64 `json:"physical_table_id"`
-}
-
 type litBackfillFlowHandle struct {
 	getDDL func() DDL
 }
@@ -63,7 +44,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 		return nil, nil
 	}
 
-	var globalTaskMeta LitBackfillGlobalTaskMeta
+	var globalTaskMeta BackfillGlobalMeta
 	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
 	}
@@ -92,7 +73,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 
 	subTaskMetas := make([][]byte, 0, len(physicalIDs))
 	for _, physicalID := range physicalIDs {
-		subTaskMeta := &LitBackfillSubTaskMeta{
+		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: physicalID,
 		}
 
@@ -111,4 +92,10 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back
 	return nil, nil
+}
+
+func init() {
+	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(func() DDL {
+		return GetDDL()
+	}))
 }

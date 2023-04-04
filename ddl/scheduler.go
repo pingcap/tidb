@@ -222,6 +222,13 @@ func (b *BackFillSubtaskExecutor) Run(ctx context.Context) error {
 	return nil
 }
 
+const BackfillTaskType = "backfill"
+
 func init() {
-	scheduler.RegisterSchedulerConstructor("backfill", NewBackfillSchedulerHandle)
+	scheduler.RegisterSchedulerConstructor(BackfillTaskType, NewBackfillSchedulerHandle)
+	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
+		return &BackFillSubtaskExecutor{
+			Task: minimalTask,
+		}, nil
+	})
 }
