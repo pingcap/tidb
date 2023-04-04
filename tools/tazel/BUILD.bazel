@@ -3,20 +3,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 go_library(
     name = "tazel_lib",
     srcs = [
-        "analyze.go",
+        "ast.go",
         "main.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/tools/tazel",
     visibility = ["//visibility:private"],
     deps = [
+        "//util/mathutil",
         "//util/set",
         "@com_github_bazelbuild_buildtools//build:go_default_library",
         "@com_github_pingcap_log//:log",
-        "@org_golang_x_tools//go/analysis",
-        "@org_golang_x_tools//go/analysis/passes/inspect",
-        "@org_golang_x_tools//go/analysis/singlechecker",
-        "@org_golang_x_tools//go/ast/inspector",
         "@org_uber_go_zap//:zap",
     ],
 )
