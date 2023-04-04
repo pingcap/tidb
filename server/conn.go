@@ -56,6 +56,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -1580,8 +1582,16 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	if loadDataWorker == nil {
 		return errors.New("load data info is empty")
 	}
-
-	err := cc.writeReq(ctx, loadDataWorker.GetInfilePath())
+	infile := loadDataWorker.GetInfilePath()
+	compressTp, err := mydump.ParseCompressionOnFileExtension(infile)
+	if err != nil {
+		return err
+	}
+	compressTp2, err := mydump.ToStorageCompressType(compressTp)
+	if err != nil {
+		return err
+	}
+	err = cc.writeReq(ctx, infile)
 	if err != nil {
 		return err
 	}
@@ -1628,7 +1638,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
 	_, err = loadDataWorker.Load(ctx, []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
-			return executor.NewSimpleSeekerOnReadCloser(r), nil
+			addedSeekReader := executor.NewSimpleSeekerOnReadCloser(r)
+			return storage.InterceptDecompressReader(addedSeekReader, compressTp2)
 		}}})
 	_ = r.Close()
 	wg.Wait()
