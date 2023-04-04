@@ -248,8 +248,8 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 
 		switch plan := physPlan.(type) {
 		case *PhysicalApply:
-			label[plan.InnerChildIdx] = ProbeSide
-			label[1-plan.InnerChildIdx] = BuildSide
+			label[plan.InnerChildIdx] = BuildSide
+			label[1-plan.InnerChildIdx] = ProbeSide
 		case *PhysicalHashJoin:
 			if plan.UseOuterToBuild {
 				label[plan.InnerChildIdx] = ProbeSide
