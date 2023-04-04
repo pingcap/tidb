@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -272,7 +273,7 @@ type ddl struct {
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
-	sessPool          *sessionPool
+	sessPool          *sess.Pool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
 	// used in the concurrency ddl.
@@ -718,7 +719,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	workerFactory := func(tp workerType) func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
 			wk := newWorker(d.ctx, tp, d.sessPool, d.delRangeMgr, d.ddlCtx)
-			sessForJob, err := d.sessPool.get()
+			sessForJob, err := d.sessPool.Get()
 			if err != nil {
 				return nil, err
 			}
@@ -763,7 +764,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.wg.Run(d.limitDDLJobs)
-	d.sessPool = newSessionPool(ctxPool, d.store)
+	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
 		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
@@ -877,7 +878,7 @@ func (d *ddl) close() {
 		d.delRangeMgr.clear()
 	}
 	if d.sessPool != nil {
-		d.sessPool.close()
+		d.sessPool.Close()
 	}
 	variable.UnregisterStatistics(d)
 
@@ -1106,14 +1107,14 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// If the connection being killed, we need to CANCEL the DDL job.
 		if atomic.LoadUint32(&sessVars.Killed) == 1 {
 			if sessVars.StmtCtx.DDLJobID != 0 {
-				se, err := d.sessPool.get()
+				se, err := d.sessPool.Get()
 				if err != nil {
 					logutil.BgLogger().Error("[ddl] get session failed, check again", zap.Error(err))
 					continue
 				}
 				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
 				errs, err := CancelJobs(se, []int64{jobID})
-				d.sessPool.put(se)
+				d.sessPool.Put(se)
 				if len(errs) > 0 {
 					logutil.BgLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
 				}
@@ -1124,13 +1125,13 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			}
 		}
 
-		se, err := d.sessPool.get()
+		se, err := d.sessPool.Get()
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get session failed, check again", zap.Error(err))
 			continue
 		}
 		historyJob, err = GetHistoryJobByID(se, jobID)
-		d.sessPool.put(se)
+		d.sessPool.Put(se)
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
@@ -1251,12 +1252,12 @@ func (d *ddl) SwitchMDL(enable bool) error {
 
 	// Check if there is any DDL running.
 	// This check can not cover every corner cases, so users need to guarantee that there is no DDL running by themselves.
-	sess, err := d.sessPool.get()
+	sessCtx, err := d.sessPool.Get()
 	if err != nil {
 		return err
 	}
-	defer d.sessPool.put(sess)
-	se := newSession(sess)
+	defer d.sessPool.Put(sessCtx)
+	se := newSession(sessCtx)
 	rows, err := se.execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
 	if err != nil {
 		return err
@@ -1372,13 +1373,13 @@ type Info struct {
 
 // GetDDLInfoWithNewTxn returns DDL information using a new txn.
 func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
-	sess := newSession(s)
-	err := sess.begin()
+	se := newSession(s)
+	err := se.begin()
 	if err != nil {
 		return nil, err
 	}
 	info, err := GetDDLInfo(s)
-	sess.rollback()
+	se.rollback()
 	return info, err
 }
 
@@ -1386,15 +1387,15 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
-	sess := newSession(s)
-	txn, err := sess.txn()
+	se := newSession(s)
+	txn, err := se.txn()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	t := meta.NewMeta(txn)
 	info.Jobs = make([]*model.Job, 0, 2)
 	var generalJob, reorgJob *model.Job
-	generalJob, reorgJob, err = get2JobsFromTable(sess)
+	generalJob, reorgJob, err = get2JobsFromTable(se)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1415,7 +1416,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = newReorgHandler(sess).GetDDLReorgHandle(reorgJob)
+	_, info.ReorgHandle, _, _, err = newReorgHandler(se).GetDDLReorgHandle(reorgJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -1463,8 +1464,8 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 	}
 	var jobMap = make(map[int64]int) // jobID -> error index
 
-	sess := newSession(se)
-	err := sess.begin()
+	sessCtx := newSession(se)
+	err := sessCtx.begin()
 	if err != nil {
 		return nil, err
 	}
@@ -1475,9 +1476,9 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 		idsStr = append(idsStr, strconv.FormatInt(id, 10))
 	}
 
-	jobs, err := getJobsBySQL(sess, JobTable, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
+	jobs, err := getJobsBySQL(sessCtx, JobTable, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
 	if err != nil {
-		sess.rollback()
+		sessCtx.rollback()
 		return nil, err
 	}
 
@@ -1512,12 +1513,12 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 			errs[i] = errors.Trace(err)
 			continue
 		}
-		err = updateDDLJob2Table(sess, job, true)
+		err = updateDDLJob2Table(sessCtx, job, true)
 		if err != nil {
 			errs[i] = errors.Trace(err)
 		}
 	}
-	err = sess.commit()
+	err = sessCtx.commit()
 	if err != nil {
 		return nil, err
 	}
@@ -1531,9 +1532,6 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
 	return getJobsBySQL(newSession(sess), JobTable, "1 order by job_id")
 }
-
-// MaxHistoryJobs is exported for testing.
-const MaxHistoryJobs = 10
 
 // DefNumHistoryJobs is default value of the default number of history job
 const DefNumHistoryJobs = 10
