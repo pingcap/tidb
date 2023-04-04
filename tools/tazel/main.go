@@ -74,7 +74,7 @@ func main() {
 					}
 					if old != int64(mathutil.Min(cnt, MaxShardCount)) {
 						toWrite = true
-						if cnt > 10 {
+						if cnt > 20 {
 							gotest[0].SetAttr("shard_count",
 								&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, MaxShardCount)), 10)})
 						}
@@ -83,7 +83,6 @@ func main() {
 			}
 		}
 		if toWrite {
-			log.Info("write file", zap.String("path", path))
 			write(path, buildfile)
 		}
 		return nil
