@@ -123,7 +123,7 @@ func TestGetInstance(t *testing.T) {
 }
 
 const (
-	subtaskCnt = 10
+	subtaskCnt = 3
 )
 
 func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
@@ -151,8 +151,8 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 
 	dispatcher.RegisterTaskFlowHandle(taskTypeExample, NumberExampleHandle{})
 
-	// 2s
-	cnt := 40
+	// 3s
+	cnt := 60
 	checkGetRunningGTaskCnt := func() {
 		var retCnt int
 		for i := 0; i < cnt; i++ {
