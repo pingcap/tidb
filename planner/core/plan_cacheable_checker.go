@@ -383,18 +383,22 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 	case *ast.ColumnName:
 		if checker.filterCnt > 0 {
 			// this column is appearing some filters, e.g. `col = 1`
+			colFound := false
 			for _, tableNode := range checker.tableNodes {
 				if tableNode == nil {
 					continue
 				}
-				colType, found := getColType(checker.schema, tableNode, node)
-				if !found {
-					checker.cacheable = false
-					checker.reason = "some column is not found in table schema"
-				} else if colType == mysql.TypeJSON || colType == mysql.TypeEnum || colType == mysql.TypeSet || colType == mysql.TypeBit {
-					checker.cacheable = false
-					checker.reason = "query has some filters with JSON, Enum, Set or Bit columns"
+				if colType, found := getColType(checker.schema, tableNode, node); found {
+					colFound = found
+					if colType == mysql.TypeJSON || colType == mysql.TypeEnum || colType == mysql.TypeSet || colType == mysql.TypeBit {
+						checker.cacheable = false
+						checker.reason = "query has some filters with JSON, Enum, Set or Bit columns"
+					}
 				}
+			}
+			if !colFound {
+				checker.cacheable = false
+				checker.reason = "some column is not found in table schema"
 			}
 		}
 		return in, !checker.cacheable
