@@ -454,3 +454,64 @@ func TestIssue33231(t *testing.T) {
 		Sort().
 		Check(testkit.Rows("6 beautiful curran 6 vigorous rhodes", "7 affectionate curie 7 sweet aryabhata", "7 epic kalam 7 sweet aryabhata"))
 }
+
+func TestListDefaultPruning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_default_list_partition=1`)
+	tk.MustExec("create database ListDefaultPrune")
+	tk.MustExec("use ListDefaultPrune")
+	tk.MustExec(`create table t (a int, b int) partition by list columns (a,b) (partition p1 values in ((1,1)), partition p2 values in ((2,2)), partition pDef default)`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select * from t where a in (1,2) and b in (1,2)`).Sort().Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
+	tk.MustQuery(`select * from t where a in (1,2) and b in (3,4)`).Sort().Check(testkit.Rows("1 4", "2 3"))
+	tk.MustQuery(`explain format='brief' select * from t where a in (1,2) and b in (3,4)`).Check(testkit.Rows(""+
+		`TableReader 2.57 root partition:pDef data:Selection`,
+		`└─Selection 2.57 cop[tikv]  in(listdefaultprune.t.a, 1, 2), in(listdefaultprune.t.b, 3, 4)`,
+		`  └─TableFullScan 7.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustQuery(`select * from t where a in (1,2) and b in (1,2)`).Sort().Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
+	tk.MustQuery(`explain format='brief' select * from t where a in (1,2) and b in (1,2)`).Check(testkit.Rows(""+
+		"TableReader 3.43 root partition:p1,p2,pDef data:Selection",
+		"└─Selection 3.43 cop[tikv]  in(listdefaultprune.t.a, 1, 2), in(listdefaultprune.t.b, 1, 2)",
+		"  └─TableFullScan 7.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from t where a in (1) and b in (1)`).Sort().Check(testkit.Rows("1 1"))
+
+	// TODO: if exact match with multiple columns, do not include the default partition?!?
+	tk.MustQuery(`explain format='brief' select * from t where a in (1) and b in (1)`).Check(testkit.Rows(""+
+		"TableReader 0.86 root partition:p1,pDef data:Selection",
+		"└─Selection 0.86 cop[tikv]  eq(listdefaultprune.t.a, 1), eq(listdefaultprune.t.b, 1)",
+		"  └─TableFullScan 7.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from t where a = 1 and b = 1`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustQuery(`explain format='brief' select * from t where a = 1 and b = 1`).Check(testkit.Rows(""+
+		"TableReader 0.86 root partition:p1,pDef data:Selection",
+		"└─Selection 0.86 cop[tikv]  eq(listdefaultprune.t.a, 1), eq(listdefaultprune.t.b, 1)",
+		"  └─TableFullScan 7.00 cop[tikv] table:t keep order:false"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int, b int) partition by list columns (a,b) (partition p1 values in ((1,1), (1,2)), partition p2 values in ((2,2),(2,1)), partition pDef default)`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select * from t where a in (1,2) and b in (1,2)`).Sort().Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
+	tk.MustQuery(`explain format='brief' select * from t where a in (1,2) and b in (1,2)`).Check(testkit.Rows(""+
+		"TableReader 3.43 root partition:p1,p2,pDef data:Selection",
+		"└─Selection 3.43 cop[tikv]  in(listdefaultprune.t.a, 1, 2), in(listdefaultprune.t.b, 1, 2)",
+		"  └─TableFullScan 7.00 cop[tikv] table:t keep order:false"))
+	tk.MustExec(`drop table t`)
+
+	// Single column LIST COLUMNS pruning is OK on exact match!
+	tk.MustExec(`create table t (a int, b int) partition by list columns (a) (partition p1 values in (1), partition p2 values in (2), partition pDef default)`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select * from t where a in (1,2)`).Sort().Check(testkit.Rows("1 1", "1 2", "1 4", "2 1", "2 2", "2 3"))
+	tk.MustQuery(`explain format='brief' select * from t where a in (1,2)`).Check(testkit.Rows(""+
+		"TableReader 6.00 root partition:p1,p2 data:Selection",
+		"└─Selection 6.00 cop[tikv]  in(listdefaultprune.t.a, 1, 2)",
+		"  └─TableFullScan 7.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows("1 1", "1 2", "1 4"))
+	tk.MustQuery(`explain format='brief' select * from t where a  = 1`).Check(testkit.Rows(""+
+		"TableReader 3.00 root partition:p1 data:Selection",
+		"└─Selection 3.00 cop[tikv]  eq(listdefaultprune.t.a, 1)",
+		"  └─TableFullScan 7.00 cop[tikv] table:t keep order:false"))
+}

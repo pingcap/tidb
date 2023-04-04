@@ -622,16 +622,20 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			if err != nil {
 				return nil, false, err
 			}
-			if location == nil && colPrune.HasDefault() {
-				// TODO: What if location != but there are multiple columns?
-				location = tables.ListPartitionLocation{
-					tables.ListPartitionGroup{
-						PartIdx:   l.listPrune.GetDefaultIdx(),
-						GroupIdxs: []int{-1}, // Special group!
-					},
+			if colPrune.HasDefault() {
+				if location == nil || len(l.listPrune.ColPrunes) > 1 {
+					if location != nil {
+						locations = append(locations, location)
+					}
+					location = tables.ListPartitionLocation{
+						tables.ListPartitionGroup{
+							PartIdx:   l.listPrune.GetDefaultIdx(),
+							GroupIdxs: []int{-1}, // Special group!
+						},
+					}
 				}
 			}
-			locations = []tables.ListPartitionLocation{location}
+			locations = append(locations, location)
 		} else {
 			locations, err = colPrune.LocateRanges(sc, r, l.listPrune.GetDefaultIdx())
 			if types.ErrOverflow.Equal(err) {
@@ -639,6 +643,15 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			}
 			if err != nil {
 				return nil, false, err
+			}
+			if colPrune.HasDefault() /* && len(l.listPrune.ColPrunes) > 1 */ {
+				locations = append(locations,
+					tables.ListPartitionLocation{
+						tables.ListPartitionGroup{
+							PartIdx:   l.listPrune.GetDefaultIdx(),
+							GroupIdxs: []int{-1}, // Special group!
+						},
+					})
 			}
 		}
 		for _, location := range locations {
