@@ -37,6 +37,7 @@ type Pool struct {
 	store   kv.Storage
 }
 
+// NewSessionPool creates a new session pool.
 func NewSessionPool(resPool *pools.ResourcePool, store kv.Storage) *Pool {
 	return &Pool{resPool: resPool, store: store}
 }
