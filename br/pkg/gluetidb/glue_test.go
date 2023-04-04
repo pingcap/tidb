@@ -206,3 +206,53 @@ func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }
+
+func TestTheSessionIsoation(t *testing.T) {
+	req := require.New(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	ctx := context.Background()
+
+	g := Glue{}
+	session, err := g.CreateSession(store)
+	req.NoError(err)
+
+	infos := []*model.TableInfo{}
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_2"),
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			Name: model.NewCIStr("threereplication"),
+		},
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_3"),
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			Name: model.NewCIStr("fivereplication"),
+		},
+	})
+	polices := []*model.PolicyInfo{
+		{
+			PlacementSettings: &model.PlacementSettings{
+				Followers: 4,
+			},
+			Name: model.NewCIStr("fivereplication"),
+		},
+		{
+			PlacementSettings: &model.PlacementSettings{
+				Followers: 2,
+			},
+			Name: model.NewCIStr("threereplication"),
+		},
+	}
+	for _, pinfo := range polices {
+		before := session.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
+		req.NoError(session.CreatePlacementPolicy(ctx, pinfo))
+		after := session.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
+		req.Greater(after, before)
+	}
+	for _, info := range infos {
+		req.NoError(session.CreateTable(ctx, model.NewCIStr("test"), info))
+	}
+}
