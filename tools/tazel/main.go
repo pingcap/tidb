@@ -16,7 +16,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -27,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 )
+
+const MaxShardCount = 50
 
 func main() {
 	initCount()
@@ -61,22 +62,21 @@ func main() {
 			if err != nil {
 				return err
 			}
-			fmt.Println(filepath.Dir(abspath))
 			if cnt, ok := testMap[filepath.Dir(abspath)]; ok {
-				if cnt > 3 {
-					if !skipFlaky(path) {
-						old := int64(0)
-						value := gotest[0].AttrLiteral("shard_count")
-						if value != "" {
-							old, err = strconv.ParseInt(value, 10, 64)
-							if err != nil {
-								return err
-							}
+				if !skipFlaky(path) {
+					old := int64(0)
+					value := gotest[0].AttrLiteral("shard_count")
+					if value != "" {
+						old, err = strconv.ParseInt(value, 10, 64)
+						if err != nil {
+							return err
 						}
-						if old != int64(mathutil.Min(cnt, 5)) {
-							toWrite = true
+					}
+					if old != int64(mathutil.Min(cnt, MaxShardCount)) {
+						toWrite = true
+						if cnt > 10 {
 							gotest[0].SetAttr("shard_count",
-								&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, 3)), 10)})
+								&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, MaxShardCount)), 10)})
 						}
 					}
 				}

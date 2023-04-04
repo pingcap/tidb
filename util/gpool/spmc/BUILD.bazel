@@ -37,7 +37,7 @@ go_test(
     embed = [":spmc"],
     flaky = True,
     race = "on",
-    shard_count = 2,
+    shard_count = 13,
     deps = [
         "//resourcemanager/pooltask",
         "//resourcemanager/util",

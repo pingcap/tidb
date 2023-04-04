@@ -92,6 +92,7 @@ go_test(
     data = glob(["**"]),
     embed = [":export"],
     flaky = True,
+    shard_count = 50,
     deps = [
         "//br/pkg/storage",
         "//br/pkg/version",

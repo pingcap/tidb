@@ -15,7 +15,6 @@
 package main
 
 import (
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -71,7 +70,6 @@ func scan(path string) error {
 		if ok {
 			if strings.HasPrefix(funcDecl.Name.Name, "Test") && funcDecl.Name.Name != "TestMain" {
 				addTestMap(filepath.Dir(path))
-				fmt.Println(funcDecl.Name.Name + " " + filepath.Dir(path))
 			}
 		}
 		return true

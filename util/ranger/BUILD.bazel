@@ -45,7 +45,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 26,
+    shard_count = 25,
     deps = [
         ":ranger",
         "//config",

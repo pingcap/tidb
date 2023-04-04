@@ -39,6 +39,7 @@ go_test(
     ],
     embed = [":codec"],
     flaky = True,
+    shard_count = 29,
     deps = [
         "//parser/mysql",
         "//parser/terror",
