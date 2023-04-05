@@ -27,11 +27,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const MaxShardCount = 50
+const maxShardCount = 50
 
 func main() {
 	initCount()
-	Walk()
+	walk()
 	if _, err := os.Stat("WORKSPACE"); errors.Is(err, os.ErrNotExist) {
 		log.Fatal("It should run from the project root")
 	}
@@ -63,7 +63,7 @@ func main() {
 				if cnt, ok := testMap[filepath.Dir(abspath)]; ok {
 					if cnt > 3 {
 						gotest[0].SetAttr("shard_count",
-							&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, MaxShardCount)), 10)})
+							&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, maxShardCount)), 10)})
 					} else {
 						gotest[0].DelAttr("shard_count")
 					}

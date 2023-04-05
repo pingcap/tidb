@@ -39,7 +39,7 @@ func addTestMap(path string) {
 	testMap[path]++
 }
 
-func Walk() {
+func walk() {
 	err := filepath.Walk(".", func(path string, d fs.FileInfo, _ error) error {
 		if d.IsDir() || !strings.HasSuffix(d.Name(), "_test.go") {
 			return nil
