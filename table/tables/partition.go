@@ -929,7 +929,6 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, def
 	lp.defaultPartitionIdx = -1
 	for partitionIdx, def := range defs {
 		for _, vs := range def.InValues {
-			// TODO: use a proper constant
 			if strings.EqualFold(vs[0], "DEFAULT") {
 				lp.defaultPartitionIdx = partitionIdx
 				continue
@@ -955,7 +954,10 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, def
 // LocatePartition locates partition by the column value
 func (lp *ForListPruning) LocatePartition(value int64, isNull bool) int {
 	if isNull {
-		return lp.nullPartitionIdx
+		if lp.nullPartitionIdx >= 0 {
+			return lp.nullPartitionIdx
+		}
+		return lp.defaultPartitionIdx
 	}
 	partitionIdx, ok := lp.valueMap[value]
 	if !ok {
