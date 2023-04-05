@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -819,7 +820,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	}
 	cc.ctx.SetPort(port)
 	if cc.dbname != "" {
-		err = cc.useDB(context.Background(), cc.dbname)
+		_, err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
 			return err
 		}
@@ -1321,7 +1322,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComInitDB:
-		if err := cc.useDB(ctx, dataStr); err != nil {
+		node, err := cc.useDB(ctx, dataStr)
+		cc.onExtensionStmtEnd(node, false, err)
+		if err != nil {
 			return err
 		}
 		return cc.writeOK(ctx)
@@ -1404,19 +1407,19 @@ func (cc *clientConn) writeStats(ctx context.Context) error {
 	return cc.flush(ctx)
 }
 
-func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
+func (cc *clientConn) useDB(ctx context.Context, db string) (node ast.StmtNode, err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
 	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cc.dbname = db
-	return
+	return stmts[0], err
 }
 
 func (cc *clientConn) flush(ctx context.Context) error {
@@ -1623,7 +1626,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	}()
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
-	_, err = loadDataWorker.Load(ctx, []executor.LoadDataReaderInfo{{
+	_, err = loadDataWorker.Load(ctx, []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			return executor.NewSimpleSeekerOnReadCloser(r), nil
 		}}})
@@ -1638,7 +1641,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
 		for !drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
-			if atomic.CompareAndSwapUint32(&loadDataWorker.Ctx.GetSessionVars().Killed, 1, 0) {
+			if atomic.CompareAndSwapUint32(&loadDataWorker.UserSctx.GetSessionVars().Killed, 1, 0) {
 				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
 				return exeerrors.ErrQueryInterrupted
 			}
@@ -1795,6 +1798,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	parserWarns := warns[len(prevWarns):]
 
 	var pointPlans []plannercore.Plan
+	cc.ctx.GetSessionVars().InMultiStmts = false
 	if len(stmts) > 1 {
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
@@ -1816,6 +1820,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				parserWarns = append(parserWarns, warn)
 			}
 		}
+		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
@@ -1918,6 +1923,49 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key //nolint: prealloc
 	var rowKeys []kv.Key //nolint: prealloc
+
+	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
+		var tableID int64
+		switch v := p.(type) {
+		case *plannercore.PointGetPlan:
+			if v.PartitionInfo != nil {
+				tableID = v.PartitionInfo.ID
+			} else {
+				tableID = v.TblInfo.ID
+			}
+			if v.IndexInfo != nil {
+				resetStmtCtxFn()
+				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
+				if err1 != nil {
+					return err1
+				}
+				idxKeys = append(idxKeys, idxKey)
+			} else {
+				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
+			}
+		case *plannercore.BatchPointGetPlan:
+			if v.PartitionInfos != nil {
+				// TODO: move getting physical table ID from BatchPointGetExec.initialize to newBatchPointGetPlan
+				return nil
+			}
+			if v.IndexInfo != nil {
+				resetStmtCtxFn()
+				for _, idxVals := range v.IndexValues {
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, v.TblInfo.ID)
+					if err1 != nil {
+						return err1
+					}
+					idxKeys = append(idxKeys, idxKey)
+				}
+			} else {
+				for _, handle := range v.Handles {
+					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(v.TblInfo.ID, handle))
+				}
+			}
+		}
+		return nil
+	}
+
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		if _, ok := stmt.(*ast.UseStmt); ok {
@@ -1936,25 +1984,35 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		if p == nil {
 			continue
 		}
-		// Only support Update for now.
+		// Only support Update and Delete for now.
 		// TODO: support other point plans.
-		if x, ok := p.(*plannercore.Update); ok {
+		switch x := p.(type) {
+		case *plannercore.Update:
 			//nolint:forcetypeassert
-			updateStmt := stmt.(*ast.UpdateStmt)
-			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
-				if pp.PartitionInfo != nil {
-					continue
-				}
-				if pp.IndexInfo != nil {
-					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
-					if err1 != nil {
-						return nil, err1
-					}
-					idxKeys = append(idxKeys, idxKey)
-				} else {
-					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
-				}
+			updateStmt, ok := stmt.(*ast.UpdateStmt)
+			if !ok {
+				logutil.BgLogger().Warn("unexpected statement type for Update plan",
+					zap.String("type", fmt.Sprintf("%T", stmt)))
+				continue
+			}
+			err = handlePlan(x.SelectPlan, func() {
+				executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
+			})
+			if err != nil {
+				return nil, err
+			}
+		case *plannercore.Delete:
+			deleteStmt, ok := stmt.(*ast.DeleteStmt)
+			if !ok {
+				logutil.BgLogger().Warn("unexpected statement type for Delete plan",
+					zap.String("type", fmt.Sprintf("%T", stmt)))
+				continue
+			}
+			err = handlePlan(x.SelectPlan, func() {
+				executor.ResetDeleteStmtCtx(sc, deleteStmt, vars)
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -2278,34 +2336,12 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
-	// if fetchedRows is not enough, getting data from recordSet.
-	// NOTE: chunk should not be allocated from the allocator
-	// the allocator will reset every statement
-	// but it maybe stored in the result set among statements
-	// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
-	// Here server.tidbResultSet implements Next method.
-	req := rs.NewChunk(nil)
-	for len(fetchedRows) < fetchSize {
-		if err := rs.Next(ctx, req); err != nil {
-			return err
-		}
-		rowCount := req.NumRows()
-		if rowCount == 0 {
-			break
-		}
-		// filling fetchedRows with chunk
-		for i := 0; i < rowCount; i++ {
-			fetchedRows = append(fetchedRows, req.GetRow(i))
-		}
-		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
-	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
 	if len(fetchedRows) == 0 {
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
-		terror.Call(rs.Close)
 		return cc.writeEOF(ctx, serverStatus)
 	}
 
@@ -2460,7 +2496,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		return errors.New("Could not reset connection")
 	}
 	if cc.dbname != "" { // Restore the current DB
-		err = cc.useDB(context.Background(), cc.dbname)
+		_, err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
 			return err
 		}

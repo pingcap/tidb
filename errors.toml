@@ -506,6 +506,11 @@ error = '''
 system requirement not met
 '''
 
+["Lightning:Restore:ErrAddIndexFailed"]
+error = '''
+add index on table %s failed
+'''
+
 ["Lightning:Restore:ErrAllocTableRowIDs"]
 error = '''
 allocate table row id error
@@ -519,6 +524,11 @@ cannot find local file for table: %s engineDir: %s
 ["Lightning:Restore:ErrCreateSchema"]
 error = '''
 create schema failed, table: %s, stmt: %s
+'''
+
+["Lightning:Restore:ErrDropIndexFailed"]
+error = '''
+drop index %s on table %s failed
 '''
 
 ["Lightning:Restore:ErrEncodeKV"]
@@ -1586,7 +1596,7 @@ error = '''
 TiDB admin check table failed.
 '''
 
-["executor:8067"]
+["executor:8068"]
 error = '''
 Load data: unmatched columns
 '''
@@ -1698,7 +1708,7 @@ The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's
 
 ["executor:8159"]
 error = '''
-Access to the source file has been denied. Please check the URI, access key and secret access key are correct
+Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct
 '''
 
 ["executor:8160"]
@@ -1734,6 +1744,11 @@ Unsupported option %s for %s import mode
 ["executor:8170"]
 error = '''
 Job ID %d doesn't exist
+'''
+
+["executor:8171"]
+error = '''
+The current job status cannot perform the operation. %s
 '''
 
 ["executor:8172"]
@@ -1871,7 +1886,7 @@ error = '''
 A path expression is not a path to a cell in an array.
 '''
 
-["json:8066"]
+["json:8067"]
 error = '''
 JSON_OBJECTAGG: unsupported second argument type %v
 '''

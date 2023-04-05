@@ -1186,6 +1186,15 @@ func (rc *Client) RestoreSSTFiles(
 	var leftFiles []*backuppb.File
 	for rangeFiles, leftFiles = drainFilesByRange(files, rc.fileImporter.supportMultiIngest); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles, rc.fileImporter.supportMultiIngest) {
 		filesReplica := rangeFiles
+		if ectx.Err() != nil {
+			log.Warn("Restoring encountered error and already stopped, give up remained files.",
+				zap.Int("remained", len(leftFiles)),
+				logutil.ShortError(ectx.Err()))
+			// We will fetch the error from the errgroup then (If there were).
+			// Also note if the parent context has been canceled or something,
+			// breaking here directly is also a reasonable behavior.
+			break
+		}
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				fileStart := time.Now()
@@ -1206,7 +1215,10 @@ func (rc *Client) RestoreSSTFiles(
 		)
 		return errors.Trace(err)
 	}
-	return nil
+	// Once the parent context canceled and there is no task running in the errgroup,
+	// we may break the for loop without error in the errgroup. (Will this happen?)
+	// At that time, return the error in the context here.
+	return ctx.Err()
 }
 
 // RestoreRaw tries to restore raw keys in the specified range.

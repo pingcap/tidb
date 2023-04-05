@@ -64,6 +64,7 @@ go_test(
     timeout = "short",
     srcs = [
         "cache_test.go",
+        "export_test.go",
         "index_test.go",
         "main_test.go",
         "mutation_checker_test.go",
@@ -73,7 +74,7 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 50,
     deps = [
         "//ddl",
         "//domain",
@@ -102,6 +103,7 @@ go_test(
         "//util/codec",
         "//util/collate",
         "//util/dbterror",
+        "//util/logutil",
         "//util/mock",
         "//util/rowcodec",
         "//util/stmtsummary",
@@ -113,5 +115,6 @@ go_test(
         "@com_github_tikv_client_go_v2//oracle",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
     ],
 )

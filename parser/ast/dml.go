@@ -1824,6 +1824,7 @@ type LoadDataStmt struct {
 	Format            *string
 	OnDuplicate       OnDuplicateKeyHandlingType
 	Table             *TableName
+	Charset           *string
 	Columns           []*ColumnName
 	FieldsInfo        *FieldsClause
 	LinesInfo         *LinesClause
@@ -1856,6 +1857,10 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(" INTO TABLE ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore LoadDataStmt.Table")
+	}
+	if n.Charset != nil {
+		ctx.WriteKeyWord(" CHARACTER SET ")
+		ctx.WritePlain(*n.Charset)
 	}
 	if n.FieldsInfo != nil {
 		n.FieldsInfo.Restore(ctx)
@@ -2877,7 +2882,7 @@ type ShowStmt struct {
 
 	// GlobalScope is used by `show variables` and `show bindings`
 	GlobalScope bool
-	Pattern     *PatternLikeExpr
+	Pattern     *PatternLikeOrIlikeExpr
 	Where       ExprNode
 
 	ShowProfileTypes []int  // Used for `SHOW PROFILE` syntax
@@ -3242,7 +3247,7 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		n.Pattern = node.(*PatternLikeExpr)
+		n.Pattern = node.(*PatternLikeOrIlikeExpr)
 	}
 
 	if n.Where != nil {

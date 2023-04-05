@@ -33,7 +33,7 @@ func TestDMLVisitorCover(t *testing.T) {
 	}{
 		{&DeleteStmt{TableRefs: tableRefsClause, Tables: &DeleteTableList{}, Where: ce,
 			Order: &OrderByClause{}, Limit: &Limit{Count: ce, Offset: ce}}, 4, 4},
-		{&ShowStmt{Table: &TableName{}, Column: &ColumnName{}, Pattern: &PatternLikeExpr{Expr: ce, Pattern: ce}, Where: ce}, 3, 3},
+		{&ShowStmt{Table: &TableName{}, Column: &ColumnName{}, Pattern: &PatternLikeOrIlikeExpr{Expr: ce, Pattern: ce}, Where: ce}, 3, 3},
 		{&LoadDataStmt{Table: &TableName{}, Columns: []*ColumnName{{}}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}}, 0, 0},
 		{&Assignment{Column: &ColumnName{}, Expr: ce}, 1, 1},
 		{&ByItem{Expr: ce}, 1, 1},
@@ -415,6 +415,14 @@ func TestLoadDataRestore(t *testing.T) {
 		{
 			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t`",
 			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t` character set utf8mb4",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t` CHARACTER SET utf8mb4",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t` character set gbk",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t` CHARACTER SET gbk",
 		},
 		// ignore N lines
 		{

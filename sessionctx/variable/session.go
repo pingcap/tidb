@@ -203,8 +203,8 @@ type TxnCtxNoNeedToRestore struct {
 	shardRemain  int
 	currentShard int64
 
-	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
-	unchangedRowKeys map[string]struct{}
+	// unchangedKeys is used to store the unchanged keys that needs to lock for pessimistic transaction.
+	unchangedKeys map[string]struct{}
 
 	PessimisticCacheHit int
 
@@ -278,20 +278,20 @@ func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
-// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
-func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
-	if tc.unchangedRowKeys == nil {
-		tc.unchangedRowKeys = map[string]struct{}{}
+// AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte) {
+	if tc.unchangedKeys == nil {
+		tc.unchangedKeys = map[string]struct{}{}
 	}
-	tc.unchangedRowKeys[string(key)] = struct{}{}
+	tc.unchangedKeys[string(key)] = struct{}{}
 }
 
-// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
-func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
-	for key := range tc.unchangedRowKeys {
+// CollectUnchangedKeysForLock collects unchanged keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedKeys {
 		buf = append(buf, kv.Key(key))
 	}
-	tc.unchangedRowKeys = nil
+	tc.unchangedKeys = nil
 	return buf
 }
 
@@ -699,7 +699,7 @@ type SessionVars struct {
 	ConnectionID uint64
 
 	// PlanID is the unique id of logical and physical plan.
-	PlanID int
+	PlanID atomic.Int32
 
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID atomic.Int64
@@ -785,6 +785,9 @@ type SessionVars struct {
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
+	// InMultiStmts indicates whether the statement is a multi-statement like `update t set a=1; update t set b=2;`.
+	InMultiStmts bool
+
 	// AllowWriteRowID variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
 
@@ -841,6 +844,11 @@ type SessionVars struct {
 	// BroadcastJoinThresholdCount is used to limit the total count of smaller table.
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
+
+	// PreferBCJByExchangeDataSize indicates the method used to choose mpp broadcast join
+	// false: choose mpp broadcast join by `BroadcastJoinThresholdSize` and `BroadcastJoinThresholdCount`
+	// true: compare data exchange size of join and choose the smallest one
+	PreferBCJByExchangeDataSize bool
 
 	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	LimitPushDownThreshold int64
@@ -1076,7 +1084,7 @@ type SessionVars struct {
 
 	mppExchangeCompressionMode kv.ExchangeCompressionMode
 
-	PlannerSelectBlockAsName []ast.HintTable
+	PlannerSelectBlockAsName atomic.Pointer[[]ast.HintTable]
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	LockWaitTimeout int64
@@ -1379,9 +1387,6 @@ type SessionVars struct {
 	// Resource group name
 	ResourceGroupName string
 
-	// ProtectedTSList holds a list of timestamps that should delay GC.
-	ProtectedTSList protectedTSList
-
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
 	PessimisticTransactionFairLocking bool
@@ -1603,8 +1608,7 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 
 // AllocNewPlanID alloc new ID
 func (s *SessionVars) AllocNewPlanID() int {
-	s.PlanID++
-	return s.PlanID
+	return int(s.PlanID.Add(1))
 }
 
 const (
@@ -2396,7 +2400,7 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 }
 
 // EncodeSessionStates saves session states into SessionStates.
-func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
 	s.userVars.lock.RLock()
 	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
@@ -2433,7 +2437,7 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 }
 
 // DecodeSessionStates restores session states from SessionStates.
-func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
 	for name, userVar := range sessionStates.UserVars {
 		s.SetUserVarVal(name, *userVar.Clone())
@@ -3310,54 +3314,4 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
-}
-
-// protectedTSList implements util/processinfo#ProtectedTSList
-type protectedTSList struct {
-	sync.Mutex
-	items map[uint64]int
-}
-
-// HoldTS holds the timestamp to prevent its data from being GCed.
-func (lst *protectedTSList) HoldTS(ts uint64) (unhold func()) {
-	lst.Lock()
-	if lst.items == nil {
-		lst.items = map[uint64]int{}
-	}
-	lst.items[ts] += 1
-	lst.Unlock()
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			lst.Lock()
-			if lst.items != nil {
-				if lst.items[ts] > 1 {
-					lst.items[ts] -= 1
-				} else {
-					delete(lst.items, ts)
-				}
-			}
-			lst.Unlock()
-		})
-	}
-}
-
-// GetMinProtectedTS returns the minimum protected timestamp that greater than `lowerBound` (0 if no such one).
-func (lst *protectedTSList) GetMinProtectedTS(lowerBound uint64) (ts uint64) {
-	lst.Lock()
-	for k, v := range lst.items {
-		if v > 0 && k > lowerBound && (k < ts || ts == 0) {
-			ts = k
-		}
-	}
-	lst.Unlock()
-	return
-}
-
-// Size returns the number of protected timestamps (exported for test).
-func (lst *protectedTSList) Size() (size int) {
-	lst.Lock()
-	size = len(lst.items)
-	lst.Unlock()
-	return
 }

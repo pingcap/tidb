@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
@@ -94,11 +93,6 @@ type InsertValues struct {
 
 	stats *InsertRuntimeStat
 
-	// isLoadData indicates whatever current goroutine is use for generating batch data. LoadData use two goroutines. One for generate batch data,
-	// The other one for commit task, which will invalid txn.
-	// We use mutex to protect routine from using invalid txn.
-	isLoadData bool
-	txnInUse   syncutil.Mutex
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
@@ -591,8 +585,13 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 }
 
 // fillColValue fills the column value if it is not set in the insert statement.
-func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
-	error) {
+func (e *InsertValues) fillColValue(
+	ctx context.Context,
+	datum types.Datum,
+	idx int,
+	column *table.Column,
+	hasValue bool,
+) (types.Datum, error) {
 	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
 		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
 			vars := e.ctx.GetSessionVars()
@@ -1042,10 +1041,6 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if shardFmt.IncrementalMask()&autoRandomID != autoRandomID {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
-	if e.isLoadData {
-		e.txnInUse.Lock()
-		defer e.txnInUse.Unlock()
-	}
 	_, err = e.ctx.Txn(true)
 	if err != nil {
 		return 0, err
@@ -1189,6 +1184,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 
 	// append warnings and get no duplicated error rows
+CheckAndInsert:
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
 			continue
@@ -1201,15 +1197,21 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 					if err != nil {
 						return err
 					}
-					_, err2 := e.removeRow(ctx, txn, handle, r, false)
+					unchanged, err2 := e.removeRow(ctx, txn, handle, r, false)
 					if err2 != nil {
 						return err2
+					}
+					if unchanged {
+						// we don't need to add the identical row again, but the
+						// counter should act as if we did.
+						e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+						continue
 					}
 				} else {
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
 						// lock duplicated row key on insert-ignore
-						txnCtx.AddUnchangedRowKey(r.handleKey.newKey)
+						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey)
 					}
 					continue
 				}
@@ -1217,7 +1219,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				return err
 			}
 		}
-		skip := false
+
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
@@ -1245,10 +1247,9 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
 						// lock duplicated unique key on insert-ignore
-						txnCtx.AddUnchangedRowKey(uk.newKey)
+						txnCtx.AddUnchangedKeyForLock(uk.newKey)
 					}
-					skip = true
-					break
+					continue CheckAndInsert
 				}
 			} else if !kv.IsErrNotFound(err) {
 				return err
@@ -1256,14 +1257,12 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		}
 
 		// If row was checked with no duplicate keys,
-		// it should be add to values map for the further row check.
+		// it should be added to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
-		if !skip {
-			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-			err = addRecord(ctx, rows[i])
-			if err != nil {
-				return err
-			}
+		e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+		err = addRecord(ctx, rows[i])
+		if err != nil {
+			return err
 		}
 	}
 	if e.stats != nil {
@@ -1302,8 +1301,7 @@ func (e *InsertValues) removeRow(
 		if inReplace {
 			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 		}
-		_, err := appendUnchangedRowForLock(e.ctx, r.t, handle, oldRow)
-		if err != nil {
+		if _, err := addUnchangedKeysForLockByRow(e.ctx, r.t, handle, oldRow, lockRowKey|lockUniqueKeys); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -1375,6 +1373,12 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	}
 	return nil
 }
+
+// CreateSession will be assigned by session package.
+var CreateSession func(ctx sessionctx.Context) (sessionctx.Context, error)
+
+// CloseSession will be assigned by session package.
+var CloseSession func(ctx sessionctx.Context)
 
 // InsertRuntimeStat record the stat about insert and check
 type InsertRuntimeStat struct {

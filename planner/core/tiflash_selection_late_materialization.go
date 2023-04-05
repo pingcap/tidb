@@ -67,13 +67,15 @@ func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) Ph
 			plan.SetChildren(newChildren...)
 		}
 	case *PhysicalTableReader:
-		predicatePushDownToTableScan(sctx, p.tablePlan)
+		p.tablePlan = predicatePushDownToTableScan(sctx, p.tablePlan)
 	default:
-		newChildren := make([]PhysicalPlan, 0, len(plan.Children()))
-		for _, child := range plan.Children() {
-			newChildren = append(newChildren, predicatePushDownToTableScan(sctx, child))
+		if len(plan.Children()) > 0 {
+			newChildren := make([]PhysicalPlan, 0, len(plan.Children()))
+			for _, child := range plan.Children() {
+				newChildren = append(newChildren, predicatePushDownToTableScan(sctx, child))
+			}
+			plan.SetChildren(newChildren...)
 		}
-		plan.SetChildren(newChildren...)
 	}
 	return plan
 }
@@ -201,7 +203,7 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 // @param: physicalTableScan: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
 	// When the table is small, there is no need to push down the conditions.
-	if physicalTableScan.tblColHists.Count <= tiflashDataPackSize {
+	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize {
 		return
 	}
 	conds := physicalSelection.Conditions

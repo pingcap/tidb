@@ -1280,7 +1280,7 @@ func TestParallelDropIndex(t *testing.T) {
 	sql2 := "alter table t drop index idx2 ;"
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
-		require.EqualError(t, err2, "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")
+		require.NoError(t, err2)
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }

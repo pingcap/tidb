@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/internal/callback"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -43,7 +44,7 @@ import (
 
 // TestDDLScheduling tests the DDL scheduling. See Concurrent DDL RFC for the rules of DDL scheduling.
 // This test checks the chosen job records to see if there are wrong scheduling, if job A and job B cannot run concurrently,
-// then the all the record of job A must before or after job B, no cross record between these 2 jobs should be in between.
+// then all the records of job A must before or after job B, no cross record between these 2 jobs.
 func TestDDLScheduling(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -261,7 +262,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	d := dom.DDL()
-	se := ddl.NewSession(tk.Session())
+	se := sess.NewSession(tk.Session())
 
 	jobID1 := int64(1)
 	jobID2 := int64(2)
@@ -315,7 +316,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.Equal(t, expectJob, bJob)
 	previousTime, err := ddl.GetOracleTimeWithStartTS(se)
 	require.EqualError(t, err, "[kv:8024]invalid transaction")
-	readInTxn(se, func(sessionctx.Context) {
+	readInTxn(se.Session(), func(sessionctx.Context) {
 		previousTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})
@@ -330,7 +331,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	expectJob.InstanceID = uuid
 	equalBackfillJob(t, expectJob, bJobs[0], ddl.GetLeaseGoTime(previousTime, instanceLease))
 	var currTime time.Time
-	readInTxn(se, func(sessionctx.Context) {
+	readInTxn(se.Session(), func(sessionctx.Context) {
 		currTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})
@@ -543,7 +544,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// ID     jobID     eleID
 	// ------------------------
 	// 0      jobID2     eleID2
-	readInTxn(se, func(sessionctx.Context) {
+	readInTxn(se.Session(), func(sessionctx.Context) {
 		currTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})
@@ -733,15 +734,15 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 }
 
 func TestGetTasks(t *testing.T) {
-	// TODO: update the variable of `enableDistReorg`
-	isDistReorg := variable.DDLEnableDistributeReorg.Load()
-	variable.DDLEnableDistributeReorg.Store(false)
-	defer func() { variable.DDLEnableDistributeReorg.Store(isDistReorg) }()
+	// TODO: update the variable of `EnableDistTask`
+	isDistReorg := variable.EnableDistTask.Load()
+	variable.EnableDistTask.Store(false)
+	defer func() { variable.EnableDistTask.Store(isDistReorg) }()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	se := ddl.NewSession(tk.Session())
+	se := sess.NewSession(tk.Session())
 	se.GetSessionVars().SQLMode = mysql.ModeNone
 	d := dom.DDL()
 
@@ -762,19 +763,21 @@ func TestGetTasks(t *testing.T) {
 	var err1 error
 	ch := make(chan struct{}, 1)
 	wg.Run(func() {
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(1)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/internal/session/NotifyBeginTxnCh", `return(1)`))
 		ch <- struct{}{}
 		var bJobs []*ddl.BackfillJob
 		bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, 1, instanceLease)
 		require.Len(t, bJobs, 1)
 	})
 	<-ch
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh")) }()
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/internal/session/NotifyBeginTxnCh"))
+	}()
 	wg.Run(func() {
 		tk1 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
-		se1 := ddl.NewSession(tk1.Session())
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(2)`))
+		se1 := sess.NewSession(tk1.Session())
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/internal/session/NotifyBeginTxnCh", `return(2)`))
 		var bJobs1 []*ddl.BackfillJob
 		bJobs1, err1 = ddl.GetAndMarkBackfillJobsForOneEle(se1, 1, jobID1, uuid, 1, instanceLease)
 		require.Len(t, bJobs1, 1)
@@ -801,7 +804,7 @@ func TestGetTasks(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 	pID := int64(0)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(0)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/internal/session/NotifyBeginTxnCh", `return(0)`))
 	// Mock GetAndMarkBackfillJobsForOneEle gets a writing conflict error, but getTasks is successful.
 	// Step 1: se1 begins txn1.
 	// Step 2: se2 begins txn2.
@@ -809,7 +812,7 @@ func TestGetTasks(t *testing.T) {
 	// Step 4: se2 begin txn3.
 	// Step 5: getTasks(txn3) executes successfully.
 	wg.Run(func() {
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(1)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/internal/session/NotifyBeginTxnCh", `return(1)`))
 		ch <- struct{}{}
 		bJobs, err := ddl.GetTasks(ddl.GetDDLCtx(d), se, tbl, jobID1, &pID, 1)
 		require.Nil(t, err)
@@ -819,8 +822,8 @@ func TestGetTasks(t *testing.T) {
 	wg.Run(func() {
 		tk1 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
-		se1 := ddl.NewSession(tk1.Session())
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(2)`))
+		se1 := sess.NewSession(tk1.Session())
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/internal/session/NotifyBeginTxnCh", `return(2)`))
 		bJobs1, err1 := ddl.GetTasks(ddl.GetDDLCtx(d), se1, tbl, jobID1, &pID, 1)
 		require.Nil(t, err1)
 		require.Len(t, bJobs1, 1)

@@ -180,6 +180,7 @@ import (
 	leading           "LEADING"
 	left              "LEFT"
 	like              "LIKE"
+	ilike             "ILIKE"
 	limit             "LIMIT"
 	lines             "LINES"
 	linear            "LINEAR"
@@ -331,6 +332,7 @@ import (
 	btree                 "BTREE"
 	byteType              "BYTE"
 	cache                 "CACHE"
+	calibrate             "CALIBRATE"
 	capture               "CAPTURE"
 	cascaded              "CASCADED"
 	causal                "CAUSAL"
@@ -738,6 +740,10 @@ import (
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
 	ruRate                "RU_PER_SEC"
+	priority              "PRIORITY"
+	high                  "HIGH"
+	medium                "MEDIUM"
+	low                   "LOW"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
@@ -891,6 +897,7 @@ import (
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
 	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
+	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
@@ -1007,6 +1014,7 @@ import (
 	Boolean                                "Boolean (0, 1, false, true)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
+	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
 	ColumnDef                              "table column definition"
 	ColumnDefList                          "table column definition list"
 	ColumnName                             "column name"
@@ -1322,6 +1330,7 @@ import (
 	IsOrNotOp                              "Is predicate"
 	InOrNotOp                              "In predicate"
 	LikeOrNotOp                            "Like predicate"
+	IlikeOrNotOp                           "Ilike predicate"
 	RegexpOrNotOp                          "Regexp predicate"
 	NumericType                            "Numeric types"
 	IntegerType                            "Integer Types types"
@@ -1372,6 +1381,7 @@ import (
 	PlacementOptionList                    "Anomymous or direct placement option list"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
+	ResourceGroupPriorityOption            "Resource group priority option"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -1445,7 +1455,7 @@ import (
 	FieldTerminator                 "Field terminator"
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
-	LikeEscapeOpt                   "like escape option"
+	LikeOrIlikeEscapeOpt            "like or ilike escape option"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
 	PasswordOpt                     "Password option"
@@ -1504,7 +1514,7 @@ import (
 %left andand and
 %left between
 %precedence lowerThanEq
-%left eq ge le neq neqSynonym '>' '<' is like in
+%left eq ge le neq neqSynonym '>' '<' is like ilike in
 %left '|'
 %left '&'
 %left rsh lsh
@@ -1615,10 +1625,28 @@ ResourceGroupOptionList:
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
 	}
 
+ResourceGroupPriorityOption:
+	"LOW"
+	{
+		$$ = uint64(1)
+	}
+|	"MEDIUM"
+	{
+		$$ = uint64(8)
+	}
+|	"HIGH"
+	{
+		$$ = uint64(16)
+	}
+
 DirectResourceGroupOption:
 	"RU_PER_SEC" EqOpt LengthNum
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
+	}
+|	"PRIORITY" EqOpt ResourceGroupPriorityOption
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourcePriority, UintValue: $3.(uint64)}
 	}
 |	"BURSTABLE"
 	{
@@ -5652,6 +5680,16 @@ LikeOrNotOp:
 		$$ = false
 	}
 
+IlikeOrNotOp:
+	"ILIKE"
+	{
+		$$ = true
+	}
+|	NotSym "ILIKE"
+	{
+		$$ = false
+	}
+
 RegexpOrNotOp:
 	RegexpSym
 	{
@@ -5696,7 +5734,7 @@ PredicateExpr:
 			Not:   !$2.(bool),
 		}
 	}
-|	BitExpr LikeOrNotOp SimpleExpr LikeEscapeOpt
+|	BitExpr LikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
 		escape := $4
 		if len(escape) > 1 {
@@ -5705,11 +5743,29 @@ PredicateExpr:
 		} else if len(escape) == 0 {
 			escape = "\\"
 		}
-		$$ = &ast.PatternLikeExpr{
+		$$ = &ast.PatternLikeOrIlikeExpr{
 			Expr:    $1,
 			Pattern: $3,
 			Not:     !$2.(bool),
 			Escape:  escape[0],
+			IsLike:  true,
+		}
+	}
+|	BitExpr IlikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
+	{
+		escape := $4
+		if len(escape) > 1 {
+			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
+			return 1
+		} else if len(escape) == 0 {
+			escape = "\\"
+		}
+		$$ = &ast.PatternLikeOrIlikeExpr{
+			Expr:    $1,
+			Pattern: $3,
+			Not:     !$2.(bool),
+			Escape:  escape[0],
+			IsLike:  false,
 		}
 	}
 |	BitExpr RegexpOrNotOp SimpleExpr
@@ -5726,7 +5782,7 @@ RegexpSym:
 	"REGEXP"
 |	"RLIKE"
 
-LikeEscapeOpt:
+LikeOrIlikeEscapeOpt:
 	%prec empty
 	{
 		$$ = "\\"
@@ -6373,6 +6429,7 @@ UnReservedKeyword:
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|	"CALIBRATE"
 
 TiDBKeyword:
 	"ADMIN"
@@ -6513,6 +6570,10 @@ NotKeywordToken:
 |	"IO_READ_BANDWIDTH"
 |	"IO_WRITE_BANDWIDTH"
 |	"RU_PER_SEC"
+|	"PRIORITY"
+|	"HIGH"
+|	"MEDIUM"
+|	"LOW"
 |	"BURSTABLE"
 
 /************************************************************************************
@@ -6792,6 +6853,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -6816,6 +6878,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -6832,6 +6895,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -10612,7 +10676,7 @@ ShowStmt:
 	{
 		stmt := $2.(*ast.ShowStmt)
 		if $3 != nil {
-			if x, ok := $3.(*ast.PatternLikeExpr); ok && x.Expr == nil {
+			if x, ok := $3.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
 				stmt.Pattern = x
 			} else {
 				stmt.Where = $3.(ast.ExprNode)
@@ -11134,9 +11198,10 @@ ShowLikeOrWhereOpt:
 	}
 |	"LIKE" SimpleExpr
 	{
-		$$ = &ast.PatternLikeExpr{
+		$$ = &ast.PatternLikeOrIlikeExpr{
 			Pattern: $2,
 			Escape:  '\\',
+			IsLike:  true,
 		}
 	}
 |	"WHERE" Expression
@@ -11349,6 +11414,7 @@ Statement:
 |	DeleteFromStmt
 |	ExecuteStmt
 |	ExplainStmt
+|	CalibrateResourceStmt
 |	ChangeStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
@@ -13661,6 +13727,7 @@ LoadDataStmt:
 			Format:             $6.(*string),
 			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
 			Table:              $10.(*ast.TableName),
+			Charset:            $11.(*string),
 			FieldsInfo:         $12.(*ast.FieldsClause),
 			LinesInfo:          $13.(*ast.LinesClause),
 			IgnoreLines:        $14.(*uint64),
@@ -13708,8 +13775,14 @@ IgnoreLines:
 	}
 
 CharsetOpt:
-	{}
+	{
+		$$ = (*string)(nil)
+	}
 |	"CHARACTER" "SET" CharsetName
+	{
+		v := $3
+		$$ = &v
+	}
 
 LocalOpt:
 	{
@@ -14598,5 +14671,17 @@ PlanReplayerStmt:
 		}
 
 		$$ = x
+	}
+
+/********************************************************************
+ *
+ * Calibrate Resource Statement
+ *
+ * CALIBRATE RESOURCE
+ *******************************************************************/
+CalibrateResourceStmt:
+	"CALIBRATE" "RESOURCE"
+	{
+		$$ = &ast.CalibrateResourceStmt{}
 	}
 %%

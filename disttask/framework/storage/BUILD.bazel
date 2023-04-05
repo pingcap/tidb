@@ -13,6 +13,7 @@ go_library(
         "//util/logutil",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],
@@ -22,9 +23,9 @@ go_test(
     name = "storage_test",
     timeout = "short",
     srcs = ["table_test.go"],
-    embed = [":storage"],
     flaky = True,
     deps = [
+        ":storage",
         "//disttask/framework/proto",
         "//testkit",
         "//testkit/testsetup",

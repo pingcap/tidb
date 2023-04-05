@@ -180,6 +180,9 @@ func (p *PhysicalTopN) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*ti
 	for _, item := range p.ByItems {
 		topNExec.OrderBy = append(topNExec.OrderBy, expression.SortByItemToPB(sc, client, item.Expr, item.Desc))
 	}
+	for _, item := range p.PartitionBy {
+		topNExec.PartitionBy = append(topNExec.PartitionBy, expression.SortByItemToPB(sc, client, item.Col.Clone(), item.Desc))
+	}
 	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
@@ -194,10 +197,15 @@ func (p *PhysicalTopN) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*ti
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
 	limitExec := &tipb.Limit{
 		Limit: p.Count,
 	}
 	executorID := ""
+	for _, item := range p.PartitionBy {
+		limitExec.PartitionBy = append(limitExec.PartitionBy, expression.SortByItemToPB(sc, client, item.Col.Clone(), item.Desc))
+	}
 	if storeType == kv.TiFlash {
 		var err error
 		limitExec.Child, err = p.children[0].ToPB(ctx, storeType)
@@ -252,6 +260,17 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx sessionctx.Contex
 	if *(ptsExec.IsFastScan) {
 		telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()
 	}
+
+	if len(p.lateMaterializationFilterCondition) > 0 {
+		sc := ctx.GetSessionVars().StmtCtx
+		client := ctx.GetClient()
+		conditions, err := expression.ExpressionsToPBList(sc, p.lateMaterializationFilterCondition, client)
+		if err != nil {
+			return nil, err
+		}
+		ptsExec.PushedDownFilterConditions = conditions
+	}
+
 	ptsExec.Desc = p.Desc
 	executorID := p.ExplainID().String()
 	err := tables.SetPBColumnsDefaultValue(ctx, ptsExec.Columns, p.Columns)

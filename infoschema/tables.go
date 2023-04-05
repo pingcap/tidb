@@ -1228,7 +1228,7 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
-	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
+	{name: "QUERY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
 var tableSequencesCols = []columnInfo{
@@ -1594,7 +1594,8 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 
 var tableResourceGroupsCols = []columnInfo{
 	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
-	{name: "RU_PER_SEC", tp: mysql.TypeLonglong, size: 21},
+	{name: "RU_PER_SEC", tp: mysql.TypeVarchar, size: 21},
+	{name: "PRIORITY", tp: mysql.TypeVarchar, size: 6},
 	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
 }
 
@@ -1653,6 +1654,7 @@ type ServerInfo struct {
 	GitHash        string
 	StartTimestamp int64
 	ServerID       uint64
+	EngineRole     string
 }
 
 func (s *ServerInfo) isLoopBackOrUnspecifiedAddr(addr string) bool {
@@ -1855,11 +1857,6 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-// IsTiFlashWriteRelated check if the TiFlash is non-disaggregated or write node in disaggregated mode.
-func IsTiFlashWriteRelated(serverType string) bool {
-	return serverType == kv.TiFlash.Name() || serverType == TiFlashWrite
-}
-
 func isTiFlashStore(store *metapb.Store) bool {
 	for _, label := range store.Labels {
 		if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
@@ -1925,16 +1922,14 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		var tp string
 		if isTiFlashStore(store) {
-			if isTiFlashWriteNode(store) {
-				// tiflash_write is not a storeType in client-go, so we just judge based on the label here.
-				tp = TiFlashWrite
-			} else {
-				tp = kv.TiFlash.Name()
-			}
+			tp = kv.TiFlash.Name()
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
-
+		var engineRole string
+		if isTiFlashWriteNode(store) {
+			engineRole = placement.EngineRoleLabelWrite
+		}
 		servers = append(servers, ServerInfo{
 			ServerType:     tp,
 			Address:        store.Address,
@@ -1942,6 +1937,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			Version:        FormatStoreServerVersion(store.Version),
 			GitHash:        store.GitHash,
 			StartTimestamp: store.StartTimestamp,
+			EngineRole:     engineRole,
 		})
 	}
 	return servers, nil
@@ -1955,8 +1951,8 @@ func FormatStoreServerVersion(version string) string {
 	return version
 }
 
-// GetTiFlashWriteStoreCount returns the count of tiflash server that is non-disaggregated or write node in disaggregated mode.
-func GetTiFlashWriteStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
+// GetTiFlashStoreCount returns the count of tiflash server.
+func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 	failpoint.Inject("mockTiFlashStoreCount", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(uint64(10), nil)
@@ -1968,7 +1964,7 @@ func GetTiFlashWriteStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 		return cnt, err
 	}
 	for _, store := range stores {
-		if IsTiFlashWriteRelated(store.ServerType) {
+		if store.ServerType == kv.TiFlash.Name() {
 			cnt++
 		}
 	}
