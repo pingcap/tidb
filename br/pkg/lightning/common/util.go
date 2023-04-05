@@ -165,7 +165,7 @@ type SQLWithRetry struct {
 	HideQueryLog bool
 }
 
-func (t SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
+func (SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
 	return Retry(purpose, parentLogger, action)
 }
 

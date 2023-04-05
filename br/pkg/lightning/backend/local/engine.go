@@ -242,7 +242,7 @@ func (e *Engine) unlock() {
 
 // TotalMemorySize returns the total memory size of the engine.
 func (e *Engine) TotalMemorySize() int64 {
-	var memSize int64 = 0
+	var memSize int64
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*Writer)
 		if w.kvBuffer != nil {
@@ -355,7 +355,7 @@ func (c *RangePropertiesCollector) Finish(userProps map[string]string) error {
 }
 
 // Name implements `pebble.TablePropertyCollector`.
-func (c *RangePropertiesCollector) Name() string {
+func (*RangePropertiesCollector) Name() string {
 	return propRangeIndex
 }
 
@@ -1146,7 +1146,7 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 }
 
 // AppendRows appends rows to the SST file.
-func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
+func (w *Writer) AppendRows(ctx context.Context, _ string, columnNames []string, rows encode.Rows) error {
 	kvs := kv.Rows2KvPairs(rows)
 	if len(kvs) == 0 {
 		return nil
