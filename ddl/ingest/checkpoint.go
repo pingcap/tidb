@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ingest
 
 import (
 	"context"
@@ -26,11 +26,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -50,7 +48,7 @@ type CheckpointManager interface {
 // CentralizedCheckpointManager is a checkpoint manager implementation that used by non-distributed reorganization.
 type CentralizedCheckpointManager struct {
 	ctx      context.Context
-	bcCtx    *ingest.BackendContext
+	bcCtx    *BackendContext
 	sessPool *sess.Pool
 	jobID    int64
 	indexID  int64
@@ -89,7 +87,7 @@ type TaskCheckpoint struct {
 }
 
 // NewCentralizedCheckpointManager creates a new checkpoint manager.
-func NewCentralizedCheckpointManager(ctx context.Context, bcCtx *ingest.BackendContext,
+func NewCentralizedCheckpointManager(ctx context.Context, bcCtx *BackendContext,
 	sessPool *sess.Pool, jobID, indexID int64) (*CentralizedCheckpointManager, error) {
 	instanceAddr := initInstanceAddr()
 	cm := &CentralizedCheckpointManager{
@@ -137,6 +135,7 @@ func (s *CentralizedCheckpointManager) IsComplete(_ int, _, end kv.Key) bool {
 	return s.localDataIsValid && len(s.minKeySyncLocal) > 0 && end.Cmp(s.minKeySyncLocal) <= 0
 }
 
+// Status returns the status of the checkpoint.
 func (s *CentralizedCheckpointManager) Status() (int, kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -234,12 +233,12 @@ func (s *CentralizedCheckpointManager) resumeCheckpoint() error {
 		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
-	ddlSess := session{Context: sessCtx}
-	return ddlSess.runInTxn(func(sess *session) error {
+	ddlSess := sess.NewSession(sessCtx)
+	return ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = %s;"
 		sql := fmt.Sprintf(template, s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
-		ctx := kv.WithInternalSourceType(s.ctx, getDDLRequestSource(model.ActionAddIndex))
-		rows, err := sess.execute(ctx, sql, "get_checkpoint")
+		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
+		rows, err := se.Execute(ctx, sql, "get_checkpoint")
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -293,8 +292,8 @@ func (s *CentralizedCheckpointManager) updateCheckpoint() error {
 		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
-	ddlSess := session{Context: sessCtx}
-	err = ddlSess.runInTxn(func(sess *session) error {
+	ddlSess := sess.NewSession(sessCtx)
+	err = ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_id = %d and ele_type = %s;"
 		cp := &ReorgCheckpoint{
 			LocalSyncKey:   currentLocalKey,
@@ -309,8 +308,8 @@ func (s *CentralizedCheckpointManager) updateCheckpoint() error {
 			return errors.Trace(err)
 		}
 		sql := fmt.Sprintf(template, wrapKey2String(rawReorgMeta), s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
-		ctx := kv.WithInternalSourceType(s.ctx, getDDLRequestSource(model.ActionAddIndex))
-		_, err = sess.execute(ctx, sql, "update_checkpoint")
+		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
+		_, err = se.Execute(ctx, sql, "update_checkpoint")
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -347,4 +346,11 @@ func (s *CentralizedCheckpointManager) updateCheckpointLoop() {
 			return
 		}
 	}
+}
+
+func wrapKey2String(key []byte) string {
+	if len(key) == 0 {
+		return "''"
+	}
+	return fmt.Sprintf("0x%x", key)
 }

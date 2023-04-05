@@ -273,7 +273,7 @@ type ingestBackfillScheduler struct {
 	poolErr     chan error
 	backendCtx  *ingest.BackendContext
 
-	checkpointMgr CheckpointManager
+	checkpointMgr ingest.CheckpointManager
 }
 
 func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
@@ -297,7 +297,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	b.backendCtx = bc
-	mgr, err := NewCentralizedCheckpointManager(b.ctx, bc, b.sessPool, job.ID, b.reorgInfo.currElement.ID)
+	mgr, err := ingest.NewCentralizedCheckpointManager(b.ctx, bc, b.sessPool, job.ID, b.reorgInfo.currElement.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "backend.go",
         "backend_mgr.go",
+        "checkpoint.go",
         "config.go",
         "disk_root.go",
         "engine.go",
@@ -27,7 +28,9 @@ go_library(
         "//br/pkg/lightning/glue",
         "//br/pkg/lightning/log",
         "//config",
+        "//ddl/internal/session",
         "//kv",
+        "//meta",
         "//parser",
         "//parser/model",
         "//parser/mysql",

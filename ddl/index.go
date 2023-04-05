@@ -720,6 +720,7 @@ func pickBackfillType(job *model.Job) model.ReorgType {
 		if ingest.LitInitialized {
 			useIngest = canUseIngest()
 			if useIngest {
+				cleanupSortPath(job.ID)
 				job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 				return model.ReorgTypeLitMerge
 			}
@@ -1675,7 +1676,7 @@ type addIndexIngestWorker struct {
 	index            table.Index
 	writerCtx        *ingest.WriterContext
 	copReqSenderPool *copReqSenderPool
-	checkpointMgr    CheckpointManager
+	checkpointMgr    ingest.CheckpointManager
 
 	resultCh chan *backfillResult
 	jobID    int64
@@ -1683,7 +1684,7 @@ type addIndexIngestWorker struct {
 
 func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.EngineInfo,
 	resultCh chan *backfillResult, jobID int64, schemaName string, indexID int64, writerID int,
-	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context, checkpointMgr CheckpointManager) (*addIndexIngestWorker, error) {
+	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context, checkpointMgr ingest.CheckpointManager) (*addIndexIngestWorker, error) {
 	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	lwCtx, err := ei.NewWriterCtx(writerID, indexInfo.Unique)

@@ -14,7 +14,6 @@ go_library(
         "backfilling.go",
         "backfilling_scheduler.go",
         "callback.go",
-        "checkpoint.go",
         "cluster.go",
         "column.go",
         "constant.go",

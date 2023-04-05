@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -68,7 +69,7 @@ type chunkSender interface {
 type copReqSenderPool struct {
 	tasksCh       chan *reorgBackfillTask
 	chunkSender   chunkSender
-	checkpointMgr CheckpointManager
+	checkpointMgr ingest.CheckpointManager
 
 	ctx    context.Context
 	copCtx *copContext
@@ -146,7 +147,7 @@ func (c *copReqSender) run() {
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
-	taskCh chan *reorgBackfillTask, checkpointMgr CheckpointManager) *copReqSenderPool {
+	taskCh chan *reorgBackfillTask, checkpointMgr ingest.CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
