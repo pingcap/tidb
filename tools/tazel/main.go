@@ -55,18 +55,21 @@ func main() {
 			if !skipFlaky(path) && gotest[0].AttrLiteral("flaky") == "" {
 				gotest[0].SetAttr("flaky", &build.LiteralExpr{Token: "True"})
 			}
-			abspath, err := filepath.Abs(path)
-			if err != nil {
-				return err
-			}
-			if cnt, ok := testMap[filepath.Dir(abspath)]; ok {
-				if cnt > 3 {
-					gotest[0].SetAttr("shard_count",
-						&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, MaxShardCount)), 10)})
-				} else {
-					gotest[0].DelAttr("shard_count")
+			if !skipShardCount(path) {
+				abspath, err := filepath.Abs(path)
+				if err != nil {
+					return err
+				}
+				if cnt, ok := testMap[filepath.Dir(abspath)]; ok {
+					if cnt > 3 {
+						gotest[0].SetAttr("shard_count",
+							&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, MaxShardCount)), 10)})
+					} else {
+						gotest[0].DelAttr("shard_count")
+					}
 				}
 			}
+
 		}
 		write(path, buildfile)
 		return nil
