@@ -225,7 +225,6 @@ func TestListDefaultPartitionPruner(t *testing.T) {
 			result.Check(tk2.MustQuery(tt).Sort().Rows())
 		}
 	}
-
 }
 
 type testTablePartitionInfo struct {
