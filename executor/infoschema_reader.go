@@ -1099,20 +1099,15 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 					} else if table.Partition.Type == model.PartitionTypeList {
 						if len(pi.InValues) > 0 {
 							buf := bytes.NewBuffer(nil)
-							if len(pi.InValues[0]) == 1 {
-								for i, vs := range pi.InValues {
-									if i > 0 {
-										buf.WriteString(",")
-									}
-									buf.WriteString(vs[0])
+							for i, vs := range pi.InValues {
+								if i > 0 {
+									buf.WriteString(",")
 								}
-							} else if len(pi.InValues[0]) > 1 {
-								for i, vs := range pi.InValues {
-									if i > 0 {
-										buf.WriteString(",")
-									}
+								if len(vs) != 1 {
 									buf.WriteString("(")
-									buf.WriteString(strings.Join(vs, ","))
+								}
+								buf.WriteString(strings.Join(vs, ","))
+								if len(vs) != 1 {
 									buf.WriteString(")")
 								}
 							}

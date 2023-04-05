@@ -1269,6 +1269,14 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 	require.Equal(t, [][]string{{"DEFAULT"}, {"6"}}, part.Definitions[5].InValues)
 	require.Equal(t, model.NewCIStr("pDef"), part.Definitions[5].Name)
 
+	tk.MustQuery(`select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='test'`).Sort().Check(testkit.Rows(""+
+		"p0 1 LIST `id` 1,2  <nil>",
+		"p1 2 LIST `id` 3,4  <nil>",
+		"p3 3 LIST `id` 5,NULL  <nil>",
+		"p4 4 LIST `id` 7  <nil>",
+		"p5 5 LIST `id` 8,9  <nil>",
+		"pDef 6 LIST `id` DEFAULT,6  <nil>"))
+
 	errorCases := []struct {
 		sql string
 		err *terror.Error
@@ -1425,6 +1433,14 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 		" PARTITION `p4` VALUES IN ((7,'a')),\n" +
 		" PARTITION `p5` VALUES IN ((8,'a')),\n" +
 		" PARTITION `pDef` VALUES IN ((9,'d'),DEFAULT,(10,'d')))"))
+	tk.MustQuery(`select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='test'`).Sort().Check(testkit.Rows(""+
+		"p0 1 LIST COLUMNS `id`,`name` (1,'a'),(2,'b')  <nil>",
+		"p1 2 LIST COLUMNS `id`,`name` (3,'a'),(4,'b')  <nil>",
+		"p3 3 LIST COLUMNS `id`,`name` (5,NULL)  <nil>",
+		"p4 4 LIST COLUMNS `id`,`name` (7,'a')  <nil>",
+		"p5 5 LIST COLUMNS `id`,`name` (8,'a')  <nil>",
+		"pDef 6 LIST COLUMNS `id`,`name` (9,'d'),DEFAULT,(10,'d')  <nil>"))
+
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1494,11 +1510,33 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 			" PARTITION `p4` VALUES IN ((7,'a')),\n" +
 			" PARTITION `p5` VALUES IN ((8,'a')),\n" +
 			" PARTITION `pDef` VALUES IN ((9,'d'),DEFAULT,(10,'d')))")
+	tk.MustQuery(`select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='test'`).Sort().Check(testkit.Rows(""+
+		"p0 1 LIST COLUMNS `id`,`name` (1,'a'),(2,'b')  <nil>",
+		"p1 2 LIST COLUMNS `id`,`name` (3,'a'),(4,'b')  <nil>",
+		"p3 3 LIST COLUMNS `id`,`name` (5,NULL)  <nil>",
+		"p4 4 LIST COLUMNS `id`,`name` (7,'a')  <nil>",
+		"p5 5 LIST COLUMNS `id`,`name` (8,'a')  <nil>",
+		"pDef 6 LIST COLUMNS `id`,`name` (9,'d'),DEFAULT,(10,'d')  <nil>"))
 	tk.MustExec("set @@session.tidb_enable_list_partition = OFF")
 	tk.MustExec(`alter table t drop partition pDef`)
 	tk.MustContainErrMsg(`alter table t add partition (partition pDef)`,
 		"[ddl:1479]Syntax : LIST PARTITIONING requires definition of VALUES IN for each partition")
 	tk.MustExec(`alter table t add partition (partition pDef default)`)
+	tk.MustQuery(`select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='test'`).Sort().Check(testkit.Rows(""+
+		"p0 1 LIST COLUMNS `id`,`name` (1,'a'),(2,'b')  <nil>",
+		"p1 2 LIST COLUMNS `id`,`name` (3,'a'),(4,'b')  <nil>",
+		"p3 3 LIST COLUMNS `id`,`name` (5,NULL)  <nil>",
+		"p4 4 LIST COLUMNS `id`,`name` (7,'a')  <nil>",
+		"p5 5 LIST COLUMNS `id`,`name` (8,'a')  <nil>",
+		"pDef 6 LIST COLUMNS `id`,`name` DEFAULT  <nil>"))
+	tk.MustExec(`alter table t reorganize partition pDef into (partition pDef VALUES IN (DEFAULT,(9,'c')))`)
+	tk.MustQuery(`select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='test'`).Sort().Check(testkit.Rows(""+
+		"p0 1 LIST COLUMNS `id`,`name` (1,'a'),(2,'b')  <nil>",
+		"p1 2 LIST COLUMNS `id`,`name` (3,'a'),(4,'b')  <nil>",
+		"p3 3 LIST COLUMNS `id`,`name` (5,NULL)  <nil>",
+		"p4 4 LIST COLUMNS `id`,`name` (7,'a')  <nil>",
+		"p5 5 LIST COLUMNS `id`,`name` (8,'a')  <nil>",
+		"pDef 6 LIST COLUMNS `id`,`name` DEFAULT,(9,'c')  <nil>"))
 }
 
 func TestDefaultListPartition(t *testing.T) {
