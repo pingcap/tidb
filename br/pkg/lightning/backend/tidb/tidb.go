@@ -759,7 +759,7 @@ type Writer struct {
 }
 
 // Close implements the EngineWriter interface.
-func (w *Writer) Close(_ context.Context) (backend.ChunkFlushStatus, error) {
+func (*Writer) Close(_ context.Context) (backend.ChunkFlushStatus, error) {
 	return nil, nil
 }
 
@@ -769,7 +769,7 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 }
 
 // IsSynced implements the EngineWriter interface.
-func (w *Writer) IsSynced() bool {
+func (*Writer) IsSynced() bool {
 	return true
 }
 
