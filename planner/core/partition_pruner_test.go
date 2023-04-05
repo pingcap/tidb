@@ -292,12 +292,10 @@ PARTITIONS 4`)
 	tk.MustQuery("SELECT (SELECT tt.a FROM t1 tt ORDER BY a ASC LIMIT 1) aa, COUNT(DISTINCT b) FROM t1 GROUP BY aa").Check(testkit.Rows("1 2"))
 
 	tk.MustExec("insert into t1 values (3, 3), (3, 3), (3, 3)")
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa")
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt order by 1 LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("1 3"))
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1 tt ORDER BY a ASC LIMIT 1) aa, COUNT(DISTINCT b) FROM t1 GROUP BY aa").Check(testkit.Rows("1 3"))
 
 	tk.MustExec("insert into t1 values (4, 4), (4, 4), (4, 4), (4, 4)")
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa")
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt order by 1 desc LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("4 4"))
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1 tt ORDER BY a DESC LIMIT 1) aa, COUNT(DISTINCT b) FROM t1 GROUP BY aa").Check(testkit.Rows("4 4"))
 }
 
 func TestIssue22898(t *testing.T) {
@@ -478,7 +476,9 @@ func TestListDefaultPruning(t *testing.T) {
 		"  └─TableFullScan 7.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`select * from t where a in (1) and b in (1)`).Sort().Check(testkit.Rows("1 1"))
 
-	// TODO: if exact match with multiple columns, do not include the default partition?!?
+	// TODO: if exact match with multiple columns, do not include the default partition.
+	// Currently the LIST pruning needs refactoring, to use the Range optimizer for all conditions
+	// instead of per column only, which makes it hard to see if all combination are covered or not.
 	tk.MustQuery(`explain format='brief' select * from t where a in (1) and b in (1)`).Check(testkit.Rows(""+
 		"TableReader 0.86 root partition:p1,pDef data:Selection",
 		"└─Selection 0.86 cop[tikv]  eq(listdefaultprune.t.a, 1), eq(listdefaultprune.t.b, 1)",
