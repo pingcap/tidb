@@ -3504,7 +3504,14 @@ func TestAddHashPartition(t *testing.T) {
 		"  `store_id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`store_id`) PARTITIONS 12"))
-	tk.MustExec("alter table t add partition (partition p13)")
+	tk.MustContainErrMsg(`alter table t coalesce partition 0`,
+		"[ddl:1515]At least one partition must be coalesced")
+	tk.MustContainErrMsg(`alter table t coalesce partition 12`,
+		"[ddl:1508]Cannot remove all partitions, use DROP TABLE instead")
+	tk.MustExec(`create placement policy tworeplicas followers=1`)
+	tk.MustExec(`create placement policy threereplicas followers=2`)
+	tk.MustExec(`create placement policy fourreplicas followers=3`)
+	tk.MustExec("alter table t add partition (partition p13 comment 'p13' placement policy tworeplicas, partition p14 comment 'p14' placement policy threereplicas, partition p15 comment 'p15' placement policy fourreplicas)")
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
@@ -3528,8 +3535,12 @@ func TestAddHashPartition(t *testing.T) {
 		" PARTITION `p9`,\n" +
 		" PARTITION `p10`,\n" +
 		" PARTITION `p11`,\n" +
-		" PARTITION `p13`)"))
-	// TODO: Check if MySQL removes all names when coalesce partitions too?
+		" PARTITION `p13` COMMENT 'p13' /*T![placement] PLACEMENT POLICY=`tworeplicas` */,\n" +
+		" PARTITION `p14` COMMENT 'p14' /*T![placement] PLACEMENT POLICY=`threereplicas` */,\n" +
+		" PARTITION `p15` COMMENT 'p15' /*T![placement] PLACEMENT POLICY=`fourreplicas` */)"))
+	// MySQL keeps the comments, so we should keep all options connected to the remaining partitions too!
+	// So once you added any partition option,
+	// it will never go back to just a number of partitions in MySQL!
 	tk.MustExec("alter table t coalesce partition 2")
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -3541,7 +3552,36 @@ func TestAddHashPartition(t *testing.T) {
 		"  `job_code` int(11) DEFAULT NULL,\n" +
 		"  `store_id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY HASH (`store_id`) PARTITIONS 11"))
+		"PARTITION BY HASH (`store_id`)\n" +
+		"(PARTITION `p0`,\n" +
+		" PARTITION `p1`,\n" +
+		" PARTITION `p2`,\n" +
+		" PARTITION `p3`,\n" +
+		" PARTITION `p4`,\n" +
+		" PARTITION `p5`,\n" +
+		" PARTITION `p6`,\n" +
+		" PARTITION `p7`,\n" +
+		" PARTITION `p8`,\n" +
+		" PARTITION `p9`,\n" +
+		" PARTITION `p10`,\n" +
+		" PARTITION `p11`,\n" +
+		" PARTITION `p13` COMMENT 'p13' /*T![placement] PLACEMENT POLICY=`tworeplicas` */)"))
+	// If no extra options, it will go back to just numbers in TiDB:
+	tk.MustExec("alter table t coalesce partition 1")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`store_id`) PARTITIONS 12"))
+	tk.MustExec(`drop placement policy tworeplicas`)
+	tk.MustExec(`drop placement policy threereplicas`)
+	tk.MustExec(`drop placement policy fourreplicas`)
 	tk.MustExec(`drop table t`)
 
 	tk.MustExec(`create table t (

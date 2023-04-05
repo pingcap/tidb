@@ -1122,21 +1122,25 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 	definitions := make([]model.PartitionDefinition, tbInfo.Partition.Num)
 	if len(defs) == 0 {
 		for i := 0; i < len(definitions); i++ {
-			definitions[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
+			definitions[i].Name = model.NewCIStr(fmt.Sprintf("p%d", i))
 		}
 		return definitions, nil
 	}
-	// ADD PARTITION for hash/key may use partition definitions,
 	// So start by re-using the existing ones
+	// For COALESCE, it will copy the remaining ones
+	// For ADD it will copy the existing ones
 	copy(definitions, tbInfo.Partition.Definitions)
 	offset := len(tbInfo.Partition.Definitions)
 
-	for i := 0; i < len(defs); i++ {
-		def := defs[i]
-		definitions[i+offset].Name = def.Name
-		definitions[i+offset].Comment, _ = def.Comment()
-		if err := setPartitionPlacementFromOptions(&definitions[i+offset], def.Options); err != nil {
-			return nil, err
+	if uint64(len(tbInfo.Partition.Definitions)) < tbInfo.Partition.Num {
+		// ADD PARTITION needs to add the new partitions
+		for i := 0; i < len(defs); i++ {
+			def := defs[i]
+			definitions[i+offset].Name = def.Name
+			definitions[i+offset].Comment, _ = def.Comment()
+			if err := setPartitionPlacementFromOptions(&definitions[i+offset], def.Options); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return definitions, nil

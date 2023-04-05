@@ -4176,6 +4176,34 @@ func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, 
 	if newSpec.Num < uint64(len(newSpec.PartDefinitions)) {
 		newSpec.Num = uint64(len(newSpec.PartDefinitions))
 	}
+	if spec.Tp == ast.AlterTableCoalescePartitions {
+		if newSpec.Num < 1 {
+			return ast.ErrCoalescePartitionNoPartition
+		}
+		if newSpec.Num >= uint64(len(pi.Definitions)) {
+			return dbterror.ErrDropLastPartition
+		}
+		// Generate all partition definitions from the remaining existing partitions,
+		// I.e. keep the options like comment, placement rules etc.
+		newNum := uint64(len(pi.Definitions)) - newSpec.Num
+		nonDefaultOptions := false
+		for i := uint64(0); i < newNum; i++ {
+			orgDef := pi.Definitions[i]
+			if orgDef.Name.O != fmt.Sprintf("p%d", i) {
+				nonDefaultOptions = true
+			}
+			if len(orgDef.Comment) > 0 {
+				nonDefaultOptions = true
+			}
+			if orgDef.PlacementPolicyRef != nil {
+				nonDefaultOptions = true
+			}
+		}
+		if nonDefaultOptions {
+			// The partition definitions will be copied in buildHashPartitionDefinitions()
+			newSpec.PartDefinitions = []*ast.PartitionDefinition{&ast.PartitionDefinition{}}
+		}
+	}
 
 	return d.ReorganizePartitions(sctx, ident, &newSpec)
 }
@@ -7123,7 +7151,7 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		switch spec.Tp {
 		case ast.AlterTableCoalescePartitions:
 			if int(spec.Num) >= len(meta.Partition.Definitions) {
-				return nil, ast.ErrCoalescePartitionNoPartition
+				return nil, dbterror.ErrDropLastPartition
 			}
 			resetNum := meta.Partition.Num
 			defer func() { meta.Partition.Num = resetNum }()
