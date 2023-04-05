@@ -358,8 +358,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
-      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "br/pkg/lightning/importer/opts": "br/pkg/lightning/importer/opts",
+      "br/pkg/lightning/": "br/pkg/lightning/",
       "executor/aggregate.go": "executor/aggregate.go",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",

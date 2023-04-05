@@ -60,7 +60,7 @@ func (p pebbleIter) Seek(key []byte) bool {
 	return p.SeekGE(key)
 }
 
-func (p pebbleIter) OpType() sst.Pair_OP {
+func (pebbleIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 
@@ -194,7 +194,7 @@ func (d *dupDetectIter) Close() error {
 	return d.iter.Close()
 }
 
-func (d *dupDetectIter) OpType() sst.Pair_OP {
+func (*dupDetectIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 
@@ -281,7 +281,7 @@ func (d *dupDBIter) Close() error {
 	return d.iter.Close()
 }
 
-func (d *dupDBIter) OpType() sst.Pair_OP {
+func (*dupDBIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 

@@ -358,7 +358,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 }
 
 // Close implements CheckpointsDB.Close.
-func (g GlueCheckpointsDB) Close() error {
+func (GlueCheckpointsDB) Close() error {
 	return nil
 }
 
@@ -769,17 +769,17 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 }
 
 // DumpTables implements CheckpointsDB.DumpTables.
-func (g GlueCheckpointsDB) DumpTables(ctx context.Context, csv io.Writer) error {
+func (GlueCheckpointsDB) DumpTables(_ context.Context, _ io.Writer) error {
 	return errors.Errorf("dumping glue checkpoint into CSV not unsupported")
 }
 
 // DumpEngines implements CheckpointsDB.DumpEngines.
-func (g GlueCheckpointsDB) DumpEngines(ctx context.Context, csv io.Writer) error {
+func (GlueCheckpointsDB) DumpEngines(_ context.Context, _ io.Writer) error {
 	return errors.Errorf("dumping glue checkpoint into CSV not unsupported")
 }
 
 // DumpChunks implements CheckpointsDB.DumpChunks.
-func (g GlueCheckpointsDB) DumpChunks(ctx context.Context, csv io.Writer) error {
+func (GlueCheckpointsDB) DumpChunks(_ context.Context, _ io.Writer) error {
 	return errors.Errorf("dumping glue checkpoint into CSV not unsupported")
 }
 

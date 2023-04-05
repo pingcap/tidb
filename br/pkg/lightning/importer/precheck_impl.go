@@ -15,7 +15,6 @@ package importer
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -64,7 +63,7 @@ func NewClusterResourceCheckItem(preInfoGetter PreImportInfoGetter) PrecheckItem
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (ci *clusterResourceCheckItem) GetCheckItemID() CheckItemID {
+func (*clusterResourceCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterSize
 }
 
@@ -199,7 +198,7 @@ func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*my
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (ci *clusterVersionCheckItem) GetCheckItemID() CheckItemID {
+func (*clusterVersionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterVersion
 }
 
@@ -234,7 +233,7 @@ func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydum
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (ci *emptyRegionCheckItem) GetCheckItemID() CheckItemID {
+func (*emptyRegionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterEmptyRegion
 }
 
@@ -331,7 +330,7 @@ func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas [
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (ci *regionDistributionCheckItem) GetCheckItemID() CheckItemID {
+func (*regionDistributionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterRegionDist
 }
 
@@ -409,7 +408,7 @@ func NewStoragePermissionCheckItem(cfg *config.Config) PrecheckItem {
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (ci *storagePermissionCheckItem) GetCheckItemID() CheckItemID {
+func (*storagePermissionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckSourcePermission
 }
 
@@ -453,12 +452,12 @@ func NewLargeFileCheckItem(cfg *config.Config, dbMetas []*mydump.MDDatabaseMeta)
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (ci *largeFileCheckItem) GetCheckItemID() CheckItemID {
+func (*largeFileCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLargeDataFile
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *largeFileCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+func (ci *largeFileCheckItem) Check(_ context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
@@ -495,12 +494,12 @@ func NewLocalDiskPlacementCheckItem(cfg *config.Config) PrecheckItem {
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (ci *localDiskPlacementCheckItem) GetCheckItemID() CheckItemID {
+func (*localDiskPlacementCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLocalDiskPlacement
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *localDiskPlacementCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+func (ci *localDiskPlacementCheckItem) Check(_ context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
@@ -536,7 +535,7 @@ func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreImportInfoG
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (ci *localTempKVDirCheckItem) GetCheckItemID() CheckItemID {
+func (*localTempKVDirCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLocalTempKVDir
 }
 
@@ -618,7 +617,7 @@ func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGette
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (ci *checkpointCheckItem) GetCheckItemID() CheckItemID {
+func (*checkpointCheckItem) GetCheckItemID() CheckItemID {
 	return CheckCheckpoints
 }
 
@@ -761,7 +760,7 @@ func NewCDCPITRCheckItem(cfg *config.Config) PrecheckItem {
 }
 
 // GetCheckItemID implements PrecheckItem interface.
-func (ci *CDCPITRCheckItem) GetCheckItemID() CheckItemID {
+func (*CDCPITRCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetUsingCDCPITR
 }
 
@@ -849,24 +848,6 @@ type onlyState struct {
 	State string `json:"state"`
 }
 
-func isActiveCDCChangefeed(jsonBytes []byte) bool {
-	s := onlyState{}
-	err := json.Unmarshal(jsonBytes, &s)
-	if err != nil {
-		// maybe a compatible issue, skip this key
-		log.L().Error("unmarshal etcd value failed when check CDC changefeed, will skip this key",
-			zap.ByteString("value", jsonBytes),
-			zap.Error(err))
-		return false
-	}
-	switch s.State {
-	case "normal", "stopped", "error":
-		return true
-	default:
-		return false
-	}
-}
-
 type schemaCheckItem struct {
 	cfg           *config.Config
 	preInfoGetter PreImportInfoGetter
@@ -885,7 +866,7 @@ func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, d
 }
 
 // GetCheckItemID implements PrecheckItem interface.
-func (ci *schemaCheckItem) GetCheckItemID() CheckItemID {
+func (*schemaCheckItem) GetCheckItemID() CheckItemID {
 	return CheckSourceSchemaValid
 }
 
@@ -1123,7 +1104,7 @@ func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter
 }
 
 // GetCheckItemID implements PrecheckItem interface.
-func (ci *csvHeaderCheckItem) GetCheckItemID() CheckItemID {
+func (*csvHeaderCheckItem) GetCheckItemID() CheckItemID {
 	return CheckCSVHeader
 }
 
@@ -1341,7 +1322,7 @@ func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGette
 }
 
 // GetCheckItemID implements PrecheckItem interface
-func (ci *tableEmptyCheckItem) GetCheckItemID() CheckItemID {
+func (*tableEmptyCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetTableEmpty
 }
 
