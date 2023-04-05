@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
@@ -1865,12 +1866,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 				}
 			}
-			sctx, err1 := w.sessPool.get()
+			sctx, err1 := w.sessPool.Get()
 			if err1 != nil {
 				return ver, err1
 			}
-			defer w.sessPool.put(sctx)
-			rh := newReorgHandler(newSession(sctx))
+			defer w.sessPool.Put(sctx)
+			rh := newReorgHandler(sess.NewSession(sctx))
 			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
@@ -2189,13 +2190,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	failpoint.Inject("exchangePartitionAutoID", func(val failpoint.Value) {
 		if val.(bool) {
-			se, err := w.sessPool.get()
-			defer w.sessPool.put(se)
+			seCtx, err := w.sessPool.Get()
+			defer w.sessPool.Put(seCtx)
 			if err != nil {
 				failpoint.Return(ver, err)
 			}
-			sess := newSession(se)
-			_, err = sess.execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
+			se := sess.NewSession(seCtx)
+			_, err = se.Execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
 			if err != nil {
 				failpoint.Return(ver, err)
 			}
@@ -2572,12 +2573,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
-	sctx, err1 := w.sessPool.get()
+	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
 		return done, ver, err1
 	}
-	defer w.sessPool.put(sctx)
-	rh := newReorgHandler(newSession(sctx))
+	defer w.sessPool.Put(sctx)
+	rh := newReorgHandler(sess.NewSession(sctx))
 	elements := BuildElements(tbl.Meta().Columns[0], tbl.Meta().Indices)
 	partTbl, ok := tbl.(table.PartitionedTable)
 	if !ok {
@@ -3002,11 +3003,11 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 
 	var ctx sessionctx.Context
-	ctx, err := w.sessPool.get()
+	ctx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.put(ctx)
+	defer w.sessPool.Put(ctx)
 
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, sql, paramList...)
 	if err != nil {

@@ -566,18 +566,6 @@ func (be *tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
-	panic("Unsupported Operation")
-}
-
-func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
-	panic("Unsupported Operation")
-}
-
-func (be *tidbBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
-	return nil
-}
-
 func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) error {
 	return nil
 }
@@ -736,22 +724,27 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 	return nil
 }
 
+// EngineFileSizes returns the size of each engine file.
 func (be *tidbBackend) EngineFileSizes() []backend.EngineFileSize {
 	return nil
 }
 
+// FlushEngine flushes the data in the engine to the underlying storage.
 func (be *tidbBackend) FlushEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
+// FlushAllEngines flushes all the data in the engines to the underlying storage.
 func (be *tidbBackend) FlushAllEngines(context.Context) error {
 	return nil
 }
 
+// ResetEngine resets the engine.
 func (be *tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
 	return errors.New("cannot reset an engine in TiDB backend")
 }
 
+// LocalWriter returns a writer that writes data to local storage.
 func (be *tidbBackend) LocalWriter(
 	ctx context.Context,
 	cfg *backend.LocalWriterConfig,
@@ -760,28 +753,34 @@ func (be *tidbBackend) LocalWriter(
 	return &Writer{be: be}, nil
 }
 
+// Writer is a writer that writes data to local storage.
 type Writer struct {
 	be *tidbBackend
 }
 
+// Close implements the EngineWriter interface.
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	return nil, nil
 }
 
+// AppendRows implements the EngineWriter interface.
 func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
 	return w.be.WriteRows(ctx, tableName, columnNames, rows)
 }
 
+// IsSynced implements the EngineWriter interface.
 func (w *Writer) IsSynced() bool {
 	return true
 }
 
+// TableAutoIDInfo is the auto id information of a table.
 type TableAutoIDInfo struct {
 	Column string
 	NextID int64
 	Type   string
 }
 
+// FetchTableAutoIDInfos fetches the auto id information of a table.
 func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableName string) ([]*TableAutoIDInfo, error) {
 	rows, e := exec.QueryContext(ctx, fmt.Sprintf("SHOW TABLE %s NEXT_ROW_ID", tableName))
 	if e != nil {

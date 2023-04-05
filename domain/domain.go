@@ -282,7 +282,7 @@ func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, ver
 		if err != nil {
 			return 0, err
 		}
-		if len(data.Info.Writes) == 0 {
+		if data == nil || data.Info == nil || len(data.Info.Writes) == 0 {
 			return 0, errors.Errorf("There is no Write MVCC info for the schema version")
 		}
 		return int64(data.Info.Writes[0].CommitTs), nil
@@ -1346,41 +1346,35 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 }
 
 func (do *Domain) initDistTaskLoop(ctx context.Context) error {
-	se1, err := do.sysExecutorFactory(do)
+	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil)
+		}
+	})
+	se, err := do.sysExecutorFactory(do)
 	if err != nil {
 		return err
 	}
 
-	se2, err := do.sysExecutorFactory(do)
+	taskManager := storage.NewTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se.(sessionctx.Context))
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
 	if err != nil {
-		se1.Close()
+		se.Close()
 		return err
 	}
 
-	gm := storage.NewGlobalTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se1.(sessionctx.Context))
-	sm := storage.NewSubTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se2.(sessionctx.Context))
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), gm, sm)
-	if err != nil {
-		se1.Close()
-		se2.Close()
-		return err
-	}
-
-	storage.SetGlobalTaskManager(gm)
-	storage.SetSubTaskManager(sm)
+	storage.SetTaskManager(taskManager)
 	do.wg.Run(func() {
 		defer func() {
-			storage.SetGlobalTaskManager(nil)
-			storage.SetSubTaskManager(nil)
-			se1.Close()
-			se2.Close()
+			storage.SetTaskManager(nil)
+			se.Close()
 		}()
-		do.distTaskFrameworkLoop(ctx, gm, sm, schedulerManager)
+		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, globalTaskManager *storage.GlobalTaskManager, subtaskManager *storage.SubTaskManager, schedulerManager *scheduler.Manager) {
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
 	defer func() {
@@ -1395,7 +1389,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, globalTaskManager *
 			return
 		}
 
-		newDispatch, err := dispatcher.NewDispatcher(ctx, globalTaskManager, subtaskManager)
+		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return

@@ -785,6 +785,9 @@ type SessionVars struct {
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
+	// InMultiStmts indicates whether the statement is a multi-statement like `update t set a=1; update t set b=2;`.
+	InMultiStmts bool
+
 	// AllowWriteRowID variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
 
