@@ -3475,7 +3475,7 @@ func TestPartitionErrorCode(t *testing.T) {
 	)
 	partition by hash( month(signed) )
 	partitions 12`)
-	tk.MustGetDBError("alter table clients coalesce partition 12", ast.ErrCoalescePartitionNoPartition)
+	tk.MustContainErrMsg("alter table clients coalesce partition 12", "[ddl:1508]Cannot remove all partitions, use DROP TABLE instead")
 
 	tk.MustExec(`create table t_part (a int key)
 		partition by range(a) (
