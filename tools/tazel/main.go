@@ -69,7 +69,6 @@ func main() {
 					}
 				}
 			}
-
 		}
 		write(path, buildfile)
 		return nil
