@@ -4206,7 +4206,8 @@ func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, 
 		}
 		if nonDefaultOptions {
 			// The partition definitions will be copied in buildHashPartitionDefinitions()
-			newSpec.PartDefinitions = []*ast.PartitionDefinition{&ast.PartitionDefinition{}}
+			// if there is a non-empty list of definitions
+			newSpec.PartDefinitions = []*ast.PartitionDefinition{{}}
 		}
 	}
 
