@@ -2262,7 +2262,7 @@ func (w *worker) onRemovePartitioning(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	}
 	tblInfo, _, partInfo, _, _, err := checkReorgPartition(t, job)
 	if job.SchemaState == model.StateNone && len(partInfo.Definitions) != 1 {
-		return ver, errors.New("REMOVE PARTITIONING, but collapsing all partitions to non-single partition!?!")
+		return ver, errors.New("In REMOVE PARTITIONING, but collapsing all partitions to non-single partition")
 	}
 	switch job.SchemaState {
 	case model.StateNone, model.StateDeleteOnly, model.StateWriteOnly,
@@ -2279,7 +2279,7 @@ func (w *worker) onRemovePartitioning(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		job.CtxVars = []interface{}{physicalTableIDs, newIDs}
 		definitionsToDrop := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition = nil
-		t.DropTableOrView(job.SchemaID, tblInfo.ID)
+		err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
