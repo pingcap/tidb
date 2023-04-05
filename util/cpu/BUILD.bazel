@@ -25,6 +25,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
+    shard_count = 2,
     deps = [
         ":cpu",
         "//resourcemanager/scheduler",

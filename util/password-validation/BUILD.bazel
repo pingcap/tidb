@@ -17,7 +17,6 @@ go_test(
     srcs = ["password_validation_test.go"],
     embed = [":password-validation"],
     flaky = True,
-    shard_count = 5,
     deps = [
         "//parser/auth",
         "//sessionctx/variable",

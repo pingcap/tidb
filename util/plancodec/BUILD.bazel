@@ -32,7 +32,6 @@ go_test(
     ],
     embed = [":plancodec"],
     flaky = True,
-    shard_count = 4,
     deps = [
         "//kv",
         "//testkit/testsetup",

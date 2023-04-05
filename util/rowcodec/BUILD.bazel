@@ -34,7 +34,6 @@ go_test(
     ],
     embed = [":rowcodec"],
     flaky = True,
-    shard_count = 11,
     deps = [
         "//kv",
         "//parser/mysql",

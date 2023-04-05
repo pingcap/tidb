@@ -32,7 +32,6 @@ go_test(
     ],
     embed = [":logutil"],
     flaky = True,
-    shard_count = 7,
     deps = [
         "//kv",
         "//testkit/testsetup",

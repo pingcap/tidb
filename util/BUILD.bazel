@@ -68,7 +68,7 @@ go_test(
     data = glob(["tls_test/**"]),
     embed = [":util"],
     flaky = True,
-    shard_count = 23,
+    shard_count = 50,
     deps = [
         "//config",
         "//kv",

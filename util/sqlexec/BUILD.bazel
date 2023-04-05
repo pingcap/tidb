@@ -31,7 +31,6 @@ go_test(
     ],
     embed = [":sqlexec"],
     flaky = True,
-    shard_count = 5,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

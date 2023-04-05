@@ -16,7 +16,6 @@ go_test(
     ],
     embed = [":selection"],
     flaky = True,
-    shard_count = 4,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

@@ -23,7 +23,6 @@ go_test(
     embed = [":execdetails"],
     flaky = True,
     race = "on",
-    shard_count = 6,
     deps = [
         "//testkit/testsetup",
         "@com_github_pingcap_tipb//go-tipb",

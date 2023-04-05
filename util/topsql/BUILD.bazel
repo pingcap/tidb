@@ -28,7 +28,6 @@ go_test(
     ],
     embed = [":topsql"],
     flaky = True,
-    shard_count = 5,
     deps = [
         "//config",
         "//parser",

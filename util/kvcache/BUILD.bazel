@@ -20,7 +20,6 @@ go_test(
     ],
     embed = [":kvcache"],
     flaky = True,
-    shard_count = 8,
     deps = [
         "//testkit/testsetup",
         "//util/memory",

@@ -49,7 +49,6 @@ go_test(
     ],
     embed = [":dbutil"],
     flaky = True,
-    shard_count = 17,
     deps = [
         "//errno",
         "//infoschema",

@@ -49,7 +49,6 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-    shard_count = 13,
     deps = [
         "//parser/auth",
         "//parser/model",

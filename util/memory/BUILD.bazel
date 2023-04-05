@@ -36,7 +36,6 @@ go_test(
     ],
     embed = [":memory"],
     flaky = True,
-    shard_count = 15,
     deps = [
         "//errno",
         "//parser/terror",
