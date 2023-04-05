@@ -111,7 +111,6 @@ go_test(
     ],
     embed = [":importer"],
     flaky = True,
-    shard_count = 50,
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/encode",

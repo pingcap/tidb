@@ -41,7 +41,6 @@ go_test(
         "configlist_test.go",
     ],
     flaky = True,
-    shard_count = 44,
     deps = [
         ":config",
         "//br/pkg/lightning/common",
