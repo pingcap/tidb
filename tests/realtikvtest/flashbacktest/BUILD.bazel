@@ -9,7 +9,6 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 12,
     deps = [
         "//ddl",
         "//ddl/util",

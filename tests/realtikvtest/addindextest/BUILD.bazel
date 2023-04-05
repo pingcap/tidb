@@ -32,7 +32,6 @@ go_test(
         "pitr_test.go",
     ],
     embed = [":addindextest"],
-    shard_count = 39,
     deps = [
         "//br/pkg/lightning/backend/local",
         "//config",
