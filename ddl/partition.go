@@ -2261,6 +2261,9 @@ func (w *worker) onRemovePartitioning(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		return ver, nil
 	}
 	tblInfo, _, partInfo, _, _, err := checkReorgPartition(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	if job.SchemaState == model.StateNone && len(partInfo.Definitions) != 1 {
 		return ver, errors.New("In REMOVE PARTITIONING, but collapsing all partitions to non-single partition")
 	}
