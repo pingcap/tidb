@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -279,13 +280,13 @@ func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage,
 		*restoreTS = meta.BackupTS
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
-		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rg *rtree.Range) {
+		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rg checkpoint.RestoreValueType) {
 			t, exists := tree[tableID]
 			if !exists {
 				t = rtree.NewRangeTree()
 				tree[tableID] = t
 			}
-			t.InsertRange(*rg)
+			t.InsertRange(*rg.Range)
 		})
 		if err != nil {
 			return tree, id, errors.Trace(err)
@@ -324,6 +325,11 @@ func (rc *Client) WaitForFinishCheckpoint(ctx context.Context) {
 
 func (rc *Client) GetCheckpointRunner() *checkpoint.RestoreRunner {
 	return rc.checkpointRunner
+}
+
+func (rc *Client) InitCheckpointForLogRestore(ctx context.Context, taskName string) (*checkpoint.LogRestoreRunner, error) {
+	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.storage, rc.cipher, taskName)
+	return runner, errors.Trace(err)
 }
 
 func (rc *Client) allocTableIDs(ctx context.Context, tables []*metautil.Table) error {
@@ -1229,7 +1235,7 @@ func (rc *Client) SplitRanges(ctx context.Context,
 	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
-func (rc *Client) WrapLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
+func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1238,7 +1244,45 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
-	return NewLogFilesIterWithSplitHelper(iter, rules, client, splitSize, splitKeys), nil
+	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
+}
+
+func (rc *Client) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*LogFilesSkipMap, error) {
+	skipMap := NewLogFilesSkipMap()
+	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueType) {
+		// filter out the checkpoint data of dropped table
+		_, exists := downstreamIdset[off.TableID]
+		if exists {
+			skipMap.Insert(groupKey, off.Goff, off.Foff)
+		}
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	summary.AdjustStartTimeToEarlierTime(t)
+	return skipMap, nil
+}
+
+func (rc *Client) WrapLogFilesIterWithCheckpoint(
+	ctx context.Context,
+	logIter LogIter,
+	downstreamIdset map[int64]struct{},
+	taskName string,
+	updateStats func(kvCount uint64, size uint64),
+	onProgress func(),
+) (LogIter, error) {
+	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset, taskName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
+		if skipMap.NeedSkip(d.MetaDataGroupName, d.OffsetInMetaGroup, d.OffsetInMergedGroup) {
+			onProgress()
+			updateStats(uint64(d.NumberOfEntries), d.Length)
+			return true
+		}
+		return false
+	}), nil
 }
 
 // RestoreSSTFiles tries to restore the files.
@@ -1991,9 +2035,9 @@ type FilesInRegion struct {
 	writeSize      uint64
 	writeKVCount   int64
 
-	defaultFiles []*backuppb.DataFileInfo
-	writeFiles   []*backuppb.DataFileInfo
-	deleteFiles  []*backuppb.DataFileInfo
+	defaultFiles []*LogDataFileInfo
+	writeFiles   []*LogDataFileInfo
+	deleteFiles  []*LogDataFileInfo
 }
 
 type FilesInTable struct {
@@ -2002,25 +2046,25 @@ type FilesInTable struct {
 
 func ApplyKVFilesWithBatchMethod(
 	ctx context.Context,
-	iter LogIter,
+	logIter LogIter,
 	batchCount int,
 	batchSize uint64,
-	applyFunc func(files []*backuppb.DataFileInfo, kvCount int64, size uint64),
+	applyFunc func(files []*LogDataFileInfo, kvCount int64, size uint64),
 ) error {
 	var (
 		tableMapFiles        = make(map[int64]*FilesInTable)
-		tmpFiles             = make([]*backuppb.DataFileInfo, 0, batchCount)
+		tmpFiles             = make([]*LogDataFileInfo, 0, batchCount)
 		tmpSize       uint64 = 0
 		tmpKVCount    int64  = 0
 	)
-	for r := iter.TryNext(ctx); !r.Finished; r = iter.TryNext(ctx) {
+	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		if r.Err != nil {
 			return r.Err
 		}
 
 		f := r.Item
 		if f.GetType() == backuppb.FileType_Put && f.GetLength() >= batchSize {
-			applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+			applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 			continue
 		}
 
@@ -2039,13 +2083,13 @@ func ApplyKVFilesWithBatchMethod(
 
 		if f.GetType() == backuppb.FileType_Delete {
 			if fs.defaultFiles == nil {
-				fs.deleteFiles = make([]*backuppb.DataFileInfo, 0)
+				fs.deleteFiles = make([]*LogDataFileInfo, 0)
 			}
 			fs.deleteFiles = append(fs.deleteFiles, f)
 		} else {
 			if f.GetCf() == stream.DefaultCF {
 				if fs.defaultFiles == nil {
-					fs.defaultFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					fs.defaultFiles = make([]*LogDataFileInfo, 0, batchCount)
 				}
 				fs.defaultFiles = append(fs.defaultFiles, f)
 				fs.defaultSize += f.Length
@@ -2058,7 +2102,7 @@ func ApplyKVFilesWithBatchMethod(
 				}
 			} else {
 				if fs.writeFiles == nil {
-					fs.writeFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					fs.writeFiles = make([]*LogDataFileInfo, 0, batchCount)
 				}
 				fs.writeFiles = append(fs.writeFiles, f)
 				fs.writeSize += f.GetLength()
@@ -2093,14 +2137,14 @@ func ApplyKVFilesWithBatchMethod(
 
 				if len(tmpFiles) >= batchCount || tmpSize >= batchSize {
 					applyFunc(tmpFiles, tmpKVCount, tmpSize)
-					tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					tmpFiles = make([]*LogDataFileInfo, 0, batchCount)
 					tmpSize = 0
 					tmpKVCount = 0
 				}
 			}
 			if len(tmpFiles) > 0 {
 				applyFunc(tmpFiles, tmpKVCount, tmpSize)
-				tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				tmpFiles = make([]*LogDataFileInfo, 0, batchCount)
 				tmpSize = 0
 				tmpKVCount = 0
 			}
@@ -2113,9 +2157,9 @@ func ApplyKVFilesWithBatchMethod(
 func ApplyKVFilesWithSingelMethod(
 	ctx context.Context,
 	files LogIter,
-	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
+	applyFunc func(file []*LogDataFileInfo, kvCount int64, size uint64),
 ) error {
-	deleteKVFiles := make([]*backuppb.DataFileInfo, 0)
+	deleteKVFiles := make([]*LogDataFileInfo, 0)
 
 	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
 		if r.Err != nil {
@@ -2127,13 +2171,13 @@ func ApplyKVFilesWithSingelMethod(
 			deleteKVFiles = append(deleteKVFiles, f)
 			continue
 		}
-		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+		applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 	}
 
 	log.Info("restore delete files", zap.Int("count", len(deleteKVFiles)))
 	for _, file := range deleteKVFiles {
 		f := file
-		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+		applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 	}
 
 	return nil
@@ -2142,7 +2186,9 @@ func ApplyKVFilesWithSingelMethod(
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
-	iter LogIter,
+	idrules map[int64]int64,
+	logIter LogIter,
+	runner *checkpoint.LogRestoreRunner,
 	pitrBatchCount uint32,
 	pitrBatchSize uint32,
 	updateStats func(kvCount uint64, size uint64),
@@ -2170,7 +2216,7 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
-	applyFunc := func(files []*backuppb.DataFileInfo, kvCount int64, size uint64) {
+	applyFunc := func(files []*LogDataFileInfo, kvCount int64, size uint64) {
 		if len(files) == 0 {
 			return
 		}
@@ -2195,9 +2241,11 @@ func (rc *Client) RestoreKVFiles(
 					summary.CollectInt("File", len(files))
 
 					if err == nil {
+						downstreamId := idrules[files[0].TableId]
 						filenames := make([]string, 0, len(files))
 						for _, f := range files {
 							filenames = append(filenames, f.Path+", ")
+							checkpoint.AppendRangeForLogRestore(ctx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup)
 						}
 						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
 							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
@@ -2211,9 +2259,9 @@ func (rc *Client) RestoreKVFiles(
 
 	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 		if supportBatch {
-			err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+			err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
 		} else {
-			err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
+			err = ApplyKVFilesWithSingelMethod(ectx, logIter, applyFunc)
 		}
 		return errors.Trace(err)
 	})

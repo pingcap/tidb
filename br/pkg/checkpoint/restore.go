@@ -25,7 +25,9 @@ import (
 )
 
 type RestoreKeyType = int64
-type RestoreRunner = CheckpointRunner[RestoreKeyType]
+type RestoreValueType = RangeType
+
+type RestoreRunner = CheckpointRunner[RestoreKeyType, RestoreValueType]
 
 const (
 	CheckpointDataDirForRestoreFormat     = CheckpointDir + "/restore-%s/data"
@@ -54,23 +56,45 @@ func flushPositionForRestore(taskName string) flushPosition {
 
 // only for test
 func StartCheckpointRestoreRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration, taskName string) (*RestoreRunner, error) {
-	runner := newCheckpointRunner[RestoreKeyType](ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	runner.startCheckpointMainLoop(ctx, tick, 0)
 	return runner, nil
 }
 
 func StartCheckpointRunnerForRestore(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, taskName string) (*RestoreRunner, error) {
-	runner := newCheckpointRunner[RestoreKeyType](ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, 0)
 	return runner, nil
 }
 
+func AppendRangesForRestore(
+	ctx context.Context,
+	r *RestoreRunner,
+	tableID RestoreKeyType,
+	ranges []rtree.Range,
+) error {
+	// no need to persist the file information
+	group := make([]RestoreValueType, 0, len(ranges))
+	for _, rg := range ranges {
+		group = append(group, RestoreValueType{
+			Range: &rtree.Range{
+				StartKey: rg.StartKey,
+				EndKey:   rg.EndKey,
+			},
+		})
+	}
+	return r.Append(ctx, &CheckpointMessage[RestoreKeyType, RestoreValueType]{
+		GroupKey: tableID,
+		Group:    group,
+	})
+}
+
 // walk the whole checkpoint range files and retrieve the metadata of restored ranges
 // and return the total time cost in the past executions
-func WalkCheckpointFileForRestore(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, taskName string, fn func(tableID int64, rg *rtree.Range)) (time.Duration, error) {
+func WalkCheckpointFileForRestore[K KeyType, V ValueType](ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, taskName string, fn func(K, V)) (time.Duration, error) {
 	return walkCheckpointFile(ctx, s, cipher, getCheckpointDataDirByName(taskName), fn)
 }
 

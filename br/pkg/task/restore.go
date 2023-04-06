@@ -670,12 +670,18 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
 	gcSafePointKeeperRemovable := false
 	defer func() {
-		// don't reset the gc-safe-point and pd scheduler if checkpoint mode is used and restored is not finished
-		if cfg.UseCheckpoint && !gcSafePointKeeperRemovable {
-			log.Info("skip removing gc-safepoint keeper and pd schehduler for next retry", zap.String("gc-id", sp.ID))
-			log.Info("wait for flush checkpoint...")
-			client.WaitForFinishCheckpoint(ctx)
-			return
+		if cfg.UseCheckpoint {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			if len(cfg.FullBackupStorage) > 0 || !gcSafePointKeeperRemovable {
+				log.Info("wait for flush checkpoint...")
+				client.WaitForFinishCheckpoint(ctx)
+			}
+			// don't reset the gc-safe-point and pd scheduler if checkpoint mode is used and restored is not finished
+			if !gcSafePointKeeperRemovable {
+				log.Info("skip removing gc-safepoint keeper and pd schehduler for next retry", zap.String("gc-id", sp.ID))
+				return
+			}
 		}
 		log.Info("start to remove the pd scheduler")
 		// run the post-work to avoid being stuck in the import

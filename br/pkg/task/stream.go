@@ -31,6 +31,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -1223,13 +1224,30 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
+	taskName := fmt.Sprintf("%d.%d", client.GetPDClient().GetClusterID(ctx), cfg.StartTS)
+	var checkpointRunner *checkpoint.LogRestoreRunner
+	if cfg.UseCheckpoint {
+		checkpointRunner, err = client.InitCheckpointForLogRestore(ctx, taskName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
 	restoreGc, err := KeepGcDisabled(g, mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
+	gcDisabledRestorable := false
 	defer func() {
+		// don't restore the gc-ratio-threshold if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !gcDisabledRestorable {
+			log.Info("skip restore the gc-ratio-threshold for next retry")
+			log.Info("wait for flush checkpoint...")
+			checkpointRunner.WaitForFinish(ctx)
+			return
+		}
+
 		if err := restoreGc(); err != nil {
 			log.Error("failed to set gc enabled", zap.Error(err))
 		}
@@ -1294,17 +1312,33 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	logFilesIter, err := client.LoadDMLFiles(ctx)
-	if err != nil {
-		return errors.Trace(err)
+	// generate the upstream->downstream id maps for checkpoint
+	idrules := make(map[int64]int64)
+	downstreamIdset := make(map[int64]struct{})
+	for upstreamId, rule := range rewriteRules {
+		downstreamId := restore.GetRewriteTableID(upstreamId, rule)
+		idrules[upstreamId] = downstreamId
+		downstreamIdset[downstreamId] = struct{}{}
 	}
-	logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, g, mgr.GetStorage())
+
+	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIterWithSplit, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
+		if cfg.UseCheckpoint {
+			logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, taskName, updateStats, p.Inc)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, g, mgr.GetStorage())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		return client.RestoreKVFiles(ctx, rewriteRules, idrules, logFilesIterWithSplit, checkpointRunner, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
