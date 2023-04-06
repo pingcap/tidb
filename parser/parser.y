@@ -1014,6 +1014,7 @@ import (
 	Boolean                                "Boolean (0, 1, false, true)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
+	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
 	ColumnDef                              "table column definition"
 	ColumnDefList                          "table column definition list"
 	ColumnName                             "column name"
@@ -6852,6 +6853,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -6876,6 +6878,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -6892,6 +6895,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -13723,6 +13727,7 @@ LoadDataStmt:
 			Format:             $6.(*string),
 			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
 			Table:              $10.(*ast.TableName),
+			Charset:            $11.(*string),
 			FieldsInfo:         $12.(*ast.FieldsClause),
 			LinesInfo:          $13.(*ast.LinesClause),
 			IgnoreLines:        $14.(*uint64),
@@ -13770,8 +13775,14 @@ IgnoreLines:
 	}
 
 CharsetOpt:
-	{}
+	{
+		$$ = (*string)(nil)
+	}
 |	"CHARACTER" "SET" CharsetName
+	{
+		v := $3
+		$$ = &v
+	}
 
 LocalOpt:
 	{
@@ -14673,5 +14684,4 @@ CalibrateResourceStmt:
 	{
 		$$ = &ast.CalibrateResourceStmt{}
 	}
-
 %%
