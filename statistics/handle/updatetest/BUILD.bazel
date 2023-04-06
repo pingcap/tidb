@@ -8,7 +8,7 @@ go_test(
         "update_test.go",
     ],
     flaky = True,
-    shard_count = 40,
+    shard_count = 44,
     deps = [
         "//metrics",
         "//parser/model",

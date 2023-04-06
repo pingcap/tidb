@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1479,6 +1481,7 @@ func TestNonPreparedPlanCacheFieldNames(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("create table tt(a varchar(10))")
 	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
 
 	checkFieldName := func(sql, hit string, fields ...string) {
@@ -1497,6 +1500,8 @@ func TestNonPreparedPlanCacheFieldNames(t *testing.T) {
 	checkFieldName(`select a+2 from t where a<40`, `1`, `a+2`)
 	checkFieldName(`select a,a+1 from t where a<30`, `0`, `a`, `a+1`) // can not hit since field names changed
 	checkFieldName(`select a,a+1 from t where a<40`, `1`, `a`, `a+1`)
+	checkFieldName(`select a+'123' from tt where a='1'`, `0`, `a+'123'`)
+	checkFieldName(`select a+'123' from tt where a='2'`, `1`, `a+'123'`)
 
 	checkFieldName(`select 1 from t where a<10`, `0`, `1`)
 	checkFieldName(`select 1 from t where a<20`, `1`, `1`)
@@ -1923,6 +1928,35 @@ func TestNonPreparedPlanCacheUnicode(t *testing.T) {
 	tk.MustQuery(`select concat(a, if(b>10, N'x', N'y')) from t1`).Check(testkit.Rows("ay")) // no error
 	tk.MustQuery(`select concat(a, if(b>10, N'x', N'y')) from t1`).Check(testkit.Rows("ay"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestNonPreparedPlanCacheAutoStmtRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(id int primary key, k int, UNIQUE KEY(k))")
+	tk1.MustExec("insert into t values(1, 1)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk2.MustExec("use test")
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set k=3 where id=1")
+
+	var wg sync.WaitGroup
+	var tk2Err error
+	wg.Add(1)
+	go func() {
+		// trigger statement auto-retry on tk2
+		_, tk2Err = tk2.Exec("insert into t values(3, 3)")
+		wg.Done()
+	}()
+	time.Sleep(100 * time.Millisecond)
+	_, err := tk1.Exec("commit")
+	require.NoError(t, err)
+	wg.Wait()
+	require.ErrorContains(t, tk2Err, "Duplicate entry")
 }
 
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {

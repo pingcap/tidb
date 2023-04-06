@@ -254,13 +254,13 @@ func NewEncodingBuilder(ctx context.Context) encode.EncodingBuilder {
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
+func (b *encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	return kv.NewTableKVEncoder(config, b.metrics)
 }
 
 // MakeEmptyRows creates an empty KV rows.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) MakeEmptyRows() encode.Rows {
+func (*encodingBuilder) MakeEmptyRows() encode.Rows {
 	return kv.MakeRowsFromKvPairs(nil)
 }
 
@@ -590,7 +590,7 @@ func NewLocalBackend(
 
 // TotalMemoryConsume returns the total memory usage of the local backend.
 func (local *Local) TotalMemoryConsume() int64 {
-	var memConsume int64 = 0
+	var memConsume int64
 	local.engines.Range(func(k, v interface{}) bool {
 		e := v.(*Engine)
 		if e != nil {
@@ -805,12 +805,12 @@ func (local *Local) FlushAllEngines(parentCtx context.Context) (err error) {
 }
 
 // RetryImportDelay returns the delay time before retrying to import a file.
-func (local *Local) RetryImportDelay() time.Duration {
+func (*Local) RetryImportDelay() time.Duration {
 	return defaultRetryBackoffTime
 }
 
 // ShouldPostProcess returns true if the backend should post process the data.
-func (local *Local) ShouldPostProcess() bool {
+func (*Local) ShouldPostProcess() bool {
 	return true
 }
 
@@ -1204,7 +1204,7 @@ func (local *Local) startWorker(
 	}
 }
 
-func (local *Local) isRetryableImportTiKVError(err error) bool {
+func (*Local) isRetryableImportTiKVError(err error) bool {
 	err = errors.Cause(err)
 	// io.EOF is not retryable in normal case
 	// but on TiKV restart, if we're writing to TiKV(through GRPC)
@@ -1554,7 +1554,7 @@ func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
 }
 
 // LocalWriter returns a new local writer.
-func (local *Local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
+func (local *Local) LocalWriter(_ context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
 	e, ok := local.engines.Load(engineUUID)
 	if !ok {
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
@@ -1621,7 +1621,8 @@ func (local *Local) EngineFileSizes() (res []backend.EngineFileSize) {
 var getSplitConfFromStoreFunc = getSplitConfFromStore
 
 // return region split size, region split keys, error
-func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
+func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (
+	splitSize int64, regionSplitKeys int64, err error) {
 	var (
 		nested struct {
 			Coprocessor struct {
@@ -1633,7 +1634,7 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (i
 	if err := tls.WithHost(host).GetJSON(ctx, "/config", &nested); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	splitSize, err := units.FromHumanSize(nested.Coprocessor.RegionSplitSize)
+	splitSize, err = units.FromHumanSize(nested.Coprocessor.RegionSplitSize)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -1642,7 +1643,8 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (i
 }
 
 // return region split size, region split keys, error
-func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (int64, int64, error) {
+func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
+	regionSplitSize int64, regionSplitKeys int64, err error) {
 	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return 0, 0, err
