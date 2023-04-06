@@ -16,7 +16,6 @@ package handle
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
@@ -68,10 +67,13 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-		// Do not update global stats, since the data have not changed!
+	// Do not update global stats, since the data have not changed!
+	case model.ActionRemovePartitioning:
+		// For now, we do not have access to the old table id, so we cannot just update the id.
+		// We highjacked the first partition's physical table id for the previous Table ID
+		return h.changeGlobalStatsID(t.PartInfo.Definitions[0].ID, t.TableInfo.ID)
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
-		// TODO: For model.ActionRemovePartitioning move global stats to table stats?
 	}
 	return nil
 }
@@ -200,6 +202,27 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 			if err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	for _, table := range []string{"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets", "stats_histograms", "column_stats_usage"} {
+		_, err = exec.ExecuteInternal(ctx, "update mysql."+table+" set table_id = %? where table_id = %?", to, from)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

@@ -4914,16 +4914,27 @@ func TestRemoveHashPartitioning(t *testing.T) {
 }
 
 func TestRemoveKeyPartitioning(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
 	tk.MustExec("create database RemovePartitioning")
 	tk.MustExec("use RemovePartitioning")
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), key (a,b), key (b)) partition by key (a) partitions 7`)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	// Fill the data with ascii strings
 	for i := 32; i <= 126; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (char(%d,%d,%d),char(%d,%d,%d,%d))`, i, i, i, i, i, i, i))
 	}
 	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemovePartitioning", "t", "global", "0", "95"},
+		{"RemovePartitioning", "t", "p0", "0", "9"},
+		{"RemovePartitioning", "t", "p1", "0", "11"},
+		{"RemovePartitioning", "t", "p2", "0", "12"},
+		{"RemovePartitioning", "t", "p3", "0", "13"},
+		{"RemovePartitioning", "t", "p4", "0", "16"},
+		{"RemovePartitioning", "t", "p5", "0", "23"},
+		{"RemovePartitioning", "t", "p6", "0", "11"}})
 	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemovePartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
 		"p0 9",
 		"p1 11",
@@ -4940,4 +4951,14 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 		"  KEY `a` (`a`,`b`),\n" +
 		"  KEY `b` (`b`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Statistics are updated asynchronously
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// And also cached and lazy loaded
+	h.Clear()
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemovePartitioning", "t", "", "0", "95"}})
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemovePartitioning", "t", "", "0", "95"}})
 }

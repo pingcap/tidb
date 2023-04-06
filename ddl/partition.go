@@ -2283,8 +2283,8 @@ func (w *worker) onRemovePartitioning(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
 		newIDs := getPartitionIDsFromDefinitions(partInfo.Definitions)
 		job.CtxVars = []interface{}{physicalTableIDs, newIDs}
-		definitionsToDrop := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition = nil
+		oldTblID := tblInfo.ID
 		err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -2316,7 +2316,9 @@ func (w *worker) onRemovePartitioning(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		// How to handle this?
 		// Seems to only trigger asynchronous update of statistics.
 		// Should it actually be synchronous?
-		asyncNotifyEvent(d, &util.Event{Tp: job.Type, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
+		// Include the old table ID, which may contain global statistics,
+		// so it can be reused for the new non-partitioned table.
+		asyncNotifyEvent(d, &util.Event{Tp: job.Type, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: []model.PartitionDefinition{{ID: oldTblID}}}})
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
 
