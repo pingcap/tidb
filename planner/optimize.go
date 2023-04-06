@@ -112,7 +112,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 
 	if val == nil {
 		// GeneratePlanCacheStmtWithAST may evaluate these parameters so set their values into SCtx in advance.
-		if err := core.SetParameterValuesIntoSCtx(sctx, nil, paramExprs); err != nil {
+		if err := core.SetParameterValuesIntoSCtx(sctx, true, nil, paramExprs); err != nil {
 			return nil, nil, false, err
 		}
 		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, paramSQL, stmt, is)
