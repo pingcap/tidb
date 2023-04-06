@@ -306,6 +306,7 @@
       "br/pkg/logutil/logging_test.go": "ignore logutil code",
       "br/pkg/storage/": "ignore storage code",
       "br/pkg/mock/storage/storage.go": "ignore storage code",
+      "br/pkg/utils/": "ignore utils code",
       "ddl/util/util.go": "ignore util code",
       "ddl/syncer/syncer.go": "ignore syncer code",
       "util/column-mapping/column.go": "ignore error",
