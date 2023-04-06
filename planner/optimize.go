@@ -95,27 +95,23 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil, false, nil
 	}
 
-	paramSQL, params, err := core.ParameterizeAST(ctx, sctx, stmt)
+	paramSQL, params, err := core.GetParamSQLFromAST(ctx, sctx, stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	defer func() {
-		// If some error occurs, just return the error directly.
-		// If no error but this stmt is not supported, restore the AST node so that it can fallback to the normal optimization path
-		if err == nil && !ok {
-			// TODO: add metrics
-			err = core.RestoreASTWithParams(ctx, sctx, stmt, params)
-		}
-	}()
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
 	paramExprs := core.Params2Expressions(params)
 
 	if val == nil {
+		paramStmt, err := core.ParseParameterizedSQL(sctx, paramSQL)
+		if err != nil {
+			return nil, nil, false, err
+		}
 		// GeneratePlanCacheStmtWithAST may evaluate these parameters so set their values into SCtx in advance.
 		if err := core.SetParameterValuesIntoSCtx(sctx, nil, paramExprs); err != nil {
 			return nil, nil, false, err
 		}
-		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, paramSQL, stmt, is)
+		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, paramSQL, paramStmt, is)
 		if err != nil {
 			return nil, nil, false, err
 		}
