@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/sessionctx"
@@ -44,6 +45,8 @@ var (
 		buf.Reset()
 		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
 		restoreCtx.Flags ^= format.RestoreKeyWordUppercase
+		restoreCtx.Flags ^= format.RestoreNameBackQuotes
+		restoreCtx.Flags |= format.RestoreStringWithoutCharset
 		return restoreCtx
 	}}
 )
@@ -95,6 +98,17 @@ func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 func (pr *paramReplacer) Reset() { pr.params, pr.selFieldsCnt, pr.groupByCnt = nil, 0, 0 }
 
+// GetParamSQLFromAST returns the parameterized SQL of this AST.
+// NOTICE: this function does not modify the original AST.
+func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
+	paramSQL, params, err = ParameterizeAST(ctx, sctx, stmt)
+	if err != nil {
+		return "", nil, err
+	}
+	err = RestoreASTWithParams(ctx, sctx, stmt, params)
+	return
+}
+
 // ParameterizeAST parameterizes this StmtNode.
 // e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23].
 // NOTICE: this function may modify the input stmt.
@@ -109,7 +123,6 @@ func ParameterizeAST(ctx context.Context, sctx sessionctx.Context, stmt ast.Stmt
 	}()
 	stmt.Accept(pr)
 	if err := stmt.Restore(pCtx); err != nil {
-		err = RestoreASTWithParams(ctx, sctx, stmt, pr.params) // keep the stmt unchanged if err
 		return "", nil, err
 	}
 	paramSQL, params = pCtx.In.(*strings.Builder).String(), pr.params
@@ -170,4 +183,22 @@ func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
 		})
 	}
 	return exprs
+}
+
+var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
+
+// ParseParameterizedSQL parse this parameterized SQL with the specified sctx.
+func ParseParameterizedSQL(sctx sessionctx.Context, paramSQL string) (ast.StmtNode, error) {
+	p := parserPool.Get().(*parser.Parser)
+	defer parserPool.Put(p)
+	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
+	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
+	tmp, _, err := p.ParseSQL(paramSQL, sctx.GetSessionVars().GetParseParams()...)
+	if err != nil {
+		return nil, err
+	}
+	if len(tmp) != 1 {
+		return nil, errors.New("unexpected multiple statements")
+	}
+	return tmp[0], nil
 }
