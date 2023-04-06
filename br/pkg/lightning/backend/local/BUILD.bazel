@@ -115,6 +115,7 @@ go_test(
         "//br/pkg/lightning/mydump",
         "//br/pkg/membuf",
         "//br/pkg/mock",
+        "//br/pkg/mock/mocklocal",
         "//br/pkg/pdutil",
         "//br/pkg/restore/split",
         "//br/pkg/utils",
