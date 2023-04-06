@@ -65,7 +65,8 @@ func scan(path string) error {
 		// Called recursively.
 		funcDecl, ok := n.(*ast.FuncDecl)
 		if ok {
-			if strings.HasPrefix(funcDecl.Name.Name, "Test") && funcDecl.Name.Name != "TestMain" {
+			if strings.HasPrefix(funcDecl.Name.Name, "Test") && funcDecl.Recv == nil &&
+				funcDecl.Name.Name != "TestMain" {
 				addTestMap(filepath.Dir(path))
 			}
 		}
