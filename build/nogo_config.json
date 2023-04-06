@@ -308,6 +308,7 @@
       "br/pkg/mock/storage/storage.go": "ignore storage code",
       "br/pkg/utils/": "ignore utils code",
       "br/pkg/version/version.go": "ignore version code",
+      "br/pkg/lightning/common/errors.go": "ignore error",
       "ddl/util/util.go": "ignore util code",
       "ddl/syncer/syncer.go": "ignore syncer code",
       "util/column-mapping/column.go": "ignore error",
