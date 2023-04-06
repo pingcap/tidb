@@ -3086,8 +3086,8 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 		return nil, errors.New("Get tiflash system tables can only run with tikv compatible storage")
 	}
 	// send request to tiflash, timeout is 1s
-	instanceId := e.instanceIds[e.instanceIdx]
-	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceId, &request, 1000000000)
+	instanceID := e.instanceIds[e.instanceIdx]
+	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, 1000000000)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3148,7 +3148,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 				return nil, errors.Errorf("Meet column of unknown type %v", column)
 			}
 		}
-		outputRow[len(e.outputCols)-1].SetString(instanceId, mysql.DefaultCollationName)
+		outputRow[len(e.outputCols)-1].SetString(instanceID, mysql.DefaultCollationName)
 		outputRows = append(outputRows, outputRow)
 	}
 	e.rowIdx += len(outputRows)
