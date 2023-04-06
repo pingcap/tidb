@@ -406,9 +406,9 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 		BasicRuntimeStats: BasicRuntimeStats{
 			tiflashScanContext: TiFlashScanContext{
 				totalDmfileScannedPacks:            summary.GetTiflashScanContext().GetTotalDmfileScannedPacks(),
-				totalDmfileSkippedPacks:            summary.GetTiflashScanContext().GetTotalDmfileSkippedPacks(),
 				totalDmfileScannedRows:             summary.GetTiflashScanContext().GetTotalDmfileScannedRows(),
-				totalDmfileSkippedRows:             summary.GetTiflashScanContext().GetTotalDmfileSkippedRows(),
+				totalDmfileLMSkippedPacks:          summary.GetTiflashScanContext().GetTotalDmfileLmSkippedPacks(),
+				totalDmfileIndexSkippedPacks:       summary.GetTiflashScanContext().GetTotalDmfileIndexSkippedPacks(),
 				totalDmfileRoughSetIndexLoadTimeMs: summary.GetTiflashScanContext().GetTotalDmfileRoughSetIndexLoadTimeMs(),
 				totalDmfileReadTimeMs:              summary.GetTiflashScanContext().GetTotalDmfileReadTimeMs(),
 				totalCreateSnapshotTimeMs:          summary.GetTiflashScanContext().GetTotalCreateSnapshotTimeMs(),
@@ -543,8 +543,8 @@ type RuntimeStats interface {
 type TiFlashScanContext struct {
 	totalDmfileScannedPacks            uint64
 	totalDmfileScannedRows             uint64
-	totalDmfileSkippedPacks            uint64
-	totalDmfileSkippedRows             uint64
+	totalDmfileLMSkippedPacks          uint64
+	totalDmfileIndexSkippedPacks       uint64
 	totalDmfileRoughSetIndexLoadTimeMs uint64
 	totalDmfileReadTimeMs              uint64
 	totalCreateSnapshotTimeMs          uint64
@@ -557,8 +557,8 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 	return TiFlashScanContext{
 		totalDmfileScannedPacks:            context.totalDmfileScannedPacks,
 		totalDmfileScannedRows:             context.totalDmfileScannedRows,
-		totalDmfileSkippedPacks:            context.totalDmfileSkippedPacks,
-		totalDmfileSkippedRows:             context.totalDmfileSkippedRows,
+		totalDmfileLMSkippedPacks:          context.totalDmfileLMSkippedPacks,
+		totalDmfileIndexSkippedPacks:       context.totalDmfileIndexSkippedPacks,
 		totalDmfileRoughSetIndexLoadTimeMs: context.totalDmfileRoughSetIndexLoadTimeMs,
 		totalDmfileReadTimeMs:              context.totalDmfileReadTimeMs,
 		totalCreateSnapshotTimeMs:          context.totalCreateSnapshotTimeMs,
@@ -567,15 +567,15 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 	}
 }
 func (context *TiFlashScanContext) String() string {
-	return fmt.Sprintf("tiflash_scan:{dtfile:{total_scanned_packs:%d, total_skipped_packs:%d, total_scanned_rows:%d, total_skipped_rows:%d, total_rs_index_load_time: %dms, total_read_time: %dms}, total_create_snapshot_time: %dms, total_local_region_num: %d, total_remote_region_num: %d}", context.totalDmfileScannedPacks, context.totalDmfileSkippedPacks, context.totalDmfileScannedRows, context.totalDmfileSkippedRows, context.totalDmfileRoughSetIndexLoadTimeMs, context.totalDmfileReadTimeMs, context.totalCreateSnapshotTimeMs, context.totalLocalRegionNum, context.totalRemoteRegionNum)
+	return fmt.Sprintf("tiflash_scan:{dtfile:{total_scanned_packs:%d, total_scanned_rows:%d, total_index_skipped_packs:%d, total_lm_skipped_packs:%d, total_rs_index_load_time: %dms, total_read_time: %dms}, total_create_snapshot_time: %dms, total_local_region_num: %d, total_remote_region_num: %d}", context.totalDmfileScannedPacks, context.totalDmfileScannedRows, context.totalDmfileIndexSkippedPacks, context.totalDmfileLMSkippedPacks, context.totalDmfileRoughSetIndexLoadTimeMs, context.totalDmfileReadTimeMs, context.totalCreateSnapshotTimeMs, context.totalLocalRegionNum, context.totalRemoteRegionNum)
 }
 
 // Merge make sum to merge the information in TiFlashScanContext
 func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 	context.totalDmfileScannedPacks += other.totalDmfileScannedPacks
 	context.totalDmfileScannedRows += other.totalDmfileScannedRows
-	context.totalDmfileSkippedPacks += other.totalDmfileSkippedPacks
-	context.totalDmfileSkippedRows += other.totalDmfileSkippedRows
+	context.totalDmfileLMSkippedPacks += other.totalDmfileLMSkippedPacks
+	context.totalDmfileIndexSkippedPacks += other.totalDmfileIndexSkippedPacks
 	context.totalDmfileRoughSetIndexLoadTimeMs += other.totalDmfileRoughSetIndexLoadTimeMs
 	context.totalDmfileReadTimeMs += other.totalDmfileReadTimeMs
 	context.totalCreateSnapshotTimeMs += other.totalCreateSnapshotTimeMs
@@ -585,7 +585,7 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 
 // Empty check whether TiFlashScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
 func (context *TiFlashScanContext) Empty() bool {
-	res := (context.totalDmfileScannedPacks == 0 && context.totalDmfileSkippedPacks == 0)
+	res := (context.totalDmfileScannedPacks == 0 && context.totalDmfileLMSkippedPacks == 0 && context.totalDmfileIndexSkippedPacks == 0)
 	return res
 }
 
