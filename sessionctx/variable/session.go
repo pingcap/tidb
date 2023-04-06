@@ -1689,8 +1689,8 @@ func (p *PlanCacheParamList) String() string {
 }
 
 // Append appends a parameter value to the PlanCacheParams.
-func (p *PlanCacheParamList) Append(v types.Datum) {
-	p.paramValues = append(p.paramValues, v)
+func (p *PlanCacheParamList) Append(vs ...types.Datum) {
+	p.paramValues = append(p.paramValues, vs...)
 }
 
 // SetForNonPrepCache sets the flag forNonPrepCache.
