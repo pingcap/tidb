@@ -691,7 +691,6 @@ import (
 	learner               "LEARNER"
 	learnerConstraints    "LEARNER_CONSTRAINTS"
 	learners              "LEARNERS"
-	log                   "LOG"
 	min                   "MIN"
 	max                   "MAX"
 	metadata              "METADATA"
@@ -5115,7 +5114,7 @@ BRIEStmt:
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
-|	"BACKUP" "LOG" "TO"	stringLit BRIEOptions
+|	"BACKUP" "LOGS" "TO" stringLit BRIEOptions
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindLogStart
@@ -5123,26 +5122,26 @@ BRIEStmt:
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
-|	"STOP" "BACKUP" "LOG"
+|	"STOP" "BACKUP" "LOGS"
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindLogStop
 		$$ = stmt
 	}
-|	"PAUSE" "BACKUP" "LOG" BRIEOptions
+|	"PAUSE" "BACKUP" "LOGS" BRIEOptions
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindLogPause
 		stmt.Options = $4.([]*ast.BRIEOption)
 		$$ = stmt
 	}
-|	"RESUME" "BACKUP" "LOG"
+|	"RESUME" "BACKUP" "LOGS"
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindLogResume
 		$$ = stmt
 	}
-|	"PURGE" "BACKUP" "LOG" "FROM" stringLit BRIEOptions
+|	"PURGE" "BACKUP" "LOGS" "FROM" stringLit BRIEOptions
     	{
     		stmt := &ast.BRIEStmt{}
     		stmt.Kind = ast.BRIEKindLogPurge
@@ -5150,13 +5149,13 @@ BRIEStmt:
     		stmt.Options = $6.([]*ast.BRIEOption)
             $$ = stmt
     	}
-|	"SHOW" "BACKUP" "LOG" "STATUS"
+|	"SHOW" "BACKUP" "LOGS" "STATUS"
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindLogStatus
 		$$ = stmt
 	}
-|   "SHOW" "BACKUP" "LOG" "METADATA" "FROM" stringLit
+|   "SHOW" "BACKUP" "LOGS" "METADATA" "FROM" stringLit
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindLogMetaData
@@ -6703,7 +6702,6 @@ NotKeywordToken:
 |	"LOW"
 |	"BURSTABLE"
 |	"BR"
-|	"LOG"
 |	"GC_TTL"
 |	"METADATA"
 |	"START_TS"

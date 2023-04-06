@@ -3175,19 +3175,19 @@ func (kind BRIEKind) String() string {
 	case BRIEKindRestore:
 		return "RESTORE"
 	case BRIEKindLogStart:
-		return "BACKUP LOG"
+		return "BACKUP LOGS"
 	case BRIEKindLogStop:
-		return "STOP BACKUP LOG"
+		return "STOP BACKUP LOGS"
 	case BRIEKindLogPause:
-		return "PAUSE BACKUP LOG"
+		return "PAUSE BACKUP LOGS"
 	case BRIEKindLogResume:
-		return "RESUME BACKUP LOG"
+		return "RESUME BACKUP LOGS"
 	case BRIEKindLogStatus:
-		return "SHOW BACKUP LOG STATUS"
+		return "SHOW BACKUP LOGS STATUS"
 	case BRIEKindLogMetaData:
-		return "SHOW BACKUP LOG METADATA"
+		return "SHOW BACKUP LOGS METADATA"
 	case BRIEKindLogPurge:
-		return "PURGE BACKUP LOG"
+		return "PURGE BACKUP LOGS"
 	case BRIEKindRestorePoint:
 		return "RESTORE POINT"
 	case BRIEKindShowJob:

@@ -465,7 +465,6 @@ var tokenMap = map[string]int{
 	"LOCATION":                 location,
 	"LOCK":                     lock,
 	"LOCKED":                   locked,
-	"LOG":                      log,
 	"LOGS":                     logs,
 	"LONG":                     long,
 	"LONGBLOB":                 longblobType,
