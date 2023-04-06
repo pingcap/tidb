@@ -38,7 +38,6 @@ func TestListPartitionOrderLimit(t *testing.T) {
 	tk.MustExec("create database list_partition_order_limit")
 	tk.MustExec("use list_partition_order_limit")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (` +
 		` partition p0 values in ` + genListPartition(0, 20) +
 		`, partition p1 values in ` + genListPartition(20, 40) +
@@ -96,7 +95,6 @@ func TestListPartitionAgg(t *testing.T) {
 	tk.MustExec("create database list_partition_agg")
 	tk.MustExec("use list_partition_agg")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (` +
 		` partition p0 values in ` + genListPartition(0, 20) +
 		`, partition p1 values in ` + genListPartition(20, 40) +
@@ -154,7 +152,6 @@ func TestListPartitionDML(t *testing.T) {
 	tk.MustExec("create database list_partition_dml")
 	tk.MustExec("use list_partition_dml")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
@@ -214,7 +211,6 @@ func TestListPartitionCreation(t *testing.T) {
 	tk.MustExec("create database list_partition_cre")
 	tk.MustExec("use list_partition_cre")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	// with UK
 	tk.MustExec("create table tuk1 (a int, b int, unique key(a)) partition by list (a) (partition p0 values in (0))")
@@ -276,7 +272,6 @@ func TestListPartitionDDL(t *testing.T) {
 	tk.MustExec("create database list_partition_ddl")
 	tk.MustExec("use list_partition_ddl")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	// index
 	tk.MustExec(`create table tlist (a int, b int) partition by list (a) (partition p0 values in (0))`)
@@ -329,7 +324,6 @@ func TestListPartitionOperations(t *testing.T) {
 	tk.MustExec("create database list_partition_op")
 	tk.MustExec("use list_partition_op")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	tk.MustExec(`create table tlist (a int) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -420,7 +414,6 @@ func TestListPartitionPrivilege(t *testing.T) {
 	tk.MustExec("create database list_partition_pri")
 	tk.MustExec("use list_partition_pri")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int) partition by list (a) (partition p0 values in (0), partition p1 values in (1))`)
 
 	tk.MustExec(`create user 'priv_test'@'%'`)
@@ -453,7 +446,6 @@ func TestListPartitionShardBits(t *testing.T) {
 	tk.MustExec("create database list_partition_shard_bits")
 	tk.MustExec("use list_partition_shard_bits")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	tk.MustExec(`create table tlist (a int) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -483,7 +475,6 @@ func TestListPartitionSplitRegion(t *testing.T) {
 	tk.MustExec("create database list_partition_split_region")
 	tk.MustExec("use list_partition_split_region")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	tk.MustExec(`create table tlist (a int, key(a)) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -515,7 +506,6 @@ func TestListPartitionView(t *testing.T) {
 	tk.MustExec("create database list_partition_view")
 	tk.MustExec("use list_partition_view")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	tk.MustExec(`create table tlist (a int, b int) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -558,7 +548,6 @@ func TestListPartitionAutoIncre(t *testing.T) {
 	tk.MustExec("create database list_partition_auto_incre")
 	tk.MustExec("use list_partition_auto_incre")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	tk.MustExec(`create table tlist1 (a int, b int AUTO_INCREMENT) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -598,7 +587,6 @@ func TestListPartitionAutoRandom(t *testing.T) {
 	tk.MustExec("create database list_partition_auto_rand")
 	tk.MustExec("use list_partition_auto_rand")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	err := tk.ExecToErr(`create table tlist (a int, b bigint AUTO_RANDOM) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -632,7 +620,6 @@ func TestListPartitionInvisibleIdx(t *testing.T) {
 	tk.MustExec("create database list_partition_invisible_idx")
 	tk.MustExec("use list_partition_invisible_idx")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	tk.MustExec(`create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))`)
 	tk.MustExec(`alter table tlist alter index a invisible`)
@@ -650,7 +637,6 @@ func TestListPartitionCTE(t *testing.T) {
 	tk.MustExec("create database list_partition_cte")
 	tk.MustExec("use list_partition_cte")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	tk.MustExec(`create table tlist (a int) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -676,7 +662,6 @@ func TestListPartitionTempTable(t *testing.T) {
 	tk.MustExec("create database list_partition_temp_table")
 	tk.MustExec("use list_partition_temp_table")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	err := tk.ExecToErr("create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Cannot create temporary table with partitions")
@@ -692,7 +677,6 @@ func TestListPartitionAlterPK(t *testing.T) {
 	tk.MustExec("create database list_partition_alter_pk")
 	tk.MustExec("use list_partition_alter_pk")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int, b int) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
@@ -721,7 +705,6 @@ func TestListPartitionRandomTransaction(t *testing.T) {
 	tk.MustExec("create database list_partition_random_tran")
 	tk.MustExec("use list_partition_random_tran")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (` +
 		` partition p0 values in ` + genListPartition(0, 20) +
@@ -772,7 +755,6 @@ func TestIssue27018(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27018")
 	tk.MustExec("use issue_27018")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`CREATE TABLE PK_LP9326 (
   COL1 tinyint(45) NOT NULL DEFAULT '30' COMMENT 'NUMERIC PK',
   PRIMARY KEY (COL1) /*T![clustered_index] CLUSTERED */
@@ -798,7 +780,6 @@ func TestIssue27017(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27017")
 	tk.MustExec("use issue_27017")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`CREATE TABLE PK_LP9465 (
   COL1 mediumint(45) NOT NULL DEFAULT '77' COMMENT 'NUMERIC PK',
   PRIMARY KEY (COL1) /*T![clustered_index] CLUSTERED */
@@ -826,7 +807,6 @@ func TestIssue27544(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27544")
 	tk.MustExec("use issue_27544")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table t3 (a datetime) partition by list (mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1) (
 		partition p0 values in (2),
 		partition p1 values in (3),
@@ -842,7 +822,6 @@ func TestIssue27012(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27012")
 	tk.MustExec("use issue_27012")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`CREATE TABLE IDT_LP24306 (
   COL1 tinyint(16) DEFAULT '41' COMMENT 'NUMERIC UNIQUE INDEX',
   KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
@@ -871,7 +850,6 @@ func TestIssue27030(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27030")
 	tk.MustExec("use issue_27030")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`CREATE TABLE PK_LCP9290 (
   COL1 varbinary(10) NOT NULL,
   PRIMARY KEY (COL1) /*T![clustered_index] NONCLUSTERED */
@@ -892,9 +870,8 @@ func TestIssue27070(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27070")
 	tk.MustExec("use issue_27070")
-	tk.MustExec("set @@tidb_enable_list_partition = OFF")
 	tk.MustExec(`create table if not exists t (id int,   create_date date NOT NULL DEFAULT '2000-01-01',   PRIMARY KEY (id,create_date)  ) PARTITION BY list COLUMNS(create_date) (   PARTITION p20210506 VALUES IN ("20210507"),   PARTITION p20210507 VALUES IN ("20210508") )`)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type LIST, treat as normal table"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(""))
 }
 
 func TestIssue27031(t *testing.T) {
@@ -903,7 +880,6 @@ func TestIssue27031(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27031")
 	tk.MustExec("use issue_27031")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`CREATE TABLE NT_LP27390 (
   COL1 mediumint(28) DEFAULT '114' COMMENT 'NUMERIC NO INDEX'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -920,7 +896,6 @@ func TestIssue27493(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27493")
 	tk.MustExec("use issue_27493")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`CREATE TABLE UK_LP17321 (
   COL1 mediumint(16) DEFAULT '82' COMMENT 'NUMERIC UNIQUE INDEX',
   COL3 bigint(20) DEFAULT NULL,
@@ -949,7 +924,6 @@ func TestIssue27532(t *testing.T) {
 	tk.MustExec("create database issue_27532")
 	defer tk.MustExec(`drop database issue_27532`)
 	tk.MustExec("use issue_27532")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table t2 (c1 int primary key, c2 int, c3 int, c4 int, key k2 (c2), key k3 (c3)) partition by hash(c1) partitions 10`)
 	tk.MustExec(`insert into t2 values (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4)`)
 	tk.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)

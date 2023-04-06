@@ -56,7 +56,6 @@ func TestAlterPartitionCache(t *testing.T) {
 	tk.MustGetErrCode("alter table cache_partition_range_table cache;", errno.ErrOptOnCacheTable)
 	defer tk.MustExec("drop table if exists cache_partition_range_table;")
 	tk.MustExec("drop table if exists partition_list_table;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table cache_partition_list_table (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),

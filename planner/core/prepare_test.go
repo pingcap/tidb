@@ -2218,7 +2218,6 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("create database test_plan_cache")
 	tk.MustExec("use test_plan_cache")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@tidb_enable_list_partition = 1")
 
 	type testcase struct {
 		t1Create string

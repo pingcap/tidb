@@ -942,9 +942,6 @@ type SessionVars struct {
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
 
-	// EnableListTablePartition enables list table partition feature.
-	EnableListTablePartition bool
-
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
 

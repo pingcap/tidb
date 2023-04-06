@@ -33,7 +33,6 @@ func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 	tk.MustExec("drop database if exists test_range_col_in")
 	tk.MustExec("create database test_range_col_in")
 	tk.MustExec("use test_range_col_in")
-	tk.MustExec(`set @@session.tidb_enable_list_partition = 1`)
 	tk.MustExec("set @@session.tidb_partition_prune_mode='static'")
 
 	// case in issue-26739
@@ -222,7 +221,6 @@ func TestListColumnsPartitionPrunerRandom(t *testing.T) {
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table t1 (id int, a int, b int ) partition by list columns (b, id, a) (partition p0 values in ((1,0,2),(2,0,2),(0,1,0),(1,1,0),(2,1,0),(0,1,1),(0,1,2),(0,2,0),(1,2,0)),partition p1 values in ((1,0,1),(0,0,2),(2,1,1),(2,1,2),(2,2,1),(1,2,2),(2,2,2)),partition p2 values in ((0,0,0),(1,0,0),(2,0,0),(0,0,1),(2,0,1),(1,1,1),(1,1,2),(2,2,0),(0,2,1),(1,2,1),(0,2,2)))")
 
 	tk1 := testkit.NewTestKit(t, store)

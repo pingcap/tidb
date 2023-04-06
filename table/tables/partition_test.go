@@ -405,7 +405,6 @@ func TestLocatePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("drop table if exists t;")
 
@@ -651,7 +650,6 @@ func TestIssue24746(t *testing.T) {
 func TestIssue31629(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_enable_list_partition = 1")
 	tk.MustExec("create database Issue31629")
 	defer tk.MustExec("drop database Issue31629")
 	tk.MustExec("use Issue31629")
@@ -2258,7 +2256,6 @@ func TestIssue31721(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_list_partition=on;")
 	tk.MustExec("drop tables if exists t_31721")
 	tk.MustExec("CREATE TABLE `t_31721` (`COL1` char(1) NOT NULL) CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY LIST COLUMNS(`COL1`) " +
 		"(PARTITION `P0` VALUES IN ('1')," +

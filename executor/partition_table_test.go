@@ -110,7 +110,6 @@ func TestPartitionIndexJoin(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-	tk.MustExec("set @@session.tidb_enable_list_partition = 1")
 	for i := 0; i < 3; i++ {
 		tk.MustExec("drop table if exists p, t")
 		if i == 0 {
@@ -168,7 +167,6 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 	tk.MustExec("create database test_pointget_list_hash")
 	tk.MustExec("use test_pointget_list_hash")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
 	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
@@ -1088,7 +1086,6 @@ func TestIssue25527(t *testing.T) {
 	tk.MustExec("create database test_issue_25527")
 	tk.MustExec("use test_issue_25527")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// the original case
 	tk.MustExec(`CREATE TABLE t (
@@ -1152,7 +1149,6 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	tk.MustExec("create database test_pointget")
 	tk.MustExec("use test_pointget")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
 	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
@@ -3393,7 +3389,6 @@ func TestIssue21731(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p, t")
-	tk.MustExec("set @@tidb_enable_list_partition = OFF")
 	// Notice that this does not really test the issue #21731
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
 }

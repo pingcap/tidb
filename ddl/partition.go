@@ -439,7 +439,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 
 	var enable bool
 	switch s.Tp {
-	case model.PartitionTypeRange:
+	case model.PartitionTypeRange, model.PartitionTypeList:
 		if s.Sub == nil {
 			enable = true
 		}
@@ -460,9 +460,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		if s.Sub == nil && len(s.ColumnNames) != 0 {
 			enable = true
 		}
-	case model.PartitionTypeList:
-		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
-		enable = ctx.GetSessionVars().EnableListTablePartition
 	}
 
 	if !enable {

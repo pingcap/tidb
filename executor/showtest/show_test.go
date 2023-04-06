@@ -376,7 +376,6 @@ func TestShowCreateTable(t *testing.T) {
 	result = tk.MustQuery("show create table t;").Rows()[0][1]
 	require.Regexp(t, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`, result)
 	// Test show list partition table
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -537,9 +536,6 @@ func TestShowCreateTablePlacement(t *testing.T) {
 
 	// Partitioned tables
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("set @old_list_part = @@tidb_enable_list_partition")
-	defer tk.MustExec("set @@tidb_enable_list_partition = @old_list_part")
-	tk.MustExec("set tidb_enable_list_partition = 1")
 	tk.MustExec("create table t(a int, b varchar(255))" +
 		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
 		"PARTITION BY LIST (a)\n" +

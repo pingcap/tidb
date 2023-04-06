@@ -181,9 +181,6 @@ const (
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
-	// TiDBEnableListTablePartition is used to control list table partition feature.
-	TiDBEnableListTablePartition = "tidb_enable_list_partition"
-
 	// TiDBSkipIsolationLevelCheck is used to control whether to return error when set unsupported transaction
 	// isolation level.
 	TiDBSkipIsolationLevelCheck = "tidb_skip_isolation_level_check"

@@ -639,7 +639,6 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 	tk.MustQuery("explain select * from t where b in (1, 2, 1)").Check(testkit.Rows(
 		"Batch_Point_Get_1 3.00 root table:t, partition:p1,p2, index:b(b) keep order:false, desc:false"))
 
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (id int primary key, name_id int) PARTITION BY LIST(id) (" +
 		"partition p0 values IN (1, 2), " +
@@ -649,7 +648,6 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 	tk.MustQuery("explain format='brief' select * from t where id in (1, 3)").Check(testkit.Rows(
 		"Batch_Point_Get 2.00 root table:t, partition:p0,p1 handle:[1 3], keep order:false, desc:false"))
 
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0 (id int primary key, name_id int) PARTITION BY LIST COLUMNS(id) (" +
 		"partition p0 values IN (1, 2), " +
@@ -660,7 +658,6 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		"TableReader 2.00 root partition:p0,p1 data:TableRangeScan]\n" +
 			"[└─TableRangeScan 2.00 cop[tikv] table:t0 range:[1,1], [3,3], keep order:false, stats:pseudo"))
 
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (id int, name_id int, unique key(id, name_id)) PARTITION BY LIST COLUMNS(id, name_id) (" +
 		"partition p0 values IN ((1, 1),(2, 2)), " +
@@ -671,7 +668,6 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		"IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan]\n" +
 			"[└─IndexRangeScan 2.00 cop[tikv] table:t1, index:id(id, name_id) range:[1 1,1 1], [3 3,3 3], keep order:false, stats:pseudo"))
 
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("CREATE TABLE t2 (id int, name varchar(10), unique key(id, name)) PARTITION BY LIST COLUMNS(id, name) (" +
 		"partition p0 values IN ((1,'a'),(2,'b')), " +

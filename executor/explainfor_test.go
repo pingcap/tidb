@@ -1330,7 +1330,6 @@ func TestListPartition4PlanCache(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	tk.MustExec("set @@session.tidb_enable_list_partition=1;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int) PARTITION BY LIST (a) ( PARTITION p0 VALUES IN (1, 2, 3), PARTITION p1 VALUES IN (4, 5, 6));")
 

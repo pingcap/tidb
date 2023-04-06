@@ -834,7 +834,6 @@ func TestDisableTablePartition(t *testing.T) {
 	tk.MustExec("use test;")
 	for _, v := range []string{"'AUTO'", "'OFF'", "0", "'ON'"} {
 		tk.MustExec("set @@session.tidb_enable_table_partition = " + v)
-		tk.MustExec("set @@session.tidb_enable_list_partition = OFF")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),partition p1 values in (3,4));`)
@@ -866,7 +865,6 @@ func TestCreateTableWithListPartition(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -1013,7 +1011,6 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -1220,7 +1217,6 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1336,7 +1332,6 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -1404,7 +1399,6 @@ func TestAlterTableDropPartitionByList(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1440,7 +1434,6 @@ func TestAlterTableDropPartitionByListColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -1478,7 +1471,6 @@ func TestAlterTableTruncatePartitionByList(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1510,7 +1502,6 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -2166,7 +2157,6 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	tk.MustGetErrCode("alter table e6 exchange partition p1 with table e7", errno.ErrRowDoesNotMatchPartition)
 
 	// validation test for list partition
-	tk.MustExec("set @@tidb_enable_list_partition=true")
 	tk.MustExec(`CREATE TABLE t1 (store_id int)
 	PARTITION BY LIST (store_id) (
 		PARTITION pNorth VALUES IN (1, 2, 3, 4, 5),
@@ -3787,7 +3777,6 @@ func TestPartitionListWithTimeType(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));")
 	tk.MustExec("insert into t_list1(a) values (20180203);")
 	tk.MustQuery(`select * from t_list1 partition (p0);`).Check(testkit.Rows("2018-02-03"))
@@ -3801,7 +3790,6 @@ func TestPartitionListWithNewCollation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustGetErrCode(`create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));`, mysql.ErrMultipleDefConstInListPart)
 	tk.MustExec("create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));")
 	tk.MustExec("insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');")
@@ -3833,7 +3821,6 @@ func TestAddTableWithPartition(t *testing.T) {
 	) ON COMMIT DELETE ROWS;`, errno.ErrPartitionNoTemporary)
 	tk.MustExec("drop table if exists partition_range_table;")
 	tk.MustExec("drop table if exists partition_list_table;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustGetErrCode(`create global temporary table partition_list_table (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -3858,7 +3845,6 @@ func TestAddTableWithPartition(t *testing.T) {
 	);`, errno.ErrPartitionNoTemporary)
 	tk.MustExec("drop table if exists local_partition_range_table;")
 	tk.MustExec("drop table if exists local_partition_list_table;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustGetErrCode(`create temporary table local_partition_list_table (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -3953,7 +3939,6 @@ func TestDuplicatePartitionNames(t *testing.T) {
 	defer tk.MustExec("drop database DuplicatePartitionNames")
 	tk.MustExec("use DuplicatePartitionNames")
 
-	tk.MustExec("set @@tidb_enable_list_partition=on")
 	tk.MustExec("create table t1 (a int) partition by list (a) (partition p1 values in (1), partition p2 values in (2), partition p3 values in (3))")
 	tk.MustExec("insert into t1 values (1),(2),(3)")
 	tk.MustExec("alter table t1 truncate partition p1,p1")

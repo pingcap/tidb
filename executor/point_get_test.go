@@ -125,7 +125,6 @@ func TestIssue25489(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists UK_RP16939;")
 	// range partition

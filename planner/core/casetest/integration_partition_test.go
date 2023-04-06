@@ -31,7 +31,6 @@ func TestListPartitionPushDown(t *testing.T) {
 	tk.MustExec("use list_push_down")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int) partition by list (a) (
     partition p0 values in (0, 1, 2),
     partition p1 values in (3, 4, 5))`)
@@ -63,7 +62,6 @@ func TestListColVariousTypes(t *testing.T) {
 	tk.MustExec("create database list_col_partition_types")
 	tk.MustExec("use list_col_partition_types")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
 	tk.MustExec(`create table tint (a int) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`)
 	tk.MustExec(`create table tdate (a date) partition by list columns(a) (partition p0 values in ('2000-01-01', '2000-01-02'), partition p1 values in ('2000-01-03', '2000-01-04'))`)
@@ -110,7 +108,6 @@ func TestListPartitionPruning(t *testing.T) {
 	tk.MustExec("create database list_partition_pruning")
 	tk.MustExec("use list_partition_pruning")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int) partition by list (a) (
     partition p0 values in (0, 1, 2),
     partition p1 values in (3, 4, 5),
@@ -153,7 +150,6 @@ func TestListPartitionFunctions(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_pruning")
 	tk.MustExec("use list_partition_pruning")
-	tk.MustExec("set tidb_enable_list_partition = 1")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 
 	var input []string
@@ -186,7 +182,6 @@ func TestEstimationForTopNPushToDynamicPartition(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table trange (a int, b int, c int, index ia(a), primary key (b) clustered)
     partition by range(b) (
     partition p1 values less than(100),
