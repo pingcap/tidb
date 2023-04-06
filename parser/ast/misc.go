@@ -3116,11 +3116,10 @@ const (
 	BRIEKindStreamStop
 	BRIEKindStreamPurge
 	BRIEKindRestore
-	BRIEKindRestorePoint
+	BRIEKindRestorePIT
 	BRIEKindShowJob
 	BRIEKindShowQuery
 	BRIEKindShowBackupMeta
-
 	// common BRIE options
 	BRIEOptionRateLimit BRIEOptionType = iota + 1
 	BRIEOptionConcurrency
@@ -3188,7 +3187,7 @@ func (kind BRIEKind) String() string {
 		return "SHOW BACKUP LOGS METADATA"
 	case BRIEKindStreamPurge:
 		return "PURGE BACKUP LOGS"
-	case BRIEKindRestorePoint:
+	case BRIEKindRestorePIT:
 		return "RESTORE POINT"
 	case BRIEKindShowJob:
 		return "SHOW BR JOB"
@@ -3381,7 +3380,7 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	case BRIEKindStreamStart:
 		ctx.WriteKeyWord(" TO ")
 		ctx.WriteString(n.Storage)
-	case BRIEKindRestorePoint, BRIEKindStreamMetaData, BRIEKindShowBackupMeta, BRIEKindStreamPurge:
+	case BRIEKindRestorePIT, BRIEKindStreamMetaData, BRIEKindShowBackupMeta, BRIEKindStreamPurge:
 		ctx.WriteKeyWord(" FROM ")
 		ctx.WriteString(n.Storage)
 	}

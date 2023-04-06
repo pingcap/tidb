@@ -5201,7 +5201,7 @@ BRIEStmt:
 |	"RESTORE" "POINT" "FROM" stringLit BRIEOptions
 	{
 		stmt :=  &ast.BRIEStmt{}
-		stmt.Kind = ast.BRIEKindRestorePoint
+		stmt.Kind = ast.BRIEKindRestorePIT
 		stmt.Storage = $4
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
