@@ -281,7 +281,8 @@ func (s *subscription) listenOver(cli eventStream) {
 				Value: m.Checkpoint,
 			}
 		}
-		metrics.RegionCheckpointSubscriptionEvent.WithLabelValues(strconv.Itoa(int(storeID))).Observe(float64(len(msg.Events)))
+		metrics.RegionCheckpointSubscriptionEvent.WithLabelValues(
+			strconv.Itoa(int(storeID))).Observe(float64(len(msg.Events)))
 	}
 }
 
