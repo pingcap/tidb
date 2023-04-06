@@ -3108,13 +3108,13 @@ type BRIEOptionType uint16
 const (
 	BRIEKindBackup BRIEKind = iota
 	BRIEKindCancelJob
-	BRIEKindLogStart
-	BRIEKindLogMetaData
-	BRIEKindLogStatus
-	BRIEKindLogPause
-	BRIEKindLogResume
-	BRIEKindLogStop
-	BRIEKindLogPurge
+	BRIEKindStreamStart
+	BRIEKindStreamMetaData
+	BRIEKindStreamStatus
+	BRIEKindStreamPause
+	BRIEKindStreamResume
+	BRIEKindStreamStop
+	BRIEKindStreamPurge
 	BRIEKindRestore
 	BRIEKindRestorePoint
 	BRIEKindShowJob
@@ -3174,19 +3174,19 @@ func (kind BRIEKind) String() string {
 		return "BACKUP"
 	case BRIEKindRestore:
 		return "RESTORE"
-	case BRIEKindLogStart:
+	case BRIEKindStreamStart:
 		return "BACKUP LOGS"
-	case BRIEKindLogStop:
+	case BRIEKindStreamStop:
 		return "STOP BACKUP LOGS"
-	case BRIEKindLogPause:
+	case BRIEKindStreamPause:
 		return "PAUSE BACKUP LOGS"
-	case BRIEKindLogResume:
+	case BRIEKindStreamResume:
 		return "RESUME BACKUP LOGS"
-	case BRIEKindLogStatus:
+	case BRIEKindStreamStatus:
 		return "SHOW BACKUP LOGS STATUS"
-	case BRIEKindLogMetaData:
+	case BRIEKindStreamMetaData:
 		return "SHOW BACKUP LOGS METADATA"
-	case BRIEKindLogPurge:
+	case BRIEKindStreamPurge:
 		return "PURGE BACKUP LOGS"
 	case BRIEKindRestorePoint:
 		return "RESTORE POINT"
@@ -3378,10 +3378,10 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case BRIEKindCancelJob, BRIEKindShowJob, BRIEKindShowQuery:
 		ctx.WritePlainf(" %d", n.JobID)
-	case BRIEKindLogStart:
+	case BRIEKindStreamStart:
 		ctx.WriteKeyWord(" TO ")
 		ctx.WriteString(n.Storage)
-	case BRIEKindRestorePoint, BRIEKindLogMetaData, BRIEKindShowBackupMeta, BRIEKindLogPurge:
+	case BRIEKindRestorePoint, BRIEKindStreamMetaData, BRIEKindShowBackupMeta, BRIEKindStreamPurge:
 		ctx.WriteKeyWord(" FROM ")
 		ctx.WriteString(n.Storage)
 	}

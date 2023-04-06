@@ -5117,7 +5117,7 @@ BRIEStmt:
 |	"BACKUP" "LOGS" "TO" stringLit BRIEOptions
 	{
 		stmt := &ast.BRIEStmt{}
-		stmt.Kind = ast.BRIEKindLogStart
+		stmt.Kind = ast.BRIEKindStreamStart
 		stmt.Storage = $4
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
@@ -5125,26 +5125,26 @@ BRIEStmt:
 |	"STOP" "BACKUP" "LOGS"
 	{
 		stmt := &ast.BRIEStmt{}
-		stmt.Kind = ast.BRIEKindLogStop
+		stmt.Kind = ast.BRIEKindStreamStop
 		$$ = stmt
 	}
 |	"PAUSE" "BACKUP" "LOGS" BRIEOptions
 	{
 		stmt := &ast.BRIEStmt{}
-		stmt.Kind = ast.BRIEKindLogPause
+		stmt.Kind = ast.BRIEKindStreamPause
 		stmt.Options = $4.([]*ast.BRIEOption)
 		$$ = stmt
 	}
 |	"RESUME" "BACKUP" "LOGS"
 	{
 		stmt := &ast.BRIEStmt{}
-		stmt.Kind = ast.BRIEKindLogResume
+		stmt.Kind = ast.BRIEKindStreamResume
 		$$ = stmt
 	}
 |	"PURGE" "BACKUP" "LOGS" "FROM" stringLit BRIEOptions
     	{
     		stmt := &ast.BRIEStmt{}
-    		stmt.Kind = ast.BRIEKindLogPurge
+    		stmt.Kind = ast.BRIEKindStreamPurge
     		stmt.Storage = $5
     		stmt.Options = $6.([]*ast.BRIEOption)
             $$ = stmt
@@ -5152,13 +5152,13 @@ BRIEStmt:
 |	"SHOW" "BACKUP" "LOGS" "STATUS"
 	{
 		stmt := &ast.BRIEStmt{}
-		stmt.Kind = ast.BRIEKindLogStatus
+		stmt.Kind = ast.BRIEKindStreamStatus
 		$$ = stmt
 	}
 |   "SHOW" "BACKUP" "LOGS" "METADATA" "FROM" stringLit
 	{
 		stmt := &ast.BRIEStmt{}
-		stmt.Kind = ast.BRIEKindLogMetaData
+		stmt.Kind = ast.BRIEKindStreamMetaData
 		stmt.Storage = $6
 		$$ = stmt
 	}
