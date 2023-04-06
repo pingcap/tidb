@@ -83,7 +83,7 @@ func (b *deliverKVBatch) size() uint64 {
 
 func (b *deliverKVBatch) add(kvs *kv.Pairs) {
 	for _, pair := range kvs.Pairs {
-		if pair.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
+		if tablecodec.IsRecordKey(pair.Key) {
 			b.dataKVs.Pairs = append(b.dataKVs.Pairs, pair)
 			b.dataChecksum.UpdateOne(pair)
 		} else {
@@ -123,6 +123,7 @@ type chunkProcessor struct {
 }
 
 func (p *chunkProcessor) process(ctx context.Context) error {
+	// todo: use error group pattern to simplify the code
 	deliverCompleteCh := make(chan deliverResult)
 	go func() {
 		defer close(deliverCompleteCh)
