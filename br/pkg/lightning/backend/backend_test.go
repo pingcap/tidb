@@ -137,11 +137,11 @@ func TestWriteEngine(t *testing.T) {
 	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), gomock.Any()).
 		Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
-		AppendRows(ctx, "`db`.`table`", []string{"c1", "c2"}, rows1).
+		AppendRows(ctx, []string{"c1", "c2"}, rows1).
 		Return(nil)
 	mockWriter.EXPECT().Close(ctx).Return(nil, nil).AnyTimes()
 	mockWriter.EXPECT().
-		AppendRows(ctx, "`db`.`table`", []string{"c1", "c2"}, rows2).
+		AppendRows(ctx, []string{"c1", "c2"}, rows2).
 		Return(nil)
 
 	engine, err := s.engineMgr.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
@@ -165,9 +165,9 @@ func TestWriteToEngineWithNothing(t *testing.T) {
 	mockWriter := mock.NewMockEngineWriter(s.controller)
 
 	s.mockBackend.EXPECT().OpenEngine(ctx, &backend.EngineConfig{}, gomock.Any()).Return(nil)
-	mockWriter.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), emptyRows).Return(nil)
+	mockWriter.EXPECT().AppendRows(ctx, gomock.Any(), emptyRows).Return(nil)
 	mockWriter.EXPECT().Close(ctx).Return(nil, nil)
-	s.mockBackend.EXPECT().LocalWriter(ctx, &backend.LocalWriterConfig{}, gomock.Any()).Return(mockWriter, nil)
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), gomock.Any()).Return(mockWriter, nil)
 
 	engine, err := s.engineMgr.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
 	require.NoError(t, err)
@@ -204,7 +204,7 @@ func TestWriteEngineFailed(t *testing.T) {
 
 	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), gomock.Any()).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
-		AppendRows(ctx, gomock.Any(), gomock.Any(), rows).
+		AppendRows(ctx, gomock.Any(), rows).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable write error"))
 	mockWriter.EXPECT().Close(ctx).Return(nil, nil)
 
@@ -230,7 +230,7 @@ func TestWriteBatchSendFailedWithRetry(t *testing.T) {
 	mockWriter := mock.NewMockEngineWriter(s.controller)
 
 	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), gomock.Any()).Return(mockWriter, nil).AnyTimes()
-	mockWriter.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), rows).
+	mockWriter.EXPECT().AppendRows(ctx, gomock.Any(), rows).
 		Return(errors.New("fake recoverable write batch error")).
 		MinTimes(1)
 	mockWriter.EXPECT().Close(ctx).Return(nil, nil).MinTimes(1)
