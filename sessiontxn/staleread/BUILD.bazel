@@ -43,6 +43,7 @@ go_test(
         "provider_test.go",
     ],
     flaky = True,
+    shard_count = 10,
     deps = [
         ":staleread",
         "//domain",

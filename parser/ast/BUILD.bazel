@@ -47,6 +47,7 @@ go_test(
     ],
     embed = [":ast"],
     flaky = True,
+    shard_count = 50,
     deps = [
         "//parser",
         "//parser/auth",

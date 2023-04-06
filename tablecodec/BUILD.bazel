@@ -36,7 +36,7 @@ go_test(
     ],
     embed = [":tablecodec"],
     flaky = True,
-    shard_count = 30,
+    shard_count = 23,
     deps = [
         "//kv",
         "//parser/mysql",

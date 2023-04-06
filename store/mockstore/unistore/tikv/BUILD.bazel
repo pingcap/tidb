@@ -70,6 +70,7 @@ go_test(
     ],
     embed = [":tikv"],
     flaky = True,
+    shard_count = 28,
     deps = [
         "//store/mockstore/unistore/config",
         "//store/mockstore/unistore/lockstore",

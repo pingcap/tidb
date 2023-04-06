@@ -58,6 +58,7 @@ go_test(
     ],
     embed = [":aggregation"],
     flaky = True,
+    shard_count = 14,
     deps = [
         "//expression",
         "//kv",

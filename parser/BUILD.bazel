@@ -43,6 +43,7 @@ go_test(
     data = glob(["**"]),
     embed = [":parser"],
     flaky = True,
+    shard_count = 50,
     deps = [
         "//parser/ast",
         "//parser/charset",

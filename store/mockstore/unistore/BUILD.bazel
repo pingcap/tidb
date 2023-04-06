@@ -52,6 +52,7 @@ go_test(
     ],
     embed = [":unistore"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//testkit/testsetup",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

@@ -39,6 +39,7 @@ go_test(
     ],
     embed = [":extension"],
     flaky = True,
+    shard_count = 14,
     deps = [
         "//expression",
         "//parser/ast",

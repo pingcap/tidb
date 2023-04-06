@@ -30,6 +30,7 @@ go_test(
     ],
     embed = [":model"],
     flaky = True,
+    shard_count = 20,
     deps = [
         "//parser/charset",
         "//parser/mysql",
