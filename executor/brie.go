@@ -233,6 +233,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		Checksum:    true,
 		SendCreds:   true,
 		LogProgress: true,
+
 		CipherInfo: backuppb.CipherInfo{
 			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 		},
@@ -305,6 +306,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	switch s.Kind {
 	case ast.BRIEKindBackup:
 		e.backupCfg = &task.BackupConfig{Config: cfg}
+		// Set some default flags
+		e.backupCfg.UseCheckpoint = true
+		e.backupCfg.IgnoreStats = true
 
 		for _, opt := range s.Options {
 			switch opt.Tp {
