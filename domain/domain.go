@@ -1155,7 +1155,7 @@ func (do *Domain) Init(
 		return err
 	}
 
-	if err = do.initDistTaskLoop(ctx); err != nil {
+	if err = do.initDistTaskLoop(ctx, sysCtxPool); err != nil {
 		return err
 	}
 	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
@@ -1345,21 +1345,16 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	return nil
 }
 
-func (do *Domain) initDistTaskLoop(ctx context.Context) error {
+func (do *Domain) initDistTaskLoop(ctx context.Context, sePool *pools.ResourcePool) error {
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil)
 		}
 	})
-	se, err := do.sysExecutorFactory(do)
-	if err != nil {
-		return err
-	}
 
-	taskManager := storage.NewTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se.(sessionctx.Context))
+	taskManager := storage.NewTaskManager(ctx, sePool)
 	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
 	if err != nil {
-		se.Close()
 		return err
 	}
 
@@ -1367,7 +1362,6 @@ func (do *Domain) initDistTaskLoop(ctx context.Context) error {
 	do.wg.Run(func() {
 		defer func() {
 			storage.SetTaskManager(nil)
-			se.Close()
 		}()
 		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
 	}, "distTaskFrameworkLoop")
