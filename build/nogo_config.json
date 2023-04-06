@@ -303,6 +303,7 @@
       ".*pb\\.go$": "ignore generated code",
       "br/pkg/errors/errors.go": "ignore error",
       "br/pkg/rtree/logging_test.go": "ignore rtree code",
+      "br/pkg/logutil/logging_test.go": "ignore logutil code",
       "br/pkg/storage/": "ignore storage code",
       "br/pkg/mock/storage/storage.go": "ignore storage code",
       "ddl/util/util.go": "ignore util code",
