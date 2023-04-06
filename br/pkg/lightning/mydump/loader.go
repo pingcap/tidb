@@ -111,7 +111,8 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 		return "", errors.Annotate(err, "check table schema file exists error")
 	}
 	if !fileExists {
-		return "", errors.Errorf("the provided schema file (%s) for the table '%s.%s' doesn't exist", schemaFilePath, m.DB, m.Name)
+		return "", errors.Errorf("the provided schema file (%s) for the table '%s.%s' doesn't exist",
+			schemaFilePath, m.DB, m.Name)
 	}
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
@@ -217,7 +218,8 @@ func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSe
 }
 
 // NewMyDumpLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
-func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
+func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
+	store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
 

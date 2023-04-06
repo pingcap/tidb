@@ -115,7 +115,8 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
 		err := sub.loadError()
 		if err != nil {
 			retry := f.canBeRetried(err)
-			log.Warn("[log backup flush subscriber] Meet error.", logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
+			log.Warn("[log backup flush subscriber] Meet error.",
+				logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
 			if retry {
 				sub.connect(f.masterCtx, f.dialer)
 			}
@@ -261,12 +262,14 @@ func (s *subscription) listenOver(cli eventStream) {
 		for _, m := range msg.Events {
 			start, err := decodeKey(m.StartKey)
 			if err != nil {
-				log.Warn("start key not encoded, skipping", logutil.Key("event", m.StartKey), logutil.ShortError(err))
+				log.Warn("start key not encoded, skipping",
+					logutil.Key("event", m.StartKey), logutil.ShortError(err))
 				continue
 			}
 			end, err := decodeKey(m.EndKey)
 			if err != nil {
-				log.Warn("end key not encoded, skipping", logutil.Key("event", m.EndKey), logutil.ShortError(err))
+				log.Warn("end key not encoded, skipping",
+					logutil.Key("event", m.EndKey), logutil.ShortError(err))
 				continue
 			}
 			s.output <- spans.Valued{
