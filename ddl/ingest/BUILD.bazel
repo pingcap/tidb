@@ -39,6 +39,7 @@ go_library(
         "//util",
         "//util/dbterror",
         "//util/generic",
+        "//util/intest",
         "//util/logutil",
         "//util/mathutil",
         "//util/size",

@@ -29,6 +29,7 @@ import (
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -74,7 +75,7 @@ type CentralizedCheckpointManager struct {
 	updateInterval  time.Duration
 	updating        bool
 	updaterWg       sync.WaitGroup
-	updaterCh       chan struct{}
+	updaterCh       chan *sync.WaitGroup
 	updaterExitCh   chan struct{}
 }
 
@@ -96,7 +97,7 @@ type FlushController interface {
 // NewCentralizedCheckpointManager creates a new checkpoint manager.
 func NewCentralizedCheckpointManager(ctx context.Context, flushCtrl FlushController,
 	sessPool *sess.Pool, jobID, indexID int64, interval time.Duration) (*CentralizedCheckpointManager, error) {
-	instanceAddr := initInstanceAddr()
+	instanceAddr := InitInstanceAddr()
 	cm := &CentralizedCheckpointManager{
 		ctx:            ctx,
 		flushCtrl:      flushCtrl,
@@ -109,7 +110,7 @@ func NewCentralizedCheckpointManager(ctx context.Context, flushCtrl FlushControl
 		updateInterval: interval,
 		updaterWg:      sync.WaitGroup{},
 		updaterExitCh:  make(chan struct{}),
-		updaterCh:      make(chan struct{}),
+		updaterCh:      make(chan *sync.WaitGroup),
 	}
 	err := cm.resumeCheckpoint()
 	if err != nil {
@@ -127,7 +128,7 @@ func NewCentralizedCheckpointManager(ctx context.Context, flushCtrl FlushControl
 	return cm, nil
 }
 
-func initInstanceAddr() string {
+func InitInstanceAddr() string {
 	cfg := config.GetGlobalConfig()
 	dsn := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
 	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
@@ -175,7 +176,7 @@ func (s *CentralizedCheckpointManager) UpdateCurrent(taskID int, added int) erro
 	cp := s.checkpoints[taskID]
 	cp.currentKeys += added
 
-	if time.Since(s.timeOfLastFlush) < s.updateInterval {
+	if !intest.InTest && time.Since(s.timeOfLastFlush) < s.updateInterval {
 		return nil
 	}
 	s.timeOfLastFlush = time.Now()
@@ -216,7 +217,10 @@ func (s *CentralizedCheckpointManager) Close() {
 
 // Sync syncs the checkpoint.
 func (s *CentralizedCheckpointManager) Sync() {
-	s.updaterCh <- struct{}{}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	s.updaterCh <- &wg
+	wg.Wait()
 }
 
 // JobReorgMeta is the metadata for a reorg job.
@@ -344,11 +348,12 @@ func (s *CentralizedCheckpointManager) updateCheckpointLoop() {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-s.updaterCh:
+		case wg := <-s.updaterCh:
 			err := s.updateCheckpoint()
 			if err != nil {
 				logutil.BgLogger().Error("[ddl-ingest] update checkpoint failed", zap.Error(err))
 			}
+			wg.Done()
 		case <-ticker.C:
 			s.mu.Lock()
 			if s.updating || !s.dirty {
