@@ -113,7 +113,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 		return err
 	}
 	b.bc = bc
-	d.newReorgCtx(genBackfillJobReorgCtxID(b.job.ID), nil, &meta.Element{ID: b.index.ID, TypeKey: b.eleTypeKey}, 0)
+	d.newReorgCtx(b.job.ID, nil, &meta.Element{ID: b.index.ID, TypeKey: b.eleTypeKey}, 0)
 	return nil
 }
 
