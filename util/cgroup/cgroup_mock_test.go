@@ -170,6 +170,14 @@ func TestCgroupsGetMemoryInactiveFileUsage(t *testing.T) {
 		},
 		{
 			paths: map[string]string{
+				"/proc/self/cgroup":                 v1CgroupWithEccentricMemoryController,
+				"/proc/self/mountinfo":              v1MountsWithEccentricMemController,
+				"/sys/fs/cgroup/memory/memory.stat": v1MemoryStat,
+			},
+			value: 1363746816,
+		},
+		{
+			paths: map[string]string{
 				"/proc/self/cgroup":    v2CgroupWithMemoryController,
 				"/proc/self/mountinfo": v2Mounts,
 			},
@@ -280,6 +288,14 @@ func TestCgroupsGetMemoryLimit(t *testing.T) {
 			},
 			limit: 9223372036854775807,
 		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":                 v1CgroupWithEccentricMemoryController,
+				"/proc/self/mountinfo":              v1MountsWithEccentricMemController,
+				"/sys/fs/cgroup/memory/memory.stat": v1MemoryStat,
+			},
+			limit: 2936016896,
+		},
 	} {
 		dir := createFiles(t, tc.paths)
 		limit, err := getCgroupMemLimit(dir)
@@ -288,6 +304,69 @@ func TestCgroupsGetMemoryLimit(t *testing.T) {
 		require.Equal(t, tc.limit, limit)
 	}
 }
+
+const (
+	v1CgroupWithEccentricMemoryController = `
+13:devices:/system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+12:freezer:/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+11:cpu,cpuacct:/system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+10:perf_event:/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+9:rdma:/
+8:pids:/system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+7:blkio:/system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+6:hugetlb:/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+5:memory:/system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+4:cpuset:/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+3:files:/
+2:net_cls,net_prio:/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+1:name=systemd:/system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2
+0::/
+`
+	v1MountsWithEccentricMemController = `
+1421 1021 0:133 / / rw,relatime master:412 - overlay overlay rw,lowerdir=/apps/data/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1285288/fs:/apps/data/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1285287/fs:/apps/data/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1285286/fs:/apps/data/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1285285/fs:/apps/data/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1283928/fs,upperdir=/apps/data/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1287880/fs,workdir=/apps/data/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1287880/work
+1442 1421 0:136 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
+1443 1421 0:137 / /dev rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755
+1444 1443 0:138 / /dev/pts rw,nosuid,noexec,relatime - devpts devpts rw,gid=5,mode=620,ptmxmode=666
+2303 1443 0:119 / /dev/mqueue rw,nosuid,nodev,noexec,relatime - mqueue mqueue rw
+2304 1421 0:129 / /sys ro,nosuid,nodev,noexec,relatime - sysfs sysfs ro
+2305 2304 0:139 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,mode=755
+2306 2305 0:25 /system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/systemd ro,nosuid,nodev,noexec,relatime master:5 - cgroup cgroup rw,xattr,release_agent=/usr/lib/systemd/systemd-cgroups-agent,name=systemd
+2307 2305 0:28 /kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/net_cls,net_prio ro,nosuid,nodev,noexec,relatime master:6 - cgroup cgroup rw,net_cls,net_prio
+2308 2305 0:29 / /sys/fs/cgroup/files ro,nosuid,nodev,noexec,relatime master:7 - cgroup cgroup rw,files
+2309 2305 0:30 /kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/cpuset ro,nosuid,nodev,noexec,relatime master:8 - cgroup cgroup rw,cpuset
+2310 2305 0:31 /system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/memory ro,nosuid,nodev,noexec,relatime master:9 - cgroup cgroup rw,memory
+2311 2305 0:32 /kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/hugetlb ro,nosuid,nodev,noexec,relatime master:10 - cgroup cgroup rw,hugetlb
+2312 2305 0:33 /system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/blkio ro,nosuid,nodev,noexec,relatime master:11 - cgroup cgroup rw,blkio
+2313 2305 0:34 /system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/pids ro,nosuid,nodev,noexec,relatime master:12 - cgroup cgroup rw,pids
+2314 2305 0:35 / /sys/fs/cgroup/rdma ro,nosuid,nodev,noexec,relatime master:13 - cgroup cgroup rw,rdma
+2315 2305 0:36 /kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/perf_event ro,nosuid,nodev,noexec,relatime master:14 - cgroup cgroup rw,perf_event
+2316 2305 0:37 /system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/cpu,cpuacct ro,nosuid,nodev,noexec,relatime master:15 - cgroup cgroup rw,cpu,cpuacct
+2317 2305 0:38 /kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/freezer ro,nosuid,nodev,noexec,relatime master:16 - cgroup cgroup rw,freezer
+2318 2305 0:39 /system.slice/containerd.service/kubepods-burstable-pod94598a35_ad1e_4a00_91b1_1db37e8f52f6.slice:cri-containerd:0ac322a00cf64a4d58144a1974b993d91537f3ceec12928b10d881af6be8bbb2 /sys/fs/cgroup/devices ro,nosuid,nodev,noexec,relatime master:17 - cgroup cgroup rw,devices
+2319 1421 0:101 / /etc/podinfo ro,relatime - tmpfs tmpfs rw
+2320 1421 253:3 /data/containerd/io.containerd.grpc.v1.cri/sandboxes/22c18c845c47667097eb8973fd0ec05256be685cd1b1a8b0fe7c748a04401cdb/hostname /etc/hostname rw,relatime - xfs /dev/mapper/vg1-lvm1k8s rw,attr2,inode64,sunit=512,swidth=512,noquota
+2321 1421 253:3 /data/kubelet/pods/94598a35-ad1e-4a00-91b1-1db37e8f52f6/volumes/kubernetes.io~configmap/config /etc/tikv ro,relatime - xfs /dev/mapper/vg1-lvm1k8s rw,attr2,inode64,sunit=512,swidth=512,noquota
+2322 1443 0:104 / /dev/shm rw,nosuid,nodev,noexec,relatime - tmpfs shm rw,size=65536k
+2323 1421 253:3 /data/kubelet/pods/94598a35-ad1e-4a00-91b1-1db37e8f52f6/etc-hosts /etc/hosts rw,relatime - xfs /dev/mapper/vg1-lvm1k8s rw,attr2,inode64,sunit=512,swidth=512,noquota
+2324 1443 253:3 /data/kubelet/pods/94598a35-ad1e-4a00-91b1-1db37e8f52f6/containers/tikv/0981845c /dev/termination-log rw,relatime - xfs /dev/mapper/vg1-lvm1k8s rw,attr2,inode64,sunit=512,swidth=512,noquota
+2325 1421 253:3 /data/containerd/io.containerd.grpc.v1.cri/sandboxes/22c18c845c47667097eb8973fd0ec05256be685cd1b1a8b0fe7c748a04401cdb/resolv.conf /etc/resolv.conf rw,relatime - xfs /dev/mapper/vg1-lvm1k8s rw,attr2,inode64,sunit=512,swidth=512,noquota
+2326 1421 253:2 /pv03 /var/lib/tikv rw,relatime - xfs /dev/mapper/vg2-lvm2k8s rw,attr2,inode64,sunit=512,swidth=512,noquota
+2327 1421 253:3 /data/kubelet/pods/94598a35-ad1e-4a00-91b1-1db37e8f52f6/volumes/kubernetes.io~configmap/startup-script /usr/local/bin ro,relatime - xfs /dev/mapper/vg1-lvm1k8s rw,attr2,inode64,sunit=512,swidth=512,noquota
+2328 1421 0:102 / /run/secrets/kubernetes.io/serviceaccount ro,relatime - tmpfs tmpfs rw
+1022 1442 0:136 /bus /proc/bus ro,nosuid,nodev,noexec,relatime - proc proc rw
+1034 1442 0:136 /fs /proc/fs ro,nosuid,nodev,noexec,relatime - proc proc rw
+1035 1442 0:136 /irq /proc/irq ro,nosuid,nodev,noexec,relatime - proc proc rw
+1036 1442 0:136 /sys /proc/sys ro,nosuid,nodev,noexec,relatime - proc proc rw
+1037 1442 0:136 /sysrq-trigger /proc/sysrq-trigger ro,nosuid,nodev,noexec,relatime - proc proc rw
+1038 1442 0:161 / /proc/acpi ro,relatime - tmpfs tmpfs ro
+1039 1442 0:137 /null /proc/kcore rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755
+1040 1442 0:137 /null /proc/keys rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755
+1041 1442 0:137 /null /proc/timer_list rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755
+1042 1442 0:137 /null /proc/sched_debug rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755
+1043 1442 0:162 / /proc/scsi ro,relatime - tmpfs tmpfs ro
+1044 2304 0:163 / /sys/firmware ro,relatime - tmpfs tmpfs ro
+`
+)
 
 func TestCgroupsGetCPU(t *testing.T) {
 	for _, tc := range []struct {

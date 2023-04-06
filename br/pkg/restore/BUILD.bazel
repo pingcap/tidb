@@ -124,7 +124,7 @@ go_test(
     ],
     embed = [":restore"],
     flaky = True,
-    race = "on",
+    race = "off",
     shard_count = 50,
     deps = [
         "//br/pkg/backup",

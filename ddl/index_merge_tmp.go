@@ -139,7 +139,7 @@ func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, eleID in
 	}
 }
 
-// BackfillDataInTxn merge temp index data in txn.
+// BackfillData merge temp index data in txn.
 func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())

@@ -681,7 +681,7 @@ type TikvImporter struct {
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 	KeyspaceName        string                       `toml:"keyspace-name" json:"keyspace-name"`
-	AddIndexBySQL       *bool                        `toml:"add-index-by-sql" json:"add-index-by-sql"`
+	AddIndexBySQL       bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -766,6 +766,8 @@ const (
 	UTF8MB4
 	GB18030
 	GBK
+	Latin1
+	ASCII
 )
 
 // String return the string value of charset
@@ -779,6 +781,10 @@ func (c Charset) String() string {
 		return "gb18030"
 	case GBK:
 		return "gbk"
+	case Latin1:
+		return "latin1"
+	case ASCII:
+		return "ascii"
 	default:
 		return "unknown_charset"
 	}
@@ -789,12 +795,16 @@ func ParseCharset(dataCharacterSet string) (Charset, error) {
 	switch strings.ToLower(dataCharacterSet) {
 	case "", "binary":
 		return Binary, nil
-	case "utf8mb4":
+	case "utf8", "utf8mb4":
 		return UTF8MB4, nil
 	case "gb18030":
 		return GB18030, nil
 	case "gbk":
 		return GBK, nil
+	case "latin1":
+		return Latin1, nil
+	case "ascii":
+		return ASCII, nil
 	default:
 		return Binary, errors.Errorf("found unsupported data-character-set: %s", dataCharacterSet)
 	}
@@ -1131,22 +1141,9 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 }
 
 func (cfg *Config) CheckAndAdjustForLocalBackend() error {
-	if cfg.TikvImporter.IncrementalImport {
-		addIndexBySQL := cfg.TikvImporter.AddIndexBySQL
-		if addIndexBySQL != nil && *addIndexBySQL {
-			return common.ErrInvalidConfig.
-				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
-		} else if addIndexBySQL == nil {
-			falseVal := false
-			cfg.TikvImporter.AddIndexBySQL = &falseVal // Disable add-index-by-sql when incremental-import is enabled.
-		}
-	} else {
-		// Automatically enable add-index-by-sql if failpoint is enabled. (For integration test)
-		// TODO: remove this after TiDB v7.0.0 is released, in which add-index-by-sql is enabled by default.
-		if cfg.TikvImporter.AddIndexBySQL == nil && common.IsFailpointBuild {
-			trueVal := true
-			cfg.TikvImporter.AddIndexBySQL = &trueVal
-		}
+	if cfg.TikvImporter.IncrementalImport && cfg.TikvImporter.AddIndexBySQL {
+		return common.ErrInvalidConfig.
+			GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
 	}
 
 	if len(cfg.TikvImporter.SortedKVDir) == 0 {
