@@ -103,6 +103,8 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	paramExprs := core.Params2Expressions(params)
 
 	if val == nil {
+		// Create a new AST upon this parameterized SQL instead of using the original AST.
+		// Keep the original AST unchanged to avoid any side effect.
 		paramStmt, err := core.ParseParameterizedSQL(sctx, paramSQL)
 		if err != nil {
 			return nil, nil, false, err
