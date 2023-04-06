@@ -156,7 +156,7 @@ func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
 	if !run {
 		return pool.ErrPoolOverload
 	}
-	exitCh := make(chan struct{})
+	exitCh := make(chan struct{}, 1)
 	meta := poolmanager.NewMeta(p.GenTaskID(), exitCh, fns, int32(concurrency))
 	p.taskManager.RegisterTask(meta)
 	for n := int32(0); n < conc; n++ {
