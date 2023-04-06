@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/util/syncutil"
+	"golang.org/x/exp/maps"
 )
 
 // TaskFlowHandle is used to control the process operations for each global task.
@@ -39,15 +40,19 @@ func RegisterTaskFlowHandle(taskType string, dispatcherHandle TaskFlowHandle) {
 	taskFlowHandleMap.Unlock()
 }
 
+// ClearTaskFlowHandle is only used in test
+func ClearTaskFlowHandle() {
+	taskFlowHandleMap.Lock()
+	maps.Clear(taskFlowHandleMap.handleMap)
+	taskFlowHandleMap.Unlock()
+}
+
 // GetTaskFlowHandle is used to get the global task handle.
 func GetTaskFlowHandle(taskType string) TaskFlowHandle {
 	taskFlowHandleMap.Lock()
 	defer taskFlowHandleMap.Unlock()
 	return taskFlowHandleMap.handleMap[taskType]
 }
-
-// MockTiDBIDs is used to mock TiDB IDs.
-var MockTiDBIDs []string
 
 func init() {
 	taskFlowHandleMap.handleMap = make(map[string]TaskFlowHandle)

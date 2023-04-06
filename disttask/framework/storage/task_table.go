@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -33,60 +34,36 @@ import (
 	"go.uber.org/zap"
 )
 
-// GlobalTaskManager is the manager of global task.
-type GlobalTaskManager struct {
+// TaskManager is the manager of global/sub task.
+type TaskManager struct {
 	ctx context.Context
 	se  sessionctx.Context
 	mu  sync.Mutex
 }
 
-var globalTaskManagerInstance atomic.Pointer[GlobalTaskManager]
-var subTaskManagerInstance atomic.Pointer[SubTaskManager]
+var taskManagerInstance atomic.Pointer[TaskManager]
 
-// NewGlobalTaskManager creates a new global task manager.
-func NewGlobalTaskManager(ctx context.Context, se sessionctx.Context) *GlobalTaskManager {
+// NewTaskManager creates a new task manager.
+func NewTaskManager(ctx context.Context, se sessionctx.Context) *TaskManager {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-	return &GlobalTaskManager{
+	return &TaskManager{
 		ctx: ctx,
 		se:  se,
 	}
 }
 
-// NewSubTaskManager creates a new sub task manager.
-func NewSubTaskManager(ctx context.Context, se sessionctx.Context) *SubTaskManager {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-	return &SubTaskManager{
-		ctx: ctx,
-		se:  se,
-	}
-}
-
-// GetGlobalTaskManager gets the global task manager.
-func GetGlobalTaskManager() (*GlobalTaskManager, error) {
-	v := globalTaskManagerInstance.Load()
+// GetTaskManager gets the task manager.
+func GetTaskManager() (*TaskManager, error) {
+	v := taskManagerInstance.Load()
 	if v == nil {
 		return nil, errors.New("global task manager is not initialized")
 	}
 	return v, nil
 }
 
-// SetGlobalTaskManager sets the global task manager.
-func SetGlobalTaskManager(is *GlobalTaskManager) {
-	globalTaskManagerInstance.Store(is)
-}
-
-// GetSubTaskManager gets the sub task manager.
-func GetSubTaskManager() (*SubTaskManager, error) {
-	v := subTaskManagerInstance.Load()
-	if v == nil {
-		return nil, errors.New("subTask manager is not initialized")
-	}
-	return v, nil
-}
-
-// SetSubTaskManager sets the sub task manager.
-func SetSubTaskManager(is *SubTaskManager) {
-	subTaskManagerInstance.Store(is)
+// SetTaskManager sets the task manager.
+func SetTaskManager(is *TaskManager) {
+	taskManagerInstance.Store(is)
 }
 
 // execSQL executes the sql and returns the result.
@@ -128,8 +105,8 @@ func row2GlobeTask(r chunk.Row) *proto.Task {
 	return task
 }
 
-// AddNewTask adds a new task to global task table.
-func (stm *GlobalTaskManager) AddNewTask(key, tp string, concurrency int, meta []byte) (int64, error) {
+// AddNewGlobalTask adds a new task to global task table.
+func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta []byte) (int64, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -146,8 +123,8 @@ func (stm *GlobalTaskManager) AddNewTask(key, tp string, concurrency int, meta [
 	return strconv.ParseInt(rs[0].GetString(0), 10, 64)
 }
 
-// GetNewTask get a new task from global task table, it's used by dispatcher only.
-func (stm *GlobalTaskManager) GetNewTask() (task *proto.Task, err error) {
+// GetNewGlobalTask get a new task from global task table, it's used by dispatcher only.
+func (stm *TaskManager) GetNewGlobalTask() (task *proto.Task, err error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -163,8 +140,13 @@ func (stm *GlobalTaskManager) GetNewTask() (task *proto.Task, err error) {
 	return row2GlobeTask(rs[0]), nil
 }
 
-// UpdateTask updates the global task.
-func (stm *GlobalTaskManager) UpdateTask(task *proto.Task) error {
+// UpdateGlobalTask updates the global task.
+func (stm *TaskManager) UpdateGlobalTask(task *proto.Task) error {
+	failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("updateTaskErr"))
+		}
+	})
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -177,8 +159,8 @@ func (stm *GlobalTaskManager) UpdateTask(task *proto.Task) error {
 	return nil
 }
 
-// GetTasksInStates gets the tasks in the states.
-func (stm *GlobalTaskManager) GetTasksInStates(states ...interface{}) (task []*proto.Task, err error) {
+// GetGlobalTasksInStates gets the tasks in the states.
+func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -197,8 +179,8 @@ func (stm *GlobalTaskManager) GetTasksInStates(states ...interface{}) (task []*p
 	return task, nil
 }
 
-// GetTaskByID gets the task by the global task ID.
-func (stm *GlobalTaskManager) GetTaskByID(taskID int64) (task *proto.Task, err error) {
+// GetGlobalTaskByID gets the task by the global task ID.
+func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -213,11 +195,20 @@ func (stm *GlobalTaskManager) GetTaskByID(taskID int64) (task *proto.Task, err e
 	return row2GlobeTask(rs[0]), nil
 }
 
-// SubTaskManager is the manager of subtask.
-type SubTaskManager struct {
-	ctx context.Context
-	se  sessionctx.Context
-	mu  sync.Mutex
+// GetGlobalTaskByKey gets the task by the task key
+func (stm *TaskManager) GetGlobalTaskByKey(key string) (task *proto.Task, err error) {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	rs, err := execSQL(stm.ctx, stm.se, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where task_key = %?", key)
+	if err != nil {
+		return task, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	return row2GlobeTask(rs[0]), nil
 }
 
 // row2SubTask converts a row to a subtask.
@@ -238,8 +229,8 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 	return task
 }
 
-// AddNewTask adds a new task to subtask table.
-func (stm *SubTaskManager) AddNewTask(globalTaskID int64, designatedTiDBID string, meta []byte, tp string, isRevert bool) error {
+// AddNewSubTask adds a new task to subtask table.
+func (stm *TaskManager) AddNewSubTask(globalTaskID int64, designatedTiDBID string, meta []byte, tp string, isRevert bool) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -257,7 +248,7 @@ func (stm *SubTaskManager) AddNewTask(globalTaskID int64, designatedTiDBID strin
 }
 
 // GetSubtaskInStates gets the subtask in the states.
-func (stm *SubTaskManager) GetSubtaskInStates(tidbID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
+func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -275,7 +266,7 @@ func (stm *SubTaskManager) GetSubtaskInStates(tidbID string, taskID int64, state
 }
 
 // GetSubtaskInStatesCnt gets the subtask count in the states.
-func (stm *SubTaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error) {
+func (stm *TaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -290,7 +281,7 @@ func (stm *SubTaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interfa
 }
 
 // HasSubtasksInStates checks if there are subtasks in the states.
-func (stm *SubTaskManager) HasSubtasksInStates(tidbID string, taskID int64, states ...interface{}) (bool, error) {
+func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, states ...interface{}) (bool, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -305,7 +296,7 @@ func (stm *SubTaskManager) HasSubtasksInStates(tidbID string, taskID int64, stat
 }
 
 // UpdateSubtaskState updates the subtask state.
-func (stm *SubTaskManager) UpdateSubtaskState(id int64, state string) error {
+func (stm *TaskManager) UpdateSubtaskState(id int64, state string) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -313,8 +304,8 @@ func (stm *SubTaskManager) UpdateSubtaskState(id int64, state string) error {
 	return err
 }
 
-// UpdateHeartbeat updates the heartbeat of the subtask.
-func (stm *SubTaskManager) UpdateHeartbeat(instanceID string, taskID int64, heartbeat time.Time) error {
+// UpdateSubtaskHeartbeat updates the heartbeat of the subtask.
+func (stm *TaskManager) UpdateSubtaskHeartbeat(instanceID string, taskID int64, heartbeat time.Time) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -322,8 +313,8 @@ func (stm *SubTaskManager) UpdateHeartbeat(instanceID string, taskID int64, hear
 	return err
 }
 
-// DeleteTasks deletes the subtask of the given global task ID.
-func (stm *SubTaskManager) DeleteTasks(taskID int64) error {
+// DeleteSubtasksByTaskID deletes the subtask of the given global task ID.
+func (stm *TaskManager) DeleteSubtasksByTaskID(taskID int64) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -335,8 +326,8 @@ func (stm *SubTaskManager) DeleteTasks(taskID int64) error {
 	return nil
 }
 
-// GetSchedulerIDs gets the scheduler IDs of the given global task ID.
-func (stm *SubTaskManager) GetSchedulerIDs(taskID int64) ([]string, error) {
+// GetSchedulerIDsByTaskID gets the scheduler IDs of the given global task ID.
+func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
