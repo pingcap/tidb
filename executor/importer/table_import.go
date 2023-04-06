@@ -129,6 +129,7 @@ func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImpo
 		DB:        e.DBName,
 		Name:      e.Table.Meta().Name.O,
 		DataFiles: e.toMyDumpFiles(),
+		// todo: set IsRowOrdered.
 	}
 	dataDivideCfg := &mydump.DataDivideConfig{
 		ColumnCnt:         len(e.Table.Meta().Columns),
