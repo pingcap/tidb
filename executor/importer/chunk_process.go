@@ -28,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/keyspace"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -121,7 +119,7 @@ type chunkProcessor struct {
 
 	checksum verify.KVChecksum
 	encoder  kvEncoder
-	kvStore  tidbkv.Storage
+	kvCodec  tikv.Codec
 }
 
 func (p *chunkProcessor) process(ctx context.Context) error {
@@ -235,11 +233,7 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 }
 
 func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
-	c := keyspace.CodecV1
-	if p.kvStore != nil {
-		c = p.kvStore.GetCodec()
-	}
-	kvBatch := newDeliverKVBatch(c)
+	kvBatch := newDeliverKVBatch(p.kvCodec)
 
 	for {
 	outer:

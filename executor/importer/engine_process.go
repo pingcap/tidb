@@ -128,7 +128,7 @@ func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.Op
 			dataWriter:  dataWriter,
 			indexWriter: indexWriter,
 			encoder:     encoder,
-			kvStore:     ep.kvStore,
+			kvCodec:     ep.kvStore.GetCodec(),
 		}
 		// todo: process in parallel
 		err = cp.process(ctx)

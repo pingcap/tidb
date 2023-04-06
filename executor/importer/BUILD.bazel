@@ -25,7 +25,6 @@ go_library(
         "//br/pkg/storage",
         "//config",
         "//expression",
-        "//keyspace",
         "//kv",
         "//meta/autoid",
         "//parser/ast",
