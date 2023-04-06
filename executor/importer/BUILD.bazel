@@ -65,7 +65,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/config",
