@@ -229,8 +229,10 @@ func buildIndexRequest(
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: append(append([]byte{}, oldKeyspace...), tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
-			NewPrefix: append(append([]byte{}, newKeyspace...), tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
+			OldPrefix: append(append([]byte{}, oldKeyspace...),
+				tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
+			NewPrefix: append(append([]byte{}, newKeyspace...),
+				tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
 		}
 	}
 	checksum := &tipb.ChecksumRequest{
