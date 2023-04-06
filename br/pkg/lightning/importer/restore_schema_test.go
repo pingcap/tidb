@@ -141,7 +141,8 @@ func (s *restoreSchemaSuite) SetupTest() {
 		Return(s.tableInfos, nil)
 	mockBackend.EXPECT().Close()
 	theBackend := backend.MakeEngineManager(mockBackend)
-	s.rc.backend = theBackend
+	s.rc.engineMgr = theBackend
+	s.rc.backend = mockBackend
 	s.targetInfoGetter.backend = mockTargetInfoGetter
 
 	mockDB, sqlMock, err := sqlmock.New()

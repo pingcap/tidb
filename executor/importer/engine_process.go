@@ -90,7 +90,7 @@ func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.Op
 		var (
 			parser                  mydump.Parser
 			encoder                 kvEncoder
-			dataWriter, indexWriter *backend.LocalEngineWriter
+			dataWriter, indexWriter backend.EngineWriter
 		)
 		closer.reset()
 		parser, err = ep.tableImporter.getParser(ctx, chunk)

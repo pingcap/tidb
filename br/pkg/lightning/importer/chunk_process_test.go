@@ -100,7 +100,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopCancel() {
 	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
 	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 
-	rc := &Controller{backend: backend.MakeEngineManager(mockBackend), encBuilder: mockEncBuilder}
+	rc := &Controller{engineMgr: backend.MakeEngineManager(mockBackend), backend: mockBackend, encBuilder: mockEncBuilder}
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan []deliveredKVs)
 	go cancel()
@@ -141,7 +141,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 
 	cfg := &config.Config{}
 	saveCpCh := make(chan saveCp, 16)
-	rc := &Controller{cfg: cfg, backend: importer, saveCpCh: saveCpCh, encBuilder: mockEncBuilder}
+	rc := &Controller{cfg: cfg, engineMgr: backend.MakeEngineManager(mockBackend), backend: mockBackend, saveCpCh: saveCpCh, encBuilder: mockEncBuilder}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -251,7 +251,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	}()
 
 	cfg := &config.Config{}
-	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer, encBuilder: mockEncBuilder}
+	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, engineMgr: backend.MakeEngineManager(mockBackend), backend: mockBackend, encBuilder: mockEncBuilder}
 
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	require.NoError(s.T(), err)
@@ -686,7 +686,8 @@ func (s *chunkRestoreSuite) TestRestore() {
 	err = s.cr.process(ctx, s.tr, 0, dataWriter, indexWriter, &Controller{
 		cfg:        s.cfg,
 		saveCpCh:   saveCpCh,
-		backend:    importer,
+		engineMgr:  backend.MakeEngineManager(mockBackend),
+		backend:    mockBackend,
 		pauser:     DeliverPauser,
 		encBuilder: mockEncBuilder,
 	})

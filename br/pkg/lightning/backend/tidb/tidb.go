@@ -743,12 +743,13 @@ func (be *tidbBackend) LocalWriter(
 	_ *backend.LocalWriterConfig,
 	_ uuid.UUID,
 ) (backend.EngineWriter, error) {
-	return &Writer{be: be}, nil
+	return &Writer{be: be, tableName: cfg.TableName}, nil
 }
 
 // Writer is a writer that writes data to local storage.
 type Writer struct {
-	be *tidbBackend
+	be        *tidbBackend
+	tableName string
 }
 
 // Close implements the EngineWriter interface.
@@ -757,8 +758,8 @@ func (*Writer) Close(_ context.Context) (backend.ChunkFlushStatus, error) {
 }
 
 // AppendRows implements the EngineWriter interface.
-func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
-	return w.be.WriteRows(ctx, tableName, columnNames, rows)
+func (w *Writer) AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
+	return w.be.WriteRows(ctx, w.tableName, columnNames, rows)
 }
 
 // IsSynced implements the EngineWriter interface.

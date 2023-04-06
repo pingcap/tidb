@@ -577,6 +577,7 @@ func (tr *TableImporter) preprocessEngine(
 		tr.tableInfo.Core.Partition == nil
 	dataWriterCfg := &backend.LocalWriterConfig{
 		IsKVSorted: hasAutoIncrementAutoID,
+		TableName:  tr.tableName,
 	}
 
 	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
@@ -688,7 +689,7 @@ ChunkLoop:
 			break
 		}
 
-		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: tr.tableName})
 		if err != nil {
 			_, _ = dataWriter.Close(ctx)
 			setError(err)

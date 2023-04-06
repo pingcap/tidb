@@ -164,7 +164,7 @@ func (noopRow) ClassifyAndAppend(*encode.Rows, *verification.KVChecksum, *encode
 type Writer struct{}
 
 // AppendRows implements the EngineWriter interface.
-func (Writer) AppendRows(context.Context, string, []string, encode.Rows) error {
+func (Writer) AppendRows(context.Context, []string, encode.Rows) error {
 	return nil
 }
 

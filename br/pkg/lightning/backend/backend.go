@@ -72,7 +72,10 @@ type EngineFileSize struct {
 // LocalWriterConfig defines the configuration to open a LocalWriter
 type LocalWriterConfig struct {
 	// is the chunk KV written to this LocalWriter sent in order
+	// only needed for local backend, can omit for tidb backend
 	IsKVSorted bool
+	// only needed for tidb backend, can omit for local backend
+	TableName string
 }
 
 // EngineConfig defines configuration used for open engine
@@ -175,6 +178,8 @@ type Backend interface {
 }
 
 // EngineManager is the manager of engines.
+// this is a wrapper of Backend, which provides some common methods for managing engines.
+// and it has no states, can be created on demand
 type EngineManager struct {
 	backend Backend
 }
@@ -195,12 +200,6 @@ type OpenedEngine struct {
 	engine
 	tableName string
 	config    *EngineConfig
-}
-
-// LocalEngineWriter is a thread-local writer for writing rows into a single engine.
-type LocalEngineWriter struct {
-	writer    EngineWriter
-	tableName string
 }
 
 // MakeEngineManager creates a new Backend from an Backend.
@@ -266,27 +265,8 @@ func (engine *OpenedEngine) Flush(ctx context.Context) error {
 }
 
 // LocalWriter returns a writer that writes to the local backend.
-func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (*LocalEngineWriter, error) {
-	w, err := engine.backend.LocalWriter(ctx, cfg, engine.uuid)
-	if err != nil {
-		return nil, err
-	}
-	return &LocalEngineWriter{writer: w, tableName: engine.tableName}, nil
-}
-
-// WriteRows writes a collection of encoded rows into the engine.
-func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
-	return w.writer.AppendRows(ctx, w.tableName, columnNames, rows)
-}
-
-// Close closes the engine and returns the status of the engine.
-func (w *LocalEngineWriter) Close(ctx context.Context) (ChunkFlushStatus, error) {
-	return w.writer.Close(ctx)
-}
-
-// IsSynced returns whether the engine is synced.
-func (w *LocalEngineWriter) IsSynced() bool {
-	return w.writer.IsSynced()
+func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (EngineWriter, error) {
+	return engine.backend.LocalWriter(ctx, cfg, engine.uuid)
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.
@@ -385,12 +365,7 @@ type ChunkFlushStatus interface {
 
 // EngineWriter is the interface for writing data to an engine.
 type EngineWriter interface {
-	AppendRows(
-		ctx context.Context,
-		tableName string,
-		columnNames []string,
-		rows encode.Rows,
-	) error
+	AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error
 	IsSynced() bool
 	Close(ctx context.Context) (ChunkFlushStatus, error)
 }
