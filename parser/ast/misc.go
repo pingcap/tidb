@@ -3189,7 +3189,7 @@ func (kind BRIEKind) String() string {
 	case BRIEKindLogPurge:
 		return "PURGE BACKUP LOGS"
 	case BRIEKindRestorePoint:
-		return "RESTORE TO_POINT"
+		return "RESTORE POINT"
 	case BRIEKindShowJob:
 		return "SHOW BR JOB"
 	case BRIEKindShowQuery:

@@ -6565,10 +6565,10 @@ func TestBRIE(t *testing.T) {
 		{"cancel br job 1234", true, "CANCEL BR JOB 1234"},
 		{"purge backup logs from 'noop://'", true, "PURGE BACKUP LOGS FROM 'noop://'"},
 		{"purge backup logs from 'noop://' until_ts='2012122304'", true, "PURGE BACKUP LOGS FROM 'noop://' UNTIL_TS = '2012122304'"},
-		{"restore to_point from 'noop://log_backup'", true, "RESTORE TO_POINT FROM 'noop://log_backup'"},
-		{"restore to_point from 'noop://log_backup' full_backup_storage='noop://full_log'", true, "RESTORE TO_POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log'"},
-		{"restore to_point from 'noop://log_backup' full_backup_storage='noop://full_log' restored_ts='20230123'", true, "RESTORE TO_POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log' RESTORED_TS = '20230123'"},
-		{"restore to_point from 'noop://log_backup' full_backup_storage='noop://full_log' start_ts='20230101' restored_ts='20230123'", true, "RESTORE TO_POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log' START_TS = '20230101' RESTORED_TS = '20230123'"},
+		{"restore point from 'noop://log_backup'", true, "RESTORE POINT FROM 'noop://log_backup'"},
+		{"restore point from 'noop://log_backup' full_backup_storage='noop://full_log'", true, "RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log'"},
+		{"restore point from 'noop://log_backup' full_backup_storage='noop://full_log' restored_ts='20230123'", true, "RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log' RESTORED_TS = '20230123'"},
+		{"restore point from 'noop://log_backup' full_backup_storage='noop://full_log' start_ts='20230101' restored_ts='20230123'", true, "RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log' START_TS = '20230101' RESTORED_TS = '20230123'"},
 	}
 
 	RunTest(t, table, false)

@@ -561,7 +561,7 @@ var tokenMap = map[string]int{
 	"PLAN":                     plan,
 	"PLAN_CACHE":               planCache,
 	"PLUGINS":                  plugins,
-	"TO_POINT":                 to_point,
+	"POINT":                    point,
 	"POLICY":                   policy,
 	"POSITION":                 position,
 	"PRE_SPLIT_REGIONS":        preSplitRegions,

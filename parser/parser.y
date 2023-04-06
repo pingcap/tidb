@@ -511,6 +511,7 @@ import (
 	per_table             "PER_TABLE"
 	pipesAsOr
 	plugins               "PLUGINS"
+	point                 "POINT"
 	policy                "POLICY"
 	preSplitRegions       "PRE_SPLIT_REGIONS"
 	preceding             "PRECEDING"
@@ -699,7 +700,6 @@ import (
 	placement             "PLACEMENT"
 	plan                  "PLAN"
 	planCache             "PLAN_CACHE"
-	to_point              "TO_POINT"
 	position              "POSITION"
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
@@ -5198,7 +5198,7 @@ BRIEStmt:
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
-|	"RESTORE" "TO_POINT" "FROM" stringLit BRIEOptions
+|	"RESTORE" "POINT" "FROM" stringLit BRIEOptions
 	{
 		stmt :=  &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindRestorePoint
@@ -6301,6 +6301,7 @@ UnReservedKeyword:
 |	"START"
 |	"STATUS"
 |	"OPEN"
+|	"POINT"
 |	"SUBPARTITIONS"
 |	"SUBPARTITION"
 |	"TABLES"
@@ -6706,7 +6707,6 @@ NotKeywordToken:
 |	"METADATA"
 |	"START_TS"
 |	"UNTIL_TS"
-|	"TO_POINT"
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
 
@@ -7496,6 +7496,7 @@ FunctionNameConflict:
 |	"MINUTE"
 |	"MONTH"
 |	builtinNow
+|	"POINT"
 |	"QUARTER"
 |	"REPEAT"
 |	"REPLACE"
