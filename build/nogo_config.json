@@ -309,6 +309,8 @@
       "br/pkg/utils/": "ignore utils code",
       "br/pkg/version/version.go": "ignore version code",
       "br/pkg/lightning/common/errors.go": "ignore error",
+      "br/pkg/lightning/config/config.go": "ignore config code",
+      "br/pkg/lightning/config/global.go": "ignore global code",
       "ddl/util/util.go": "ignore util code",
       "ddl/syncer/syncer.go": "ignore syncer code",
       "util/column-mapping/column.go": "ignore error",
