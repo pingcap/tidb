@@ -43,9 +43,9 @@ import (
 )
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
-func SetParameterValuesIntoSCtx(sctx sessionctx.Context, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
+func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
-	vars.PreparedParams = vars.PreparedParams[:0]
+	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
 		val, err := usingParam.Eval(chunk.Row{})
 		if err != nil {
@@ -63,8 +63,9 @@ func SetParameterValuesIntoSCtx(sctx sessionctx.Context, markers []ast.ParamMark
 			param.Datum = val
 			param.InExecute = true
 		}
-		vars.PreparedParams = append(vars.PreparedParams, val)
+		vars.PlanCacheParams.Append(val)
 	}
+	vars.PlanCacheParams.SetForNonPrepCache(isNonPrep)
 	return nil
 }
 
@@ -79,7 +80,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 2: set parameter values
-	if err := SetParameterValuesIntoSCtx(sctx, stmtAst.Params, params); err != nil {
+	if err := SetParameterValuesIntoSCtx(sctx, isNonPrepared, stmtAst.Params, params); err != nil {
 		return errors.Trace(err)
 	}
 
