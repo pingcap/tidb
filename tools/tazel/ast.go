@@ -61,8 +61,7 @@ func scan(path string) error {
 	if err != nil {
 		return err
 	}
-	ast.Inspect(f, func(n ast.Node) bool {
-		// Called recursively.
+	for _, n := range f.Decls {
 		funcDecl, ok := n.(*ast.FuncDecl)
 		if ok {
 			if strings.HasPrefix(funcDecl.Name.Name, "Test") && funcDecl.Recv == nil &&
@@ -70,7 +69,6 @@ func scan(path string) error {
 				addTestMap(filepath.Dir(path))
 			}
 		}
-		return true
-	})
+	}
 	return nil
 }
