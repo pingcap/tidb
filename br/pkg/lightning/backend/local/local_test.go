@@ -1115,7 +1115,7 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	jobOutCh := make(chan *regionJob, 1)
 	err := bak.startWorker(context.Background(), jobCh, jobOutCh)
 	require.Error(t, err)
-	require.Regexp(t, "The available disk of TiKV.*", err.Error())
+	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	require.Len(t, jobCh, 0)
 }
 
