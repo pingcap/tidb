@@ -82,8 +82,6 @@ func NewBackfillSchedulerHandle(taskMeta []byte, step int64) (scheduler.Schedule
 	}
 	bh.db = db
 
-	d.newReorgCtx(jobMeta.ID, nil, &meta.Element{ID: bgm.EleID, TypeKey: bgm.EleTypeKey}, 0)
-
 	physicalTable := tbl.(table.PhysicalTable)
 	bh.ptbl = physicalTable
 
@@ -115,7 +113,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 		return err
 	}
 	b.bc = bc
-
+	d.newReorgCtx(genBackfillJobReorgCtxID(b.job.ID), nil, &meta.Element{ID: b.index.ID, TypeKey: b.eleTypeKey}, 0)
 	return nil
 }
 
@@ -190,6 +188,8 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 
 // CleanupSubtaskExecEnv implements the Scheduler interface.
 func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
+	d, _ := GetDDL().(*ddl)
+	d.removeReorgCtx(genBackfillJobReorgCtxID(b.job.ID))
 	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
 
 	err := b.bc.FinishImport(b.index.ID, b.index.Unique, b.ptbl)
