@@ -128,6 +128,7 @@ func NewCentralizedCheckpointManager(ctx context.Context, flushCtrl FlushControl
 	return cm, nil
 }
 
+// InitInstanceAddr returns the string concat with instance address and temp-dir.
 func InitInstanceAddr() string {
 	cfg := config.GetGlobalConfig()
 	dsn := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
