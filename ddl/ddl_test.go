@@ -79,9 +79,6 @@ func (d *ddl) RemoveReorgCtx(id int64) {
 // JobNeedGCForTest is only used for test.
 var JobNeedGCForTest = jobNeedGC
 
-// NewSession is only used for test.
-var NewSession = newSession
-
 // GetJobWithoutPartition is only used for test.
 const GetJobWithoutPartition = getJobWithoutPartition
 

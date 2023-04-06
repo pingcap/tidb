@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -522,11 +523,11 @@ type resultConsumer struct {
 	wg        *sync.WaitGroup
 	err       error
 	hasError  *atomic.Bool
-	reorgInfo *reorgInfo   // reorgInfo is used to update the reorg handle.
-	sessPool  *sessionPool // sessPool is used to get the session to update the reorg handle.
+	reorgInfo *reorgInfo // reorgInfo is used to update the reorg handle.
+	sessPool  *sess.Pool // sessPool is used to get the session to update the reorg handle.
 }
 
-func newResultConsumer(dc *ddlCtx, reorgInfo *reorgInfo, sessPool *sessionPool) *resultConsumer {
+func newResultConsumer(dc *ddlCtx, reorgInfo *reorgInfo, sessPool *sess.Pool) *resultConsumer {
 	return &resultConsumer{
 		dc:        dc,
 		wg:        &sync.WaitGroup{},
@@ -693,13 +694,13 @@ var (
 	TestCheckReorgTimeout = int32(0)
 )
 
-func loadDDLReorgVars(ctx context.Context, sessPool *sessionPool) error {
+func loadDDLReorgVars(ctx context.Context, sessPool *sess.Pool) error {
 	// Get sessionctx from context resource pool.
-	sCtx, err := sessPool.get()
+	sCtx, err := sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer sessPool.put(sCtx)
+	defer sessPool.Put(sCtx)
 	return ddlutil.LoadDDLReorgVars(ctx, sCtx)
 }
 
@@ -759,7 +760,7 @@ func SetBackfillTaskChanSizeForTest(n int) {
 //
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
+func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 

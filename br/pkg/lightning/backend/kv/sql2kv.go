@@ -179,13 +179,13 @@ func Row2KvPairs(row encode.Row) []common.KvPair {
 //
 // See comments in `(*TableRestore).initializeColumns` for the meaning of the
 // `columnPermutation` parameter.
-func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
+func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, _ int64) (encode.Row, error) {
 	var value types.Datum
 	var err error
 
 	record := kvcodec.GetOrCreateRecord()
 	for i, col := range kvcodec.Columns {
-		var theDatum *types.Datum = nil
+		var theDatum *types.Datum
 		j := columnPermutation[i]
 		if j >= 0 && j < len(row) {
 			theDatum = &row[j]
