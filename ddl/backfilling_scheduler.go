@@ -289,6 +289,8 @@ func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 	}
 }
 
+const checkpointUpdateInterval = 5 * time.Second
+
 func (b *ingestBackfillScheduler) setupWorkers() error {
 	job := b.reorgInfo.Job
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
@@ -297,7 +299,8 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	b.backendCtx = bc
-	mgr, err := ingest.NewCentralizedCheckpointManager(b.ctx, bc, b.sessPool, job.ID, b.reorgInfo.currElement.ID)
+	mgr, err := ingest.NewCentralizedCheckpointManager(b.ctx, bc, b.sessPool, job.ID,
+		b.reorgInfo.currElement.ID, checkpointUpdateInterval)
 	if err != nil {
 		return errors.Trace(err)
 	}

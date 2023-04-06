@@ -52,6 +52,7 @@ go_test(
     name = "ingest_test",
     timeout = "short",
     srcs = [
+        "checkpoint_test.go",
         "env_test.go",
         "mem_root_test.go",
     ],
@@ -60,6 +61,9 @@ go_test(
     deps = [
         ":ingest",
         "//config",
+        "//ddl/internal/session",
+        "//testkit",
+        "@com_github_ngaut_pools//:pools",
         "@com_github_stretchr_testify//require",
     ],
 )

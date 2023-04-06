@@ -47,11 +47,11 @@ type CheckpointManager interface {
 
 // CentralizedCheckpointManager is a checkpoint manager implementation that used by non-distributed reorganization.
 type CentralizedCheckpointManager struct {
-	ctx      context.Context
-	bcCtx    *BackendContext
-	sessPool *sess.Pool
-	jobID    int64
-	indexID  int64
+	ctx       context.Context
+	flushCtrl FlushController
+	sessPool  *sess.Pool
+	jobID     int64
+	indexID   int64
 
 	// Derived and unchanged after the initialization.
 	instanceAddr     string
@@ -74,6 +74,7 @@ type CentralizedCheckpointManager struct {
 	updateInterval  time.Duration
 	updating        bool
 	updaterWg       sync.WaitGroup
+	updaterCh       chan struct{}
 	updaterExitCh   chan struct{}
 }
 
@@ -86,22 +87,29 @@ type TaskCheckpoint struct {
 	lastBatchSent bool
 }
 
+// FlushController is an interface to control the flush of the checkpoint.
+type FlushController interface {
+	// Flush flushes the checkpoint to the storage.
+	Flush(indexID int64) (bool, error)
+}
+
 // NewCentralizedCheckpointManager creates a new checkpoint manager.
-func NewCentralizedCheckpointManager(ctx context.Context, bcCtx *BackendContext,
-	sessPool *sess.Pool, jobID, indexID int64) (*CentralizedCheckpointManager, error) {
+func NewCentralizedCheckpointManager(ctx context.Context, flushCtrl FlushController,
+	sessPool *sess.Pool, jobID, indexID int64, interval time.Duration) (*CentralizedCheckpointManager, error) {
 	instanceAddr := initInstanceAddr()
 	cm := &CentralizedCheckpointManager{
 		ctx:            ctx,
-		bcCtx:          bcCtx,
+		flushCtrl:      flushCtrl,
 		sessPool:       sessPool,
 		jobID:          jobID,
 		indexID:        indexID,
 		checkpoints:    make(map[int]*TaskCheckpoint, 16),
 		mu:             sync.Mutex{},
 		instanceAddr:   instanceAddr,
-		updateInterval: 3 * time.Second,
+		updateInterval: interval,
 		updaterWg:      sync.WaitGroup{},
 		updaterExitCh:  make(chan struct{}),
+		updaterCh:      make(chan struct{}),
 	}
 	err := cm.resumeCheckpoint()
 	if err != nil {
@@ -171,7 +179,7 @@ func (s *CentralizedCheckpointManager) UpdateCurrent(taskID int, added int) erro
 		return nil
 	}
 	s.timeOfLastFlush = time.Now()
-	imported, err := s.bcCtx.Flush(s.indexID)
+	imported, err := s.flushCtrl.Flush(s.indexID)
 	if err != nil {
 		return err
 	}
@@ -204,6 +212,11 @@ func (s *CentralizedCheckpointManager) Close() {
 		s.globalCnt = s.localCnt
 		delete(s.checkpoints, id)
 	}
+}
+
+// Sync syncs the checkpoint.
+func (s *CentralizedCheckpointManager) Sync() {
+	s.updaterCh <- struct{}{}
 }
 
 // JobReorgMeta is the metadata for a reorg job.
@@ -331,6 +344,11 @@ func (s *CentralizedCheckpointManager) updateCheckpointLoop() {
 	defer ticker.Stop()
 	for {
 		select {
+		case <-s.updaterCh:
+			err := s.updateCheckpoint()
+			if err != nil {
+				logutil.BgLogger().Error("[ddl-ingest] update checkpoint failed", zap.Error(err))
+			}
 		case <-ticker.C:
 			s.mu.Lock()
 			if s.updating || !s.dirty {
