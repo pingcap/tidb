@@ -1753,6 +1753,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
+		// TODO: Will this drop LabelRules for existing partitons, if the new partitions have the same name?
 		err = dropLabelRules(d, job.SchemaName, tblInfo.Name.L, pNames)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -2268,6 +2269,7 @@ func (w *worker) onRemovePartitioning(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if job.SchemaState == model.StateNone && len(partInfo.Definitions) != 1 {
 		return ver, errors.New("In REMOVE PARTITIONING, but collapsing all partitions to non-single partition")
 	}
+	// TODO: Add optimization if already only a single partition!
 	switch job.SchemaState {
 	case model.StateNone, model.StateDeleteOnly, model.StateWriteOnly,
 		model.StateWriteReorganization:

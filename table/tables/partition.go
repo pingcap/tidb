@@ -1424,6 +1424,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	}
 	tblInfo := t.Meta().Clone()
 	tblInfo.Partition.Definitions = tblInfo.Partition.AddingDefinitions
+	tblInfo.Partition.Num = uint64(len(tblInfo.Partition.Definitions))
 	tblInfo.Partition.AddingDefinitions = nil
 	tblInfo.Partition.DroppingDefinitions = nil
 	var tc TableCommon

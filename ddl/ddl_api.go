@@ -4069,16 +4069,17 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 		return dbterror.ErrPartitionMgmtOnNonpartitioned
 	}
 	newSpec := spec
-	// shortcut if only one partition
+	// skip if only one partition
 	if len(pi.Definitions) != 1 {
 		newSpec = &ast.AlterTableSpec{}
+		newSpec.Tp = spec.Tp
 		switch pi.Type {
 		case model.PartitionTypeRange:
+			defs := make([]*ast.PartitionDefinition, 1)
 			cols := int(1)
 			if len(pi.Columns) > 1 {
 				cols = len(pi.Columns)
 			}
-			defs := make([]*ast.PartitionDefinition, 1)
 			defs[0] = &ast.PartitionDefinition{}
 			defs[0].Name = model.NewCIStr("CollapsedPartitions")
 			exprs := make([]ast.ExprNode, cols)
@@ -4088,8 +4089,13 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 			clause := &ast.PartitionDefinitionClauseLessThan{Exprs: exprs}
 			defs[0].Clause = clause
 			newSpec.PartDefinitions = defs
-			// TODO: Add support for HASH and KEY partitioning when ADD/COALESCE
-			// is supported
+		case model.PartitionTypeHash, model.PartitionTypeKey:
+			// Just decrease the number of partitions to 1,
+			// without preserving any comments or placement per partition
+			newSpec.Num = 1
+
+		// TODO:
+		//case model.PartitionTypeList:
 		default:
 			// Add support for LIST partitioning when DEFAULT List partition
 			// is supported
@@ -7156,6 +7162,15 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 			if len(spec.PartDefinitions) == 0 {
 				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
 			}
+		}
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		switch spec.Tp {
+		case ast.AlterTableRemovePartitioning:
+			// This is needed for buildHashPartitionDefinitions
+			meta = meta.Clone()
+			meta.Partition.Num = 1
+		default:
+			return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
 		}
 	default:
 		// we don't support ADD PARTITION for all other partition types yet.

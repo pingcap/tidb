@@ -4883,3 +4883,61 @@ partition pMax values less than (maxvalue,1))`)
 		"  `b` varchar(255) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
+
+func TestRemoveHashPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RemovePartitioning")
+	tk.MustExec("use RemovePartitioning")
+	tk.MustExec(`create table t (a int, b varchar(255), key (a,b), key (b)) partition by hash (a) partitions 7`)
+	for i := 32; i <= 126; i++ {
+		// Fill the data with int and ascii strings
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d,char(%d,%d,%d,%d))`, i, i, i, i, i))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemovePartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 14",
+		"p1 13",
+		"p2 13",
+		"p3 13",
+		"p4 14",
+		"p5 14",
+		"p6 14"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestRemoveKeyPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RemovePartitioning")
+	tk.MustExec("use RemovePartitioning")
+	tk.MustExec(`create table t (a varchar(255), b varchar(255), key (a,b), key (b)) partition by key (a) partitions 7`)
+	// Fill the data with ascii strings
+	for i := 32; i <= 126; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (char(%d,%d,%d),char(%d,%d,%d,%d))`, i, i, i, i, i, i, i))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemovePartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 9",
+		"p1 11",
+		"p2 12",
+		"p3 13",
+		"p4 16",
+		"p5 23",
+		"p6 11"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` varchar(255) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
