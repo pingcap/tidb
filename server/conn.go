@@ -1583,10 +1583,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 		return errors.New("load data info is empty")
 	}
 	infile := loadDataWorker.GetInfilePath()
-	compressTp, err := mydump.ParseCompressionOnFileExtension(infile)
-	if err != nil {
-		return err
-	}
+	compressTp := mydump.ParseCompressionOnFileExtension(infile)
 	compressTp2, err := mydump.ToStorageCompressType(compressTp)
 	if err != nil {
 		return err

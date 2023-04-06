@@ -130,17 +130,17 @@ func (s SourceType) String() string {
 }
 
 // ParseCompressionOnFileExtension parses the compression type from the file extension.
-func ParseCompressionOnFileExtension(filename string) (Compression, error) {
+func ParseCompressionOnFileExtension(filename string) Compression {
 	fileExt := strings.ToLower(filepath.Ext(filename))
 	if len(fileExt) == 0 {
-		return CompressionNone, nil
+		return CompressionNone
 	}
 	tp, err := parseCompressionType(fileExt[1:])
 	if err != nil {
 		// file extension is not a compression type, just ignore it
-		return CompressionNone, nil
+		return CompressionNone
 	}
-	return tp, nil
+	return tp
 }
 
 func parseCompressionType(t string) (Compression, error) {

@@ -667,10 +667,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek in LOAD DATA")
 		}
-		compressTp, err4 := mydump.ParseCompressionOnFileExtension(path)
-		if err4 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(err4.Error(), "failed to parse compression type")
-		}
+		compressTp := mydump.ParseCompressionOnFileExtension(path)
 		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
 			Path:        path,
 			FileSize:    size,
@@ -688,10 +685,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
-				compressTp, err3 := mydump.ParseCompressionOnFileExtension(remotePath)
-				if err3 != nil {
-					return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(err3.Error(), "")
-				}
+				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
 				dataFiles = append(dataFiles, &mydump.SourceFileMeta{
 					Path:        remotePath,
 					FileSize:    size,
