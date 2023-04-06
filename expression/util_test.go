@@ -182,9 +182,7 @@ func TestGetUint64FromConstant(t *testing.T) {
 	require.Equal(t, uint64(1), num)
 
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().PreparedParams = []types.Datum{
-		types.NewUintDatum(100),
-	}
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewUintDatum(100))
 	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
 	num, _, _ = GetUint64FromConstant(con)
 	require.Equal(t, uint64(100), num)

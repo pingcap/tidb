@@ -292,7 +292,7 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 func TestDeferredParamNotNull(t *testing.T) {
 	ctx := mock.NewContext()
 	testTime := time.Now()
-	ctx.GetSessionVars().PreparedParams = []types.Datum{
+	ctx.GetSessionVars().PlanCacheParams.Append(
 		types.NewIntDatum(1),
 		types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
 		types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
@@ -305,7 +305,7 @@ func TestDeferredParamNotNull(t *testing.T) {
 		types.NewUintDatum(100),
 		types.NewMysqlBitDatum([]byte{1}),
 		types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
-	}
+	)
 	cstInt := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newIntFieldType()}
 	cstDec := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 1}, RetType: newDecimalFieldType()}
 	cstTime := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 2}, RetType: newDateFieldType()}
@@ -346,7 +346,8 @@ func TestDeferredParamNotNull(t *testing.T) {
 	require.Equal(t, "b", s)
 	evalTime, _, err := cstTime.EvalTime(ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.Equal(t, 0, evalTime.Compare(ctx.GetSessionVars().PreparedParams[2].GetMysqlTime()))
+	v := ctx.GetSessionVars().PlanCacheParams.GetParamValue(2)
+	require.Equal(t, 0, evalTime.Compare(v.GetMysqlTime()))
 	dur, _, err := cstDuration.EvalDuration(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.ZeroDuration.Duration, dur.Duration)
@@ -487,9 +488,7 @@ func TestVectorizedConstant(t *testing.T) {
 
 func TestGetTypeThreadSafe(t *testing.T) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().PreparedParams = []types.Datum{
-		types.NewIntDatum(1),
-	}
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(1))
 	con := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newStringFieldType()}
 	ft1 := con.GetType()
 	ft2 := con.GetType()

@@ -1478,7 +1478,7 @@ func (b *builtinGetParamStringSig) evalString(row chunk.Row) (string, bool, erro
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	v := sessionVars.PreparedParams[idx]
+	v := sessionVars.PlanCacheParams.GetParamValue(int(idx))
 
 	str, err := v.ToString()
 	if err != nil {

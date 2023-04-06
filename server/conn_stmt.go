@@ -813,7 +813,7 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	if sv.EnableRedactLog {
 		return cc.preparedStmt2StringNoArgs(stmtID)
 	}
-	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()
+	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PlanCacheParams.String()
 }
 
 func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {

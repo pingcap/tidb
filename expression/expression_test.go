@@ -71,7 +71,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	require.True(t, res.Equal(ctx, NewNull())) // the expression is evaluated to null
 	param := NewOne()
 	param.ParamMarker = &ParamMarker{ctx: ctx, order: 0}
-	ctx.GetSessionVars().PreparedParams = append(ctx.GetSessionVars().PreparedParams, types.NewIntDatum(10))
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(10))
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
 	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
