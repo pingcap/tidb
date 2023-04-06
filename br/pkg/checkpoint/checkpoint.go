@@ -561,7 +561,8 @@ func (r *CheckpointRunner) flushLock(ctx context.Context, p int64) error {
 		LockId:   r.lockId,
 		ExpireAt: p + lockTimeToLive.Milliseconds(),
 	}
-	log.Info("start to flush the checkpoint lock", zap.Int64("lock-at", p), zap.Int64("expire-at", lock.ExpireAt))
+	log.Info("start to flush the checkpoint lock", zap.Int64("lock-at", p),
+		zap.Int64("expire-at", lock.ExpireAt))
 	data, err := json.Marshal(lock)
 	if err != nil {
 		return errors.Trace(err)
@@ -588,7 +589,8 @@ func (r *CheckpointRunner) checkLockFile(ctx context.Context, now int64) error {
 				"Please check whether the BR is running. If not, you can retry.", lock.LockId, r.lockId)
 		}
 		if lock.LockId == r.lockId {
-			log.Warn("The lock has expired.", zap.Int64("expire-at(ms)", lock.ExpireAt), zap.Int64("now(ms)", now))
+			log.Warn("The lock has expired.",
+				zap.Int64("expire-at(ms)", lock.ExpireAt), zap.Int64("now(ms)", now))
 		}
 	} else if lock.LockId != r.lockId {
 		return errors.Errorf("The existing lock will expire in %d seconds. "+
