@@ -76,7 +76,8 @@ func (s *Session) Execute(ctx context.Context, query string, label string) ([]ch
 	startTime := time.Now()
 	var err error
 	defer func() {
-		metrics.DDLJobTableDuration.WithLabelValues(label + "-" + metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		metrics.DDLJobTableDuration.WithLabelValues(label + "-" + metrics.RetLabel(err)).
+			Observe(time.Since(startTime).Seconds())
 	}()
 
 	if ctx.Value(kv.RequestSourceKey) == nil {
