@@ -216,17 +216,17 @@ func (m *MockEngineWriter) EXPECT() *MockEngineWriterMockRecorder {
 }
 
 // AppendRows mocks base method.
-func (m *MockEngineWriter) AppendRows(arg0 context.Context, arg1 string, arg2 []string, arg3 encode.Rows) error {
+func (m *MockEngineWriter) AppendRows(arg0 context.Context, arg1 []string, arg2 encode.Rows) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AppendRows", arg0, arg1, arg2, arg3)
+	ret := m.ctrl.Call(m, "AppendRows", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AppendRows indicates an expected call of AppendRows.
-func (mr *MockEngineWriterMockRecorder) AppendRows(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+func (mr *MockEngineWriterMockRecorder) AppendRows(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendRows", reflect.TypeOf((*MockEngineWriter)(nil).AppendRows), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendRows", reflect.TypeOf((*MockEngineWriter)(nil).AppendRows), arg0, arg1, arg2)
 }
 
 // Close mocks base method.
