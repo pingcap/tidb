@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -116,9 +117,14 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 		return
 	}
 	instanceStats := memory.ReadMemStats()
+	failpoint.Inject("ReadMemStats", func(val failpoint.Value) {
+		injectedSize := val.(int)
+		instanceStats.HeapInuse += uint64(injectedSize)
+	})
 	if instanceStats.HeapInuse > MemoryMaxUsed.Load() {
 		MemoryMaxUsed.Store(instanceStats.HeapInuse)
 	}
+
 	if instanceStats.HeapInuse > bt {
 		t := memory.MemUsageTop1Tracker.Load()
 		if t != nil {
