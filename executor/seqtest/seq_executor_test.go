@@ -940,7 +940,11 @@ func TestBatchInsertDelete(t *testing.T) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
+<<<<<<< HEAD
 	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5800)
+=======
+	kv.TxnTotalSizeLimit.Store(6000)
+>>>>>>> 915b39b8845 (ddl: DDL job add charset and collate when create the index (#42750))
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
