@@ -699,7 +699,7 @@ import (
 	placement             "PLACEMENT"
 	plan                  "PLAN"
 	planCache             "PLAN_CACHE"
-	point                 "POINT"
+	to_point              "TO_POINT"
 	position              "POSITION"
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
@@ -5198,7 +5198,7 @@ BRIEStmt:
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
-|	"RESTORE" "POINT" "FROM" stringLit BRIEOptions
+|	"RESTORE" "TO_POINT" "FROM" stringLit BRIEOptions
 	{
 		stmt :=  &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindRestorePoint
@@ -6706,7 +6706,7 @@ NotKeywordToken:
 |	"METADATA"
 |	"START_TS"
 |	"UNTIL_TS"
-|	"POINT"
+|	"TO_POINT"
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
 
