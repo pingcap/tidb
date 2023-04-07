@@ -959,7 +959,6 @@ func TestChecksum(t *testing.T) {
 }
 
 func TestExtraChecksum(t *testing.T) {
-
 	sc := new(stmtctx.StatementContext)
 	enc := rowcodec.Encoder{}
 

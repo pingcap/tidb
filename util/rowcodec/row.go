@@ -159,12 +159,11 @@ func (r *row) fromBytes(rowData []byte) error {
 		if r.checksumVersion() != 0 {
 			return errInvalidChecksumVer
 		}
-		cursor += 1
+		cursor++
 		r.checksum1 = binary.LittleEndian.Uint32(rowData[cursor:])
 		cursor += 4
 		if r.hasExtraChecksum() {
 			r.checksum2 = binary.LittleEndian.Uint32(rowData[cursor:])
-			cursor += 4
 		}
 	}
 	return nil
