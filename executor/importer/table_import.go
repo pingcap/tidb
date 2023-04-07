@@ -107,12 +107,14 @@ func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImpo
 	}
 
 	backendConfig := local.BackendConfig{
-		PDAddr:                  tidbCfg.Path,
-		LocalStoreDir:           dir,
-		MaxConnPerStore:         config.DefaultRangeConcurrency,
-		ConnCompressType:        config.CompressionNone,
-		WorkerConcurrency:       config.DefaultRangeConcurrency * 2,
-		KVWriteBatchSize:        config.KVWriteBatchSize,
+		PDAddr:            tidbCfg.Path,
+		LocalStoreDir:     dir,
+		MaxConnPerStore:   config.DefaultRangeConcurrency,
+		ConnCompressType:  config.CompressionNone,
+		WorkerConcurrency: config.DefaultRangeConcurrency * 2,
+		KVWriteBatchSize:  config.KVWriteBatchSize,
+		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
+		// set to false when we fix it.
 		CheckpointEnabled:       true,
 		MemTableSize:            int(config.DefaultEngineMemCacheSize),
 		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
@@ -120,9 +122,10 @@ func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImpo
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
 		StoreWriteBWLimit:       0,
-		ShouldCheckWriteStall:   false,
-		MaxOpenFiles:            int(util.GenRLimit()),
-		KeyspaceName:            keySpaceName,
+		// todo: we can set it false when we support switch import mode.
+		ShouldCheckWriteStall: true,
+		MaxOpenFiles:          int(util.GenRLimit()),
+		KeyspaceName:          keySpaceName,
 	}
 
 	tableMeta := &mydump.MDTableMeta{
