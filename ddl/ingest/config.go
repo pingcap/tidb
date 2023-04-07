@@ -59,7 +59,7 @@ func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config
 	cfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
 	cfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
 	// in DDL scenario, we don't switch import mode
-	cfg.Cron.SwitchMode = lightning.Duration{Duration: 0}
+	cfg.Cron.SwitchMode = config.Duration{Duration: 0}
 
 	return cfg, err
 }
