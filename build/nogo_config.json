@@ -318,6 +318,7 @@
       "br/pkg/lightning/backend/local/": "ignore local code",
       "br/pkg/lightning/checkpoints/checkpoints_test.go": "ignore checkpoints code",
       "br/pkg/lightning/checkpoints/checkpoints_sql_test.go": "ignore checkpoints code",
+      "br/pkg/lightning/errormanager/errormanager_test.go": "ignore errormanager code",
       "ddl/util/util.go": "ignore util code",
       "ddl/syncer/syncer.go": "ignore syncer code",
       "ddl/ingest/backend.go": "ignore backend code",
