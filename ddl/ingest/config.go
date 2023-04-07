@@ -64,6 +64,8 @@ func genConfig(memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
 	cfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
 	cfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
 	cfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
+	// in DDL scenario, we don't switch import mode
+	cfg.Cron.SwitchMode = lightning.Duration{Duration: 0}
 
 	c := &Config{
 		Lightning:    cfg,
