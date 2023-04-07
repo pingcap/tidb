@@ -74,11 +74,6 @@ func TestParameterize(t *testing.T) {
 			`SELECT a + 'a b c'+"x" FROM t`, // keep the original format for select fields
 			[]interface{}{},
 		},
-		{
-			`insert into t (a, B, c, D) values (1, 2, 3, 4)`,
-			`INSERT INTO t (a,B,c,D) VALUES (?,?,?,?)`,
-			[]interface{}{int64(1), int64(2), int64(3), int64(4)},
-		},
 		// TODO: more test cases
 	}
 
@@ -92,20 +87,6 @@ func TestParameterize(t *testing.T) {
 		for i := range params {
 			require.Equal(t, c.params[i], params[i].Datum.GetValue())
 		}
-	}
-}
-
-func BenchmarkParameterizeInsert(b *testing.B) {
-	newOrderInsertOrder := `INSERT INTO orders (o_id, o_d_id, o_w_id, o_c_id, o_entry_d, o_ol_cnt, o_all_local) VALUES (1, 2, 3, 4, 5, 6, 7)`
-	stmt, err := parser.New().ParseOneStmt(newOrderInsertOrder, "", "")
-	require.Nil(b, err)
-	sctx := MockContext()
-	_, _, err = ParameterizeAST(context.Background(), sctx, stmt)
-	require.Nil(b, err)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		ParameterizeAST(context.Background(), sctx, stmt)
 	}
 }
 
