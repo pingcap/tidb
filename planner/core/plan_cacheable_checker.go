@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
@@ -276,6 +277,12 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 
 	// put the checker back
 	nonPrepCacheCheckerPool.Put(checker)
+
+	if !cacheable {
+		// this metrics can measure the extra overhead of non-prep plan cache.
+		core_metrics.GetNonPrepPlanCacheUnsupportedCounter().Inc()
+	}
+
 	return cacheable, reason
 }
 
