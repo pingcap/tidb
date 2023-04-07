@@ -3797,17 +3797,36 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tbl, err
 }
 
-func buildIndexReq(ctx sessionctx.Context, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
+// buildIndexReq is designed to create a DAG for index request.
+// If len(ByItems) != 0 means index request should return related columns
+// to sort result rows in TiDB side for parition tables.
+func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := constructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
+
 	indexReq.OutputOffsets = []uint32{}
-	for i := 0; i < handleLen; i++ {
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen+i))
+	if len(plans[0].(*plannercore.PhysicalIndexScan).ByItems) != 0 {
+		idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+		tblInfo := idxScan.Table
+		for _, item := range idxScan.ByItems {
+			c, ok := item.Expr.(*expression.Column)
+			if !ok {
+				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
+			}
+			column := model.FindColumnInfoByID(tblInfo.Columns, c.ID)
+			for i, idxColumn := range columns {
+				if idxColumn.Name.L == column.Name.L {
+					indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+					break
+				}
+			}
+		}
 	}
-	if len(indexReq.OutputOffsets) == 0 {
-		indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
+
+	for i := 0; i < handleLen; i++ {
+		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
 	}
 	return indexReq, err
 }
@@ -3824,7 +3843,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		// Should output pid col.
 		handleLen++
 	}
-	indexReq, err := buildIndexReq(b.ctx, len(is.Index.Columns), handleLen, v.IndexPlans)
+	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -3854,6 +3873,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		table:             tbl,
 		index:             is.Index,
 		keepOrder:         is.KeepOrder,
+		byItems:           is.ByItems,
 		desc:              is.Desc,
 		tableRequest:      tableReq,
 		columns:           ts.Columns,
@@ -3938,7 +3958,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return ret
 	}
 
-	if is.Index.Global {
+	if is.Index.Global || len(is.ByItems) != 0 {
 		tmp, ok := b.is.TableByID(ts.Table.ID)
 		if !ok {
 			b.err = err
@@ -3955,7 +3975,9 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 			return nil
 		}
 
-		return ret
+		if is.Index.Global {
+			return ret
+		}
 	}
 	if ok, _ := is.IsPartition(); ok {
 		// Already pruned when translated to logical union.
@@ -3993,7 +4015,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, err = buildIndexReq(b.ctx, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
+			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 		} else {

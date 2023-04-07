@@ -317,20 +317,16 @@ func TestUsingReorgCtx(t *testing.T) {
 	wg := util.WaitGroupWrapper{}
 	wg.Run(func() {
 		jobID := int64(1)
-		startKey := []byte("skey")
-		ele := &meta.Element{ID: 1, TypeKey: nil}
 		for i := 0; i < 500; i++ {
-			d.(ddl.DDLForTest).NewReorgCtx(jobID, startKey, ele, 0)
+			d.(ddl.DDLForTest).NewReorgCtx(jobID, 0)
 			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()
 			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
 		}
 	})
 	wg.Run(func() {
 		jobID := int64(1)
-		startKey := []byte("skey")
-		ele := &meta.Element{ID: 1, TypeKey: nil}
 		for i := 0; i < 500; i++ {
-			d.(ddl.DDLForTest).NewReorgCtx(jobID, startKey, ele, 0)
+			d.(ddl.DDLForTest).NewReorgCtx(jobID, 0)
 			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()
 			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
 		}
