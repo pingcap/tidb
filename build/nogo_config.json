@@ -311,6 +311,7 @@
       "br/pkg/version/version.go": "ignore version code",
       "br/pkg/lightning/common/errors.go": "ignore error",
       "br/pkg/lightning/config/config.go": "ignore config code",
+      "br/pkg/lightning/config/config_test.go": "ignore config code",
       "br/pkg/lightning/config/global.go": "ignore global code",
       "br/pkg/lightning/mydump/": "ignore mydump code",
       "br/pkg/lightning/checkpoints/checkpoints.go": "ignore checkpoints code",
