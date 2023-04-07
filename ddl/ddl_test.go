@@ -43,7 +43,7 @@ const testLease = 5 * time.Millisecond
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
-	NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx
+	NewReorgCtx(jobID int64, rowCount int64) *reorgCtx
 	GetReorgCtx(jobID int64) *reorgCtx
 	RemoveReorgCtx(id int64)
 }
@@ -62,8 +62,8 @@ func (rc *reorgCtx) IsReorgCanceled() bool {
 }
 
 // NewReorgCtx exports for testing.
-func (d *ddl) NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
-	return d.newReorgCtx(jobID, startKey, currElement, rowCount)
+func (d *ddl) NewReorgCtx(jobID int64, rowCount int64) *reorgCtx {
+	return d.newReorgCtx(jobID, rowCount)
 }
 
 // GetReorgCtx exports for testing.

@@ -411,7 +411,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 		return
 	}
 	// TODO: Adjust how the non-owner uses ReorgCtx.
-	d.newReorgCtx(genBackfillJobReorgCtxID(bfJob.JobID), bfJob.Meta.StartKey, &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}, bfJob.Meta.RowCount)
+	d.newReorgCtx(genBackfillJobReorgCtxID(bfJob.JobID), bfJob.Meta.RowCount)
 	d.wg.Run(func() {
 		defer func() {
 			tidbutil.Recover(metrics.LabelDistReorg, "runBackfillJobs", nil, false)
