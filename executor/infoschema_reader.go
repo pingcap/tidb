@@ -1778,25 +1778,37 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 	rows := make([][]types.Datum, 0, 1024)
 	count := 0
 	for e.curTable < len(e.initialTables) && count < 1024 {
-		table := e.initialTables[e.curTable]
-		tableID := table.ID
-		err := e.helper.GetPDRegionStats(tableID, &e.stats, false)
-		if err != nil {
-			return nil, err
+		tbl := e.initialTables[e.curTable]
+		tblIDs := make([]int64, 0, 1)
+		tblIDs = append(tblIDs, tbl.ID)
+		if partInfo := tbl.GetPartitionInfo(); partInfo != nil {
+			for _, partDef := range partInfo.Definitions {
+				tblIDs = append(tblIDs, partDef.ID)
+			}
 		}
-		peerCount := len(e.stats.StorePeerCount)
 
-		record := types.MakeDatums(
-			table.db,            // TABLE_SCHEMA
-			table.Name.O,        // TABLE_NAME
-			tableID,             // TABLE_ID
-			peerCount,           // TABLE_PEER_COUNT
-			e.stats.Count,       // TABLE_REGION_COUNT
-			e.stats.EmptyCount,  // TABLE_EMPTY_REGION_COUNT
-			e.stats.StorageSize, // TABLE_SIZE
-			e.stats.StorageKeys, // TABLE_KEYS
-		)
-		rows = append(rows, record)
+		for _, tableID := range tblIDs {
+			err := e.helper.GetPDRegionStats(tableID, &e.stats, false)
+			if err != nil {
+				return nil, err
+			}
+			peerCount := 0
+			for _, cnt := range e.stats.StorePeerCount {
+				peerCount += cnt
+			}
+
+			record := types.MakeDatums(
+				tbl.db,              // TABLE_SCHEMA
+				tbl.Name.O,          // TABLE_NAME
+				tableID,             // TABLE_ID
+				peerCount,           // TABLE_PEER_COUNT
+				e.stats.Count,       // TABLE_REGION_COUNT
+				e.stats.EmptyCount,  // TABLE_EMPTY_REGION_COUNT
+				e.stats.StorageSize, // TABLE_SIZE
+				e.stats.StorageKeys, // TABLE_KEYS
+			)
+			rows = append(rows, record)
+		}
 		count++
 		e.curTable++
 	}
