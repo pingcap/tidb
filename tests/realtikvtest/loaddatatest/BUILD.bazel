@@ -4,6 +4,7 @@ go_test(
     name = "loaddatatest_test",
     timeout = "short",
     srcs = [
+        "load_data_test.go",
         "main_test.go",
         "util_test.go",
     ],
@@ -11,11 +12,11 @@ go_test(
     race = "on",
     deps = [
         "//config",
+        "//executor/importer",
         "//kv",
         "//testkit",
         "//tests/realtikvtest",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_stretchr_testify//suite",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

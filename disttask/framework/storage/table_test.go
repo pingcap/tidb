@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/testkit"
@@ -41,8 +42,11 @@ func TestGlobalTaskTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-
-	gm := storage.NewTaskManager(context.Background(), tk.Session())
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	gm := storage.NewTaskManager(context.Background(), pool)
 
 	storage.SetTaskManager(gm)
 	gm, err := storage.GetTaskManager()
@@ -97,8 +101,11 @@ func TestSubTaskTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-
-	sm := storage.NewTaskManager(context.Background(), tk.Session())
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	sm := storage.NewTaskManager(context.Background(), pool)
 
 	storage.SetTaskManager(sm)
 	sm, err := storage.GetTaskManager()
