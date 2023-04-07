@@ -4554,14 +4554,6 @@ def go_deps():
     )
 
     go_repository(
-        name = "com_google_cloud_go_apikeys",
-        build_file_proto_mode = "disable",
-        importpath = "cloud.google.com/go/apikeys",
-        sum = "h1:B9CdHFZTFjVti89tmyXXrO+7vSNo2jvZuHG8zD5trdQ=",
-        version = "v0.6.0",
-    )
-
-    go_repository(
         name = "com_google_cloud_go_appengine",
         build_file_proto_mode = "disable",
         importpath = "cloud.google.com/go/appengine",
