@@ -475,26 +475,26 @@ func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	return nil
 }
 
-type RestoreFunc func() error
+type RestoreFunc func(string) error
 
 // KeepGcDisabled keeps GC disabled and return a function that used to gc enabled.
 // gc.ratio-threshold = "-1.0", which represents disable gc in TiKV.
-func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, error) {
+func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, string, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, "", errors.Trace(err)
 	}
 
 	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
 	oldRatio, err := utils.GetGcRatio(execCtx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, "", errors.Trace(err)
 	}
 
 	newRatio := "-1.0"
 	err = utils.SetGcRatio(execCtx, newRatio)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, "", errors.Trace(err)
 	}
 
 	// If the oldRatio is negative, which is not normal status.
@@ -503,9 +503,9 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, error) {
 		oldRatio = "1.1"
 	}
 
-	return func() error {
-		return utils.SetGcRatio(execCtx, oldRatio)
-	}, nil
+	return func(ratio string) error {
+		return utils.SetGcRatio(execCtx, ratio)
+	}, oldRatio, nil
 }
 
 // RunStreamCommand run all kinds of `stream task`
@@ -1234,7 +1234,7 @@ func restoreStream(
 	}
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
-	restoreGc, err := KeepGcDisabled(g, mgr.GetStorage())
+	restoreGc, oldRatio, err := KeepGcDisabled(g, mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1248,10 +1248,19 @@ func restoreStream(
 			return
 		}
 
-		if err := restoreGc(); err != nil {
+		log.Info("start to restore gc")
+		if err := restoreGc(oldRatio); err != nil {
 			log.Error("failed to set gc enabled", zap.Error(err))
 		}
+		log.Info("finish restoring gc")
 	}()
+
+	if cfg.UseCheckpoint {
+		oldRatio, err = client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {

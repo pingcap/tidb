@@ -679,6 +679,7 @@ type CheckpointMetadata struct {
 	ConfigHash  []byte        `json:"config-hash"`
 	BackupTS    uint64        `json:"backup-ts"`
 	Ranges      []rtree.Range `json:"ranges"`
+	GcRatio     string        `json:"gc-ratio,omitempty"`
 
 	CheckpointChecksum map[int64]*ChecksumItem    `json:"-"`
 	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`

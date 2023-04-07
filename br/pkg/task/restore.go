@@ -646,18 +646,14 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// don't support checkpoint for the ddl restore
 		cfg.UseCheckpoint = false
 	}
-	tree, gcID, err := client.InitCheckpoint(ctx, s, &restoreTS, cfg.UseCheckpoint)
+	tree, gcID, err := client.InitCheckpoint(ctx, s, cfg.UseCheckpoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	var gcTTL int64 = utils.DefaultBRGCSafePointTTL
-	if cfg.UseCheckpoint {
-		gcTTL = utils.DefaultCheckpointGCSafePointTTL
-	}
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
-		TTL:      gcTTL,
+		TTL:      utils.DefaultBRGCSafePointTTL,
 		ID:       gcID,
 	}
 	g.Record("BackupTS", backupMeta.EndVersion)
@@ -670,23 +666,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
 	gcSafePointKeeperRemovable := false
 	defer func() {
-		if cfg.UseCheckpoint {
-			// need to flush the whole checkpoint data so that br can quickly jump to
-			// the log kv restore step when the next retry.
-			if len(cfg.FullBackupStorage) > 0 || !gcSafePointKeeperRemovable {
-				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint(ctx)
-			}
-			// don't reset the gc-safe-point and pd scheduler if checkpoint mode is used and restored is not finished
-			if !gcSafePointKeeperRemovable {
-				log.Info("skip removing gc-safepoint keeper and pd schehduler for next retry", zap.String("gc-id", sp.ID))
-				return
-			}
-		}
-		log.Info("start to remove the pd scheduler")
-		// run the post-work to avoid being stuck in the import
-		// mode or emptied schedulers.
-		restorePostWork(ctx, client, restoreSchedulers)
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
@@ -697,7 +676,26 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 				zap.Error(err),
 			)
 		}
-		log.Info("finish removing gc-safepoint keeper and pd scheduler")
+		log.Info("finish removing gc-safepoint keeper")
+
+		if cfg.UseCheckpoint {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			if len(cfg.FullBackupStorage) > 0 || !gcSafePointKeeperRemovable {
+				log.Info("wait for flush checkpoint...")
+				client.WaitForFinishCheckpoint(ctx)
+			}
+			// don't reset pd scheduler if checkpoint mode is used and restored is not finished
+			if !gcSafePointKeeperRemovable {
+				log.Info("skip removing gc-safepoint keeper and pd schehduler for next retry", zap.String("gc-id", sp.ID))
+				return
+			}
+		}
+		log.Info("start to remove the pd scheduler")
+		// run the post-work to avoid being stuck in the import
+		// mode or emptied schedulers.
+		restorePostWork(ctx, client, restoreSchedulers)
+		log.Info("finish removing pd scheduler")
 	}()
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
