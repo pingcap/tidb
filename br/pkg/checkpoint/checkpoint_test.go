@@ -54,7 +54,7 @@ func TestCheckpointMeta(t *testing.T) {
 
 	taskName := "test123"
 	checkpointMetaForRestore := &checkpoint.CheckpointMetadataForRestore{
-		SchedulersConfig: pdutil.ClusterConfig{
+		SchedulersConfig: &pdutil.ClusterConfig{
 			Schedulers: []string{"1", "2"},
 			ScheduleCfg: map[string]interface{}{
 				"1": "2",

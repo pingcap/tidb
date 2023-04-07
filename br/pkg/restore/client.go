@@ -249,7 +249,7 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 // restored for the first time, it will initialize the checkpoint metadata. Otherwrise,
 // it will load checkpoint metadata and checkpoint ranges/checksum from the external
 // storage.
-func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage, mgr *conn.Mgr, config pdutil.ClusterConfig, useCheckpoint bool) (map[int64]rtree.RangeTree, pdutil.UndoFunc, error) {
+func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage, mgr *conn.Mgr, config *pdutil.ClusterConfig, useCheckpoint bool) (map[int64]rtree.RangeTree, pdutil.UndoFunc, error) {
 	var (
 		taskName = fmt.Sprintf("%d", rc.GetPDClient().GetClusterID(ctx))
 		// checkpoint ranges
@@ -277,7 +277,12 @@ func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage,
 			return tree, nil, errors.Trace(err)
 		}
 
-		undo = mgr.MakeUndoFunctionByConfig(meta.SchedulersConfig)
+		if meta.SchedulersConfig != nil {
+			undo = mgr.MakeUndoFunctionByConfig(*meta.SchedulersConfig)
+		} else {
+			// the schedulers config is nil, so the restore-schedulers operation is just a nop
+			undo = pdutil.Nop
+		}
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
 		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rg checkpoint.RestoreValueType) {
@@ -305,9 +310,12 @@ func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage,
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, &checkpoint.CheckpointMetadataForRestore{
-			SchedulersConfig: config,
-		}, taskName); err != nil {
+		meta := &checkpoint.CheckpointMetadataForRestore{}
+		// a nil config means undo function
+		if config != nil {
+			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
+		}
+		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, meta, taskName); err != nil {
 			return tree, nil, errors.Trace(err)
 		}
 	}

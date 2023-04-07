@@ -660,7 +660,7 @@ func (p *PdController) RemoveSchedulers(ctx context.Context) (undo UndoFunc, err
 }
 
 // RemoveSchedulersWithConfig removes the schedulers that may slow down BR speed.
-func (p *PdController) RemoveSchedulersWithConfig(ctx context.Context) (undo UndoFunc, config ClusterConfig, err error) {
+func (p *PdController) RemoveSchedulersWithConfig(ctx context.Context) (undo UndoFunc, config *ClusterConfig, err error) {
 	undo = Nop
 
 	origin, _, err1 := p.RemoveSchedulersWithOrigin(ctx)
@@ -670,7 +670,7 @@ func (p *PdController) RemoveSchedulersWithConfig(ctx context.Context) (undo Und
 	}
 
 	undo = p.MakeUndoFunctionByConfig(ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg})
-	return undo, origin, errors.Trace(err)
+	return undo, &origin, errors.Trace(err)
 }
 
 // RemoveAllPDSchedulers pause pd scheduler during the snapshot backup and restore

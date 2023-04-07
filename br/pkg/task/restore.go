@@ -970,9 +970,9 @@ func filterRestoreFiles(
 
 // restorePreWork executes some prepare work before restore.
 // TODO make this function returns a restore post work.
-func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, pdutil.ClusterConfig, error) {
+func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
 	if client.IsOnline() {
-		return pdutil.Nop, pdutil.ClusterConfig{}, nil
+		return pdutil.Nop, nil, nil
 	}
 
 	if switchToImport {

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "backup.go",
         "checkpoint.go",
+        "log_restore.go",
         "restore.go",
         "ticker.go",
     ],
@@ -13,6 +14,7 @@ go_library(
     deps = [
         "//br/pkg/logutil",
         "//br/pkg/metautil",
+        "//br/pkg/pdutil",
         "//br/pkg/rtree",
         "//br/pkg/storage",
         "//br/pkg/summary",
@@ -33,6 +35,7 @@ go_test(
     race = "on",
     deps = [
         ":checkpoint",
+        "//br/pkg/pdutil",
         "//br/pkg/rtree",
         "//br/pkg/storage",
         "@com_github_pingcap_kvproto//pkg/brpb",

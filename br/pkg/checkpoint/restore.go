@@ -104,8 +104,8 @@ func LoadCheckpointChecksumForRestore(ctx context.Context, s storage.ExternalSto
 }
 
 type CheckpointMetadataForRestore struct {
-	SchedulersConfig pdutil.ClusterConfig `json:"schedulers-config,omitempty"`
-	GcRatio          string               `json:"gc-ratio,omitempty"`
+	SchedulersConfig *pdutil.ClusterConfig `json:"schedulers-config,omitempty"`
+	GcRatio          string                `json:"gc-ratio,omitempty"`
 }
 
 func LoadCheckpointMetadataForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) (*CheckpointMetadataForRestore, error) {
