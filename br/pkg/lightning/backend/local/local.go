@@ -1212,7 +1212,7 @@ func (local *Local) startWorker(
 				return nil
 			}
 
-			err := local.writeAndIngestJob(ctx, job)
+			err := local.executeJob(ctx, job)
 			switch job.stage {
 			case regionScanned, wrote, ingested:
 				jobOutCh <- job
@@ -1259,12 +1259,12 @@ func (*Local) isRetryableImportTiKVError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-// writeAndIngestJob handles a regionJob and tries to convert it to ingested stage.
+// executeJob handles a regionJob and tries to convert it to ingested stage.
 // If non-retryable error occurs, it will return the error.
 // If retryable error occurs, it will return nil and caller should check the stage
 // of the regionJob to determine what to do with it.
 // TODO: check when return the job is at which stage
-func (local *Local) writeAndIngestJob(
+func (local *Local) executeJob(
 	ctx context.Context,
 	job *regionJob,
 ) error {
@@ -1300,12 +1300,7 @@ func (local *Local) writeAndIngestJob(
 	}
 
 	for {
-		err := job.writeToTiKV(ctx,
-			local.tikvCodec.GetAPIVersion(),
-			local.importClientFactory,
-			local.KVWriteBatchSize,
-			local.bufferPool,
-			local.writeLimiter)
+		err := local.writeToTiKV(ctx, job)
 		if err != nil {
 			if !local.isRetryableImportTiKVError(err) {
 				return err
@@ -1316,13 +1311,7 @@ func (local *Local) writeAndIngestJob(
 			return nil
 		}
 
-		err = job.ingest(
-			ctx,
-			local.importClientFactory,
-			local.splitCli,
-			local.supportMultiIngest,
-			local.ShouldCheckWriteStall,
-		)
+		err = local.ingest(ctx, job)
 		if err != nil {
 			if !local.isRetryableImportTiKVError(err) {
 				return err

@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -135,14 +134,12 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
-func (j *regionJob) writeToTiKV(
-	ctx context.Context,
-	apiVersion kvrpcpb.APIVersion,
-	clientFactory ImportClientFactory,
-	kvBatchSize int,
-	bufferPool *membuf.Pool,
-	writeLimiter StoreWriteLimiter,
-) error {
+func (local *Local) writeToTiKV(ctx context.Context, j *regionJob) error {
+	apiVersion := local.tikvCodec.GetAPIVersion()
+	clientFactory := local.importClientFactory
+	kvBatchSize := local.KVWriteBatchSize
+	bufferPool := local.bufferPool
+	writeLimiter := local.writeLimiter
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -353,13 +350,8 @@ func (j *regionJob) writeToTiKV(
 // set job to a proper stage with nil error returned.
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
-func (j *regionJob) ingest(
-	ctx context.Context,
-	clientFactory ImportClientFactory,
-	splitCli split.SplitClient,
-	supportMultiIngest bool,
-	shouldCheckWriteStall bool,
-) error {
+func (local *Local) ingest(ctx context.Context, j *regionJob) error {
+	splitCli := local.splitCli
 	if j.stage != wrote {
 		return nil
 	}
@@ -370,7 +362,7 @@ func (j *regionJob) ingest(
 	}
 
 	for retry := 0; retry < maxRetryTimes; retry++ {
-		resp, err := j.doIngest(ctx, clientFactory, supportMultiIngest, shouldCheckWriteStall)
+		resp, err := local.doIngest(ctx, j)
 		if err == nil && resp.GetError() == nil {
 			j.convertStageTo(ingested)
 			return nil
@@ -384,7 +376,7 @@ func (j *regionJob) ingest(
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
 			continue
 		}
-		canContinue, err := j.fixIngestError(ctx, resp, splitCli)
+		canContinue, err := j.convertStageOnIngestError(ctx, resp, splitCli)
 		if common.IsContextCanceledError(err) {
 			return err
 		}
@@ -406,11 +398,11 @@ func (j *regionJob) ingest(
 	return nil
 }
 
-func (*regionJob) checkWriteStall(
+func (local *Local) checkWriteStall(
 	ctx context.Context,
 	region *split.RegionInfo,
-	clientFactory ImportClientFactory,
 ) (bool, *sst.IngestResponse, error) {
+	clientFactory := local.importClientFactory
 	for _, peer := range region.Region.GetPeers() {
 		cli, err := clientFactory.Create(ctx, peer.StoreId)
 		if err != nil {
@@ -431,14 +423,12 @@ func (*regionJob) checkWriteStall(
 
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
-func (j *regionJob) doIngest(
-	ctx context.Context,
-	clientFactory ImportClientFactory,
-	supportMultiIngest bool,
-	shouldCheckWriteStall bool,
-) (*sst.IngestResponse, error) {
+func (local *Local) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+	clientFactory := local.importClientFactory
+	supportMultiIngest := local.supportMultiIngest
+	shouldCheckWriteStall := local.ShouldCheckWriteStall
 	if shouldCheckWriteStall {
-		writeStall, resp, err := j.checkWriteStall(ctx, j.region, clientFactory)
+		writeStall, resp, err := local.checkWriteStall(ctx, j.region)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -522,11 +512,11 @@ func (j *regionJob) doIngest(
 	return resp, nil
 }
 
-// fixIngestError will try to fix the error contained in ingest response.
+// convertStageOnIngestError will try to fix the error contained in ingest response.
 // Return (_, error) when another error occurred.
 // Return (true, nil) when the job can retry ingesting immediately.
 // Return (false, nil) when the job should be put back to queue.
-func (j *regionJob) fixIngestError(
+func (j *regionJob) convertStageOnIngestError(
 	ctx context.Context,
 	resp *sst.IngestResponse,
 	splitCli split.SplitClient,

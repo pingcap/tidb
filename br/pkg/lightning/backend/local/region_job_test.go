@@ -78,7 +78,7 @@ func TestIsIngestRetryable(t *testing.T) {
 	}
 
 	clone := job
-	canContinueIngest, err := (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err := (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.True(t, canContinueIngest)
 	require.Equal(t, wrote, clone.stage)
@@ -105,7 +105,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, regionScanned, clone.stage)
@@ -130,7 +130,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, needRescan, clone.stage)
@@ -140,7 +140,7 @@ func TestIsIngestRetryable(t *testing.T) {
 
 	resp.Error = &errorpb.Error{Message: "raft: proposal dropped"}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, needRescan, clone.stage)
@@ -154,7 +154,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, needRescan, clone.stage)
@@ -166,7 +166,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		DiskFull: &errorpb.DiskFull{},
 	}
 	clone = job
-	_, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	_, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.ErrorContains(t, err, "non-retryable error")
 
 	// a general error is retryable from writing
@@ -175,7 +175,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		StaleCommand: &errorpb.StaleCommand{},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, regionScanned, clone.stage)
