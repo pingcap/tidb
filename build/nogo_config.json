@@ -355,6 +355,7 @@
       "ttl/cache/ttlstatus.go": "ignore ttlstatus code",
       "ttl/ttlworker/": "ignore ttlworker code",
       "planner/core/": "ignore core code",
+      "planner/optimize.go": "ignore optimize code",
       "planner/cascades/": "ignore cascades code",
       "ddl/placement/": "ignore placement code"
     },
