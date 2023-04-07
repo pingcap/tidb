@@ -340,7 +340,6 @@ func (rf RestoreFlags) HasRestoreWithTTLEnableOff() bool {
 	return rf.has(RestoreWithTTLEnableOff)
 }
 
-
 // HasRestoreForNonPrepPlanCache returns a boolean indicating whether `rf` has `RestoreForNonPrepPlanCache` flag.
 func (rf RestoreFlags) HasRestoreForNonPrepPlanCache() bool {
 	return rf.has(RestoreForNonPrepPlanCache)
