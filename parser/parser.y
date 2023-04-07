@@ -5142,48 +5142,48 @@ BRIEStmt:
 		$$ = stmt
 	}
 |	"PURGE" "BACKUP" "LOGS" "FROM" stringLit BRIEOptions
-    	{
-    		stmt := &ast.BRIEStmt{}
-    		stmt.Kind = ast.BRIEKindStreamPurge
-    		stmt.Storage = $5
-    		stmt.Options = $6.([]*ast.BRIEOption)
-            $$ = stmt
-    	}
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamPurge
+		stmt.Storage = $5
+		stmt.Options = $6.([]*ast.BRIEOption)
+		$$ = stmt
+	}
 |	"SHOW" "BACKUP" "LOGS" "STATUS"
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindStreamStatus
 		$$ = stmt
 	}
-|   "SHOW" "BACKUP" "LOGS" "METADATA" "FROM" stringLit
+|	"SHOW" "BACKUP" "LOGS" "METADATA" "FROM" stringLit
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindStreamMetaData
 		stmt.Storage = $6
 		$$ = stmt
 	}
-|   "SHOW" "BR" "JOB" Int64Num
+|	"SHOW" "BR" "JOB" Int64Num
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindShowJob
 		stmt.JobID = $4.(int64)
 		$$ = stmt
 	}
-|   "SHOW" "BR" "JOB" "QUERY" Int64Num
+|	"SHOW" "BR" "JOB" "QUERY" Int64Num
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindShowQuery
 		stmt.JobID = $5.(int64)
 		$$ = stmt
 	}
-|   "CANCEL" "BR" "JOB" Int64Num
+|	"CANCEL" "BR" "JOB" Int64Num
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindCancelJob
 		stmt.JobID = $4.(int64)
 		$$ = stmt
 	}
-|   "SHOW" "BACKUP" "METADATA" "FROM" stringLit
+|	"SHOW" "BACKUP" "METADATA" "FROM" stringLit
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindShowBackupMeta
@@ -5200,7 +5200,7 @@ BRIEStmt:
 	}
 |	"RESTORE" "POINT" "FROM" stringLit BRIEOptions
 	{
-		stmt :=  &ast.BRIEStmt{}
+		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindRestorePIT
 		stmt.Storage = $4
 		stmt.Options = $5.([]*ast.BRIEOption)
@@ -5463,29 +5463,30 @@ BRIEOption:
 		$$ = &ast.BRIEOption{
 			Tp:       ast.BRIEOptionRestoredTS,
 			StrValue: $3,
-        }
+		}
 	}
 |	"START_TS" EqOpt stringLit
 	{
 		$$ = &ast.BRIEOption{
 			Tp:       ast.BRIEOptionStartTS,
 			StrValue: $3,
-        }
+		}
 	}
-| 	"UNTIL_TS" EqOpt stringLit
-    	{
-    		$$ = &ast.BRIEOption{
-    			Tp:       ast.BRIEOptionUntilTS,
-    			StrValue: $3,
-            }
-    	}
+|	"UNTIL_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionUntilTS,
+			StrValue: $3,
+		}
+	}
 |	"GC_TTL" EqOpt stringLit
 	{
 		$$ = &ast.BRIEOption{
 			Tp:       ast.BRIEOptionGCTTL,
 			StrValue: $3,
-        }
+		}
 	}
+
 LengthNum:
 	NUM
 	{
