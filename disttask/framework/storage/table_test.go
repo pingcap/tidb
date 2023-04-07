@@ -212,6 +212,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	require.Equal(t, int64(1), id)
 
 	task, err := sm.GetNewGlobalTask()
+	require.NoError(t, err)
 	require.Equal(t, proto.TaskStatePending, task.State)
 
 	// isSubTaskRevert: false
