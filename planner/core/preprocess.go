@@ -56,7 +56,7 @@ type PreprocessOpt func(*preprocessor)
 
 // InPrepare is a PreprocessOpt that indicates preprocess is executing under prepare statement.
 func InPrepare(p *preprocessor) {
-	p.flag |= inPrepare
+	//p.flag |= inPrepare
 }
 
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
