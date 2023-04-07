@@ -354,11 +354,13 @@
       "planner/util/path.go" : "ignore path code",
       "ttl/cache/ttlstatus.go": "ignore ttlstatus code",
       "ttl/ttlworker/": "ignore ttlworker code",
+      "planner/core/": "ignore core code",
       "ddl/placement/": "ignore placement code"
     },
      "only_files": {
        "br/": "only for br code",
        "ttl/": "only for ttl code",
+       "planner/": "only for planner code",
        "parser/": "only for parser code",
        "dumpling/": "only for dumpling code"
      }
