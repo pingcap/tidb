@@ -322,6 +322,7 @@
       "br/pkg/lightning/errormanager/errormanager_test.go": "ignore errormanager code",
       "br/pkg/lightning/backend/kv/sql2kv_test.go": "ignore sql2kv code",
       "br/pkg/stream/rewrite_meta_rawkv.go": "ignore rewrite_meta_rawkv code",
+      "br/pkg/mock/": "ignore mock code",
       "br/pkg/aws/ebs.go": "ignore ebs code",
       "br/pkg/backup/": "ignore backup code",
       "br/pkg/restore/": "ignore restore code",
