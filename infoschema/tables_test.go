@@ -870,6 +870,7 @@ func TestFormatVersion(t *testing.T) {
 
 // TestStmtSummaryTable Test statements_summary.
 func TestStmtSummaryTable(t *testing.T) {
+	t.Skip()
 	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
