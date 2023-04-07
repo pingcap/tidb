@@ -2167,8 +2167,12 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			if err := v.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
+			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(v.OriginalText()) > 0 {
+				ctx.WritePlain(v.OriginalText())
+			} else {
+				if err := v.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
+				}
 			}
 		}
 		ctx.WritePlain(")")
