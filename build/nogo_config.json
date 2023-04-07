@@ -320,6 +320,8 @@
       "br/pkg/lightning/checkpoints/checkpoints_sql_test.go": "ignore checkpoints code",
       "br/pkg/lightning/errormanager/errormanager_test.go": "ignore errormanager code",
       "br/pkg/lightning/backend/kv/sql2kv_test.go": "ignore sql2kv code",
+      "br/pkg/stream/rewrite_meta_rawkv.go": "ignore rewrite_meta_rawkv code",
+      "br/pkg/aws/ebs.go": "ignore ebs code",
       "ddl/util/util.go": "ignore util code",
       "ddl/syncer/syncer.go": "ignore syncer code",
       "ddl/ingest/backend.go": "ignore backend code",
