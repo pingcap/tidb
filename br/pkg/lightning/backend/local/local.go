@@ -593,7 +593,7 @@ func NewBackend(
 
 // TotalMemoryConsume returns the total memory usage of the local backend.
 func (local *Backend) TotalMemoryConsume() int64 {
-	var memConsume int64 = 0
+	var memConsume int64
 	local.engines.Range(func(k, v interface{}) bool {
 		e := v.(*Engine)
 		if e != nil {
