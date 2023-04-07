@@ -674,26 +674,15 @@ func walkCheckpointFile[K KeyType, V ValueType](ctx context.Context, s storage.E
 	return pastDureTime, errors.Trace(err)
 }
 
-type CheckpointMetadata struct {
-	GCServiceId string        `json:"gc-service-id"`
-	ConfigHash  []byte        `json:"config-hash"`
-	BackupTS    uint64        `json:"backup-ts"`
-	Ranges      []rtree.Range `json:"ranges"`
-	GcRatio     string        `json:"gc-ratio,omitempty"`
-
-	CheckpointChecksum map[int64]*ChecksumItem    `json:"-"`
-	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`
-}
-
 // load checkpoint meta data from external storage and unmarshal back
-func loadCheckpointMeta(ctx context.Context, s storage.ExternalStorage, path string) (*CheckpointMetadata, error) {
+func loadCheckpointMeta[T any](ctx context.Context, s storage.ExternalStorage, path string, m *T) error {
 	data, err := s.ReadFile(ctx, path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	m := &CheckpointMetadata{}
+
 	err = json.Unmarshal(data, m)
-	return m, errors.Trace(err)
+	return errors.Trace(err)
 }
 
 // walk the whole checkpoint checksum files and retrieve checksum information of tables calculated
@@ -738,7 +727,7 @@ func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage, subD
 	return checkpointChecksum, pastDureTime, errors.Trace(err)
 }
 
-func saveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadata, path string) error {
+func saveCheckpointMetadata[T any](ctx context.Context, s storage.ExternalStorage, meta *T, path string) error {
 	data, err := json.Marshal(meta)
 	if err != nil {
 		return errors.Trace(err)

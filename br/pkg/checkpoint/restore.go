@@ -20,6 +20,7 @@ import (
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
@@ -102,11 +103,18 @@ func LoadCheckpointChecksumForRestore(ctx context.Context, s storage.ExternalSto
 	return loadCheckpointChecksum(ctx, s, getCheckpointChecksumDirByName(taskName))
 }
 
-func LoadCheckpointMetaForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) (*CheckpointMetadata, error) {
-	return loadCheckpointMeta(ctx, s, getCheckpointMetaPathByName(taskName))
+type CheckpointMetadataForRestore struct {
+	SchedulersConfig pdutil.ClusterConfig `json:"schedulers-config,omitempty"`
+	GcRatio          string               `json:"gc-ratio,omitempty"`
 }
 
-func SaveCheckpointMetadataForRestore(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadata, taskName string) error {
+func LoadCheckpointMetadataForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) (*CheckpointMetadataForRestore, error) {
+	m := &CheckpointMetadataForRestore{}
+	err := loadCheckpointMeta(ctx, s, getCheckpointMetaPathByName(taskName), m)
+	return m, err
+}
+
+func SaveCheckpointMetadataForRestore(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadataForRestore, taskName string) error {
 	return saveCheckpointMetadata(ctx, s, meta, getCheckpointMetaPathByName(taskName))
 }
 

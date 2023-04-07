@@ -646,25 +646,52 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// don't support checkpoint for the ddl restore
 		cfg.UseCheckpoint = false
 	}
-	tree, gcID, err := client.InitCheckpoint(ctx, s, cfg.UseCheckpoint)
+
+	restoreSchedulers, schedulersConfig, err := restorePreWork(ctx, client, mgr, true)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	schedulersRemovable := false
+	defer func() {
+		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !schedulersRemovable {
+			log.Info("skip removing pd schehduler for next retry")
+			return
+		}
+		log.Info("start to remove the pd scheduler")
+		// run the post-work to avoid being stuck in the import
+		// mode or emptied schedulers.
+		restorePostWork(ctx, client, restoreSchedulers)
+		log.Info("finish removing pd scheduler")
+	}()
+
+	tree, restoreSchedulersFromCheckpoint, err := client.InitCheckpoint(ctx, s, mgr, schedulersConfig, cfg.UseCheckpoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if restoreSchedulersFromCheckpoint != nil {
+		restoreSchedulers = restoreSchedulersFromCheckpoint
+	}
+	if cfg.UseCheckpoint {
+		defer func() {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			if len(cfg.FullBackupStorage) > 0 || !schedulersRemovable {
+				log.Info("wait for flush checkpoint...")
+				client.WaitForFinishCheckpoint(ctx)
+			}
+		}()
 	}
 
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
 		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       gcID,
+		ID:       utils.MakeSafePointID(),
 	}
 	g.Record("BackupTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)
-
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
-	gcSafePointKeeperRemovable := false
 	defer func() {
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
@@ -677,25 +704,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			)
 		}
 		log.Info("finish removing gc-safepoint keeper")
-
-		if cfg.UseCheckpoint {
-			// need to flush the whole checkpoint data so that br can quickly jump to
-			// the log kv restore step when the next retry.
-			if len(cfg.FullBackupStorage) > 0 || !gcSafePointKeeperRemovable {
-				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint(ctx)
-			}
-			// don't reset pd scheduler if checkpoint mode is used and restored is not finished
-			if !gcSafePointKeeperRemovable {
-				log.Info("skip removing gc-safepoint keeper and pd schehduler for next retry", zap.String("gc-id", sp.ID))
-				return
-			}
-		}
-		log.Info("start to remove the pd scheduler")
-		// run the post-work to avoid being stuck in the import
-		// mode or emptied schedulers.
-		restorePostWork(ctx, client, restoreSchedulers)
-		log.Info("finish removing pd scheduler")
 	}()
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
@@ -898,7 +906,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// So leave it out of the pipeline for easier implementation.
 	client.RestoreSystemSchemas(ctx, cfg.TableFilter)
 
-	gcSafePointKeeperRemovable = true
+	schedulersRemovable = true
 
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
@@ -962,9 +970,9 @@ func filterRestoreFiles(
 
 // restorePreWork executes some prepare work before restore.
 // TODO make this function returns a restore post work.
-func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, error) {
+func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, pdutil.ClusterConfig, error) {
 	if client.IsOnline() {
-		return pdutil.Nop, nil
+		return pdutil.Nop, pdutil.ClusterConfig{}, nil
 	}
 
 	if switchToImport {
@@ -972,7 +980,7 @@ func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, 
 		client.SwitchToImportMode(ctx)
 	}
 
-	return mgr.RemoveSchedulers(ctx)
+	return mgr.RemoveSchedulersWithConfig(ctx)
 }
 
 // restorePostWork executes some post work after restore.

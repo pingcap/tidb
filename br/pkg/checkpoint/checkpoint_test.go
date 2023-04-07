@@ -26,6 +26,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -38,7 +39,7 @@ func TestCheckpointMeta(t *testing.T) {
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
 
-	checkpointMeta := &checkpoint.CheckpointMetadata{
+	checkpointMeta := &checkpoint.CheckpointMetadataForBackup{
 		ConfigHash: []byte("123456"),
 		BackupTS:   123456,
 	}
@@ -50,6 +51,25 @@ func TestCheckpointMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, checkpointMeta.ConfigHash, checkpointMeta2.ConfigHash)
 	require.Equal(t, checkpointMeta.BackupTS, checkpointMeta2.BackupTS)
+
+	taskName := "test123"
+	checkpointMetaForRestore := &checkpoint.CheckpointMetadataForRestore{
+		SchedulersConfig: pdutil.ClusterConfig{
+			Schedulers: []string{"1", "2"},
+			ScheduleCfg: map[string]interface{}{
+				"1": "2",
+				"2": "1",
+			},
+		},
+		GcRatio: "123",
+	}
+	err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, checkpointMetaForRestore, taskName)
+	require.NoError(t, err)
+
+	checkpointMetaForRestore2, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
+	require.NoError(t, err)
+	require.Equal(t, checkpointMetaForRestore.SchedulersConfig, checkpointMetaForRestore2.SchedulersConfig)
+	require.Equal(t, checkpointMetaForRestore.GcRatio, checkpointMetaForRestore2.GcRatio)
 }
 
 type mockTimer struct {
@@ -163,7 +183,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	_, err = checkpoint.WalkCheckpointFileForBackup(ctx, s, cipher, checker)
 	require.NoError(t, err)
 
-	checkpointMeta := &checkpoint.CheckpointMetadata{
+	checkpointMeta := &checkpoint.CheckpointMetadataForBackup{
 		ConfigHash: []byte("123456"),
 		BackupTS:   123456,
 	}
@@ -285,22 +305,12 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	_, err = checkpoint.WalkCheckpointFileForRestore(ctx, s, cipher, taskName, checker)
 	require.NoError(t, err)
 
-	checkpointMeta := &checkpoint.CheckpointMetadata{
-		GCServiceId: "654321",
-		ConfigHash:  []byte("123456"),
-		BackupTS:    123456,
-	}
-
-	err = checkpoint.SaveCheckpointMetadata(ctx, s, checkpointMeta)
-	require.NoError(t, err)
-	meta, err := checkpoint.LoadCheckpointMetadata(ctx, s)
-	require.NoError(t, err)
-	meta.CheckpointChecksum, _, err = checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
+	checksum, _, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
 	require.NoError(t, err)
 
 	var i int64
 	for i = 1; i <= 4; i++ {
-		require.Equal(t, meta.CheckpointChecksum[i].Crc64xor, uint64(i))
+		require.Equal(t, checksum[i].Crc64xor, uint64(i))
 	}
 
 	// only 2 checksum files exists, they are t2_and__ and t4_and__
@@ -392,7 +402,7 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 		fs, ok := d[resp.Goff]
 		require.True(t, ok)
 		for _, f := range fs {
-			if f.foff == resp.Foff && resp.TableID == resp.TableID {
+			if f.foff == resp.Foff && f.table == resp.TableID {
 				return
 			}
 		}

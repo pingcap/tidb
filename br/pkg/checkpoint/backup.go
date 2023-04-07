@@ -94,9 +94,20 @@ func WalkCheckpointFileForBackup(ctx context.Context, s storage.ExternalStorage,
 	return walkCheckpointFile(ctx, s, cipher, CheckpointDataDirForBackup, fn)
 }
 
+type CheckpointMetadataForBackup struct {
+	GCServiceId string        `json:"gc-service-id"`
+	ConfigHash  []byte        `json:"config-hash"`
+	BackupTS    uint64        `json:"backup-ts"`
+	Ranges      []rtree.Range `json:"ranges"`
+
+	CheckpointChecksum map[int64]*ChecksumItem    `json:"-"`
+	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`
+}
+
 // load checkpoint metadata from the external storage
-func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadata, error) {
-	m, err := loadCheckpointMeta(ctx, s, CheckpointMetaPath)
+func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadataForBackup, error) {
+	m := &CheckpointMetadataForBackup{}
+	err := loadCheckpointMeta(ctx, s, CheckpointMetaPath, m)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -105,6 +116,6 @@ func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*Ch
 }
 
 // save the checkpoint metadata into the external storage
-func SaveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadata) error {
+func SaveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadataForBackup) error {
 	return saveCheckpointMetadata(ctx, s, meta, CheckpointMetaPath)
 }

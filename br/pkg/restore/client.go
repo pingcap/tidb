@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -177,7 +178,7 @@ type Client struct {
 	// the rewrite mode of the downloaded SST files in TiKV.
 	rewriteMode RewriteMode
 
-	// checkpoint information
+	// checkpoint information for snapshot restore
 	checkpointRunner   *checkpoint.RestoreRunner
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 }
@@ -248,36 +249,35 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 // restored for the first time, it will initialize the checkpoint metadata. Otherwrise,
 // it will load checkpoint metadata and checkpoint ranges/checksum from the external
 // storage.
-func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage, useCheckpoint bool) (map[int64]rtree.RangeTree, string, error) {
+func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage, mgr *conn.Mgr, config pdutil.ClusterConfig, useCheckpoint bool) (map[int64]rtree.RangeTree, pdutil.UndoFunc, error) {
 	var (
 		taskName = fmt.Sprintf("%d", rc.GetPDClient().GetClusterID(ctx))
-		// id is the gc-safepoint id, the same restore task's id should be the same.
-		id = utils.MakeSafePointID()
 		// checkpoint ranges
 		tree = make(map[int64]rtree.RangeTree)
 
-		meta *checkpoint.CheckpointMetadata
+		undo pdutil.UndoFunc
 	)
 
 	// if not use checkpoint, return empty checkpoint ranges and new gc-safepoint id
 	if !useCheckpoint {
-		return tree, id, nil
+		return tree, nil, nil
 	}
 
 	// if the checkpoint metadata exists in the external storage, the restore is not
 	// for the first time.
 	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, taskName)
 	if err != nil {
-		return tree, id, errors.Trace(err)
+		return tree, nil, errors.Trace(err)
 	}
 
 	if exists {
 		// load the checkpoint since this is not the first time to restore
-		meta, err = checkpoint.LoadCheckpointMetaForRestore(ctx, s, taskName)
+		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
 		if err != nil {
-			return tree, id, errors.Trace(err)
+			return tree, nil, errors.Trace(err)
 		}
-		id = meta.GCServiceId
+
+		undo = mgr.MakeUndoFunctionByConfig(meta.SchedulersConfig)
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
 		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rg checkpoint.RestoreValueType) {
@@ -289,12 +289,12 @@ func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage,
 			t.InsertRange(*rg.Range)
 		})
 		if err != nil {
-			return tree, id, errors.Trace(err)
+			return tree, nil, errors.Trace(err)
 		}
 		// t2 is the latest time the checkpoint checksum persisted to the external storage.
 		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
 		if err != nil {
-			return tree, id, errors.Trace(err)
+			return tree, nil, errors.Trace(err)
 		}
 		rc.checkpointChecksum = checkpointChecksum
 		// use the later time to adjust the summary elapsed time.
@@ -305,15 +305,15 @@ func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage,
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, &checkpoint.CheckpointMetadata{
-			GCServiceId: id,
+		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, &checkpoint.CheckpointMetadataForRestore{
+			SchedulersConfig: config,
 		}, taskName); err != nil {
-			return tree, id, errors.Trace(err)
+			return tree, nil, errors.Trace(err)
 		}
 	}
 
 	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, s, rc.cipher, taskName)
-	return tree, id, errors.Trace(err)
+	return tree, undo, errors.Trace(err)
 }
 
 func (rc *Client) WaitForFinishCheckpoint(ctx context.Context) {
@@ -326,7 +326,7 @@ func (rc *Client) GetCheckpointRunner() *checkpoint.RestoreRunner {
 	return rc.checkpointRunner
 }
 
-func (rc *Client) InitCheckpointForLogRestore(ctx context.Context, taskName string) (*checkpoint.LogRestoreRunner, error) {
+func (rc *Client) StartCheckpointRunnerForLogRestore(ctx context.Context, taskName string) (*checkpoint.LogRestoreRunner, error) {
 	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.storage, rc.cipher, taskName)
 	return runner, errors.Trace(err)
 }
@@ -341,7 +341,7 @@ func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskN
 
 	if exists {
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetaForRestore(ctx, rc.storage, taskName)
+		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, rc.storage, taskName)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
@@ -350,7 +350,7 @@ func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskN
 	}
 
 	// initialize the checkpoint metadata since it is the first time to restore.
-	if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, rc.storage, &checkpoint.CheckpointMetadata{
+	if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, rc.storage, &checkpoint.CheckpointMetadataForRestore{
 		GcRatio: gcRatio,
 	}, taskName); err != nil {
 		return gcRatio, errors.Trace(err)
@@ -2260,6 +2260,7 @@ func (rc *Client) RestoreKVFiles(
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
+			downstreamId := idrules[files[0].TableId]
 			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer func() {
@@ -2268,12 +2269,17 @@ func (rc *Client) RestoreKVFiles(
 					summary.CollectInt("File", len(files))
 
 					if err == nil {
-						downstreamId := idrules[files[0].TableId]
 						filenames := make([]string, 0, len(files))
-						for _, f := range files {
-							filenames = append(filenames, f.Path+", ")
-							if e := checkpoint.AppendRangeForLogRestore(ctx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
-								err = errors.Annotate(e, "failed to append checkpoint data")
+						if runner == nil {
+							for _, f := range files {
+								filenames = append(filenames, f.Path+", ")
+							}
+						} else {
+							for _, f := range files {
+								filenames = append(filenames, f.Path+", ")
+								if e := checkpoint.AppendRangeForLogRestore(ctx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+									err = errors.Annotate(e, "failed to append checkpoint data")
+								}
 							}
 						}
 						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),

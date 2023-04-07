@@ -94,7 +94,7 @@ type Client struct {
 	apiVersion kvrpcpb.APIVersion
 
 	cipher           *backuppb.CipherInfo
-	checkpointMeta   *checkpoint.CheckpointMetadata
+	checkpointMeta   *checkpoint.CheckpointMetadataForBackup
 	checkpointRunner *checkpoint.BackupRunner
 
 	gcTTL int64
@@ -291,7 +291,7 @@ func (bc *Client) StartCheckpointRunner(
 	progressCallBack func(ProgressUnit),
 ) (err error) {
 	if bc.checkpointMeta == nil {
-		bc.checkpointMeta = &checkpoint.CheckpointMetadata{
+		bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{
 			GCServiceId: safePointID,
 			ConfigHash:  cfgHash,
 			BackupTS:    backupTS,

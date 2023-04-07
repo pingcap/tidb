@@ -1216,7 +1216,7 @@ func restoreStream(
 	}
 	client.SetCurrentTS(currentTS)
 
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr, false)
+	restoreSchedulers, _, err := restorePreWork(ctx, client, mgr, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1224,14 +1224,6 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
-	taskName := fmt.Sprintf("%d.%d", client.GetPDClient().GetClusterID(ctx), cfg.StartTS)
-	var checkpointRunner *checkpoint.LogRestoreRunner
-	if cfg.UseCheckpoint {
-		checkpointRunner, err = client.InitCheckpointForLogRestore(ctx, taskName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
 	restoreGc, oldRatio, err := KeepGcDisabled(g, mgr.GetStorage())
@@ -1243,8 +1235,6 @@ func restoreStream(
 		// don't restore the gc-ratio-threshold if checkpoint mode is used and restored is not finished
 		if cfg.UseCheckpoint && !gcDisabledRestorable {
 			log.Info("skip restore the gc-ratio-threshold for next retry")
-			log.Info("wait for flush checkpoint...")
-			checkpointRunner.WaitForFinish(ctx)
 			return
 		}
 
@@ -1255,11 +1245,23 @@ func restoreStream(
 		log.Info("finish restoring gc")
 	}()
 
+	taskName := fmt.Sprintf("%d.%d", client.GetPDClient().GetClusterID(ctx), cfg.StartTS)
+	var checkpointRunner *checkpoint.LogRestoreRunner
 	if cfg.UseCheckpoint {
-		oldRatio, err = client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
+		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		oldRatio = oldRatioFromCheckpoint
+
+		checkpointRunner, err = client.StartCheckpointRunnerForLogRestore(ctx, taskName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer func() {
+			log.Info("wait for flush checkpoint...")
+			checkpointRunner.WaitForFinish(ctx)
+		}()
 	}
 
 	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
