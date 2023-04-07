@@ -324,6 +324,7 @@
       "br/pkg/aws/ebs.go": "ignore ebs code",
       "br/pkg/backup/": "ignore backup code",
       "br/pkg/restore/": "ignore restore code",
+      "br/pkg/task/": "ignore task code",
       "ddl/util/util.go": "ignore util code",
       "ddl/syncer/syncer.go": "ignore syncer code",
       "ddl/ingest/backend.go": "ignore backend code",
