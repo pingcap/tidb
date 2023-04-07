@@ -73,8 +73,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 }
 
 // GetDeadLockedTables gets dead locked tables.
-func (d *DeadTableLockChecker) GetDeadLockedTables(
-	ctx context.Context, schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
+func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
 	if d.etcdCli == nil {
 		return nil, nil
 	}
