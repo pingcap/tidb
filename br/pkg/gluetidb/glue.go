@@ -191,7 +191,8 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 		defer rs.Close()
 		c := rs.NewChunk(nil)
 		if err := rs.Next(ctx, c); err != nil {
-			log.Warn("Error during draining result of internal sql.", logutil.Redact(zap.String("sql", sql)), logutil.ShortError(err))
+			log.Warn("Error during draining result of internal sql.",
+				logutil.Redact(zap.String("sql", sql)), logutil.ShortError(err))
 			return nil
 		}
 	}
