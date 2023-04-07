@@ -3394,8 +3394,9 @@ def go_deps():
         name = "com_github_pingcap_sysutil",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/sysutil",
-        sum = "h1:HYbcxtnkN3s5tqrZ/z3eJS4j3Db8wMphEm1q10lY/TM=",
-        version = "v0.0.0-20220114020952-ea68d2dbf5b4",
+        replace = "github.com/hawkingrei/sysutil",
+        sum = "h1:eicG3wrRtoK/uGr0ZGDZXzFeYBFct0gRWO5Txk6rN7c=",
+        version = "v1.0.1-0.20230407030713-0a21d2f12fdc",
     )
     go_repository(
         name = "com_github_pingcap_tidb_dashboard",
