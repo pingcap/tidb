@@ -355,6 +355,7 @@
       "ttl/cache/ttlstatus.go": "ignore ttlstatus code",
       "ttl/ttlworker/": "ignore ttlworker code",
       "planner/core/": "ignore core code",
+      "planner/cascades/": "ignore cascades code",
       "ddl/placement/": "ignore placement code"
     },
      "only_files": {
