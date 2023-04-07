@@ -300,6 +300,7 @@
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore test code",
       ".*pb\\.go$": "ignore generated code",
       "br/pkg/errors/errors.go": "ignore error",
       "br/pkg/rtree/logging_test.go": "ignore rtree code",
