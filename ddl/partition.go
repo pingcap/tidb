@@ -501,7 +501,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		return errors.Trace(err)
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(ctx, s.Definitions, tbInfo)
+	defs, err := buildPartitionDefinitionsInfo(ctx, s.Definitions, tbInfo, s.Num)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1079,12 +1079,12 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 }
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
-func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) (partitions []model.PartitionDefinition, err error) {
+func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, numParts uint64) (partitions []model.PartitionDefinition, err error) {
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
 		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo)
 	case model.PartitionTypeHash, model.PartitionTypeKey:
-		partitions, err = buildHashPartitionDefinitions(ctx, defs, tbInfo)
+		partitions, err = buildHashPartitionDefinitions(ctx, defs, tbInfo, numParts)
 	case model.PartitionTypeList:
 		partitions, err = buildListPartitionDefinitions(ctx, defs, tbInfo)
 	}
@@ -1115,12 +1115,12 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 	return nil
 }
 
-func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
+func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, numParts uint64) ([]model.PartitionDefinition, error) {
 	if err := checkAddPartitionTooManyPartitions(tbInfo.Partition.Num); err != nil {
 		return nil, err
 	}
 
-	definitions := make([]model.PartitionDefinition, tbInfo.Partition.Num)
+	definitions := make([]model.PartitionDefinition, numParts)
 	if len(defs) == 0 {
 		for i := 0; i < len(definitions); i++ {
 			definitions[i].Name = model.NewCIStr(fmt.Sprintf("p%d", i))
@@ -1133,7 +1133,7 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 	copy(definitions, tbInfo.Partition.Definitions)
 	offset := len(tbInfo.Partition.Definitions)
 
-	if uint64(len(tbInfo.Partition.Definitions)) < tbInfo.Partition.Num {
+	if uint64(len(tbInfo.Partition.Definitions)) < numParts {
 		// ADD PARTITION needs to add the new partitions
 		for i := 0; i < len(defs); i++ {
 			def := defs[i]

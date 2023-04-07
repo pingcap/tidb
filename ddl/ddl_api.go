@@ -4196,12 +4196,15 @@ func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, 
 			orgDef := pi.Definitions[i]
 			if orgDef.Name.O != fmt.Sprintf("p%d", i) {
 				nonDefaultOptions = true
+				break
 			}
 			if len(orgDef.Comment) > 0 {
 				nonDefaultOptions = true
+				break
 			}
 			if orgDef.PlacementPolicyRef != nil {
 				nonDefaultOptions = true
+				break
 			}
 		}
 		if nonDefaultOptions {
@@ -5118,7 +5121,7 @@ func GetModifiableColumnJob(
 			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate.Load()
 			sv.TruncateAsWarning = false
 			sv.IgnoreTruncate.Store(false)
-			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo)
+			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
 			sv.TruncateAsWarning = oldTruncAsWarn
 			sv.IgnoreTruncate.Store(oldIgnoreTrunc)
 			if err != nil {
@@ -7133,6 +7136,7 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+	numParts := uint64(0)
 	switch meta.Partition.Type {
 	case model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
@@ -7156,16 +7160,12 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 			if int(spec.Num) >= len(meta.Partition.Definitions) {
 				return nil, dbterror.ErrDropLastPartition
 			}
-			resetNum := meta.Partition.Num
-			defer func() { meta.Partition.Num = resetNum }()
-			meta.Partition.Num = uint64(len(meta.Partition.Definitions)) - spec.Num
+			numParts = uint64(len(meta.Partition.Definitions)) - spec.Num
 		case ast.AlterTableAddPartitions:
-			resetNum := meta.Partition.Num
-			defer func() { meta.Partition.Num = resetNum }()
 			if len(spec.PartDefinitions) > 0 {
-				meta.Partition.Num = uint64(len(meta.Partition.Definitions)) + uint64(len(spec.PartDefinitions))
+				numParts = uint64(len(meta.Partition.Definitions)) + uint64(len(spec.PartDefinitions))
 			} else {
-				meta.Partition.Num = uint64(len(meta.Partition.Definitions)) + spec.Num
+				numParts = uint64(len(meta.Partition.Definitions)) + spec.Num
 			}
 		}
 	default:
@@ -7180,7 +7180,7 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		Enable:  meta.Partition.Enable,
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta)
+	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta, numParts)
 	if err != nil {
 		return nil, err
 	}
