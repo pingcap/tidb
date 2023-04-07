@@ -36,7 +36,7 @@ require (
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/mock v1.6.0
-	github.com/golang/protobuf v1.5.2
+	github.com/golang/protobuf v1.5.3
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20220901101216-f2edd75033f2
 	github.com/golangci/golangci-lint v1.50.1
@@ -69,9 +69,15 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20220729040631-518f63d66278
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
+<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20221130022225-6c56ac56fe5f
 	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
+=======
+	github.com/pingcap/kvproto v0.0.0-20230407040905-68d0eebd564a
+	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
+	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
+>>>>>>> bd3a036c922 (memory: support cluster_hardware get memory info from cgroup (#42850))
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20221123081521-2fb828910813
 	github.com/pkg/errors v0.9.1
@@ -79,7 +85,12 @@ require (
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.37.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
+<<<<<<< HEAD
 	github.com/shirou/gopsutil/v3 v3.22.9
+=======
+	github.com/sasha-s/go-deadlock v0.2.0
+	github.com/shirou/gopsutil/v3 v3.23.3
+>>>>>>> bd3a036c922 (memory: support cluster_hardware get memory info from cgroup (#42850))
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.6.1
@@ -104,6 +115,7 @@ require (
 	go.opencensus.io v0.23.0
 	go.uber.org/atomic v1.10.0
 	go.uber.org/automaxprocs v1.4.0
+<<<<<<< HEAD
 	go.uber.org/goleak v1.2.0
 	go.uber.org/multierr v1.8.0
 	go.uber.org/zap v1.23.0
@@ -118,6 +130,22 @@ require (
 	golang.org/x/tools v0.2.0
 	google.golang.org/api v0.74.0
 	google.golang.org/grpc v1.45.0
+=======
+	go.uber.org/goleak v1.2.1
+	go.uber.org/multierr v1.11.0
+	go.uber.org/zap v1.24.0
+	golang.org/x/exp v0.0.0-20221023144134-a1e5550cf13e
+	golang.org/x/net v0.9.0
+	golang.org/x/oauth2 v0.6.0
+	golang.org/x/sync v0.1.0
+	golang.org/x/sys v0.7.0
+	golang.org/x/term v0.7.0
+	golang.org/x/text v0.9.0
+	golang.org/x/time v0.3.0
+	golang.org/x/tools v0.7.0
+	google.golang.org/api v0.114.0
+	google.golang.org/grpc v1.54.0
+>>>>>>> bd3a036c922 (memory: support cluster_hardware get memory info from cgroup (#42850))
 	gopkg.in/yaml.v2 v2.4.0
 	honnef.co/go/tools v0.3.3
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
@@ -125,9 +153,17 @@ require (
 )
 
 require (
+<<<<<<< HEAD
 	cloud.google.com/go v0.100.2 // indirect
 	cloud.google.com/go/compute v1.5.0 // indirect
 	cloud.google.com/go/iam v0.1.1 // indirect
+=======
+	cloud.google.com/go v0.110.0 // indirect
+	cloud.google.com/go/compute v1.19.0 // indirect
+	cloud.google.com/go/compute/metadata v0.2.3 // indirect
+	cloud.google.com/go/iam v0.13.0 // indirect
+	cloud.google.com/go/pubsub v1.30.0 // indirect
+>>>>>>> bd3a036c922 (memory: support cluster_hardware get memory info from cgroup (#42850))
 	github.com/Azure/azure-sdk-for-go/sdk/internal v0.8.1 // indirect
 	github.com/DataDog/zstd v1.4.5 // indirect
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2 // indirect
@@ -163,7 +199,14 @@ require (
 	github.com/golang/glog v1.0.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
+<<<<<<< HEAD
 	github.com/googleapis/gax-go/v2 v2.2.0 // indirect
+=======
+	github.com/google/licensecheck v0.3.1 // indirect
+	github.com/google/renameio/v2 v2.0.0 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.2.3 // indirect
+	github.com/googleapis/gax-go/v2 v2.7.1 // indirect
+>>>>>>> bd3a036c922 (memory: support cluster_hardware get memory info from cgroup (#42850))
 	github.com/gorilla/handlers v1.5.1 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect
@@ -189,7 +232,7 @@ require (
 	github.com/lestrrat-go/httprc v1.0.4 // indirect
 	github.com/lestrrat-go/iter v1.0.2 // indirect
 	github.com/lestrrat-go/option v1.0.0 // indirect
-	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
+	github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.16 // indirect
 	github.com/mattn/go-runewidth v0.0.14 // indirect
@@ -206,13 +249,23 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
 	github.com/pkg/browser v0.0.0-20180916011732-0a3d74bf9ce4 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+<<<<<<< HEAD
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/prometheus/procfs v0.8.0 // indirect
+=======
+	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
+	github.com/prometheus/procfs v0.9.0 // indirect
+>>>>>>> bd3a036c922 (memory: support cluster_hardware get memory info from cgroup (#42850))
 	github.com/prometheus/tsdb v0.8.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/rivo/uniseg v0.4.2 // indirect
 	github.com/rogpeppe/go-internal v1.6.1 // indirect
+<<<<<<< HEAD
+=======
+	github.com/shoenig/go-m1cpu v0.1.5 // indirect
+	github.com/shopspring/decimal v1.2.0 // indirect
+>>>>>>> bd3a036c922 (memory: support cluster_hardware get memory info from cgroup (#42850))
 	github.com/shurcooL/httpfs v0.0.0-20190707220628-8d4bc4ba7749 // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
@@ -243,9 +296,15 @@ require (
 	golang.org/x/mod v0.7.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220411194840-2f41105eb62f // indirect
 	google.golang.org/appengine v1.6.7 // indirect
+<<<<<<< HEAD
 	google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
+=======
+	google.golang.org/genproto v0.0.0-20230403163135-c38d8f061ccd // indirect
+	google.golang.org/protobuf v1.30.0 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
+>>>>>>> bd3a036c922 (memory: support cluster_hardware get memory info from cgroup (#42850))
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	sigs.k8s.io/yaml v1.2.0 // indirect
 )
