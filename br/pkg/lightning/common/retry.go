@@ -102,8 +102,7 @@ func isSingleRetryableError(err error) bool {
 		if nerr.Timeout() {
 			return true
 		}
-		switch cause := nerr.(type) {
-		case *net.OpError:
+		if cause, ok := nerr.(*net.OpError); ok {
 			syscallErr, ok := cause.Unwrap().(*os.SyscallError)
 			if ok {
 				return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET

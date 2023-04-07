@@ -103,7 +103,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 }
 
 // NewTiDBManager creates a new TiDB manager.
-func NewTiDBManager(ctx context.Context, dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
+func NewTiDBManager(ctx context.Context, dsn config.DBStore, _ *common.TLS) (*TiDBManager, error) {
 	db, err := DBFromConfig(ctx, dsn)
 	if err != nil {
 		return nil, errors.Trace(err)

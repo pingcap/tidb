@@ -1155,7 +1155,7 @@ func (do *Domain) Init(
 		return err
 	}
 
-	if err = do.initDistTaskLoop(ctx); err != nil {
+	if err = do.initDistTaskLoop(ctx, sysCtxPool); err != nil {
 		return err
 	}
 	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
@@ -1345,47 +1345,30 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	return nil
 }
 
-func (do *Domain) initDistTaskLoop(ctx context.Context) error {
+func (do *Domain) initDistTaskLoop(ctx context.Context, sePool *pools.ResourcePool) error {
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil)
 		}
 	})
-	se1, err := do.sysExecutorFactory(do)
+
+	taskManager := storage.NewTaskManager(ctx, sePool)
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
 	if err != nil {
 		return err
 	}
 
-	se2, err := do.sysExecutorFactory(do)
-	if err != nil {
-		se1.Close()
-		return err
-	}
-
-	gm := storage.NewGlobalTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se1.(sessionctx.Context))
-	sm := storage.NewSubTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se2.(sessionctx.Context))
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), gm, sm)
-	if err != nil {
-		se1.Close()
-		se2.Close()
-		return err
-	}
-
-	storage.SetGlobalTaskManager(gm)
-	storage.SetSubTaskManager(sm)
+	storage.SetTaskManager(taskManager)
 	do.wg.Run(func() {
 		defer func() {
-			storage.SetGlobalTaskManager(nil)
-			storage.SetSubTaskManager(nil)
-			se1.Close()
-			se2.Close()
+			storage.SetTaskManager(nil)
 		}()
-		do.distTaskFrameworkLoop(ctx, gm, sm, schedulerManager)
+		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, globalTaskManager *storage.GlobalTaskManager, subtaskManager *storage.SubTaskManager, schedulerManager *scheduler.Manager) {
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
 	defer func() {
@@ -1400,7 +1383,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, globalTaskManager *
 			return
 		}
 
-		newDispatch, err := dispatcher.NewDispatcher(ctx, globalTaskManager, subtaskManager)
+		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return

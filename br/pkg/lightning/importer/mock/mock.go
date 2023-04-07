@@ -214,7 +214,7 @@ func (t *TargetInfo) SetTableInfo(schemaName string, tableName string, tblInfo *
 
 // FetchRemoteTableModels fetches the table structures from the remote target.
 // It implements the TargetInfoGetter interface.
-func (t *TargetInfo) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+func (t *TargetInfo) FetchRemoteTableModels(_ context.Context, schemaName string) ([]*model.TableInfo, error) {
 	resultInfos := []*model.TableInfo{}
 	tblMap, ok := t.dbTblInfoMap[schemaName]
 	if !ok {
@@ -229,7 +229,7 @@ func (t *TargetInfo) FetchRemoteTableModels(ctx context.Context, schemaName stri
 
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
 // It implements the TargetInfoGetter interface.
-func (t *TargetInfo) GetTargetSysVariablesForImport(ctx context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
+func (t *TargetInfo) GetTargetSysVariablesForImport(_ context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
 	result := make(map[string]string)
 	for k, v := range t.sysVarMap {
 		result[k] = v
@@ -239,7 +239,7 @@ func (t *TargetInfo) GetTargetSysVariablesForImport(ctx context.Context, _ ...ro
 
 // GetReplicationConfig gets the replication config on the target.
 // It implements the TargetInfoGetter interface.
-func (t *TargetInfo) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
+func (t *TargetInfo) GetReplicationConfig(_ context.Context) (*pdtypes.ReplicationConfig, error) {
 	replCount := t.MaxReplicasPerRegion
 	if replCount <= 0 {
 		replCount = 1
@@ -251,7 +251,7 @@ func (t *TargetInfo) GetReplicationConfig(ctx context.Context) (*pdtypes.Replica
 
 // GetStorageInfo gets the storage information on the target.
 // It implements the TargetInfoGetter interface.
-func (t *TargetInfo) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error) {
+func (t *TargetInfo) GetStorageInfo(_ context.Context) (*pdtypes.StoresInfo, error) {
 	resultStoreInfos := make([]*pdtypes.StoreInfo, len(t.StorageInfos))
 	for i, storeInfo := range t.StorageInfos {
 		resultStoreInfos[i] = &pdtypes.StoreInfo{
@@ -277,7 +277,7 @@ func (t *TargetInfo) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, e
 
 // GetEmptyRegionsInfo gets the region information of all the empty regions on the target.
 // It implements the TargetInfoGetter interface.
-func (t *TargetInfo) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
+func (t *TargetInfo) GetEmptyRegionsInfo(_ context.Context) (*pdtypes.RegionsInfo, error) {
 	totalEmptyRegions := []pdtypes.RegionInfo{}
 	totalEmptyRegionCount := 0
 	for storeID, storeEmptyRegionCount := range t.EmptyRegionCountMap {
@@ -304,7 +304,7 @@ func (t *TargetInfo) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsI
 
 // IsTableEmpty checks whether the specified table on the target DB contains data or not.
 // It implements the TargetInfoGetter interface.
-func (t *TargetInfo) IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error) {
+func (t *TargetInfo) IsTableEmpty(_ context.Context, schemaName string, tableName string) (*bool, error) {
 	var result bool
 	tblInfoMap, ok := t.dbTblInfoMap[schemaName]
 	if !ok {
@@ -316,12 +316,12 @@ func (t *TargetInfo) IsTableEmpty(ctx context.Context, schemaName string, tableN
 		result = true
 		return &result, nil
 	}
-	result = (tblInfo.RowCount == 0)
+	result = tblInfo.RowCount == 0
 	return &result, nil
 }
 
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.
 // It implements the TargetInfoGetter interface.
-func (t *TargetInfo) CheckVersionRequirements(ctx context.Context) error {
+func (*TargetInfo) CheckVersionRequirements(_ context.Context) error {
 	return nil
 }
