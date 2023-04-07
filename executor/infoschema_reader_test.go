@@ -869,20 +869,16 @@ func TestNullColumns(t *testing.T) {
 
 // Code below are helper utilities for the test cases.
 
-type getTiFlashSystemTableClientHandler struct {
-	fn func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error)
-}
-
 type getTiFlashSystemTableRequestMocker struct {
 	tikv.Client
 	t        *testing.T
-	handlers map[string]*getTiFlashSystemTableClientHandler
+	handlers map[string]func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error)
 }
 
 func (client *getTiFlashSystemTableRequestMocker) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if req.Type == tikvrpc.CmdGetTiFlashSystemTable {
 		if handler, ok := client.handlers[req.Req.(*kvrpcpb.TiFlashSystemTableRequest).Sql]; ok {
-			resp, err := handler.fn(req.GetTiFlashSystemTable())
+			resp, err := handler(req.GetTiFlashSystemTable())
 			if err != nil {
 				return nil, err
 			}
@@ -894,17 +890,8 @@ func (client *getTiFlashSystemTableRequestMocker) SendRequest(ctx context.Contex
 	return client.Client.SendRequest(ctx, addr, req, timeout)
 }
 
-func newGetTiFlashSystemTableRequestMocker(t *testing.T) *getTiFlashSystemTableRequestMocker {
-	return &getTiFlashSystemTableRequestMocker{
-		handlers: make(map[string]*getTiFlashSystemTableClientHandler, 0),
-		t:        t,
-	}
-}
-
 func (client *getTiFlashSystemTableRequestMocker) MockQuery(query string, fn func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error)) *getTiFlashSystemTableRequestMocker {
-	client.handlers[query] = &getTiFlashSystemTableClientHandler{
-		fn: fn,
-	}
+	client.handlers[query] = fn
 	return client
 }
 
@@ -913,4 +900,11 @@ func (client *getTiFlashSystemTableRequestMocker) AsOpt() mockstore.MockTiKVStor
 		client.Client = kvClient
 		return client
 	})
+}
+
+func newGetTiFlashSystemTableRequestMocker(t *testing.T) *getTiFlashSystemTableRequestMocker {
+	return &getTiFlashSystemTableRequestMocker{
+		handlers: make(map[string]func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error), 0),
+		t:        t,
+	}
 }

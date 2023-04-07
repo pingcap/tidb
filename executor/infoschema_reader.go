@@ -3087,18 +3087,16 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	}
 	// send request to tiflash, timeout is 1s
 	instanceID := e.instanceIds[e.instanceIdx]
-	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, 1000000000)
+	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, time.Second)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if resp.Resp == nil {
-		return nil, errors.New("Get tiflash system tables failed: empty response")
-	}
-	tiflashResp := resp.Resp.(*kvrpcpb.TiFlashSystemTableResponse)
 	var result tiFlashSQLExecuteResponse
-	err = json.Unmarshal(tiflashResp.Data, &result)
-	if err != nil {
-		return nil, errors.Wrapf(err, "Failed to decode JSON from TiFlash")
+	if tiflashResp, ok := resp.Resp.(*kvrpcpb.TiFlashSystemTableResponse); ok {
+		err = json.Unmarshal(tiflashResp.Data, &result)
+		if err != nil {
+			return nil, errors.Wrapf(err, "Failed to decode JSON from TiFlash")
+		}
 	}
 
 	// Map result columns back to our columns. It is possible that some columns cannot be
