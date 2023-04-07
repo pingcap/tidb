@@ -28,6 +28,7 @@ go_test(
     ],
     embed = [":label"],
     flaky = True,
+    shard_count = 8,
     deps = [
         "//parser/ast",
         "//testkit/testsetup",

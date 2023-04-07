@@ -406,7 +406,7 @@ func (j *regionJob) ingest(
 	return nil
 }
 
-func (j *regionJob) checkWriteStall(
+func (*regionJob) checkWriteStall(
 	ctx context.Context,
 	region *split.RegionInfo,
 	clientFactory ImportClientFactory,

@@ -1010,7 +1010,7 @@ func TestMultiIngest(t *testing.T) {
 		pdCtl := &pdutil.PdController{}
 		pdCtl.SetPDClient(&mockPdClient{stores: stores})
 
-		local := &local{
+		local := &Local{
 			pdCtl: pdCtl,
 			importClientFactory: &mockImportClientFactory{
 				stores: allStores,
@@ -1031,7 +1031,7 @@ func TestMultiIngest(t *testing.T) {
 }
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
-	bak := local{}
+	bak := Local{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
@@ -1079,7 +1079,7 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 }
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
-	l := local{}
+	l := Local{}
 	require.True(t, l.isRetryableImportTiKVError(io.EOF))
 	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }
@@ -1101,7 +1101,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		}}
 
 	createTimeStore12 := 0
-	local := &local{
+	local := &Local{
 		importClientFactory: &mockImportClientFactory{
 			stores: []*metapb.Store{
 				{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
@@ -1122,12 +1122,14 @@ func TestCheckPeersBusy(t *testing.T) {
 				return importCli
 			},
 		},
-		logger:                log.L(),
-		writeLimiter:          noopStoreWriteLimiter{},
-		bufferPool:            membuf.NewPool(),
-		supportMultiIngest:    true,
-		shouldCheckWriteStall: true,
-		tikvCodec:             keyspace.CodecV1,
+		logger:             log.L(),
+		writeLimiter:       noopStoreWriteLimiter{},
+		bufferPool:         membuf.NewPool(),
+		supportMultiIngest: true,
+		BackendConfig: BackendConfig{
+			ShouldCheckWriteStall: true,
+		},
+		tikvCodec: keyspace.CodecV1,
 	}
 
 	db, tmpPath := makePebbleDB(t, nil)
@@ -1277,7 +1279,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		getSizePropertiesFn = backup
 	})
 
-	local := &local{
+	local := &Local{
 		splitCli: initTestSplitClient(
 			[][]byte{{1}, {11}},      // we have one big region
 			panicSplitRegionClient{}, // make sure no further split region

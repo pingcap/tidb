@@ -88,10 +88,11 @@ type MemBuf struct {
 	kv.MemBuffer
 	buf           *BytesBuf
 	availableBufs []*BytesBuf
-	kvPairs       *KvPairs
+	kvPairs       *Pairs
 	size          int
 }
 
+// Recycle recycles the byte buffer.
 func (mb *MemBuf) Recycle(buf *BytesBuf) {
 	buf.idx = 0
 	buf.cap = len(buf.buf)
@@ -106,6 +107,7 @@ func (mb *MemBuf) Recycle(buf *BytesBuf) {
 	mb.Unlock()
 }
 
+// AllocateBuf allocates a byte buffer.
 func (mb *MemBuf) AllocateBuf(size int) {
 	mb.Lock()
 	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
@@ -130,6 +132,7 @@ func (mb *MemBuf) AllocateBuf(size int) {
 	mb.Unlock()
 }
 
+// Set sets the key-value pair.
 func (mb *MemBuf) Set(k kv.Key, v []byte) error {
 	kvPairs := mb.kvPairs
 	size := len(k) + len(v)
@@ -147,25 +150,28 @@ func (mb *MemBuf) Set(k kv.Key, v []byte) error {
 	return nil
 }
 
-func (mb *MemBuf) SetWithFlags(k kv.Key, v []byte, ops ...kv.FlagsOp) error {
+// SetWithFlags implements the kv.MemBuffer interface.
+func (mb *MemBuf) SetWithFlags(k kv.Key, v []byte, _ ...kv.FlagsOp) error {
 	return mb.Set(k, v)
 }
 
-func (mb *MemBuf) Delete(k kv.Key) error {
+// Delete implements the kv.MemBuffer interface.
+func (*MemBuf) Delete(_ kv.Key) error {
 	return errors.New("unsupported operation")
 }
 
 // Release publish all modifications in the latest staging buffer to upper level.
-func (mb *MemBuf) Release(h kv.StagingHandle) {
+func (*MemBuf) Release(_ kv.StagingHandle) {
 }
 
-func (mb *MemBuf) Staging() kv.StagingHandle {
+// Staging creates a new staging buffer.
+func (*MemBuf) Staging() kv.StagingHandle {
 	return 0
 }
 
 // Cleanup the resources referenced by the StagingHandle.
 // If the changes are not published by `Release`, they will be discarded.
-func (mb *MemBuf) Cleanup(h kv.StagingHandle) {}
+func (*MemBuf) Cleanup(_ kv.StagingHandle) {}
 
 // Size returns sum of keys and values length.
 func (mb *MemBuf) Size() int {
@@ -181,18 +187,22 @@ type kvUnionStore struct {
 	MemBuf
 }
 
+// GetMemBuffer implements the kv.UnionStore interface.
 func (s *kvUnionStore) GetMemBuffer() kv.MemBuffer {
 	return &s.MemBuf
 }
 
-func (s *kvUnionStore) GetIndexName(tableID, indexID int64) string {
+// GetIndexName implements the kv.UnionStore interface.
+func (*kvUnionStore) GetIndexName(_, _ int64) string {
 	panic("Unsupported Operation")
 }
 
-func (s *kvUnionStore) CacheIndexName(tableID, indexID int64, name string) {
+// CacheIndexName implements the kv.UnionStore interface.
+func (*kvUnionStore) CacheIndexName(_, _ int64, _ string) {
 }
 
-func (s *kvUnionStore) CacheTableInfo(id int64, info *model.TableInfo) {
+// CacheTableInfo implements the kv.UnionStore interface.
+func (*kvUnionStore) CacheTableInfo(_ int64, _ *model.TableInfo) {
 }
 
 // transaction is a trimmed down Transaction type which only supports adding a
@@ -202,29 +212,32 @@ type transaction struct {
 	kvUnionStore
 }
 
+// GetMemBuffer implements the kv.Transaction interface.
 func (t *transaction) GetMemBuffer() kv.MemBuffer {
 	return &t.kvUnionStore.MemBuf
 }
 
-func (t *transaction) Discard() {
+// Discard implements the kv.Transaction interface.
+func (*transaction) Discard() {
 	// do nothing
 }
 
-func (t *transaction) Flush() (int, error) {
+// Flush implements the kv.Transaction interface.
+func (*transaction) Flush() (int, error) {
 	// do nothing
 	return 0, nil
 }
 
 // Reset implements the kv.MemBuffer interface
-func (t *transaction) Reset() {}
+func (*transaction) Reset() {}
 
 // Get implements the kv.Retriever interface
-func (t *transaction) Get(ctx context.Context, key kv.Key) ([]byte, error) {
+func (*transaction) Get(_ context.Context, _ kv.Key) ([]byte, error) {
 	return nil, kv.ErrNotExist
 }
 
 // Iter implements the kv.Retriever interface
-func (t *transaction) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+func (*transaction) Iter(_ kv.Key, _ kv.Key) (kv.Iterator, error) {
 	return &invalidIterator{}, nil
 }
 
@@ -234,16 +247,16 @@ func (t *transaction) Set(k kv.Key, v []byte) error {
 }
 
 // GetTableInfo implements the kv.Transaction interface.
-func (t *transaction) GetTableInfo(id int64) *model.TableInfo {
+func (*transaction) GetTableInfo(_ int64) *model.TableInfo {
 	return nil
 }
 
 // CacheTableInfo implements the kv.Transaction interface.
-func (t *transaction) CacheTableInfo(id int64, info *model.TableInfo) {
+func (*transaction) CacheTableInfo(_ int64, _ *model.TableInfo) {
 }
 
 // SetAssertion implements the kv.Transaction interface.
-func (t *transaction) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
+func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
 	return nil
 }
 
@@ -263,6 +276,7 @@ func NewSessionCtx(options *encode.SessionOptions, logger log.Logger) sessionctx
 	return NewSession(options, logger)
 }
 
+// NewSession creates a new trimmed down Session matching the options.
 func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	s := &Session{
 		values: make(map[fmt.Stringer]interface{}, 1),
@@ -304,24 +318,25 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
-	s.txn.kvPairs = &KvPairs{}
+	s.txn.kvPairs = &Pairs{}
 
 	return s
 }
 
-func (se *Session) TakeKvPairs() *KvPairs {
+// TakeKvPairs returns the current Pairs and resets the buffer.
+func (se *Session) TakeKvPairs() *Pairs {
 	memBuf := &se.txn.MemBuf
 	pairs := memBuf.kvPairs
 	if pairs.BytesBuf != nil {
 		pairs.MemBuf = memBuf
 	}
-	memBuf.kvPairs = &KvPairs{Pairs: make([]common.KvPair, 0, len(pairs.Pairs))}
+	memBuf.kvPairs = &Pairs{Pairs: make([]common.KvPair, 0, len(pairs.Pairs))}
 	memBuf.size = 0
 	return pairs
 }
 
 // Txn implements the sessionctx.Context interface
-func (se *Session) Txn(active bool) (kv.Transaction, error) {
+func (se *Session) Txn(_ bool) (kv.Transaction, error) {
 	return &se.txn, nil
 }
 
@@ -341,28 +356,29 @@ func (se *Session) Value(key fmt.Stringer) interface{} {
 }
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface
-func (se *Session) StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle) {}
+func (*Session) StmtAddDirtyTableOP(_ int, _ int64, _ kv.Handle) {}
 
 // GetInfoSchema implements the sessionctx.Context interface.
-func (se *Session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (*Session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return nil
 }
 
 // GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
 // Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
-func (se *Session) GetBuiltinFunctionUsage() map[string]uint32 {
+func (*Session) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
 
 // BuiltinFunctionUsageInc implements the sessionctx.Context interface.
-func (se *Session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+func (*Session) BuiltinFunctionUsageInc(_ string) {
 }
 
 // GetStmtStats implements the sessionctx.Context interface.
-func (se *Session) GetStmtStats() *stmtstats.StatementStats {
+func (*Session) GetStmtStats() *stmtstats.StatementStats {
 	return nil
 }
 
+// Close implements the sessionctx.Context interface
 func (se *Session) Close() {
 	memBuf := &se.txn.MemBuf
 	if memBuf.buf != nil {
