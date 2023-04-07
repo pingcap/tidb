@@ -768,13 +768,13 @@ func TestSetVar(t *testing.T) {
 
 	// test variable 'tidb_enable_non_prepared_plan_cache'
 	// global scope
-	tk.MustQuery("select @@global.tidb_enable_non_prepared_plan_cache").Check(testkit.Rows("0")) // default value
+	tk.MustQuery("select @@global.tidb_enable_non_prepared_plan_cache").Check(testkit.Rows("1")) // default value
 	tk.MustExec("set global tidb_enable_non_prepared_plan_cache = 1")
 	tk.MustQuery("select @@global.tidb_enable_non_prepared_plan_cache").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_non_prepared_plan_cache = 0")
 	tk.MustQuery("select @@global.tidb_enable_non_prepared_plan_cache").Check(testkit.Rows("0"))
 	// session scope
-	tk.MustQuery("select @@session.tidb_enable_non_prepared_plan_cache").Check(testkit.Rows("0")) // default value
+	tk.MustQuery("select @@session.tidb_enable_non_prepared_plan_cache").Check(testkit.Rows("1")) // default value
 	tk.MustExec("set session tidb_enable_non_prepared_plan_cache = 1")
 	tk.MustQuery("select @@session.tidb_enable_non_prepared_plan_cache").Check(testkit.Rows("1"))
 	tk.MustExec("set session tidb_enable_non_prepared_plan_cache = 0")
