@@ -1154,29 +1154,12 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	if lp.HasDefault() {
 		// Add the default partition since there may be a gap
 		// between the conditions range and the LIST COLUMNS values
-		addDefault := true
-		if len(lp.tblInfo.Partition.Columns) == 1 {
-			rangeSteps := 0
-			for ; rangeSteps <= len(locations); rangeSteps++ {
-				if bytes.Compare(lowKey, highKey) < 0 {
-					// TODO: Does this work? Also for int?
-					lowKey = kv.Key(lowKey).PrefixNext()
-				} else {
-					break
-				}
-			}
-			if rangeSteps == len(locations) {
-				addDefault = false
-			}
-		}
-		if addDefault {
-			locations = append(locations, ListPartitionLocation{
-				ListPartitionGroup{
-					PartIdx:   defaultPartIdx,
-					GroupIdxs: []int{-1}, // Special group!
-				},
-			})
-		}
+		locations = append(locations, ListPartitionLocation{
+			ListPartitionGroup{
+				PartIdx:   defaultPartIdx,
+				GroupIdxs: []int{-1}, // Special group!
+			},
+		})
 	}
 	return locations, nil
 }
