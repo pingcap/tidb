@@ -15,6 +15,7 @@
 package rowcodec_test
 
 import (
+	"hash/crc32"
 	"math"
 	"strings"
 	"testing"
@@ -863,6 +864,150 @@ func Test65535Bug(t *testing.T) {
 
 	rs := result[1]
 	require.Equal(t, text65535, rs.GetString())
+}
+
+func TestChecksum(t *testing.T) {
+	sc := new(stmtctx.StatementContext)
+	enc := rowcodec.Encoder{WithChecksum: true}
+
+	d0 := types.NewDatum(nil)
+	d1 := types.NewDatum("foo")
+	t0 := types.NewFieldType(mysql.TypeNull)
+	t1 := types.NewFieldType(mysql.TypeString)
+
+	for _, tt := range []struct {
+		name     string
+		ids      []int64
+		datums   []types.Datum
+		types    []*types.FieldType
+		checksum uint32
+	}{
+		{
+			"Empty",
+			[]int64{},
+			[]types.Datum{},
+			[]*types.FieldType{},
+			0,
+		},
+		{
+			"NullOnly",
+			[]int64{1},
+			[]types.Datum{d0},
+			[]*types.FieldType{t0},
+			0,
+		},
+		{
+			"SingleDatum",
+			[]int64{1},
+			[]types.Datum{d1},
+			[]*types.FieldType{t1},
+			crc32.ChecksumIEEE(d1.GetBytes()),
+		},
+		{
+			"MultiDatums",
+			[]int64{1, 2},
+			[]types.Datum{d1, d1},
+			[]*types.FieldType{t1, t1},
+			crc32.ChecksumIEEE(append(d1.GetBytes(), d1.GetBytes()...)),
+		},
+		{
+			"DataAndNull1",
+			[]int64{1, 2},
+			[]types.Datum{d1, d0},
+			[]*types.FieldType{t1, t0},
+			crc32.ChecksumIEEE(d1.GetBytes()),
+		},
+		{
+			"DataAndNull2",
+			[]int64{1, 2},
+			[]types.Datum{d0, d1},
+			[]*types.FieldType{t0, t1},
+			crc32.ChecksumIEEE(d1.GetBytes()),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, enable := range []bool{false, true} {
+				enc.WithChecksum = enable
+				checksum, err := enc.Checksum(sc, tt.ids, tt.datums)
+				require.NoError(t, err)
+				require.Equal(t, tt.checksum, checksum)
+			}
+
+			// encode
+			raw, err := enc.Encode(sc, tt.ids, tt.datums, nil)
+			require.NoError(t, err)
+			checksum, ok := enc.GetChecksum()
+			require.True(t, ok)
+			require.Equal(t, tt.checksum, checksum)
+
+			// decode
+			cols := make([]rowcodec.ColInfo, len(tt.ids))
+			for i, id := range tt.ids {
+				cols[i] = rowcodec.ColInfo{ID: id, Ft: tt.types[i]}
+			}
+			dec := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
+			m, err := dec.DecodeToDatumMap(raw, nil)
+			require.NoError(t, err)
+			for i, id := range tt.ids {
+				require.Equal(t, m[id], tt.datums[i])
+			}
+			checksum, ok = dec.GetChecksum()
+			require.True(t, ok)
+			require.Equal(t, tt.checksum, checksum)
+		})
+	}
+}
+
+func TestExtraChecksum(t *testing.T) {
+
+	sc := new(stmtctx.StatementContext)
+	enc := rowcodec.Encoder{}
+
+	d0 := types.NewDatum(nil)
+	d1 := types.NewDatum("foo")
+	t0 := types.NewFieldType(mysql.TypeNull)
+	t1 := types.NewFieldType(mysql.TypeString)
+	extraChecksum := uint32(42)
+
+	t.Run("ChecksumDisabled", func(t *testing.T) {
+		raw1, err := enc.EncodeWithExtraChecksum(sc, []int64{1, 2}, []types.Datum{d0, d1}, extraChecksum, nil)
+		require.NoError(t, err)
+		_, ok := enc.GetChecksum()
+		require.False(t, ok)
+		_, ok = enc.GetExtraChecksum()
+		require.False(t, ok)
+
+		raw2, err := enc.Encode(sc, []int64{1, 2}, []types.Datum{d0, d1}, nil)
+		require.NoError(t, err)
+		require.Equal(t, raw1, raw2)
+	})
+
+	enc.WithChecksum = true
+
+	t.Run("EncodeDecode", func(t *testing.T) {
+		// encode
+		raw, err := enc.EncodeWithExtraChecksum(sc, []int64{1, 2}, []types.Datum{d0, d1}, extraChecksum, nil)
+		require.NoError(t, err)
+		h, ok := enc.GetChecksum()
+		require.True(t, ok)
+		require.Equal(t, crc32.ChecksumIEEE(d1.GetBytes()), h)
+		h, ok = enc.GetExtraChecksum()
+		require.True(t, ok)
+		require.Equal(t, extraChecksum, h)
+
+		// decode
+		dec := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{{ID: 1, Ft: t0}, {ID: 2, Ft: t1}}, sc.TimeZone)
+		m, err := dec.DecodeToDatumMap(raw, nil)
+		require.NoError(t, err)
+		require.Equal(t, m[1], d0)
+		require.Equal(t, m[2], d1)
+		h, ok = dec.GetChecksum()
+		require.True(t, ok)
+		require.Equal(t, crc32.ChecksumIEEE(d1.GetBytes()), h)
+		h, ok = dec.GetExtraChecksum()
+		require.True(t, ok)
+		require.Equal(t, extraChecksum, h)
+	})
 }
 
 var (
