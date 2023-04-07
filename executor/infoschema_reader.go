@@ -3097,6 +3097,8 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 		if err != nil {
 			return nil, errors.Wrapf(err, "Failed to decode JSON from TiFlash")
 		}
+	} else {
+		return nil, errors.Errorf("Unexpected response type: %T", resp.Resp)
 	}
 
 	// Map result columns back to our columns. It is possible that some columns cannot be
