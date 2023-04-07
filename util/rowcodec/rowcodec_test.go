@@ -1006,6 +1006,21 @@ func TestExtraChecksum(t *testing.T) {
 		h, ok = dec.GetExtraChecksum()
 		require.True(t, ok)
 		require.Equal(t, extraChecksum, h)
+
+		// decode data without checksum by same decoder
+		enc.WithChecksum = false
+		raw, err = enc.Encode(sc, []int64{1, 2}, []types.Datum{d0, d1}, nil)
+		require.NoError(t, err)
+		m, err = dec.DecodeToDatumMap(raw, nil)
+		require.NoError(t, err)
+		require.Equal(t, m[1], d0)
+		require.Equal(t, m[2], d1)
+		h, ok = dec.GetChecksum()
+		require.False(t, ok)
+		require.Equal(t, uint32(0), h)
+		h, ok = dec.GetExtraChecksum()
+		require.False(t, ok)
+		require.Equal(t, uint32(0), h)
 	})
 }
 

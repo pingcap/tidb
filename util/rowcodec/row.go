@@ -164,7 +164,13 @@ func (r *row) fromBytes(rowData []byte) error {
 		cursor += 4
 		if r.hasExtraChecksum() {
 			r.checksum2 = binary.LittleEndian.Uint32(rowData[cursor:])
+		} else {
+			r.checksum2 = 0
 		}
+	} else {
+		r.checksumHeader = 0
+		r.checksum1 = 0
+		r.checksum2 = 0
 	}
 	return nil
 }
