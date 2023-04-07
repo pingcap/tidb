@@ -74,6 +74,11 @@ func TestParameterize(t *testing.T) {
 			`SELECT a + 'a b c'+"x" FROM t`, // keep the original format for select fields
 			[]interface{}{},
 		},
+		{
+			`insert into t (a, B, c) values (1, 2, 3), (4, 5, 6)`,
+			`INSERT INTO t (a,B,c) VALUES (?,?,?),(?,?,?)`,
+			[]interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6)},
+		},
 		// TODO: more test cases
 	}
 
