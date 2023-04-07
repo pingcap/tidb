@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
-	"go.uber.org/goleak"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 )
 
 func init() {
@@ -29,10 +29,5 @@ func init() {
 }
 
 func TestMain(m *testing.M) {
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-	}
-	goleak.VerifyTestMain(m, opts...)
+	realtikvtest.RunTestMain(m)
 }

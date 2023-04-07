@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -148,6 +149,7 @@ type LoadDataController struct {
 	// todo: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
+	// - ref columns in set clause is allowed in mysql, but not in tidb
 	InsertColumns []*table.Column
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
@@ -801,8 +803,30 @@ func (e *LoadDataController) GetParser(
 
 // PhysicalImport do physical import.
 func (e *LoadDataController) PhysicalImport(ctx context.Context) (int64, error) {
-	// todo: implement it
-	return 0, nil
+	// todo: implement job
+	importer, err := newTableImporter(ctx, e)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = importer.Close()
+	}()
+	return 0, importer.importTable(ctx)
+}
+
+func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
+	tbl := filter.Table{
+		Schema: e.DBName,
+		Name:   e.Table.Meta().Name.O,
+	}
+	res := []mydump.FileInfo{}
+	for _, f := range e.dataFiles {
+		res = append(res, mydump.FileInfo{
+			TableName: tbl,
+			FileMeta:  *f,
+		})
+	}
+	return res
 }
 
 // GetMsgFromBRError get msg from BR error.
