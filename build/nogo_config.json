@@ -351,7 +351,6 @@
     },
      "only_files": {
        "br/": "only for br code",
-       "ddl/": "only for ddl code",
        "ttl/": "only for ttl code",
        "planner/": "only for planner code",
        "parser/": "only for parser code",
