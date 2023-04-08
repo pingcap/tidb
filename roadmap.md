@@ -41,6 +41,16 @@ This roadmap brings you what's coming in the future, so you can see the new feat
           </li>
           <br />
           <li>
+            <b>Disaggregate TiFlash compute and storage </b
+            ><br /><i>Realize elastic HTAP resource utilization</i>
+          </li>
+          <br />
+          <li>
+            <b>TiFlash S3 based storage engine</b>
+            <br /><i>Provide shared storage at lower cost</i>
+          </li>      
+          <br />
+          <li>
             <b>Fastest online DDL distributed framework</b><br /><i>
               Complete the distributed framework to support the fastest
               online DDL
@@ -57,16 +67,6 @@ This roadmap brings you what's coming in the future, so you can see the new feat
               >Provide reliable and consistent performance for tremendous
               data</i
             >
-          </li>
-          <br />
-          <li>
-            <b>Disaggregate TiFlash compute and storage (auto-scaling) </b
-            ><br /><i>Realize elastic HTAP resource utilization</i>
-          </li>
-          <br />
-          <li>
-            <b>TiFlash S3 based storage engine</b>
-            <br /><i>Provide shared storage at lower cost</i>
           </li>
           <br />
         </ul>
@@ -107,6 +107,11 @@ This roadmap brings you what's coming in the future, so you can see the new feat
           </li>
           <br />
           <li>
+            <b>TiFlash spill to disk</b>
+            <br /><i>Avoid TiFlash OOM</i>
+          </li>  
+          <br />
+          <li>
             <b>TiCDC/PITR recovery objective enhancements</b>
             <br /><i>
               Increase business continuity and minimize the impact of system
@@ -142,11 +147,6 @@ This roadmap brings you what's coming in the future, so you can see the new feat
           <li>
             <b>Improved cluster/node level fault tolerance</b>
             <br /><i>Enhance cluster resilience</i>
-          </li>
-          <br />
-          <li>
-            <b>TiFlash spill to disk</b>
-            <br /><i>Avoid TiFlash OOM</i>
           </li>
           <br />
         </ul>
