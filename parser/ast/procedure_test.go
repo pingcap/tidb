@@ -33,7 +33,6 @@ func TestProcedureVisitorCover(t *testing.T) {
 	}
 	stmts2 := []ast.StmtNode{
 		&ast.ProcedureBlock{},
-		&ast.ProcedureProc{},
 		&ast.ProcedureInfo{ProcedureBody: &ast.ProcedureBlock{}},
 		&ast.DropProcedureStmt{},
 	}

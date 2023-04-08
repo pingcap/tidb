@@ -924,18 +924,18 @@ import (
 	CreateIndexStmt            "CREATE INDEX statement"
 	CreateBindingStmt          "CREATE BINDING  statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
-	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
 	CreateProcedureStmt        "CREATE PROCEDURE statement"
+	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt         "CREATE SEQUENCE statement"
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
 	DropDatabaseStmt           "DROP DATABASE statement"
 	DropIndexStmt              "DROP INDEX statement"
+	DropProcedureStmt          "DROP PROCEDURE statement"
 	DropResourceGroupStmt      "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt         "DROP STATISTICS statement"
 	DropStatsStmt              "DROP STATS statement"
 	DropTableStmt              "DROP TABLE statement"
-	DropProcedureStmt          "DROP PROCEDURE statement"
 	DropSequenceStmt           "DROP SEQUENCE statement"
 	DropUserStmt               "DROP USER"
 	DropRoleStmt               "DROP ROLE"
@@ -1011,26 +1011,26 @@ import (
 	CancelLoadDataStmt         "CANCEL LOAD DATA JOB statement"
 	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
-	ProcedureBlockContent      "The statement block in procedure  expressed with 'Begin ... End'"
-	SimpleWhenCase             "Procedure when then"
-	ProcedureStatementIf       "Procedure if block info"
-	procedurceElseIfs          "Procedure else block info"
-	ProcedureIf                "Procedure if data info"
-	ProcedureStmtUnlabeled     "Loop statement in procedure  which has no label"
-	ProcedureUnlabeledControl  "The realization of loop statement in procedure"
+	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
+	SimpleWhenThen             "Procedure when then"
+	ProcedureIfstmt            "The if statement in procedure, expressed by if ... elseif .. else ... end if"
+	procedurceElseIfs          "The else block in procedure, expressed by elseif or else or nil"
+	ProcedureIf                "The if block in procedure, expressed by expr then statement procedurceElseIfs"
+	ProcedureUnlabelLoopBlock  "The loop block without label in procedure "
+	ProcedureUnlabelLoopStmt   "The loop statement in procedure, expressed by repeat/do while/loop"
 	ProcedureCaseStmt          "Case statement in procedure, expressed by `case ... when.. then ..`"
-	ProcedureSimpleCase        "Procedure case when"
-	ProcedureSearchedCase      "Procedure search when then"
-	ProcedureSelectStmt        "Can use cursor select"
-	ProcedureOpenCur           "Open procedurce cursor"
-	ProcedureCloseCur          "Close procedurce cursor"
-	ProcedureFetchInto         "Procedure fetch into cursor"
-	ProcedureHcond             "Procedure handle error condition"
-	ProcedurceCond             "Procedure handle error code"
-	ProcedureLabeledBlock      "Procedure label block"
-	ProcedureStmtLabeled       "Procedure label loop"
-	ProcedureIterate           "Procedure label iterate"
-	ProcedureLeave             "Procedure label leave"
+	ProcedureSimpleCase        "The simpe case statement in procedure, expressed by `case expr when expr then statement ... end case`"
+	ProcedureSearchedCase      "The searched case statement in procedure, expressed by `case when expr then statement ... end case`"
+	ProcedureCursorSelectStmt  "The select stmt can used in procedure cursor."
+	ProcedureOpenCur           "The open cursor statement in procedure, expressed by `open ...`"
+	ProcedureCloseCur          "The close cursor statement in procedure, expressed by `close ...`"
+	ProcedureFetchInto         "The fetch into statement in procedure, expressed by `fetch ... into ...`"
+	ProcedureHcond             "The handler value statement in procedure, expressed by condition_value"
+	ProcedurceCond             "The handler code statement in procedure, expressed by code error num or `sqlstate ...`"
+	ProcedureLabeledBlock      "The statement block with label in procedure"
+	ProcedurelabeledLoopStmt   "The loop block with label in procedure"
+	ProcedureIterate           "The iterate statement in procedure, expressed by `iterate ...`"
+	ProcedureLeave             "The leave statement in procedure, expressed by `leave ...`"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -1429,22 +1429,22 @@ import (
 	StatsOptionsOpt                        "Stats options"
 	DryRunOptions                          "Dry run options"
 	OptionalShardColumn                    "Optional shard column"
-	SpOptInout                             "Procedure param type"
-	OptSpPdparams                          "Opt procedure param list"
+	SpOptInout                             "Optional procedure param type"
+	OptSpPdparams                          "Optional procedure param list"
 	SpPdparams                             "Procedure params"
 	SpPdparam                              "Procedure param"
-	ProcedureOptDefault                    "Opt procedure default value"
-	ProcedureProcStmts                     "Procedure SQL stmts"
-	ProcedureProcStmt1s                    "Procedure SQL stmts and at least one stmt"
-	ProcedureDecl                          "Procedure variance info"
-	ProcedureDecls                         "Procedure variances info"
-	ProcedureDeclsOpt                      "Opt procedure variances info"
-	ProcedureDeclIdents                    "Procedure variances names"
-	SimpleWhenCaseList                     "Procedure when then list"
-	ElseCaseOpt                            "Opt procedure case else"
+	ProcedureOptDefault                    "Optional procedure variable default value"
+	ProcedureProcStmts                     "Procedure statement list"
+	ProcedureProcStmt1s                    "One more procedure statement"
+	ProcedureDecl                          "Procedure variable statement"
+	ProcedureDecls                         "Procedure variable statements"
+	ProcedureDeclsOpt                      "Optional procedure variable statements"
+	ProcedureDeclIdents                    "Procedure variable name identifiers"
+	SimpleWhenThenList                     "Procedure SimpleWhenThen list"
+	ElseCaseOpt                            "Optional procedure else statement, expressed by `else .../nil`"
 	ProcedureFetchList                     "Procedure fetch into variables"
-	ProcedureHandlerType                   "Procedure handler type"
-	ProcedureHcondList                     "Procedure handle error condition list"
+	ProcedureHandlerType                   "Procedure handler operation type"
+	ProcedureHcondList                     "Procedure handler condition value list"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1522,7 +1522,7 @@ import (
 	StringName                      "string literal or identifier"
 	StringNameOrBRIEOptionKeyword   "string literal or identifier or keyword used for BRIE options"
 	Symbol                          "Constraint Symbol"
-	ProcedurceLabelOpt              "Procedure label name opt"
+	ProcedurceLabelOpt              "Optional Procedure label name"
 
 %precedence empty
 %precedence as
@@ -14826,7 +14826,7 @@ ProcedureStatementStmt:
 |	AnalyzeTableStmt
 |	TruncateTableStmt
 
-ProcedureSelectStmt:
+ProcedureCursorSelectStmt:
 	SelectStmt
 |	SelectStmtWithClause
 |	SubSelect
@@ -14892,7 +14892,7 @@ ProcedureDecl:
 	 identifier/*$2*/
 	 "CURSOR"/*$3*/
 	 "FOR"/*$4*/
-	 ProcedureSelectStmt
+	 ProcedureCursorSelectStmt
 	/*$5*/
 	{
 		name := strings.ToLower($2)
@@ -15079,7 +15079,7 @@ ProcedureBlockContent:
 		$$ = x
 	}
 
-ProcedureStatementIf:
+ProcedureIfstmt:
 	"IF" ProcedureIf "END" "IF"
 	{
 		$$ = &ast.ProcedureIfInfo{
@@ -15127,22 +15127,22 @@ ProcedureCaseStmt:
 		$$ = $1
 	}
 
-SimpleWhenCaseList:
-	SimpleWhenCase
+SimpleWhenThenList:
+	SimpleWhenThen
 	{
-		$$ = []*ast.SimpleWhenCaseStmt{$1.(*ast.SimpleWhenCaseStmt)}
+		$$ = []*ast.SimpleWhenThenStmt{$1.(*ast.SimpleWhenThenStmt)}
 	}
-|	SimpleWhenCaseList SimpleWhenCase
+|	SimpleWhenThenList SimpleWhenThen
 	{
-		l := $1.([]*ast.SimpleWhenCaseStmt)
-		l = append(l, $2.(*ast.SimpleWhenCaseStmt))
+		l := $1.([]*ast.SimpleWhenThenStmt)
+		l = append(l, $2.(*ast.SimpleWhenThenStmt))
 		$$ = l
 	}
 
-SimpleWhenCase:
+SimpleWhenThen:
 	"WHEN" Expression "THEN" ProcedureProcStmt1s
 	{
-		$$ = &ast.SimpleWhenCaseStmt{
+		$$ = &ast.SimpleWhenThenStmt{
 			Expr:           $2.(ast.ExprNode),
 			ProcedureStmts: $4.([]ast.StmtNode),
 		}
@@ -15158,11 +15158,11 @@ ElseCaseOpt:
 	}
 
 ProcedureSimpleCase:
-	"CASE" Expression SimpleWhenCaseList ElseCaseOpt "END" "CASE"
+	"CASE" Expression SimpleWhenThenList ElseCaseOpt "END" "CASE"
 	{
 		caseStmt := &ast.SimpleCaseStmt{
 			Condition: $2.(ast.ExprNode),
-			WhenCases: $3.([]*ast.SimpleWhenCaseStmt),
+			WhenCases: $3.([]*ast.SimpleWhenThenStmt),
 		}
 		if $4 != nil {
 			caseStmt.ElseCases = $4.([]ast.StmtNode)
@@ -15171,10 +15171,10 @@ ProcedureSimpleCase:
 	}
 
 ProcedureSearchedCase:
-	"CASE" SimpleWhenCaseList ElseCaseOpt "END" "CASE"
+	"CASE" SimpleWhenThenList ElseCaseOpt "END" "CASE"
 	{
 		caseStmt := &ast.SearchCaseStmt{
-			WhenCases: $2.([]*ast.SimpleWhenCaseStmt),
+			WhenCases: $2.([]*ast.SimpleWhenThenStmt),
 		}
 		if $3 != nil {
 			caseStmt.ElseCases = $3.([]ast.StmtNode)
@@ -15182,13 +15182,13 @@ ProcedureSearchedCase:
 		$$ = caseStmt
 	}
 
-ProcedureStmtUnlabeled:
-	ProcedureUnlabeledControl
+ProcedureUnlabelLoopBlock:
+	ProcedureUnlabelLoopStmt
 	{
 		$$ = $1
 	}
 
-ProcedureUnlabeledControl:
+ProcedureUnlabelLoopStmt:
 	"WHILE" Expression "DO" ProcedureProcStmt1s "END" "WHILE"
 	{
 		$$ = &ast.ProcedureWhileStmt{
@@ -15228,8 +15228,8 @@ ProcedurceLabelOpt:
 		$$ = $1
 	}
 
-ProcedureStmtLabeled:
-	identifier ':' ProcedureUnlabeledControl ProcedurceLabelOpt
+ProcedurelabeledLoopStmt:
+	identifier ':' ProcedureUnlabelLoopStmt ProcedurceLabelOpt
 	{
 		labelLoop := &ast.ProcedureLabelLoop{
 			LableName: $1,
@@ -15263,14 +15263,14 @@ ProcedureLeave:
 ProcedureProcStmt:
 	ProcedureStatementStmt
 |	ProcedureUnlabeledBlock
-|	ProcedureStatementIf
+|	ProcedureIfstmt
 |	ProcedureCaseStmt
-|	ProcedureStmtUnlabeled
+|	ProcedureUnlabelLoopBlock
 |	ProcedureOpenCur
 |	ProcedureCloseCur
 |	ProcedureFetchInto
 |	ProcedureLabeledBlock
-|	ProcedureStmtLabeled
+|	ProcedurelabeledLoopStmt
 |	ProcedureIterate
 |	ProcedureLeave
 
