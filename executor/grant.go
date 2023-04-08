@@ -543,7 +543,7 @@ func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, inte
 	tblName := e.Level.TableName
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name <> (SELECT max(Table_name) FROM %n.%n WHERE user = %? group by lower(Table_name), Table_priv, Column_priv)", mysql.SystemDB, mysql.TablePrivTable, user.User.Username, user.User.Hostname, strings.ToLower(dbName), mysql.SystemDB, mysql.TablePrivTable, user.User.Username)
+	_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name<>(SELECT max(Table_name) FROM %n.%n WHERE user = %? group by lower(Table_name), Table_priv, Column_priv)", mysql.SystemDB, mysql.TablePrivTable, user.User.Username, user.User.Hostname, strings.ToLower(dbName), mysql.SystemDB, mysql.TablePrivTable, user.User.Username)
 	if err != nil {
 		return err
 	}
