@@ -82,10 +82,6 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			e.detachHandled = true
 		}
 	case ast.FileLocClient:
-		if e.loadDataWorker.controller.Detached {
-			return exeerrors.ErrLoadDataCantDetachWithLocal
-		}
-
 		// let caller use handleQuerySpecial to read data in this connection
 		sctx := e.loadDataWorker.UserSctx
 		val := sctx.Value(LoadDataVarKey)
@@ -106,14 +102,23 @@ type commitTask struct {
 	fileSize int64
 }
 
+type planInfo struct {
+	ID          int
+	Columns     []*ast.ColumnName
+	GenColExprs []expression.Expression
+}
+
 // LoadDataWorker does a LOAD DATA job.
 type LoadDataWorker struct {
 	UserSctx sessionctx.Context
 
+	// used for logical mode, init during load
 	encodeWorkers []*encodeWorker
 	commitWorkers []*commitWorker
+	readerInfos   []importer.LoadDataReaderInfo
 
 	controller *importer.LoadDataController
+	planInfo   planInfo
 
 	table    table.Table
 	progress *asyncloaddata.Progress
@@ -142,6 +147,21 @@ func NewLoadDataWorker(
 		setNonRestrictiveFlags(userSctx.GetSessionVars().StmtCtx)
 	}
 
+	loadDataWorker := &LoadDataWorker{
+		UserSctx:   userSctx,
+		table:      tbl,
+		controller: controller,
+		planInfo: planInfo{
+			ID:          plan.ID(),
+			Columns:     plan.Columns,
+			GenColExprs: plan.GenCols.Exprs,
+		},
+		progress: asyncloaddata.NewProgress(),
+	}
+	return loadDataWorker, nil
+}
+
+func (e *LoadDataWorker) initEncodeCommitWorkers() (err error) {
 	var createdSessions []sessionctx.Context
 	defer func() {
 		if err != nil {
@@ -150,58 +170,44 @@ func NewLoadDataWorker(
 			}
 		}
 	}()
-
-	progress := asyncloaddata.NewProgress()
-	encodeWorkers := make([]*encodeWorker, 0, controller.ThreadCnt)
-	commitWorkers := make([]*commitWorker, 0, controller.ThreadCnt)
+	encodeWorkers := make([]*encodeWorker, 0, e.controller.ThreadCnt)
+	commitWorkers := make([]*commitWorker, 0, e.controller.ThreadCnt)
 
 	// TODO: create total ThreadCnt workers rather than 2*ThreadCnt?
-	for i := int64(0); i < controller.ThreadCnt; i++ {
-		encodeCore, err2 := createInsertValues(userSctx, plan, tbl, controller)
+	for i := int64(0); i < e.controller.ThreadCnt; i++ {
+		encodeCore, err2 := e.createInsertValues()
 		if err2 != nil {
-			return nil, err2
+			return err2
 		}
 		createdSessions = append(createdSessions, encodeCore.ctx)
-		commitCore, err2 := createInsertValues(userSctx, plan, tbl, controller)
+		commitCore, err2 := e.createInsertValues()
 		if err2 != nil {
-			return nil, err2
+			return err2
 		}
 		createdSessions = append(createdSessions, commitCore.ctx)
 		encode := &encodeWorker{
 			InsertValues: encodeCore,
-			controller:   controller,
-			killed:       &userSctx.GetSessionVars().Killed,
+			controller:   e.controller,
+			killed:       &e.UserSctx.GetSessionVars().Killed,
 		}
 		encode.resetBatch()
 		encodeWorkers = append(encodeWorkers, encode)
 		commit := &commitWorker{
 			InsertValues: commitCore,
-			controller:   controller,
-			progress:     progress,
+			controller:   e.controller,
+			progress:     e.progress,
 		}
 		commitWorkers = append(commitWorkers, commit)
 	}
-
-	loadDataWorker := &LoadDataWorker{
-		UserSctx:      userSctx,
-		encodeWorkers: encodeWorkers,
-		commitWorkers: commitWorkers,
-		table:         tbl,
-		controller:    controller,
-		progress:      progress,
-	}
-	return loadDataWorker, nil
+	e.encodeWorkers = encodeWorkers
+	e.commitWorkers = commitWorkers
+	return nil
 }
 
 // createInsertValues creates InsertValues whose session context is a clone of
 // userSctx.
-func createInsertValues(
-	userSctx sessionctx.Context,
-	plan *plannercore.LoadData,
-	tbl table.Table,
-	controller *importer.LoadDataController,
-) (insertVal *InsertValues, err error) {
-	sysSession, err2 := CreateSession(userSctx)
+func (e *LoadDataWorker) createInsertValues() (insertVal *InsertValues, err error) {
+	sysSession, err2 := CreateSession(e.UserSctx)
 	if err2 != nil {
 		return nil, err2
 	}
@@ -217,21 +223,21 @@ func createInsertValues(
 	}
 	// copy the related variables to the new session
 	// I have no confident that all needed variables are copied :(
-	fromVars := userSctx.GetSessionVars()
+	fromVars := e.UserSctx.GetSessionVars()
 	toVars := sysSession.GetSessionVars()
 	toVars.User = fromVars.User
 	toVars.CurrentDB = fromVars.CurrentDB
 	toVars.SQLMode = fromVars.SQLMode
-	if !controller.Restrictive {
+	if !e.controller.Restrictive {
 		setNonRestrictiveFlags(toVars.StmtCtx)
 	}
 	toVars.StmtCtx.InitSQLDigest(fromVars.StmtCtx.SQLDigest())
 
-	insertColumns := controller.InsertColumns
+	insertColumns := e.controller.InsertColumns
 	hasExtraHandle := false
 	for _, col := range insertColumns {
 		if col.Name.L == model.ExtraHandleName.L {
-			if !userSctx.GetSessionVars().AllowWriteRowID {
+			if !e.UserSctx.GetSessionVars().AllowWriteRowID {
 				return nil, errors.Errorf("load data statement for _tidb_rowid are not supported")
 			}
 			hasExtraHandle = true
@@ -239,11 +245,11 @@ func createInsertValues(
 		}
 	}
 	ret := &InsertValues{
-		baseExecutor:   newBaseExecutor(sysSession, nil, plan.ID()),
-		Table:          tbl,
-		Columns:        plan.Columns,
-		GenExprs:       plan.GenCols.Exprs,
-		maxRowsInBatch: uint64(controller.BatchSize),
+		baseExecutor:   newBaseExecutor(sysSession, nil, e.planInfo.ID),
+		Table:          e.table,
+		Columns:        e.planInfo.Columns,
+		GenExprs:       e.planInfo.GenColExprs,
+		maxRowsInBatch: uint64(e.controller.BatchSize),
 		insertColumns:  insertColumns,
 		rowLen:         len(insertColumns),
 		hasExtraHandle: hasExtraHandle,
@@ -266,159 +272,140 @@ func (e *LoadDataWorker) closeWorkerSessions() {
 
 func (e *LoadDataWorker) loadRemote(ctx context.Context) (int64, error) {
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
-		e.closeWorkerSessions()
 		return 0, err2
 	}
-
-	if e.controller.ImportMode == importer.PhysicalImportMode {
-		// will not use session context
-		e.closeWorkerSessions()
-		return e.controller.PhysicalImport(ctx)
-	}
-
-	dataReaderInfos := e.controller.GetLoadDataReaderInfos()
-	return e.Load(ctx, dataReaderInfos)
+	return e.load(ctx, nil)
 }
 
-// Load reads from readerInfos and do load data job.
-func (e *LoadDataWorker) Load(
-	ctx context.Context,
-	readerInfos []importer.LoadDataReaderInfo,
-) (int64, error) {
+// LoadLocal reads from client connection and do load data job.
+func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
+	_, err := e.load(ctx, r)
+	return err
+}
+
+func (e *LoadDataWorker) load(ctx context.Context, r io.ReadCloser) (int64, error) {
 	var (
-		jobID int64
-		err   error
+		job *asyncloaddata.Job
+		err error
 	)
 
 	s, err := CreateSession(e.UserSctx)
 	if err != nil {
 		return 0, err
 	}
-	defer CloseSession(s)
+	defer func() {
+		// if the job is detached, we should not close the session. let go-routine to do it.
+		if !e.controller.Detached {
+			CloseSession(s)
+		}
+	}()
 
 	sqlExec := s.(sqlexec.SQLExecutor)
 
-	jobID, err = asyncloaddata.CreateLoadDataJob(
+	job, err = asyncloaddata.CreateLoadDataJob(
 		ctx,
 		sqlExec,
 		e.GetInfilePath(),
 		e.controller.DBName,
 		e.table.Meta().Name.O,
-		importer.LogicalImportMode,
+		e.controller.ImportMode,
 		e.UserSctx.GetSessionVars().User.String(),
 	)
 	if err != nil {
 		return 0, err
 	}
 
+	if e.controller.ImportMode == importer.LogicalImportMode {
+		if err = e.initEncodeCommitWorkers(); err != nil {
+			return 0, err
+		}
+		if e.controller.FileLocRef == ast.FileLocClient {
+			e.readerInfos = []importer.LoadDataReaderInfo{{
+				Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
+					return NewSimpleSeekerOnReadCloser(r), nil
+				}}}
+		} else {
+			e.readerInfos = e.controller.GetLoadDataReaderInfos()
+		}
+	}
+
 	if e.controller.Detached {
 		go func() {
+			defer CloseSession(s)
 			detachedCtx := context.Background()
 			detachedCtx = kv.WithInternalSourceType(detachedCtx, kv.InternalLoadData)
 			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck
-			_ = e.doLoad(detachedCtx, readerInfos, jobID)
+			_ = e.importJob(detachedCtx, job)
 		}()
-		return jobID, nil
+		return job.ID, nil
 	}
-	return jobID, e.doLoad(ctx, readerInfos, jobID)
+	return job.ID, e.importJob(ctx, job)
+}
+
+func (e *LoadDataWorker) importJob(ctx context.Context, job *asyncloaddata.Job) (err error) {
+	// todo: abstract into a job importer interface, to avoid checking import mode in every place.
+	if e.controller.ImportMode == importer.LogicalImportMode {
+		defer func() {
+			for _, w := range e.encodeWorkers {
+				w.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.id, w.stats)
+			}
+			for _, w := range e.commitWorkers {
+				w.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.id, w.stats)
+			}
+			e.closeWorkerSessions()
+		}()
+	}
+	if e.controller.FileLocRef == ast.FileLocServerOrRemote {
+		e.progress.SourceFileSize = e.controller.TotalFileSize
+	}
+
+	var msg string
+	defer job.OnComplete(err, msg)
+
+	err = job.StartJob(ctx)
+	if err != nil {
+		return err
+	}
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	done := make(chan struct{})
+	// UpdateJobProgress goroutine.
+	group.Go(func() error {
+		return job.ProgressUpdateRoutineFn(ctx, done, groupCtx.Done(), e.progress)
+	})
+	var importFn func(ctx context.Context, param *importer.ImportJobParam)
+	if e.controller.ImportMode == importer.PhysicalImportMode {
+		importFn = e.controller.PhysicalImport
+	} else {
+		importFn = e.LogicalImport
+	}
+	importFn(ctx, &importer.ImportJobParam{
+		Job:      job,
+		Group:    group,
+		GroupCtx: groupCtx,
+		Done:     done,
+	})
+	err = group.Wait()
+	if e.controller.ImportMode == importer.LogicalImportMode {
+		msg = e.mergeAndSetMessage()
+	}
+	return err
 }
 
 // TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
 var TestSyncCh = make(chan struct{})
 
-func (e *LoadDataWorker) doLoad(
-	ctx context.Context,
-	readerInfos []importer.LoadDataReaderInfo,
-	jobID int64,
-) (err error) {
-	defer func() {
-		for _, w := range e.encodeWorkers {
-			w.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.id, w.stats)
-		}
-		for _, w := range e.commitWorkers {
-			w.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.id, w.stats)
-		}
-		e.closeWorkerSessions()
-	}()
-
-	// get a session for UpdateJobProgress.
-	s, err := CreateSession(e.UserSctx)
-	if err != nil {
-		return err
-	}
-	defer CloseSession(s)
-
-	sqlExec := s.(sqlexec.SQLExecutor)
-
-	var msg string
-	defer func() {
-		// write the ending status even if user context is canceled.
-		ctx2 := context.Background()
-		ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
-		if err == nil {
-			err2 := asyncloaddata.FinishJob(
-				ctx2,
-				sqlExec,
-				jobID,
-				msg)
-			terror.Log(err2)
-			return
-		}
-		errMsg := err.Error()
-		if errImpl, ok := errors.Cause(err).(*errors.Error); ok {
-			b, marshalErr := errImpl.MarshalJSON()
-			if marshalErr == nil {
-				errMsg = string(b)
-			}
-		}
-
-		err2 := asyncloaddata.FailJob(ctx2, sqlExec, jobID, errMsg)
-		terror.Log(err2)
-	}()
-
-	failpoint.Inject("AfterCreateLoadDataJob", nil)
-	failpoint.Inject("SyncAfterCreateLoadDataJob", func() {
-		TestSyncCh <- struct{}{}
-		<-TestSyncCh
-	})
-
-	totalFilesize := int64(0)
-	hasErr := false
-	for _, readerInfo := range readerInfos {
-		if readerInfo.Remote == nil {
-			logutil.Logger(ctx).Warn("can not get total file size when LOAD DATA from local file")
-			hasErr = true
-			break
-		}
-		totalFilesize += readerInfo.Remote.FileSize
-	}
-	if !hasErr {
-		e.progress.SourceFileSize = totalFilesize
-	}
-
-	err = asyncloaddata.StartJob(ctx, sqlExec, jobID)
-	if err != nil {
-		return err
-	}
-
-	failpoint.Inject("AfterStartJob", nil)
-	failpoint.Inject("SyncAfterStartJob", func() {
-		TestSyncCh <- struct{}{}
-		<-TestSyncCh
-	})
-
-	group, groupCtx := errgroup.WithContext(ctx)
+func (e *LoadDataWorker) LogicalImport(ctx context.Context, param *importer.ImportJobParam) {
 	// main goroutine -> readerInfoCh -> processOneStream goroutines
 	readerInfoCh := make(chan importer.LoadDataReaderInfo, e.controller.ThreadCnt)
 	// processOneStream goroutines -> commitTaskCh -> commitWork goroutines
 	commitTaskCh := make(chan commitTask, taskQueueSize)
 	// commitWork goroutines -> done -> UpdateJobProgress goroutine
-	done := make(chan struct{})
 
 	// processOneStream goroutines.
-	group.Go(func() error {
-		encodeGroup, encodeCtx := errgroup.WithContext(groupCtx)
+	param.Group.Go(func() error {
+		encodeGroup, encodeCtx := errgroup.WithContext(param.GroupCtx)
 
 		for i := range e.encodeWorkers {
 			worker := e.encodeWorkers[i]
@@ -438,8 +425,8 @@ func (e *LoadDataWorker) doLoad(
 		return err2
 	})
 	// commitWork goroutines.
-	group.Go(func() error {
-		commitGroup, commitCtx := errgroup.WithContext(groupCtx)
+	param.Group.Go(func() error {
+		commitGroup, commitCtx := errgroup.WithContext(param.GroupCtx)
 
 		for i := range e.commitWorkers {
 			worker := e.commitWorkers[i]
@@ -451,51 +438,19 @@ func (e *LoadDataWorker) doLoad(
 
 		err2 := commitGroup.Wait()
 		if err2 == nil {
-			close(done)
+			close(param.Done)
 		}
 		return err2
 	})
-	// UpdateJobProgress goroutine.
-	group.Go(func() error {
-		ticker := time.NewTicker(time.Duration(asyncloaddata.HeartBeatInSec) * time.Second)
-		defer ticker.Stop()
 
-		for {
-			select {
-			case <-done:
-				// When done, try to update progress to reach 100%
-				ok, err2 := asyncloaddata.UpdateJobProgress(ctx, sqlExec, jobID, e.progress.String())
-				if !ok || err2 != nil {
-					logutil.Logger(ctx).Warn("failed to update job progress when finished",
-						zap.Bool("ok", ok), zap.Error(err2))
-				}
-				return nil
-			case <-groupCtx.Done():
-				return nil
-			case <-ticker.C:
-				ok, err2 := asyncloaddata.UpdateJobProgress(ctx, sqlExec, jobID, e.progress.String())
-				if err2 != nil {
-					return err2
-				}
-				if !ok {
-					return errors.Errorf("failed to update job progress, the job %d is interrupted by user or failed to keepalive", jobID)
-				}
-			}
-		}
-	})
-
-	for i := range readerInfos {
+	for i := range e.readerInfos {
 		select {
-		case <-groupCtx.Done():
-			return groupCtx.Err()
-		case readerInfoCh <- readerInfos[i]:
+		case <-param.GroupCtx.Done():
+			return
+		case readerInfoCh <- e.readerInfos[i]:
 		}
 	}
 	close(readerInfoCh)
-
-	err = group.Wait()
-	msg = e.mergeAndSetMessage()
-	return err
 }
 
 // encodeWorker is a sub-worker of LoadDataWorker that dedicated to encode data.
@@ -1031,12 +986,13 @@ type LoadDataActionExec struct {
 func (e *LoadDataActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	sqlExec := e.ctx.(sqlexec.SQLExecutor)
 	user := e.ctx.GetSessionVars().User.String()
+	job := asyncloaddata.NewJob(e.jobID, sqlExec, user)
 
 	switch e.tp {
 	case ast.LoadDataCancel:
-		return asyncloaddata.CancelJob(ctx, sqlExec, e.jobID, user)
+		return job.CancelJob(ctx)
 	case ast.LoadDataDrop:
-		return asyncloaddata.DropJob(ctx, sqlExec, e.jobID, user)
+		return job.DropJob(ctx)
 	default:
 		return errors.Errorf("not implemented LOAD DATA action %v", e.tp)
 	}

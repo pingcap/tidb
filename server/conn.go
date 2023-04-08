@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1626,10 +1625,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	}()
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
-	_, err = loadDataWorker.Load(ctx, []importer.LoadDataReaderInfo{{
-		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
-			return executor.NewSimpleSeekerOnReadCloser(r), nil
-		}}})
+	err = loadDataWorker.LoadLocal(ctx, r)
 	_ = r.Close()
 	wg.Wait()
 
