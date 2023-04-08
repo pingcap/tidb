@@ -4169,13 +4169,18 @@ func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, 
 	}
 	for i := 0; i < len(newSpec.PartDefinitions); i++ {
 		switch newSpec.PartDefinitions[i].Clause.(type) {
+		case *ast.PartitionDefinitionClauseNone:
+			// OK, expected
 		case *ast.PartitionDefinitionClauseIn:
 			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("LIST", "IN"))
 		case *ast.PartitionDefinitionClauseLessThan:
 			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("RANGE", "LESS THAN"))
+		case *ast.PartitionDefinitionClauseHistory:
+			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("SYSTEM_TIME", "HISTORY"))
+
 		default:
-			// accept the others, HISTORY is not accepted but ignore it here.
-			// and None should be the correct Clause for HASH/KEY
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"partitioning clause")
 		}
 	}
 	if newSpec.Num < uint64(len(newSpec.PartDefinitions)) {

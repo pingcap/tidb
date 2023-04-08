@@ -3592,6 +3592,12 @@ func TestAddHashPartition(t *testing.T) {
 	)
 	partition by hash(store_id)
 	partitions 4`)
+	// TiDB does not support system versioned tables / SYSTEM_TIME
+	// also the error is slightly wrong with 'VALUES HISTORY'
+	// instead of just 'HISTORY'
+	tk.MustContainErrMsg(`alter table t add partition (partition pHist history)`, "[ddl:1480]Only SYSTEM_TIME PARTITIONING can use VALUES HISTORY in partition definition")
+	tk.MustContainErrMsg(`alter table t add partition (partition pList values in (22))`, "[ddl:1480]Only LIST PARTITIONING can use VALUES IN in partition definition")
+	tk.MustContainErrMsg(`alter table t add partition (partition pRange values less than (22))`, "[ddl:1480]Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition")
 	tk.MustExec(`insert into t values (20, "Joe", "Doe", '2020-01-05', null, 1,1), (21, "Jane", "Doe", '2021-07-05', null, 2,1)`)
 	tk.MustExec("alter table t add partition partitions 8")
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
@@ -3734,7 +3740,7 @@ func TestAddHashPartition(t *testing.T) {
 		" PARTITION `p10`,\n" +
 		" PARTITION `p11`,\n" +
 		" PARTITION `p13`)"))
-	// TODO: Check if MySQL removes all names when coalesce partitions too?
+	// Note: MySQL does not remove all names when coalesce partitions is back to defaults
 	tk.MustExec("alter table t coalesce partition 2")
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
