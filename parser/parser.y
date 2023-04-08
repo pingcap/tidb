@@ -1016,7 +1016,7 @@ import (
 	ProcedureStatementIf       "Procedure if block info"
 	procedurceElseIfs          "Procedure else block info"
 	ProcedureIf                "Procedure if data info"
-	ProcedureStmtUnlabeled     "Procedure stmt unlabeled"
+	ProcedureStmtUnlabeled     "Loop statement in procedure  which has no label"
 	ProcedureUnlabeledControl  "The realization of loop statement in procedure"
 	ProcedureCaseStmt          "Case statement in procedure, expressed by `case ... when.. then ..`"
 	ProcedureSimpleCase        "Procedure case when"
