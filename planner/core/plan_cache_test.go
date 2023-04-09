@@ -1623,10 +1623,10 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	unsupported := []string{
 		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",               // hint
 		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
-		"select * from (select * from t1) t",                           // sub-query
-		"select * from t1 where a in (select a from t)",                // uncorrelated sub-query
-		"select * from t1 where a in (select a from t where a > t1.a)", // correlated sub-query
-		"select * from t where j < 1",                                  // json
+		"select * from (select * from t1) t",                                               // sub-query
+		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
+		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
+		"select * from t where j < 1",                                                      // json
 		"select * from t where a > 1 and j < 1",
 		"select * from t where e < '1'", // enum
 		"select * from t where a > 1 and e < '1'",
