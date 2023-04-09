@@ -433,8 +433,8 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		config.BufferSizeScale = backup3
 	})
 
-	s.enableFailpoint("github.com/pingcap/tidb/asyncloaddata/SyncAfterCreateLoadDataJob", `return`)
-	s.enableFailpoint("github.com/pingcap/tidb/asyncloaddata/SyncAfterStartJob", `return`)
+	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterCreateLoadDataJob", `return`)
+	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterStartJob", `return`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/SyncAfterCommitOneTask", `return`)
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t*.tsv?endpoint=%s'
 		INTO TABLE load_tsv.t WITH batch_size = 1;`, gcsEndpoint)

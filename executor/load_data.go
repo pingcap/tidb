@@ -236,7 +236,9 @@ func (e *LoadDataWorker) importJob(ctx context.Context, jobImporter importer.Job
 	job, group, groupCtx, done := param.Job, param.Group, param.GroupCtx, param.Done
 
 	var msg string
-	defer job.OnComplete(err, msg)
+	defer func() {
+		job.OnComplete(err, msg)
+	}()
 
 	err = job.StartJob(ctx)
 	if err != nil {
@@ -262,7 +264,7 @@ func (e *LoadDataWorker) getJobImporter(ctx context.Context, job *asyncloaddata.
 		Done:     make(chan struct{}),
 	}
 
-	if e.controller.ImportMode == importer.PhysicalImportMode {
+	if e.controller.ImportMode == importer.LogicalImportMode {
 		return newLogicalJobImporter(param, e, r)
 	}
 	return importer.NewTableImporter(param, e.controller)
