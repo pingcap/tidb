@@ -33,6 +33,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// Job import job.
 type Job struct {
 	ID int64
 	// Job don't manage the life cycle of the connection.
@@ -40,6 +41,7 @@ type Job struct {
 	User string
 }
 
+// NewJob returns new Job.
 func NewJob(ID int64, conn sqlexec.SQLExecutor, user string) *Job {
 	return &Job{ID: ID, Conn: conn, User: user}
 }
@@ -271,6 +273,7 @@ func (j *Job) OnComplete(inErr error, msg string) {
 	terror.Log(err2)
 }
 
+// ProgressUpdateRoutineFn job progress update routine.
 func (j *Job) ProgressUpdateRoutineFn(ctx context.Context, finishCh chan struct{}, errCh <-chan struct{}, progress *Progress) error {
 	ticker := time.NewTicker(time.Duration(HeartBeatInSec) * time.Second)
 	defer ticker.Stop()

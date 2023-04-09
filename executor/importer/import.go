@@ -817,21 +817,6 @@ func (e *LoadDataController) GetParser(
 	return parser, nil
 }
 
-// PhysicalImport do physical import.
-func (e *LoadDataController) PhysicalImport(ctx context.Context, param *ImportJobParam) {
-	param.Group.Go(func() error {
-		defer close(param.Done)
-		importer, err := newTableImporter(ctx, e)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			_ = importer.Close()
-		}()
-		return importer.importTable(ctx)
-	})
-}
-
 func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 	tbl := filter.Table{
 		Schema: e.DBName,
@@ -847,12 +832,27 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 	return res
 }
 
-type ImportJobParam struct {
+// JobImportParam is the param of the job import.
+type JobImportParam struct {
 	Job      *asyncloaddata.Job
 	Group    *errgroup.Group
 	GroupCtx context.Context
 	// should be closed in the end of the job.
 	Done chan struct{}
+}
+
+// JobImporter is the interface for importing a job.
+type JobImporter interface {
+	// Param returns the param of the job import.
+	Param() *JobImportParam
+	// Import imports the job.
+	// import should run in routines using param.Group, when import finished, it should close param.Done.
+	// during import, we should use param.GroupCtx, so this method has no context param.
+	Import()
+	// Result returns the result of the job import.
+	// todo: return a struct
+	Result() string
+	io.Closer
 }
 
 // GetMsgFromBRError get msg from BR error.
