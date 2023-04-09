@@ -62,13 +62,13 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	}
 	statsTable := statistics.PseudoTable(p.TableInfo)
 	stats := &property.StatsInfo{
-		RowCount:     float64(statsTable.Count),
+		RowCount:     float64(statsTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
 		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo.Columns, p.schema.Columns),
 		StatsVersion: statistics.PseudoVersion,
 	}
 	for _, col := range selfSchema.Columns {
-		stats.ColNDVs[col.UniqueID] = float64(statsTable.Count)
+		stats.ColNDVs[col.UniqueID] = float64(statsTable.RealtimeCount)
 	}
 	p.stats = stats
 	return p.stats, nil
@@ -164,10 +164,10 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	hist, ok := ds.statisticTable.Columns[colID]
 	if ok && hist.Count > 0 {
-		factor := float64(ds.statisticTable.Count) / float64(hist.Count)
+		factor := float64(ds.statisticTable.RealtimeCount) / float64(hist.Count)
 		ndv = float64(hist.Histogram.NDV) * factor
 	} else {
-		ndv = float64(ds.statisticTable.Count) * distinctFactor
+		ndv = float64(ds.statisticTable.RealtimeCount) * distinctFactor
 	}
 	return ndv
 }
@@ -227,7 +227,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.physicalTableID)
 	}
 	tableStats := &property.StatsInfo{
-		RowCount:     float64(ds.statisticTable.Count),
+		RowCount:     float64(ds.statisticTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, ds.schema.Len()),
 		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
 		StatsVersion: ds.statisticTable.Version,
@@ -412,7 +412,26 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		return nil, err
 	}
 
+	ds.accessPathMinSelectivity = getMinSelectivityFromPaths(ds.possibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
+
 	return ds.stats, nil
+}
+
+func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64) float64 {
+	minSelectivity := 1.0
+	if totalRowCount <= 0 {
+		return minSelectivity
+	}
+	for _, path := range paths {
+		// For table path and index merge path, AccessPath.CountAfterIndex is not set and meaningless,
+		// but we still consider their AccessPath.CountAfterAccess.
+		if path.IsTablePath() || path.PartialIndexPaths != nil {
+			minSelectivity = mathutil.Min(minSelectivity, path.CountAfterAccess/totalRowCount)
+			continue
+		}
+		minSelectivity = mathutil.Min(minSelectivity, path.CountAfterIndex/totalRowCount)
+	}
+	return minSelectivity
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.

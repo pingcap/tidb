@@ -15,7 +15,6 @@ package importer
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -27,6 +26,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -55,49 +55,50 @@ type clusterResourceCheckItem struct {
 	preInfoGetter PreImportInfoGetter
 }
 
+// NewClusterResourceCheckItem creates a new clusterResourceCheckItem.
 func NewClusterResourceCheckItem(preInfoGetter PreImportInfoGetter) PrecheckItem {
 	return &clusterResourceCheckItem{
 		preInfoGetter: preInfoGetter,
 	}
 }
 
-func (ci *clusterResourceCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*clusterResourceCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterSize
 }
 
-func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (uint64, error) {
+func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (tikvAvail uint64, tiflashAvail uint64, err error) {
 	storeInfo, err := ci.preInfoGetter.GetStorageInfo(ctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
-	clusterAvail := uint64(0)
+
 	for _, store := range storeInfo.Stores {
-		clusterAvail += uint64(store.Status.Available)
+		if engine.IsTiFlash(store.Store.Store) {
+			tiflashAvail += uint64(store.Status.Available)
+		} else {
+			tikvAvail += uint64(store.Status.Available)
+		}
 	}
-	return clusterAvail, nil
+	return
 }
 
-func (ci *clusterResourceCheckItem) getReplicaCount(ctx context.Context) (uint64, error) {
-	replConfig, err := ci.preInfoGetter.GetReplicationConfig(ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return replConfig.MaxReplicas, nil
-}
-
+// Check implements PrecheckItem.Check.
 func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
 		Passed:   true,
-		Message:  "Cluster resources are rich for this import task",
+		Message:  "",
 	}
 
 	var (
-		err           error
-		clusterAvail  uint64
-		clusterSource uint64
-		taskMgr       taskMetaMgr
+		err               error
+		tikvAvail         uint64
+		tiflashAvail      uint64
+		tikvSourceSize    uint64
+		tiflashSourceSize uint64
+		taskMgr           taskMetaMgr
 	)
 	taskMgrVal := ctx.Value(taskManagerKey)
 	if taskMgrVal != nil {
@@ -111,36 +112,44 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		clusterSource = uint64(estimatedDataSizeResult.SizeWithIndex)
-		clusterAvail, err = ci.getClusterAvail(ctx)
+		tikvSourceSize = uint64(estimatedDataSizeResult.SizeWithIndex)
+		tiflashSourceSize = uint64(estimatedDataSizeResult.TiFlashSize)
+		tikvAvail, tiflashAvail, err = ci.getClusterAvail(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
 		if err := taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
-			clusterAvail = 0
-			clusterSource = 0
+			tikvAvail = 0
+			tiflashAvail = 0
+			tikvSourceSize = 0
+			tiflashSourceSize = 0
 			restoreStarted := false
 			for _, task := range tasks {
 				if task.status > taskMetaStatusInitial {
 					restoreStarted = true
 				}
-				clusterSource += task.sourceBytes
-				if task.clusterAvail > 0 {
-					clusterAvail = task.clusterAvail
+				tikvSourceSize += task.tikvSourceBytes
+				tiflashSourceSize += task.tiflashSourceBytes
+				if task.tikvAvail > 0 {
+					tikvAvail = task.tikvAvail
+				}
+				if task.tiflashAvail > 0 {
+					tiflashAvail = task.tiflashAvail
 				}
 			}
-			if restoreStarted || clusterAvail > 0 {
+			if restoreStarted || tikvAvail > 0 || tiflashAvail > 0 {
 				return nil, nil
 			}
 
-			clusterAvail, err = ci.getClusterAvail(ctx)
+			tikvAvail, tiflashAvail, err = ci.getClusterAvail(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			newTasks := append([]taskMeta(nil), tasks...)
 			for i := 0; i < len(newTasks); i++ {
-				newTasks[i].clusterAvail = clusterAvail
+				newTasks[i].tikvAvail = tikvAvail
+				newTasks[i].tiflashAvail = tiflashAvail
 			}
 			return newTasks, nil
 		}); err != nil {
@@ -148,18 +157,29 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 		}
 	}
 
-	replicaCount, err := ci.getReplicaCount(ctx)
+	replicaCount, err := ci.preInfoGetter.GetReplicationConfig(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	estimateSize := clusterSource * replicaCount
-	if estimateSize > clusterAvail {
+	tikvSourceSize = tikvSourceSize * replicaCount.MaxReplicas
+
+	if tikvSourceSize <= tikvAvail && tiflashSourceSize <= tiflashAvail {
+		theResult.Message = fmt.Sprintf("The storage space is rich, which TiKV/Tiflash is %s/%s. The estimated storage space is %s/%s.",
+			units.BytesSize(float64(tikvAvail)), units.BytesSize(float64(tiflashAvail)), units.BytesSize(float64(tikvSourceSize)), units.BytesSize(float64(tiflashSourceSize)))
+	}
+
+	if tikvSourceSize > tikvAvail {
 		theResult.Passed = false
-		theResult.Message = fmt.Sprintf("Cluster doesn't have enough space, available is %s, but we need %s",
-			units.BytesSize(float64(clusterAvail)), units.BytesSize(float64(estimateSize)))
-	} else {
-		theResult.Message = fmt.Sprintf("Cluster available is rich, available is %s, we need %s",
-			units.BytesSize(float64(clusterAvail)), units.BytesSize(float64(estimateSize)))
+		theResult.Message += fmt.Sprintf("TiKV requires more storage space. Estimated required size: %s. Actual size: %s.",
+			units.BytesSize(float64(tikvSourceSize)), units.BytesSize(float64(tikvAvail)))
+	}
+	if tiflashAvail > 0 && tiflashSourceSize > tiflashAvail {
+		theResult.Passed = false
+		theResult.Message += fmt.Sprintf(" TiFlash requires more storage space. Estimated required size: %s. Actual size: %s.",
+			units.BytesSize(float64(tiflashSourceSize)), units.BytesSize(float64(tiflashAvail)))
+	}
+	if !theResult.Passed {
+		theResult.Message += " Please increase storage to prevent import task failures."
 	}
 	return theResult, nil
 }
@@ -169,6 +189,7 @@ type clusterVersionCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewClusterVersionCheckItem creates a new clusterVersionCheckItem.
 func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &clusterVersionCheckItem{
 		preInfoGetter: preInfoGetter,
@@ -176,10 +197,12 @@ func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*my
 	}
 }
 
-func (ci *clusterVersionCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*clusterVersionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterVersion
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *clusterVersionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -201,6 +224,7 @@ type emptyRegionCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewEmptyRegionCheckItem creates a new emptyRegionCheckItem.
 func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &emptyRegionCheckItem{
 		preInfoGetter: preInfoGetter,
@@ -208,10 +232,12 @@ func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydum
 	}
 }
 
-func (ci *emptyRegionCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*emptyRegionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterEmptyRegion
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -295,6 +321,7 @@ type regionDistributionCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewRegionDistributionCheckItem creates a new regionDistributionCheckItem.
 func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &regionDistributionCheckItem{
 		preInfoGetter: preInfoGetter,
@@ -302,10 +329,12 @@ func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas [
 	}
 }
 
-func (ci *regionDistributionCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*regionDistributionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterRegionDist
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -371,16 +400,19 @@ type storagePermissionCheckItem struct {
 	cfg *config.Config
 }
 
+// NewStoragePermissionCheckItem creates a new storagePermissionCheckItem.
 func NewStoragePermissionCheckItem(cfg *config.Config) PrecheckItem {
 	return &storagePermissionCheckItem{
 		cfg: cfg,
 	}
 }
 
-func (ci *storagePermissionCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*storagePermissionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckSourcePermission
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -411,6 +443,7 @@ type largeFileCheckItem struct {
 	dbMetas []*mydump.MDDatabaseMeta
 }
 
+// NewLargeFileCheckItem creates a new largeFileCheckItem.
 func NewLargeFileCheckItem(cfg *config.Config, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &largeFileCheckItem{
 		cfg:     cfg,
@@ -418,11 +451,13 @@ func NewLargeFileCheckItem(cfg *config.Config, dbMetas []*mydump.MDDatabaseMeta)
 	}
 }
 
-func (ci *largeFileCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*largeFileCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLargeDataFile
 }
 
-func (ci *largeFileCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+// Check implements PrecheckItem.Check.
+func (ci *largeFileCheckItem) Check(_ context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
@@ -451,17 +486,20 @@ type localDiskPlacementCheckItem struct {
 	cfg *config.Config
 }
 
+// NewLocalDiskPlacementCheckItem creates a new localDiskPlacementCheckItem.
 func NewLocalDiskPlacementCheckItem(cfg *config.Config) PrecheckItem {
 	return &localDiskPlacementCheckItem{
 		cfg: cfg,
 	}
 }
 
-func (ci *localDiskPlacementCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*localDiskPlacementCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLocalDiskPlacement
 }
 
-func (ci *localDiskPlacementCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+// Check implements PrecheckItem.Check.
+func (ci *localDiskPlacementCheckItem) Check(_ context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
@@ -487,6 +525,7 @@ type localTempKVDirCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewLocalTempKVDirCheckItem creates a new localTempKVDirCheckItem.
 func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &localTempKVDirCheckItem{
 		cfg:           cfg,
@@ -495,7 +534,8 @@ func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreImportInfoG
 	}
 }
 
-func (ci *localTempKVDirCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*localTempKVDirCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLocalTempKVDir
 }
 
@@ -512,6 +552,7 @@ func (ci *localTempKVDirCheckItem) hasCompressedFiles() bool {
 	return false
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	severity := Critical
 	// for cases that have compressed files, the estimated size may not be accurate, set severity to Warn to avoid failure
@@ -565,6 +606,7 @@ type checkpointCheckItem struct {
 	checkpointsDB checkpoints.DB
 }
 
+// NewCheckpointCheckItem creates a new checkpointCheckItem.
 func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, checkpointsDB checkpoints.DB) PrecheckItem {
 	return &checkpointCheckItem{
 		cfg:           cfg,
@@ -574,10 +616,12 @@ func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGette
 	}
 }
 
-func (ci *checkpointCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*checkpointCheckItem) GetCheckItemID() CheckItemID {
 	return CheckCheckpoints
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *checkpointCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	if !ci.cfg.Checkpoint.Enable || ci.checkpointsDB == nil {
 		return nil, nil
@@ -716,7 +760,7 @@ func NewCDCPITRCheckItem(cfg *config.Config) PrecheckItem {
 }
 
 // GetCheckItemID implements PrecheckItem interface.
-func (ci *CDCPITRCheckItem) GetCheckItemID() CheckItemID {
+func (*CDCPITRCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetUsingCDCPITR
 }
 
@@ -804,24 +848,6 @@ type onlyState struct {
 	State string `json:"state"`
 }
 
-func isActiveCDCChangefeed(jsonBytes []byte) bool {
-	s := onlyState{}
-	err := json.Unmarshal(jsonBytes, &s)
-	if err != nil {
-		// maybe a compatible issue, skip this key
-		log.L().Error("unmarshal etcd value failed when check CDC changefeed, will skip this key",
-			zap.ByteString("value", jsonBytes),
-			zap.Error(err))
-		return false
-	}
-	switch s.State {
-	case "normal", "stopped", "error":
-		return true
-	default:
-		return false
-	}
-}
-
 type schemaCheckItem struct {
 	cfg           *config.Config
 	preInfoGetter PreImportInfoGetter
@@ -829,6 +855,7 @@ type schemaCheckItem struct {
 	checkpointsDB checkpoints.DB
 }
 
+// NewSchemaCheckItem creates a checker to check whether the schema is valid.
 func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) PrecheckItem {
 	return &schemaCheckItem{
 		cfg:           cfg,
@@ -838,10 +865,12 @@ func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, d
 	}
 }
 
-func (ci *schemaCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem interface.
+func (*schemaCheckItem) GetCheckItemID() CheckItemID {
 	return CheckSourceSchemaValid
 }
 
+// Check implements PrecheckItem interface.
 func (ci *schemaCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -1065,6 +1094,7 @@ type csvHeaderCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewCSVHeaderCheckItem creates a new csvHeaderCheckItem.
 func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &csvHeaderCheckItem{
 		cfg:           cfg,
@@ -1073,7 +1103,8 @@ func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter
 	}
 }
 
-func (ci *csvHeaderCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem interface.
+func (*csvHeaderCheckItem) GetCheckItemID() CheckItemID {
 	return CheckCSVHeader
 }
 
@@ -1251,7 +1282,7 @@ func checkFieldCompatibility(
 	values []types.Datum,
 	logger log.Logger,
 ) bool {
-	se := kv.NewSession(&kv.SessionOptions{
+	se := kv.NewSessionCtx(&encode.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	}, logger)
 	for i, col := range tbl.Columns {
@@ -1280,6 +1311,7 @@ type tableEmptyCheckItem struct {
 	checkpointsDB checkpoints.DB
 }
 
+// NewTableEmptyCheckItem creates a new tableEmptyCheckItem
 func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) PrecheckItem {
 	return &tableEmptyCheckItem{
 		cfg:           cfg,
@@ -1289,10 +1321,12 @@ func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGette
 	}
 }
 
-func (ci *tableEmptyCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem interface
+func (*tableEmptyCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetTableEmpty
 }
 
+// Check implements PrecheckItem interface
 func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),

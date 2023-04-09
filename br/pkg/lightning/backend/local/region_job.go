@@ -104,7 +104,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 		j.engine.importedKVSize.Add(j.writeResult.rangeStats.totalBytes)
 		j.engine.importedKVCount.Add(j.writeResult.rangeStats.count)
 		if j.metrics != nil {
-			j.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).
+			j.metrics.BytesCounter.WithLabelValues(metric.StateImported).
 				Add(float64(j.writeResult.rangeStats.totalBytes))
 		}
 	}
@@ -391,7 +391,7 @@ func (j *regionJob) ingest(
 	return nil
 }
 
-func (j *regionJob) checkWriteStall(
+func (*regionJob) checkWriteStall(
 	ctx context.Context,
 	region *split.RegionInfo,
 	clientFactory ImportClientFactory,

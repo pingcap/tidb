@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
@@ -54,14 +55,19 @@ import (
 	"golang.org/x/exp/maps"
 )
 
+// compressionRatio is the tikv/tiflash's compression ratio
+const compressionRatio = float64(1) / 3
+
 // EstimateSourceDataSizeResult is the object for estimated data size result.
 type EstimateSourceDataSizeResult struct {
-	// SizeWithIndex is the size with the index.
+	// SizeWithIndex is the tikv size with the index.
 	SizeWithIndex int64
-	// SizeWithoutIndex is the size without the index.
+	// SizeWithoutIndex is the tikv size without the index.
 	SizeWithoutIndex int64
 	// HasUnsortedBigTables indicates whether the source data has unsorted big tables or not.
 	HasUnsortedBigTables bool
+	// TiFlashSize is the size of tiflash.
+	TiFlashSize int64
 }
 
 // PreImportInfoGetter defines the operations to get information from sources and target.
@@ -107,6 +113,7 @@ const (
 	preInfoGetterKeyDBMetas preInfoGetterKey = "PRE_INFO_GETTER/DB_METAS"
 )
 
+// WithPreInfoGetterDBMetas returns a new context with the specified dbMetas.
 func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) context.Context {
 	return context.WithValue(ctx, preInfoGetterKeyDBMetas, dbMetas)
 }
@@ -265,7 +272,7 @@ type PreImportInfoGetterImpl struct {
 	getPreInfoCfg    *ropts.GetPreInfoConfig
 	srcStorage       storage.ExternalStorage
 	ioWorkers        *worker.Pool
-	encBuilder       backend.EncodingBuilder
+	encBuilder       encode.EncodingBuilder
 	targetInfoGetter TargetInfoGetter
 
 	dbMetas          []*mydump.MDDatabaseMeta
@@ -284,7 +291,7 @@ func NewPreImportInfoGetter(
 	srcStorage storage.ExternalStorage,
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
-	encBuilder backend.EncodingBuilder,
+	encBuilder encode.EncodingBuilder,
 	opts ...ropts.GetPreInfoOption,
 ) (*PreImportInfoGetterImpl, error) {
 	if ioWorkers == nil {
@@ -450,7 +457,7 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := openReader(ctx, dataFileMeta, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, dataFileMeta, p.srcStorage)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -512,11 +519,16 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 	if result != nil && !getPreInfoCfg.ForceReloadCache {
 		return result, nil
 	}
-	sizeWithIndex := int64(0)
-	sourceTotalSize := int64(0)
-	tableCount := 0
-	unSortedBigTableCount := 0
-	errMgr := errormanager.New(nil, p.cfg, log.FromContext(ctx))
+
+	var (
+		sizeWithIndex         = int64(0)
+		tiflashSize           = int64(0)
+		sourceTotalSize       = int64(0)
+		tableCount            = 0
+		unSortedBigTableCount = 0
+		errMgr                = errormanager.New(nil, p.cfg, log.FromContext(ctx))
+	)
+
 	dbInfos, err := p.GetAllTableStructures(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -531,10 +543,10 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 			sourceTotalSize += tbl.TotalSize
 			tableInfo, ok := info.Tables[tbl.Name]
 			if ok {
+				tableSize := tbl.TotalSize
 				// Do not sample small table because there may a large number of small table and it will take a long
 				// time to sample data for all of them.
 				if isTiDBBackend(p.cfg) || tbl.TotalSize < int64(config.SplitRegionSize) {
-					sizeWithIndex += tbl.TotalSize
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
 				} else {
@@ -545,26 +557,32 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 					tbl.IndexRatio = sampledIndexRatio
 					tbl.IsRowOrdered = isRowOrderedFromSample
 
-					if tbl.IndexRatio > 0 {
-						sizeWithIndex += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
-					} else {
-						// if sample data failed due to max-error, fallback to use source size
-						sizeWithIndex += tbl.TotalSize
-					}
+					tableSize = int64(float64(tbl.TotalSize) * tbl.IndexRatio)
 
 					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 && !tbl.IsRowOrdered {
 						unSortedBigTableCount++
 					}
 				}
-				tableCount += 1
+
+				sizeWithIndex += tableSize
+				if tableInfo.Core.TiFlashReplica != nil && tableInfo.Core.TiFlashReplica.Available {
+					tiflashSize += tableSize * int64(tableInfo.Core.TiFlashReplica.Count)
+				}
+				tableCount++
 			}
 		}
+	}
+
+	if isLocalBackend(p.cfg) {
+		sizeWithIndex = int64(float64(sizeWithIndex) * compressionRatio)
+		tiflashSize = int64(float64(tiflashSize) * compressionRatio)
 	}
 
 	result = &EstimateSourceDataSizeResult{
 		SizeWithIndex:        sizeWithIndex,
 		SizeWithoutIndex:     sourceTotalSize,
 		HasUnsortedBigTables: (unSortedBigTableCount > 0),
+		TiFlashSize:          tiflashSize,
 	}
 	p.estimatedSizeCache = result
 	return result, nil
@@ -588,7 +606,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := openReader(ctx, sampleFile, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, sampleFile, p.srcStorage)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
@@ -597,11 +615,16 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	kvEncoder, err := p.encBuilder.NewEncoder(ctx, tbl, &kv.SessionOptions{
-		SQLMode:        p.cfg.TiDB.SQLMode,
-		Timestamp:      0,
-		SysVars:        sysVars,
-		AutoRandomSeed: 0,
+	logger := log.FromContext(ctx).With(zap.String("table", tableMeta.Name))
+	kvEncoder, err := p.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode:        p.cfg.TiDB.SQLMode,
+			Timestamp:      0,
+			SysVars:        sysVars,
+			AutoRandomSeed: 0,
+		},
+		Table:  tbl,
+		Logger: logger,
 	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -633,7 +656,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	}
 	//nolint: errcheck
 	defer parser.Close()
-	logTask := log.FromContext(ctx).With(zap.String("table", tableMeta.Name)).Begin(zap.InfoLevel, "sample file")
+	logger.Begin(zap.InfoLevel, "sample file")
 	igCols, err := p.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -642,8 +665,8 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	initializedColumns := false
 	var (
 		columnPermutation []int
-		kvSize            uint64 = 0
-		rowSize           uint64 = 0
+		kvSize            uint64
+		rowSize           uint64
 		extendVals        []types.Datum
 	)
 	rowCount := 0
@@ -698,7 +721,7 @@ outloop:
 		lastRow.Row = append(lastRow.Row, extendVals...)
 
 		var dataChecksum, indexChecksum verification.KVChecksum
-		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
+		kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, columnPermutation, offset)
 		if encodeErr != nil {
 			encodeErr = errMgr.RecordTypeError(ctx, log.FromContext(ctx), tableInfo.Name.O, sampleFile.Path, offset,
 				"" /* use a empty string here because we don't actually record */, encodeErr)
@@ -712,7 +735,7 @@ outloop:
 		}
 		if isRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
-			for _, kv := range kv.KvPairsFromRows(dataKVs) {
+			for _, kv := range kv.Rows2KvPairs(dataKVs) {
 				if len(lastKey) == 0 {
 					lastKey = kv.Key
 				} else if bytes.Compare(lastKey, kv.Key) > 0 {

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
@@ -693,7 +693,7 @@ func TestCancelMppTasks(t *testing.T) {
 		defer wg.Done()
 		err := tk.QueryToErr("select count(*) from t as t1 , t where t1.a = t.a")
 		require.Error(t, err)
-		require.Equal(t, int(executor.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
+		require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
 	}()
 	time.Sleep(1 * time.Second)
 	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 1)
@@ -1317,11 +1317,13 @@ func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
 func TestDisaggregatedTiFlash(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = true
+		conf.UseAutoScaler = true
 	})
 	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = false
+		conf.UseAutoScaler = false
 	})
-	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "", "", false)
+	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -1339,7 +1341,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	// Expect error, because TestAutoScaler return empty topo.
 	require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
 
-	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "", "", false)
+	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 	err = tk.ExecToErr("select * from t;")
 	// Expect error, because AWSAutoScaler is not setup, so http request will fail.
@@ -1358,7 +1360,7 @@ func TestDisaggregatedTiFlashNonAutoScaler(t *testing.T) {
 	})
 
 	// Setting globalTopoFetcher to nil to can make sure cannot fetch topo from AutoScaler.
-	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.InvalidASStr, "", "", false)
+	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.InvalidASStr, "tmpAddr", "tmpClusterID", false)
 	require.Contains(t, err.Error(), "unexpected topo fetch type. expect: mock or aws or gcp, got invalid")
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -1496,7 +1498,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
-	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "", "", false)
+	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 
 	useASs := []bool{true, false}
@@ -1646,4 +1648,61 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 	test1(true)
 	test1(false)
 	test2()
+}
+
+func TestMppStoreCntWithErrors(t *testing.T) {
+	// mock non-root tasks return error
+	var mppStoreCountPDError = "github.com/pingcap/tidb/store/copr/mppStoreCountPDError"
+	var mppStoreCountSetMPPCnt = "github.com/pingcap/tidb/store/copr/mppStoreCountSetMPPCnt"
+	var mppStoreCountSetLastUpdateTime = "github.com/pingcap/tidb/store/copr/mppStoreCountSetLastUpdateTime"
+	var mppStoreCountSetLastUpdateTimeP2 = "github.com/pingcap/tidb/store/copr/mppStoreCountSetLastUpdateTimeP2"
+
+	store := testkit.CreateMockStore(t, withMockTiFlash(3))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		require.Equal(t, mppCnt, 3)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountSetMPPCnt, `return(1000)`))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		// meet cache
+		require.Equal(t, mppCnt, 3)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTime, `return("0")`))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		// update cache
+		require.Equal(t, mppCnt, 1000)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountPDError, `return(true)`))
+	{
+		_, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Error(t, err)
+	}
+	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
+	require.Nil(t, failpoint.Enable(mppStoreCountSetMPPCnt, `return(2222)`))
+	// set last update time to the latest
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTime, fmt.Sprintf(`return("%d")`, time.Now().UnixMicro())))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		// still update cache
+		require.Equal(t, mppCnt, 2222)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTime, `return("1")`))
+	// fail to get lock and old cache
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTimeP2, `return("2")`))
+	require.Nil(t, failpoint.Enable(mppStoreCountPDError, `return(true)`))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		require.Equal(t, mppCnt, 2222)
+	}
+	require.Nil(t, failpoint.Disable(mppStoreCountSetMPPCnt))
+	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTime))
+	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTimeP2))
+	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
 }

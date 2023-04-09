@@ -30,6 +30,7 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 	if len(groupName) > MaxGroupNameLength {
 		return nil, ErrTooLongResourceGroupName
 	}
+
 	group := &rmpb.ResourceGroup{
 		Name: groupName,
 	}
@@ -43,6 +44,7 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 				},
 			},
 		}
+		group.Priority = uint32(options.Priority)
 		if len(options.CPULimiter) > 0 || len(options.IOReadBandwidth) > 0 || len(options.IOWriteBandwidth) > 0 {
 			return nil, ErrInvalidResourceGroupDuplicatedMode
 		}

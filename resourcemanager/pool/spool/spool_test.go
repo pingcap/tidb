@@ -96,7 +96,7 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 		}()
 	}
 	p.Tune(8)
-	time.Sleep(500 * time.Millisecond)
+	wg.Wait()
 	if n := p.Running(); n != 8 {
 		t.Errorf("expect 8 workers running, but got %d", n)
 	}
@@ -105,13 +105,11 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		c <- struct{}{}
 	}
-	time.Sleep(200 * time.Millisecond)
-	require.Equal(t, int32(2), p.Running())
+	require.Eventually(t, func() bool { return p.Running() == 2 }, 1*time.Second, 200*time.Millisecond)
 	for i := 0; i < 2; i++ {
 		c <- struct{}{}
 	}
-	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, int32(0), p.Running())
+	require.Eventually(t, func() bool { return p.Running() == 0 }, 1*time.Second, 200*time.Millisecond)
 
 	// test with RunWithConcurrency
 	var cnt atomic.Int32
@@ -119,19 +117,16 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 		cnt.Add(1)
 	}
 	fnChan := make(chan func(), 10)
-	wg.Wait()
 	err := p.RunWithConcurrency(fnChan, 2)
 	require.NoError(t, err)
 	require.Equal(t, int32(2), p.Running())
 	for i := 0; i < 10; i++ {
 		fnChan <- workerFn
 	}
-	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, int32(10), cnt.Load())
+	require.Eventually(t, func() bool { return cnt.Load() == 10 }, 1*time.Second, 200*time.Millisecond)
 	require.Equal(t, int32(2), p.Running())
 	close(fnChan)
-	time.Sleep(100 * time.Microsecond)
-	require.Equal(t, int32(0), p.Running())
+	require.Eventually(t, func() bool { return p.Running() == 0 }, 1*time.Second, 200*time.Millisecond)
 	p.ReleaseAndWait()
 }
 

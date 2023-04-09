@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -72,10 +73,10 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.A
 	} else {
 		statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
 	}
-	if statsTbl == nil || statsTbl.Count <= 0 {
+	if statsTbl == nil || statsTbl.RealtimeCount <= 0 {
 		return analyzeResult
 	}
-	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.Count))
+	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.RealtimeCount))
 	if newSampleRate >= *e.analyzePB.ColReq.SampleRate {
 		return analyzeResult
 	}
@@ -819,7 +820,7 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 		})
 		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
-			return errors.Trace(ErrQueryInterrupted)
+			return errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
 			time.Sleep(1000 * time.Second)

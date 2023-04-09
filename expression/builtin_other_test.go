@@ -32,10 +32,10 @@ import (
 func TestBitCount(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 	fc := funcs[ast.BitCount]
 	var bitCountCases = []struct {
@@ -68,7 +68,7 @@ func TestBitCount(t *testing.T) {
 			continue
 		}
 		sc := new(stmtctx.StatementContext)
-		sc.IgnoreTruncate = true
+		sc.IgnoreTruncate.Store(true)
 		res, err := count.ToInt64(sc)
 		require.NoError(t, err)
 		require.Equal(t, test.count, res)
@@ -141,7 +141,7 @@ func TestGetVar(t *testing.T) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
-		types.DefaultParamTypeForValue(kv.val, tp)
+		types.InferParamTypeFromUnderlyingValue(kv.val, tp)
 		ctx.GetSessionVars().SetUserVarType(kv.key, tp)
 	}
 

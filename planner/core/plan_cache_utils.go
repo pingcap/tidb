@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/kvcache"
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/size"
@@ -68,7 +70,8 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
-func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool, paramSQL string, paramStmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
+func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool,
+	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)
@@ -89,7 +92,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, ErrPsManyParam
 	}
 
-	ret := &PreprocessorReturn{}
+	ret := &PreprocessorReturn{InfoSchema: is} // is can be nil, and
 	err := Preprocess(ctx, sctx, paramStmt, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, 0, err
@@ -131,7 +134,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 			cacheable = true // it is already checked here
 		}
 		if !cacheable {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip prepared plan-cache: " + reason))
 		}
 		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB)
 		if err != nil || selectStmtNode == nil {
@@ -140,11 +143,15 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		}
 	}
 
-	// We try to build the real statement of preparedStmt.
-	for i := range prepared.Params {
-		param := prepared.Params[i].(*driver.ParamMarkerExpr)
-		param.Datum.SetNull()
-		param.InExecute = false
+	// For prepared statements like `prepare st from 'select * from t where a<?'`,
+	// parameters are unknown here, so regard them all as NULL.
+	// For non-prepared statements, all parameters are already initialized at `ParameterizeAST`, so no need to set NULL.
+	if isPrepStmt {
+		for i := range prepared.Params {
+			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			param.Datum.SetNull()
+			param.InExecute = false
+		}
 	}
 
 	var p Plan
@@ -197,6 +204,7 @@ type planCacheKey struct {
 	inRestrictedSQL          bool
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
+	ExprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
@@ -233,6 +241,7 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
+		key.hash = codec.EncodeInt(key.hash, key.ExprBlacklistTS)
 	}
 	return key.hash
 }
@@ -274,11 +283,11 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string) (kvcache.Key, error) {
+	lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
-	if schemaVersion == 0 {
+	if schemaVersion == 0 && !intest.InTest {
 		return nil, errors.New("Schema version uninitialized")
 	}
 	if stmtDB == "" {
@@ -302,6 +311,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		inRestrictedSQL:          sessionVars.InRestrictedSQL,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
+		ExprBlacklistTS:          exprBlacklistTS,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -432,7 +442,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 	return nil, ErrStmtNotFound
 }
 
-type limitExtractor struct {
+type matchOptsExtractor struct {
 	cacheable         bool // For safety considerations, check if limit count less than 10000
 	offsetAndCount    []uint64
 	unCacheableReason string
@@ -441,7 +451,7 @@ type limitExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.Limit:
 		if node.Count != nil {
@@ -451,12 +461,13 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 					if val > 10000 {
 						checker.cacheable = false
 						checker.unCacheableReason = "limit count more than 10000"
-						return in, true
+						return in, !checker.cacheable
 					}
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
+					checker.cacheable = false
 					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
-					return in, true
+					return in, !checker.cacheable
 				}
 			}
 		}
@@ -466,50 +477,58 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 				if typeExpected {
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
+					checker.cacheable = false
 					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
-					return in, true
+					return in, !checker.cacheable
 				}
 			}
 		}
+	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
+		checker.hasSubQuery = true
 	}
 	return in, false
 }
 
 // Leave implements Visitor interface.
-func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (checker *matchOptsExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, checker.cacheable
 }
 
 // ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, error) {
+func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) (*utilpc.PlanCacheMatchOpts, error) {
 	if node == nil {
-		return nil, nil
+		return nil, errors.New("AST node is nil")
 	}
-	checker := limitExtractor{
+	checker := matchOptsExtractor{
 		cacheable:      true,
 		offsetAndCount: []uint64{},
+		hasSubQuery:    false,
 	}
 	node.Accept(&checker)
 	if checker.paramTypeErr != nil {
 		return nil, checker.paramTypeErr
 	}
 	if sctx != nil && !checker.cacheable {
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New(checker.unCacheableReason))
 	}
-	return checker.offsetAndCount, nil
+
+	return &utilpc.PlanCacheMatchOpts{
+		LimitOffsetAndCount: checker.offsetAndCount,
+		HasSubQuery:         checker.hasSubQuery,
+	}, nil
 }
 
 // GetMatchOpts get options to fetch plan or generate new plan
+// we can add more options here
 func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
-	limitParams, err := ExtractLimitFromAst(node, sctx)
+	// get limit params and has sub query indicator
+	matchOpts, err := extractMatchOptsFromAST(node, sctx)
 	if err != nil {
 		return nil, err
 	}
-	paramTypes := parseParamTypes(sctx, params)
-	return &utilpc.PlanCacheMatchOpts{
-		ParamTypes:          paramTypes,
-		LimitOffsetAndCount: limitParams,
-	}, nil
+	// get param types
+	matchOpts.ParamTypes = parseParamTypes(sctx, params)
+	return matchOpts, nil
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType

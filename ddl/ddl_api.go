@@ -88,6 +88,8 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
+	// DefaultResourceGroupName is the default resource group name.
+	DefaultResourceGroupName = "default"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
@@ -3059,6 +3061,8 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 	switch typ {
 	case ast.ResourceRURate:
 		resourceGroupSettings.RURate = uintVal
+	case ast.ResourcePriority:
+		resourceGroupSettings.Priority = uintVal
 	case ast.ResourceUnitCPU:
 		resourceGroupSettings.CPULimiter = stringVal
 	case ast.ResourceUnitIOReadBandwidth:
@@ -4045,6 +4049,9 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
+	if err == nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+	}
 	return errors.Trace(err)
 }
 
@@ -5049,10 +5056,12 @@ func GetModifiableColumnJob(
 			}
 			pAst := at.Specs[0].Partition
 			sv := sctx.GetSessionVars().StmtCtx
-			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate
-			sv.TruncateAsWarning, sv.IgnoreTruncate = false, false
+			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate.Load()
+			sv.TruncateAsWarning = false
+			sv.IgnoreTruncate.Store(false)
 			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo)
-			sv.TruncateAsWarning, sv.IgnoreTruncate = oldTruncAsWarn, oldIgnoreTrunc
+			sv.TruncateAsWarning = oldTruncAsWarn
+			sv.IgnoreTruncate.Store(oldIgnoreTrunc)
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}
@@ -6708,6 +6717,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -6723,6 +6733,8 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
+		Charset:  charset,
+		Collate:  collate,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6967,11 +6979,6 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return err
 	}
 
-	// Check for drop index on auto_increment column.
-	err = CheckDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	err = checkIndexNeededInForeignKey(is, schema.Name.L, t.Meta(), indexInfo)
 	if err != nil {
 		return err
@@ -7286,11 +7293,11 @@ func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 		Args:       []interface{}{arg},
 	}
 
-	ctx, err := d.sessPool.get()
+	ctx, err := d.sessPool.Get()
 	if err != nil {
 		return err
 	}
-	defer d.sessPool.put(ctx)
+	defer d.sessPool.Put(ctx)
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
@@ -7840,10 +7847,6 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 	}
 
-	if groupName.L == variable.DefaultResourceGroupName {
-		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(groupName))
-	}
-
 	if err := d.checkResourceGroupValidation(groupInfo); err != nil {
 		return err
 	}
@@ -7874,6 +7877,9 @@ func (d *ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) e
 // DropResourceGroup implements the DDL interface.
 func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
+	if groupName.L == DefaultResourceGroupName {
+		return resourcegroup.ErrDroppingInternalResourceGroup
+	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check group existence.
 	group, ok := is.ResourceGroupByName(groupName)
@@ -7910,7 +7916,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 }
 
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
-	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	for _, opt := range options {
 		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
 		if err != nil {

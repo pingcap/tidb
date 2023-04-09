@@ -156,6 +156,18 @@ var defaultSysVars = []*SysVar{
 		s.TiFlashMaxThreads = TidbOptInt64(val, DefTiFlashMaxThreads)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxBytesBeforeTiFlashExternalJoin, Type: TypeInt, Value: strconv.Itoa(DefTiFlashMaxBytesBeforeExternalJoin), MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashMaxBytesBeforeExternalJoin = TidbOptInt64(val, DefTiFlashMaxBytesBeforeExternalJoin)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxBytesBeforeTiFlashExternalGroupBy, Type: TypeInt, Value: strconv.Itoa(DefTiFlashMaxBytesBeforeExternalGroupBy), MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashMaxBytesBeforeExternalGroupBy = TidbOptInt64(val, DefTiFlashMaxBytesBeforeExternalGroupBy)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxBytesBeforeTiFlashExternalSort, Type: TypeInt, Value: strconv.Itoa(DefTiFlashMaxBytesBeforeExternalSort), MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashMaxBytesBeforeExternalSort = TidbOptInt64(val, DefTiFlashMaxBytesBeforeExternalSort)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		err := setSnapshotTS(s, val)
 		if err != nil {
@@ -1147,13 +1159,13 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableMDL.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLEnableDistributeReorg, Value: BoolToOnOff(DefTiDBDDLEnableDistributeReorg), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		if DDLEnableDistributeReorg.Load() != TiDBOptOn(val) {
-			DDLEnableDistributeReorg.Store(TiDBOptOn(val))
+	{Scope: ScopeGlobal, Name: TiDBEnableDistTask, Value: BoolToOnOff(DefTiDBEnableDistTask), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		if EnableDistTask.Load() != TiDBOptOn(val) {
+			EnableDistTask.Store(TiDBOptOn(val))
 		}
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(DDLEnableDistributeReorg.Load()), nil
+		return BoolToOnOff(EnableDistTask.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableNoopVariables.Store(TiDBOptOn(val))
@@ -1497,6 +1509,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdSize, Value: strconv.Itoa(DefBroadcastJoinThresholdSize), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.BroadcastJoinThresholdSize = TidbOptInt64(val, DefBroadcastJoinThresholdSize)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPreferBCJByExchangeDataSize, Type: TypeBool, Value: BoolToOnOff(DefPreferBCJByExchangeDataSize), SetSession: func(s *SessionVars, val string) error {
+		s.PreferBCJByExchangeDataSize = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBuildStatsConcurrency, Value: strconv.Itoa(DefBuildStatsConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency},
@@ -2372,8 +2388,8 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableResourceControl.Load()), nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionAggressiveLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionAggressiveLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.PessimisticTransactionAggressiveLocking = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionFairLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PessimisticTransactionFairLocking = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheForParamLimit, Value: BoolToOnOff(DefTiDBEnablePlanCacheForParamLimit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -2398,6 +2414,10 @@ var defaultSysVars = []*SysVar{
 		s.EnablePlanCacheForSubquery = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableLateMaterialization, Value: BoolToOnOff(DefTiDBOptEnableLateMaterialization), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableLateMaterialization = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBLoadBasedReplicaReadThreshold, Value: time.Duration(DefTiDBLoadBasedReplicaReadThreshold).String(), Type: TypeDuration, MaxValue: uint64(time.Hour), SetSession: func(s *SessionVars, val string) error {
 		d, err := time.ParseDuration(val)
 		if err != nil {
@@ -2416,6 +2436,11 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return strconv.Itoa(int(TTLRunningTasks.Load())), nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptOrderingIdxSelThresh, Value: strconv.FormatFloat(DefTiDBOptOrderingIdxSelThresh, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1,
+		SetSession: func(s *SessionVars, val string) error {
+			s.OptOrderingIdxSelThresh = tidbOptFloat64(val, DefTiDBOptOrderingIdxSelThresh)
+			return nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

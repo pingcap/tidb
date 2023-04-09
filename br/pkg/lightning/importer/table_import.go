@@ -15,14 +15,20 @@
 package importer
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -36,18 +42,22 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
+// TableImporter is a helper struct to import a table.
 type TableImporter struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
@@ -62,6 +72,7 @@ type TableImporter struct {
 	ignoreColumns map[string]struct{}
 }
 
+// NewTableImporter creates a new TableImporter.
 func NewTableImporter(
 	tableName string,
 	tableMeta *mydump.MDTableMeta,
@@ -200,6 +211,7 @@ func (tr *TableImporter) importTable(
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
 }
 
+// Close implements the Importer interface.
 func (tr *TableImporter) Close() {
 	tr.encTable = nil
 	tr.logger.Info("restore done")
@@ -207,7 +219,8 @@ func (tr *TableImporter) Close() {
 
 func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	task := tr.logger.Begin(zap.InfoLevel, "load engines and files")
-	tableRegions, err := mydump.MakeTableRegions(ctx, tr.tableMeta, len(tr.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers, rc.store)
+	divideConfig := mydump.NewDataDivideConfig(rc.cfg, len(tr.tableInfo.Core.Columns), rc.ioWorkers, rc.store, tr.tableMeta)
+	tableRegions, err := mydump.MakeTableRegions(ctx, divideConfig)
 	if err == nil {
 		timestamp := time.Now().Unix()
 		failpoint.Inject("PopulateChunkTimestamp", func(v failpoint.Value) {
@@ -255,7 +268,8 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 	return err
 }
 
-func (tr *TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
+// RebaseChunkRowIDs rebase the row id of the chunks.
+func (*TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
 	}
@@ -709,7 +723,7 @@ ChunkLoop:
 			if err == nil {
 				if metrics != nil {
 					metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
-					metrics.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
+					metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
 				}
 				if dataFlushStatus != nil && indexFlushStaus != nil {
 					if dataFlushStatus.Flushed() && indexFlushStaus.Flushed() {
@@ -743,14 +757,18 @@ ChunkLoop:
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
 	totalSQLSize := int64(0)
+	logKeyName := "read(bytes)"
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
 		totalSQLSize += chunk.UnfinishedSize()
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			logKeyName = "read(rows)"
+		}
 	}
 
 	err = chunkErr.Get()
 	logTask.End(zap.ErrorLevel, err,
-		zap.Int64("read", totalSQLSize),
+		zap.Int64(logKeyName, totalSQLSize),
 		zap.Uint64("written", totalKVSize),
 	)
 
@@ -855,7 +873,7 @@ func (tr *TableImporter) postProcess(
 		return false, nil
 	}
 
-	// 3. alter table set auto_increment
+	// alter table set auto_increment
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
@@ -903,14 +921,19 @@ func (tr *TableImporter) postProcess(
 		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
 		// 4.5. do duplicate detection.
+		// if we came here, it must be a local backend.
+		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
+		// try to abstract it with logical mode.
+		localBackend := rc.backend.Inner().(*local.Local)
+		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
 		hasDupe := false
 		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			opts := &kv.SessionOptions{
+			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
 			var err error
-			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 				return false, err
@@ -932,11 +955,11 @@ func (tr *TableImporter) postProcess(
 		hasDupe = hasDupe || otherHasDupe
 
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			opts := &kv.SessionOptions{
+			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
-			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+			hasRemoteDupe, e := dupeController.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
 				return false, e
@@ -944,7 +967,7 @@ func (tr *TableImporter) postProcess(
 			hasDupe = hasDupe || hasRemoteDupe
 
 			if hasDupe {
-				if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+				if err = dupeController.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
 					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
 					return false, err
 				}
@@ -1004,7 +1027,27 @@ func (tr *TableImporter) postProcess(
 		cp.Status = nextStage
 	}
 
-	// 5. do table analyze
+	if cp.Status < checkpoints.CheckpointStatusIndexAdded {
+		var err error
+		if rc.cfg.TikvImporter.AddIndexBySQL {
+			var db *sql.DB
+			db, err = rc.tidbGlue.GetDB()
+			if err == nil {
+				w := rc.addIndexLimit.Apply()
+				err = tr.addIndexes(ctx, db)
+				rc.addIndexLimit.Recycle(w)
+			}
+			// Analyze will be automatically triggered after indexes are added by SQL. We can skip manual analyze.
+			shouldSkipAnalyze = true
+		}
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexAdded)
+		if err = firstErr(err, saveCpErr); err != nil {
+			return false, errors.Trace(err)
+		}
+		cp.Status = checkpoints.CheckpointStatusIndexAdded
+	}
+
+	// do table analyze
 	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
 		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
@@ -1027,8 +1070,6 @@ func (tr *TableImporter) postProcess(
 				return false, errors.Trace(err)
 			}
 			cp.Status = checkpoints.CheckpointStatusAnalyzed
-		default:
-			return true, nil
 		}
 	}
 
@@ -1175,4 +1216,343 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, g glue.SQLExecutor) e
 	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger)
 	task.End(zap.ErrorLevel, err)
 	return err
+}
+
+func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr error) {
+	const progressStep = "add-index"
+	task := tr.logger.Begin(zap.InfoLevel, "add indexes")
+	defer func() {
+		task.End(zap.ErrorLevel, retErr)
+	}()
+
+	tblInfo := tr.tableInfo
+	tableName := tr.tableName
+
+	singleSQL, multiSQLs := buildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
+	if len(multiSQLs) == 0 {
+		return nil
+	}
+
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
+
+	defer func() {
+		if retErr == nil {
+			web.BroadcastTableProgress(tr.tableName, progressStep, 1)
+		} else if !log.IsContextCanceledError(retErr) {
+			// Try to strip the prefix of the error message.
+			// e.g "add index failed: Error 1062 ..." -> "Error 1062 ..."
+			cause := errors.Cause(retErr)
+			if cause == nil {
+				cause = retErr
+			}
+			retErr = common.ErrAddIndexFailed.GenWithStack(
+				"add index failed on table %s: %v, you can add index manually by the following SQL: %s",
+				tableName, cause, singleSQL)
+		}
+	}()
+
+	var totalRows int
+	if m, ok := metric.FromContext(ctx); ok {
+		totalRows = int(metric.ReadCounter(m.RowsCounter.WithLabelValues(metric.StateRestored, tableName)))
+	}
+
+	// Try to add all indexes in one statement.
+	err := tr.executeDDL(ctx, db, singleSQL, func(status *ddlStatus) {
+		if totalRows > 0 {
+			progress := float64(status.rowCount) / float64(totalRows*len(multiSQLs))
+			if progress > 1 {
+				progress = 1
+			}
+			web.BroadcastTableProgress(tableName, progressStep, progress)
+			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
+		}
+	})
+	if err == nil {
+		return nil
+	}
+	if !isDupKeyError(err) {
+		return err
+	}
+	if len(multiSQLs) == 1 {
+		return nil
+	}
+	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", multiSQLs), zap.Error(err))
+
+	baseProgress := float64(0)
+	for _, ddl := range multiSQLs {
+		err := tr.executeDDL(ctx, db, ddl, func(status *ddlStatus) {
+			if totalRows > 0 {
+				p := float64(status.rowCount) / float64(totalRows)
+				progress := baseProgress + p/float64(len(multiSQLs))
+				web.BroadcastTableProgress(tableName, progressStep, progress)
+				logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
+			}
+		})
+		if err != nil && !isDupKeyError(err) {
+			return err
+		}
+		baseProgress += 1.0 / float64(len(multiSQLs))
+		web.BroadcastTableProgress(tableName, progressStep, baseProgress)
+	}
+	return nil
+}
+
+func (*TableImporter) executeDDL(
+	ctx context.Context,
+	db *sql.DB,
+	ddl string,
+	updateProgress func(status *ddlStatus),
+) error {
+	logger := log.FromContext(ctx).With(zap.String("ddl", ddl))
+	logger.Info("execute ddl")
+
+	s := common.SQLWithRetry{
+		DB:     db,
+		Logger: logger,
+	}
+
+	var currentTS int64
+	if err := s.QueryRow(ctx, "", "SELECT UNIX_TIMESTAMP()", &currentTS); err != nil {
+		currentTS = time.Now().Unix()
+		logger.Warn("failed to query current timestamp, use current time instead", zap.Int64("currentTS", currentTS), zap.Error(err))
+	}
+
+	resultCh := make(chan error, 1)
+	go func() {
+		resultCh <- s.Exec(ctx, "add index", ddl)
+	}()
+
+	failpoint.Inject("AddIndexCrash", func() {
+		_ = common.KillMySelf()
+	})
+
+	var ddlErr error
+	for {
+		select {
+		case ddlErr = <-resultCh:
+			failpoint.Inject("AddIndexFail", func() {
+				ddlErr = errors.New("injected error")
+			})
+			if ddlErr == nil {
+				return nil
+			}
+			if log.IsContextCanceledError(ddlErr) {
+				return ddlErr
+			}
+			if isDeterminedError(ddlErr) {
+				return ddlErr
+			}
+			logger.Warn("failed to execute ddl, try to query ddl status", zap.Error(ddlErr))
+		case <-time.After(getDDLStatusInterval):
+		}
+
+		var status *ddlStatus
+		err := common.Retry("query ddl status", logger, func() error {
+			var err error
+			status, err = getDDLStatus(ctx, db, ddl, time.Unix(currentTS, 0))
+			return err
+		})
+		if err != nil || status == nil {
+			logger.Warn("failed to query ddl status", zap.Error(err))
+			if ddlErr != nil {
+				return ddlErr
+			}
+			continue
+		}
+		updateProgress(status)
+
+		if ddlErr != nil {
+			switch state := status.state; state {
+			case model.JobStateDone, model.JobStateSynced:
+				logger.Info("ddl job is finished", zap.Stringer("state", state))
+				return nil
+			case model.JobStateRunning, model.JobStateQueueing, model.JobStateNone:
+				logger.Info("ddl job is running", zap.Stringer("state", state))
+			default:
+				logger.Warn("ddl job is canceled or rollbacked", zap.Stringer("state", state))
+				return ddlErr
+			}
+		}
+	}
+}
+
+// buildAddIndexSQL builds the SQL statement to create missing indexes.
+// It returns both a single SQL statement that creates all indexes at once,
+// and a list of SQL statements that creates each index individually.
+func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableInfo) (singleSQL string, multiSQLs []string) {
+	addIndexSpecs := make([]string, 0, len(desiredTblInfo.Indices))
+	for _, desiredIdxInfo := range desiredTblInfo.Indices {
+		present := false
+		for _, curIdxInfo := range curTblInfo.Indices {
+			if curIdxInfo.Name.L == desiredIdxInfo.Name.L {
+				present = true
+			}
+		}
+		if present {
+			continue
+		}
+
+		var buf bytes.Buffer
+		if desiredIdxInfo.Primary {
+			buf.WriteString("ADD PRIMARY KEY ")
+		} else if desiredIdxInfo.Unique {
+			buf.WriteString("ADD UNIQUE KEY ")
+		} else {
+			buf.WriteString("ADD KEY ")
+		}
+		// "primary" is a special name for primary key, we should not use it as index name.
+		if desiredIdxInfo.Name.L != "primary" {
+			buf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
+		}
+
+		colStrs := make([]string, 0, len(desiredIdxInfo.Columns))
+		for _, col := range desiredIdxInfo.Columns {
+			var colStr string
+			if desiredTblInfo.Columns[col.Offset].Hidden {
+				colStr = fmt.Sprintf("(%s)", desiredTblInfo.Columns[col.Offset].GeneratedExprString)
+			} else {
+				colStr = common.EscapeIdentifier(col.Name.O)
+				if col.Length != types.UnspecifiedLength {
+					colStr = fmt.Sprintf("%s(%s)", colStr, strconv.Itoa(col.Length))
+				}
+			}
+			colStrs = append(colStrs, colStr)
+		}
+		fmt.Fprintf(&buf, "(%s)", strings.Join(colStrs, ","))
+
+		if desiredIdxInfo.Invisible {
+			fmt.Fprint(&buf, " INVISIBLE")
+		}
+		if desiredIdxInfo.Comment != "" {
+			fmt.Fprintf(&buf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
+		}
+		addIndexSpecs = append(addIndexSpecs, buf.String())
+	}
+	if len(addIndexSpecs) == 0 {
+		return "", nil
+	}
+
+	singleSQL = fmt.Sprintf("ALTER TABLE %s %s", tableName, strings.Join(addIndexSpecs, ", "))
+	for _, spec := range addIndexSpecs {
+		multiSQLs = append(multiSQLs, fmt.Sprintf("ALTER TABLE %s %s", tableName, spec))
+	}
+	return singleSQL, multiSQLs
+}
+
+func isDupKeyError(err error) bool {
+	if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+		switch merr.Number {
+		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique:
+			return true
+		}
+	}
+	return false
+}
+
+func isDeterminedError(err error) bool {
+	if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+		switch merr.Number {
+		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique, errno.ErrDupEntry:
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	getDDLStatusInterval = time.Minute
+	// Limit the number of jobs to query. Large limit may result in empty result. See https://github.com/pingcap/tidb/issues/42298.
+	// A new TiDB cluster has at least 40 jobs in the history queue, so 30 is a reasonable value.
+	getDDLStatusMaxJobs = 30
+)
+
+type ddlStatus struct {
+	state    model.JobState
+	rowCount int64
+}
+
+func getDDLStatus(
+	ctx context.Context,
+	db *sql.DB,
+	query string,
+	minCreateTime time.Time,
+) (*ddlStatus, error) {
+	jobID, err := getDDLJobIDByQuery(ctx, db, query)
+	if err != nil || jobID == 0 {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("ADMIN SHOW DDL JOBS %d WHERE job_id = %d", getDDLStatusMaxJobs, jobID))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var (
+		rowCount      int64
+		state         string
+		createTimeStr sql.NullString
+	)
+	dest := make([]any, len(cols))
+	for i, col := range cols {
+		switch strings.ToLower(col) {
+		case "row_count":
+			dest[i] = &rowCount
+		case "state":
+			dest[i] = &state
+		case "create_time":
+			dest[i] = &createTimeStr
+		default:
+			var anyStr sql.NullString
+			dest[i] = &anyStr
+		}
+	}
+	status := &ddlStatus{}
+
+	for rows.Next() {
+		if err := rows.Scan(dest...); err != nil {
+			return nil, errors.Trace(err)
+		}
+		status.rowCount += rowCount
+		// subjob doesn't have create_time, ignore it.
+		if !createTimeStr.Valid || createTimeStr.String == "" {
+			continue
+		}
+		createTime, err := time.Parse(time.DateTime, createTimeStr.String)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// The job is not created by the current task, ignore it.
+		if createTime.Before(minCreateTime) {
+			return nil, nil
+		}
+		status.state = model.StrToJobState(state)
+	}
+	return status, errors.Trace(rows.Err())
+}
+
+func getDDLJobIDByQuery(ctx context.Context, db *sql.DB, wantQuery string) (int64, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("ADMIN SHOW DDL JOB QUERIES LIMIT %d", getDDLStatusMaxJobs))
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			jobID int64
+			query string
+		)
+		if err := rows.Scan(&jobID, &query); err != nil {
+			return 0, errors.Trace(err)
+		}
+		if query == wantQuery {
+			return jobID, errors.Trace(rows.Err())
+		}
+	}
+	return 0, errors.Trace(rows.Err())
 }

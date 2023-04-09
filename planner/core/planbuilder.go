@@ -728,18 +728,22 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 // This is The comman code pattern to use it:
 // NewPlanBuilder().Init(sctx, is, processor)
 func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
-	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
+	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(nil)
 	} else {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
+		newPlannerSelectBlockAsName := make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
 	}
 
 	b.ctx = sctx
 	b.is = is
 	b.hintProcessor = processor
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
-	return b, savedBlockNames
+	if savedBlockNames == nil {
+		return b, nil
+	}
+	return b, *savedBlockNames
 }
 
 // ResetForReuse reset the plan builder, put it into pool for reuse.
@@ -831,7 +835,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt:
+		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt,
+		*ast.LoadDataActionStmt, *ast.CalibrateResourceStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -3121,6 +3126,14 @@ func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
+func buildCalibrateResourceSchema() (*expression.Schema, types.NameSlice) {
+	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "QUOTA", mysql.TypeLonglong, longlongSize))
+
+	return schema.col2Schema(), schema.names
+}
+
 func buildShowTelemetrySchema() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "TRACKING_ID", mysql.TypeVarchar, 64))
@@ -3209,6 +3222,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			GlobalScope:           show.GlobalScope,
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
+			LoadDataJobID:         show.LoadDataJobID,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -3383,6 +3397,10 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
 		}
+	case *ast.CalibrateResourceStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
+		p.setSchemaAndNames(buildCalibrateResourceSchema())
 	case *ast.GrantRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
@@ -4177,14 +4195,16 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	return nil
 }
 
+// DetachedOption is a special option in load data statement that need to be handled separately.
+const DetachedOption = "detached"
+
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
-	// quick fix for https://github.com/pingcap/tidb/issues/33298
-	if ld.FieldsInfo != nil && len(ld.FieldsInfo.Terminated) == 0 {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("load data with empty field terminator")
-	}
-	options := []*LoadDataOpt{}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	var err error
+	var (
+		err      error
+		options  = make([]*LoadDataOpt, 0, len(ld.Options))
+		detached = false
+	)
 	for _, opt := range ld.Options {
 		loadDataOpt := LoadDataOpt{Name: opt.Name}
 		if opt.Value != nil {
@@ -4192,6 +4212,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 			if err != nil {
 				return nil, err
 			}
+		}
+		if strings.ToLower(opt.Name) == DetachedOption && opt.Value == nil {
+			detached = true
 		}
 		options = append(options, &loadDataOpt)
 	}
@@ -4201,10 +4224,10 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		Path:               ld.Path,
 		Format:             ld.Format,
 		Table:              ld.Table,
+		Charset:            ld.Charset,
 		Columns:            ld.Columns,
 		FieldsInfo:         ld.FieldsInfo,
 		LinesInfo:          ld.LinesInfo,
-		NullInfo:           ld.NullInfo,
 		IgnoreLines:        ld.IgnoreLines,
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
@@ -4237,6 +4260,12 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	if err != nil {
 		return nil, err
 	}
+
+	if detached {
+		p.setSchemaAndNames(expression.NewSchema(&expression.Column{
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}), types.NameSlice{{ColName: model.NewCIStr("Job_ID")}})
+	}
 	return p, nil
 }
 
@@ -4257,11 +4286,11 @@ func (b *PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
 
 func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 	p := &IndexAdvise{
-		IsLocal:     node.IsLocal,
-		Path:        node.Path,
-		MaxMinutes:  node.MaxMinutes,
-		MaxIndexNum: node.MaxIndexNum,
-		LinesInfo:   node.LinesInfo,
+		IsLocal:        node.IsLocal,
+		Path:           node.Path,
+		MaxMinutes:     node.MaxMinutes,
+		MaxIndexNum:    node.MaxIndexNum,
+		LineFieldsInfo: NewLineFieldsInfo(nil, node.LinesInfo),
 	}
 	return p
 }
@@ -4960,8 +4989,9 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	return &SelectInto{
-		TargetPlan: targetPlan,
-		IntoOpt:    selectIntoInfo,
+		TargetPlan:     targetPlan,
+		IntoOpt:        selectIntoInfo,
+		LineFieldsInfo: NewLineFieldsInfo(selectIntoInfo.FieldsInfo, selectIntoInfo.LinesInfo),
 	}, nil
 }
 
@@ -5055,7 +5085,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Type", "Instance", "Name", "Value"}
 	case ast.ShowDatabases:
 		fieldDB := "Database"
-		if patternName := extractPatternLikeName(s.Pattern); patternName != "" {
+		if patternName := extractPatternLikeOrIlikeName(s.Pattern); patternName != "" {
 			fieldDB = fmt.Sprintf("%s (%s)", fieldDB, patternName)
 		}
 		names = []string{fieldDB}
@@ -5064,7 +5094,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeLong}
 	case ast.ShowTables:
 		fieldTable := fmt.Sprintf("Tables_in_%s", s.DBName)
-		if patternName := extractPatternLikeName(s.Pattern); patternName != "" {
+		if patternName := extractPatternLikeOrIlikeName(s.Pattern); patternName != "" {
 			fieldTable = fmt.Sprintf("%s (%s)", fieldTable, patternName)
 		}
 		names = []string{fieldTable}
@@ -5206,6 +5236,15 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowSessionStates:
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
+	case ast.ShowLoadDataJobs:
+		names = []string{"Job_ID", "Create_Time", "Start_Time", "End_Time",
+			"Data_Source", "Target_Table", "Import_Mode", "Created_By",
+			"Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+			"Result_Code", "Result_Message"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeLonglong, mysql.TypeString}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
@@ -5297,7 +5336,7 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (Plan, error
 	return p, nil
 }
 
-func extractPatternLikeName(patternLike *ast.PatternLikeExpr) string {
+func extractPatternLikeOrIlikeName(patternLike *ast.PatternLikeOrIlikeExpr) string {
 	if patternLike == nil {
 		return ""
 	}

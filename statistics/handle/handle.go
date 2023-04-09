@@ -611,7 +611,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 			continue
 		}
 		tbl.Version = version
-		tbl.Count = count
+		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
@@ -762,7 +762,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 				return
 			}
 			// partition stats is not empty but column stats(hist, topn) is missing
-			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
+			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				var errMsg string
 				if isIndex == 0 {
 					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
@@ -774,7 +774,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			}
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
-				globalStats.Count += partitionStats.Count
+				globalStats.Count += partitionStats.RealtimeCount
 				globalStats.ModifyCount += partitionStats.ModifyCount
 			}
 			allHg[i] = append(allHg[i], hg)

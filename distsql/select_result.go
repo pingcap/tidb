@@ -16,6 +16,7 @@ package distsql
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
 	"fmt"
 	"strconv"
@@ -26,9 +27,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
@@ -62,6 +65,7 @@ var (
 var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*serialSelectResults)(nil)
+	_ SelectResult = (*sortedSelectResults)(nil)
 )
 
 // SelectResult is an iterator of coprocessor partial results.
@@ -72,6 +76,172 @@ type SelectResult interface {
 	Next(context.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
+}
+
+type chunkRowHeap struct {
+	*sortedSelectResults
+}
+
+func (h chunkRowHeap) Len() int {
+	return len(h.rowPtrs)
+}
+
+func (h chunkRowHeap) Less(i, j int) bool {
+	iPtr := h.rowPtrs[i]
+	jPtr := h.rowPtrs[j]
+	return h.lessRow(h.cachedChunks[iPtr.ChkIdx].GetRow(int(iPtr.RowIdx)),
+		h.cachedChunks[jPtr.ChkIdx].GetRow(int(jPtr.RowIdx)))
+}
+
+func (h chunkRowHeap) Swap(i, j int) {
+	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
+}
+
+func (h *chunkRowHeap) Push(x interface{}) {
+	h.rowPtrs = append(h.rowPtrs, x.(chunk.RowPtr))
+}
+
+func (h *chunkRowHeap) Pop() interface{} {
+	ret := h.rowPtrs[len(h.rowPtrs)-1]
+	h.rowPtrs = h.rowPtrs[0 : len(h.rowPtrs)-1]
+	return ret
+}
+
+// NewSortedSelectResults is only for partition table
+// When pids != nil, the pid will be set in the last column of each chunk.Rows.
+func NewSortedSelectResults(selectResult []SelectResult, pids []int64, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
+	s := &sortedSelectResults{
+		selectResult: selectResult,
+		byItems:      byitems,
+		memTracker:   memTracker,
+		pids:         pids,
+	}
+	s.initCompareFuncs()
+	s.buildKeyColumns()
+	s.heap = &chunkRowHeap{s}
+	s.cachedChunks = make([]*chunk.Chunk, len(selectResult))
+	return s
+}
+
+type sortedSelectResults struct {
+	selectResult []SelectResult
+	compareFuncs []chunk.CompareFunc
+	byItems      []*util.ByItems
+	keyColumns   []int
+
+	cachedChunks []*chunk.Chunk
+	rowPtrs      []chunk.RowPtr
+	heap         *chunkRowHeap
+
+	pids       []int64
+	memTracker *memory.Tracker
+}
+
+func (ssr *sortedSelectResults) updateCachedChunk(ctx context.Context, idx uint32) error {
+	prevMemUsage := ssr.cachedChunks[idx].MemoryUsage()
+	if err := ssr.selectResult[idx].Next(ctx, ssr.cachedChunks[idx]); err != nil {
+		return err
+	}
+	ssr.memTracker.Consume(ssr.cachedChunks[idx].MemoryUsage() - prevMemUsage)
+	if ssr.cachedChunks[idx].NumRows() == 0 {
+		return nil
+	}
+	heap.Push(ssr.heap, chunk.RowPtr{ChkIdx: idx, RowIdx: 0})
+	return nil
+}
+
+func (ssr *sortedSelectResults) initCompareFuncs() {
+	ssr.compareFuncs = make([]chunk.CompareFunc, len(ssr.byItems))
+	for i, item := range ssr.byItems {
+		keyType := item.Expr.GetType()
+		ssr.compareFuncs[i] = chunk.GetCompareFunc(keyType)
+	}
+}
+
+func (ssr *sortedSelectResults) buildKeyColumns() {
+	ssr.keyColumns = make([]int, 0, len(ssr.byItems))
+	for _, by := range ssr.byItems {
+		col := by.Expr.(*expression.Column)
+		ssr.keyColumns = append(ssr.keyColumns, col.Index)
+	}
+}
+
+func (ssr *sortedSelectResults) lessRow(rowI, rowJ chunk.Row) bool {
+	for i, colIdx := range ssr.keyColumns {
+		cmpFunc := ssr.compareFuncs[i]
+		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if ssr.byItems[i].Desc {
+			cmp = -cmp
+		}
+		if cmp < 0 {
+			return true
+		} else if cmp > 0 {
+			return false
+		}
+	}
+	return false
+}
+
+func (*sortedSelectResults) NextRaw(context.Context) ([]byte, error) {
+	panic("Not support NextRaw for sortedSelectResults")
+}
+
+func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err error) {
+	c.Reset()
+	for i := range ssr.cachedChunks {
+		if ssr.cachedChunks[i] == nil {
+			ssr.cachedChunks[i] = c.CopyConstruct()
+			if len(ssr.pids) != 0 {
+				r := make([]int, c.NumCols()-1)
+				for i := range r {
+					r[i] = i
+				}
+				ssr.cachedChunks[i] = ssr.cachedChunks[i].Prune(r)
+			}
+			ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage())
+		}
+	}
+
+	if ssr.heap.Len() == 0 {
+		for i := range ssr.cachedChunks {
+			if err = ssr.updateCachedChunk(ctx, uint32(i)); err != nil {
+				return err
+			}
+		}
+	}
+
+	for c.NumRows() < c.RequiredRows() {
+		if ssr.heap.Len() == 0 {
+			break
+		}
+
+		idx := heap.Pop(ssr.heap).(chunk.RowPtr)
+		c.AppendRow(ssr.cachedChunks[idx.ChkIdx].GetRow(int(idx.RowIdx)))
+		if len(ssr.pids) != 0 {
+			c.AppendInt64(c.NumCols()-1, ssr.pids[idx.ChkIdx])
+		}
+
+		if int(idx.RowIdx) >= ssr.cachedChunks[idx.ChkIdx].NumRows()-1 {
+			if err = ssr.updateCachedChunk(ctx, idx.ChkIdx); err != nil {
+				return err
+			}
+		} else {
+			heap.Push(ssr.heap, chunk.RowPtr{ChkIdx: idx.ChkIdx, RowIdx: idx.RowIdx + 1})
+		}
+	}
+	return nil
+}
+
+func (ssr *sortedSelectResults) Close() (err error) {
+	for i, sr := range ssr.selectResult {
+		err = sr.Close()
+		if err != nil {
+			return err
+		}
+		ssr.memTracker.Consume(-ssr.cachedChunks[i].MemoryUsage())
+		ssr.cachedChunks[i] = nil
+	}
+	return nil
 }
 
 // NewSerialSelectResults create a SelectResult which will read each SelectResult serially.
@@ -359,7 +529,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 	if copStats.ScanDetail != nil {
 		readKeys := copStats.ScanDetail.ProcessedKeys
-		readTime := copStats.TimeDetail.KvReadWallTimeMs.Seconds()
+		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
 		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
 		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
 	}
