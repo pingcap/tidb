@@ -2191,7 +2191,8 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 	}
 
 	if e.LoadDataJobID != nil {
-		info, err := asyncloaddata.GetJobInfo(ctx, exec, *e.LoadDataJobID, e.ctx.GetSessionVars().User.String())
+		job := asyncloaddata.NewJob(*e.LoadDataJobID, exec, e.ctx.GetSessionVars().User.String())
+		info, err := job.GetJobInfo(ctx)
 		if err != nil {
 			return err
 		}
