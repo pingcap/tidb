@@ -183,9 +183,14 @@ func TestIsIngestRetryable(t *testing.T) {
 	require.Error(t, clone.lastRetryableErr)
 }
 
-func TestRegionJobRetryQueue(t *testing.T) {
+func TestRegionJobRetryer(t *testing.T) {
 	putBackCh := make(chan *regionJob, 10)
-	queue := newRegionJobRetryQueue(putBackCh)
+	done := make(chan struct{})
+	retryer := newRegionJobRetryer(putBackCh)
+	go func() {
+		retryer.run(context.Background())
+		close(done)
+	}()
 	require.Len(t, putBackCh, 0)
 
 	for i := 0; i < 8; i++ {
@@ -193,7 +198,7 @@ func TestRegionJobRetryQueue(t *testing.T) {
 			job := &regionJob{
 				waitUntil: time.Now().Add(time.Hour),
 			}
-			queue.push(job)
+			retryer.push(job)
 		}()
 	}
 	select {
@@ -208,14 +213,15 @@ func TestRegionJobRetryQueue(t *testing.T) {
 		},
 		waitUntil: time.Now().Add(-time.Second),
 	}
-	queue.push(job)
+	retryer.push(job)
 	select {
 	case j := <-putBackCh:
 		require.Equal(t, job, j)
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.Fail(t, "should put back very quickly")
 	}
 
-	remainCnt := queue.close()
+	remainCnt := retryer.close()
 	require.Equal(t, 8, remainCnt)
+	<-done
 }

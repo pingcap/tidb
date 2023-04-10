@@ -93,6 +93,9 @@ type regionJob struct {
 	retryCount       int
 	waitUntil        time.Time
 	lastRetryableErr error
+
+	// injected is used in test to set the behaviour
+	injected []injectedBehaviour
 }
 
 type tikvWriteResult struct {
@@ -104,6 +107,21 @@ type tikvWriteResult struct {
 type rangeStats struct {
 	count      int64
 	totalBytes int64
+}
+
+type injectedBehaviour struct {
+	write  injectedWriteBehaviour
+	ingest injectedIngestBehaviour
+}
+
+type injectedWriteBehaviour struct {
+	result *tikvWriteResult
+	err    error
+}
+
+type injectedIngestBehaviour struct {
+	nextStage jobStageTp
+	err       error
 }
 
 func (j *regionJob) convertStageTo(stage jobStageTp) {
@@ -135,14 +153,26 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 // tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
 func (local *Local) writeToTiKV(ctx context.Context, j *regionJob) error {
+	if j.stage != regionScanned {
+		return nil
+	}
+
+	failpoint.Inject("fakeRegionJobs", func() {
+		front := j.injected[0]
+		j.injected = j.injected[1:]
+		j.writeResult = front.write.result
+		err := front.write.err
+		if err == nil {
+			j.convertStageTo(wrote)
+		}
+		failpoint.Return(err)
+	})
+
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
 	kvBatchSize := local.KVWriteBatchSize
 	bufferPool := local.bufferPool
 	writeLimiter := local.writeLimiter
-	if j.stage != regionScanned {
-		return nil
-	}
 
 	begin := time.Now()
 	stats := rangeStats{}
@@ -355,6 +385,17 @@ func (local *Local) ingest(ctx context.Context, j *regionJob) error {
 	if j.stage != wrote {
 		return nil
 	}
+
+	failpoint.Inject("fakeRegionJobs", func() {
+		log.FromContext(ctx).Debug("ingest job",
+			zap.String("start", string(j.keyRange.start)),
+			zap.String("end", string(j.keyRange.end)),
+		)
+		front := j.injected[0]
+		j.injected = j.injected[1:]
+		j.convertStageTo(front.ingest.nextStage)
+		failpoint.Return(front.ingest.err)
+	})
 
 	if len(j.writeResult.sstMeta) == 0 {
 		j.convertStageTo(ingested)
@@ -624,6 +665,8 @@ func (j *regionJob) convertStageOnIngestError(
 		j.convertStageTo(needRescan)
 		return false, nil
 	case errPb.DiskFull != nil:
+		j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
+
 		return false, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 	}
 	// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
@@ -658,32 +701,29 @@ func (h *regionJobRetryHeap) Pop() any {
 	return x
 }
 
-// regionJobRetryQueue is a concurrent-safe queue holding jobs that need to put
+// regionJobRetryer is a concurrent-safe queue holding jobs that need to put
 // back later, and put back when the regionJob.waitUntil is reached. It maintains
 // a heap of jobs internally based on the regionJob.waitUntil field.
-type regionJobRetryQueue struct {
+type regionJobRetryer struct {
 	q         regionJobRetryHeap
 	qMu       sync.Mutex
-	wg        sync.WaitGroup
 	putBackCh chan<- *regionJob
 	reload    chan struct{}
 	done      chan struct{}
+	closed    bool
+	closeMu   sync.Mutex
 }
 
-func newRegionJobRetryQueue(putBackCh chan<- *regionJob) *regionJobRetryQueue {
-	ret := &regionJobRetryQueue{
+func newRegionJobRetryer(putBackCh chan<- *regionJob) *regionJobRetryer {
+	return &regionJobRetryer{
 		q:         make([]*regionJob, 0, 16),
 		putBackCh: putBackCh,
 		reload:    make(chan struct{}, 1),
 		done:      make(chan struct{}),
 	}
-	ret.wg.Add(1)
-	go ret.run()
-	return ret
 }
 
-func (q *regionJobRetryQueue) run() {
-	defer q.wg.Done()
+func (q *regionJobRetryer) run(ctx context.Context) {
 	var (
 		front     *regionJob
 		toPutBack *regionJob
@@ -700,14 +740,20 @@ func (q *regionJobRetryQueue) run() {
 
 		switch {
 		case toPutBack != nil:
+			println("lance test will put back")
 			select {
+			case <-ctx.Done():
+				return
 			case <-q.done:
 				return
 			case q.putBackCh <- toPutBack:
 				toPutBack = nil
+				println("lance test put back done")
 			}
 		case front != nil:
 			select {
+			case <-ctx.Done():
+				return
 			case <-q.done:
 				return
 			case <-q.reload:
@@ -719,6 +765,8 @@ func (q *regionJobRetryQueue) run() {
 		default:
 			// len(q.q) == 0 && q.toPutBack == nil
 			select {
+			case <-ctx.Done():
+				return
 			case <-q.done:
 				return
 			case <-q.reload:
@@ -727,7 +775,7 @@ func (q *regionJobRetryQueue) run() {
 	}
 }
 
-func (q *regionJobRetryQueue) push(job *regionJob) {
+func (q *regionJobRetryer) push(job *regionJob) {
 	q.qMu.Lock()
 	heap.Push(&q.q, job)
 	q.qMu.Unlock()
@@ -738,8 +786,15 @@ func (q *regionJobRetryQueue) push(job *regionJob) {
 	}
 }
 
-func (q *regionJobRetryQueue) close() int {
+// close will return the number of jobs that are not put back when first called.
+func (q *regionJobRetryer) close() int {
+	q.closeMu.Lock()
+	defer q.closeMu.Unlock()
+
+	if q.closed {
+		return 0
+	}
+	q.closed = true
 	close(q.done)
-	q.wg.Wait()
 	return len(q.q)
 }

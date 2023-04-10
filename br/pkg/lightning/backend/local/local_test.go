@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -1328,4 +1329,287 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		jobWg.Done()
 	}
 	jobWg.Wait()
+}
+
+func getSuccessInjectedBehaviour() []injectedBehaviour {
+	return []injectedBehaviour{
+		{
+			write: injectedWriteBehaviour{
+				result: &tikvWriteResult{
+					remainingStartKey: nil,
+				},
+			},
+		},
+		{
+			ingest: injectedIngestBehaviour{
+				nextStage: ingested,
+			},
+		},
+	}
+}
+
+func getNeedRescanWhenIngestBehaviour() []injectedBehaviour {
+	return []injectedBehaviour{
+		{
+			write: injectedWriteBehaviour{
+				result: &tikvWriteResult{
+					remainingStartKey: nil,
+				},
+			},
+		},
+		{
+			ingest: injectedIngestBehaviour{
+				nextStage: needRescan,
+				err:       common.ErrKVEpochNotMatch,
+			},
+		},
+	}
+}
+
+func TestDoImport(t *testing.T) {
+	log.InitLogger(&log.Config{Level: "debug"}, "debug")
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 1
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs")
+	})
+
+	// test that
+	// - one job need rescan when ingest
+	// - one job need retry when write
+
+	initRanges := []Range{
+		{start: []byte{'a'}, end: []byte{'b'}},
+		{start: []byte{'b'}, end: []byte{'c'}},
+		{start: []byte{'c'}, end: []byte{'d'}},
+	}
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		[2]string{"a", "b"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'a'}, end: []byte{'b'}},
+					engine:   &Engine{},
+					injected: getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		[2]string{"b", "c"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'b'}, end: []byte{'c'}},
+					engine:   &Engine{},
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								result: &tikvWriteResult{
+									remainingStartKey: []byte{'b', '2'},
+								},
+							},
+						},
+						{
+							ingest: injectedIngestBehaviour{
+								nextStage: ingested,
+							},
+						},
+						{
+							write: injectedWriteBehaviour{
+								result: &tikvWriteResult{
+									remainingStartKey: nil,
+								},
+							},
+						},
+						{
+							ingest: injectedIngestBehaviour{
+								nextStage: ingested,
+							},
+						},
+					},
+				},
+			},
+		},
+		[2]string{"c", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					engine:   &Engine{},
+					injected: getNeedRescanWhenIngestBehaviour(),
+				},
+				{
+					keyRange: Range{start: []byte{'c', '2'}, end: []byte{'d'}},
+					engine:   &Engine{},
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								// a retryable error
+								err: errors.New("is not fully replicated"),
+							},
+						},
+						{
+							write: injectedWriteBehaviour{
+								result: &tikvWriteResult{
+									remainingStartKey: nil,
+								},
+							},
+						},
+						{
+							ingest: injectedIngestBehaviour{
+								nextStage: ingested,
+							},
+						},
+					},
+				},
+			},
+		},
+		[2]string{"c", "c2"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					engine:   &Engine{},
+					injected: getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	l := &Local{
+		BackendConfig: BackendConfig{WorkerConcurrency: 2},
+	}
+	e := &Engine{}
+	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.NoError(t, err)
+
+	// test first call to generateJobForRange meet error
+
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		[2]string{"a", "b"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'a'}, end: []byte{'b'}},
+					engine:   &Engine{},
+					injected: getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		[2]string{"b", "c"}: {
+			err: errors.New("meet error when generateJobForRange"),
+		},
+	}
+	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "meet error when generateJobForRange")
+
+	// test second call to generateJobForRange (needRescan) meet error
+
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		[2]string{"a", "b"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'a'}, end: []byte{'a', '2'}},
+					engine:   &Engine{},
+					injected: getNeedRescanWhenIngestBehaviour(),
+				},
+				{
+					keyRange: Range{start: []byte{'a', '2'}, end: []byte{'b'}},
+					engine:   &Engine{},
+					injected: getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		[2]string{"b", "c"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'b'}, end: []byte{'c'}},
+					engine:   &Engine{},
+					injected: getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		[2]string{"c", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'c'}, end: []byte{'d'}},
+					engine:   &Engine{},
+					injected: getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		[2]string{"c", "c2"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					engine:   &Engine{},
+					injected: getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		[2]string{"a", "a2"}: {
+			err: errors.New("meet error when generateJobForRange again"),
+		},
+	}
+	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "meet error when generateJobForRange again")
+
+	// test write meet unretryable error
+
+	maxRetryBackoffSecond = 100
+	l.WorkerConcurrency = 1
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		[2]string{"a", "b"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   Range{start: []byte{'a'}, end: []byte{'b'}},
+					engine:     &Engine{},
+					retryCount: maxWriteAndIngestRetryTimes - 1,
+					injected:   getNeedRescanWhenIngestBehaviour(),
+				},
+			},
+		},
+		[2]string{"b", "c"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   Range{start: []byte{'b'}, end: []byte{'c'}},
+					engine:     &Engine{},
+					retryCount: maxWriteAndIngestRetryTimes - 1,
+					injected:   getNeedRescanWhenIngestBehaviour(),
+				},
+			},
+		},
+		[2]string{"c", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'c'}, end: []byte{'d'}},
+					engine:   &Engine{},
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								// unretryable error
+								err: errors.New("fatal error"),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "fatal error")
 }

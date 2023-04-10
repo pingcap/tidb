@@ -1065,6 +1065,10 @@ func (local *Local) prepareAndSendJob(
 		needSplit = true
 	})
 	for i := 0; i < maxRetryTimes; i++ {
+		failpoint.Inject("skipSplitAndScatter", func() {
+			failpoint.Break()
+		})
+
 		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, engine.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 		if err == nil || common.IsContextCanceledError(err) {
 			break
@@ -1138,6 +1142,12 @@ func (local *Local) generateAndSendJob(
 	return nil
 }
 
+// fakeRegionJobs is used in test , the injected job can be found by (startKey, endKey).
+var fakeRegionJobs map[[2]string]struct {
+	jobs []*regionJob
+	err  error
+}
+
 // generateJobForRange will scan the region in `keyRange` and generate region jobs.
 // It will retry internally when scan region meet error.
 func (local *Local) generateJobForRange(
@@ -1146,6 +1156,17 @@ func (local *Local) generateJobForRange(
 	keyRange Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
+	failpoint.Inject("fakeRegionJobs", func() {
+		key := [2]string{string(keyRange.start), string(keyRange.end)}
+		injected := fakeRegionJobs[key]
+		// overwrite the stage to regionScanned, because some time same keyRange
+		// will be generated more than once.
+		for _, job := range injected.jobs {
+			job.stage = regionScanned
+		}
+		failpoint.Return(injected.jobs, injected.err)
+	})
+
 	start, end := keyRange.start, keyRange.end
 	pairStart, pairEnd, err := engine.getFirstAndLastKey(start, end)
 	if err != nil {
@@ -1308,6 +1329,7 @@ func (local *Local) executeJob(
 			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
 			job.lastRetryableErr = err
+			// TODO: why don't we distinguish if the job need rescan?
 			return nil
 		}
 
@@ -1425,7 +1447,7 @@ func (local *Local) doImport(ctx context.Context, engine *Engine, regionRanges [
 	                        |                jobFromWorkerCh
 	                        |                       |
 	                        |                       v
-	               [regionJobRetryQueue]<--[dispatchJobGoroutine]-->done
+	               [regionJobRetryer]<--[dispatchJobGoroutine]-->done
 	*/
 
 	var (
@@ -1439,14 +1461,22 @@ func (local *Local) doImport(ctx context.Context, engine *Engine, regionRanges [
 		jobToWorkerCh   = make(chan *regionJob)
 		jobFromWorkerCh = make(chan *regionJob)
 		// jobWg tracks the number of jobs in this workflow.
-		// prepareAndSendJob, workers and regionJobRetryQueue can own jobs.
+		// prepareAndSendJob, workers and regionJobRetryer can own jobs.
 		// When cancel on error, the goroutine of above three components have
 		// responsibility to Done jobWg of their owning jobs.
 		jobWg                sync.WaitGroup
 		dispatchJobGoroutine = make(chan struct{})
 	)
 
-	retryQueue := newRegionJobRetryQueue(jobToWorkerCh)
+	retryer := newRegionJobRetryer(jobToWorkerCh)
+	go func() {
+		retryer.run(workerCtx)
+		n := retryer.close()
+		for n > 0 {
+			n--
+			jobWg.Done()
+		}
+	}()
 
 	// dispatchJobGoroutine handles processed job from worker, it will only exit
 	// when jobFromWorkerCh is closed to avoid worker is blocked on sending to
@@ -1484,7 +1514,7 @@ func (local *Local) doImport(ctx context.Context, engine *Engine, regionRanges [
 					zap.Stringer("stage", job.stage),
 					zap.Int("retryCount", job.retryCount),
 					zap.Time("waitUntil", job.waitUntil))
-				retryQueue.push(job)
+				retryer.push(job)
 			case ingested:
 				jobWg.Done()
 			case needRescan:
@@ -1515,8 +1545,10 @@ func (local *Local) doImport(ctx context.Context, engine *Engine, regionRanges [
 		return firstErr.load()
 	}
 
+	// TODO: test retryer holds jobs and didn't Done the jobWg
 	jobWg.Wait()
 	close(jobToWorkerCh)
+	retryer.close()
 	firstErr.save(workGroup.Wait())
 	return firstErr.load()
 }
