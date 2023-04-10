@@ -1351,8 +1351,12 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 
 	if n.OrderBy != nil {
 		ctx.WritePlain(" ")
-		if err := n.OrderBy.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectStmt.OrderBy")
+		if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(n.OrderBy.OriginalText()) > 0 {
+			ctx.WritePlain(n.OrderBy.OriginalText())
+		} else {
+			if err := n.OrderBy.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectStmt.OrderBy")
+			}
 		}
 	}
 

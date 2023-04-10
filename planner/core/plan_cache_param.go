@@ -55,10 +55,10 @@ type paramReplacer struct {
 
 func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
-	case *ast.SelectField, *ast.GroupByClause, *ast.Limit:
+	case *ast.SelectField, *ast.GroupByClause, *ast.Limit, *ast.OrderByClause:
 		// Skip replacing values in these case:
 		// 1. SelectField: to keep the output field names be corresponding to these values.
-		// 2. GroupByClause: to avoid breaking the full_group_by check.
+		// 2. GroupByClause, OrderByClause: to avoid breaking the full_group_by check.
 		// 3. Limit: to generate different plans for queries with different limit values.
 		return in, true
 	case *driver.ValueExpr:
