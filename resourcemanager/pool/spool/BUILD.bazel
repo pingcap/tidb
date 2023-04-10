@@ -12,7 +12,7 @@ go_library(
         "//metrics",
         "//resourcemanager",
         "//resourcemanager/pool",
-        "//resourcemanager/pooltask",
+        "//resourcemanager/poolmanager",
         "//resourcemanager/util",
         "//util/logutil",
         "//util/mathutil",
@@ -32,7 +32,7 @@ go_test(
     embed = [":spool"],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//resourcemanager/pool",
         "//resourcemanager/util",
