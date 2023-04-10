@@ -148,8 +148,13 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 // CheckOldRunningTxn is to get all startTS of every transactions running in the current internal sessions
 func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
 	msm.mu.Lock()
+<<<<<<< HEAD
 	for _, se := range msm.conn {
 		session.RemoveLockDDLJobs(se, job2ver, job2ids)
+=======
+	for _, se := range msm.Conn {
+		session.RemoveLockDDLJobs(se, job2ver, job2ids, false)
+>>>>>>> 856648ace6a (domain, session: print more MDL log and make MDL more stable (#42891))
 	}
 	msm.mu.Unlock()
 }
