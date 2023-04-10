@@ -1307,8 +1307,12 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 
 		if n.GroupBy != nil {
 			ctx.WritePlain(" ")
-			if err := n.GroupBy.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore SelectStmt.GroupBy")
+			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(n.GroupBy.OriginalText()) > 0 {
+				ctx.WritePlain(n.GroupBy.OriginalText())
+			} else {
+				if err := n.GroupBy.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while restore SelectStmt.GroupBy")
+				}
 			}
 		}
 
