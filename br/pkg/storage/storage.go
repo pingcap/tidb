@@ -107,8 +107,7 @@ type ExternalStorage interface {
 
 // ExternalFileReader represents the streaming external file reader.
 type ExternalFileReader interface {
-	io.ReadCloser
-	io.Seeker
+	io.ReadSeekCloser
 }
 
 // ExternalFileWriter represents the streaming external file writer.
