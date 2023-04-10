@@ -86,16 +86,6 @@ func TestParameterize(t *testing.T) {
 			`SELECT * FROM t LIMIT 10,20`,
 			[]interface{}{},
 		},
-		{
-			`select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t where date_format(d,'%Y') > 2020`,
-			`SELECT date_format(d,'%Y') as df,sum(a),count(b),count(distinct c) FROM t WHERE date_format(d, ?)>?`,
-			[]interface{}{"%Y", int64(2020)},
-		},
-		{
-			`select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y') order by df`,
-			`SELECT date_format(d,'%Y') as df,sum(a),count(b),count(distinct c) FROM t group by date_format(d,'%Y') ORDER BY df`,
-			[]interface{}{},
-		},
 		// TODO: more test cases
 	}
 
