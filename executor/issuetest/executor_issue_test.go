@@ -678,6 +678,7 @@ func TestIssue22231(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect warnings
 	tk.MustExec("drop table if exists t_issue_22231")
 	tk.MustExec("create table t_issue_22231(a datetime)")
 	tk.MustExec("insert into t_issue_22231 values('2020--05-20 01:22:12')")
