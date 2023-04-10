@@ -1394,7 +1394,7 @@ func TestDoImport(t *testing.T) {
 		jobs []*regionJob
 		err  error
 	}{
-		[2]string{"a", "b"}: {
+		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'a'}, end: []byte{'b'}},
@@ -1403,7 +1403,7 @@ func TestDoImport(t *testing.T) {
 				},
 			},
 		},
-		[2]string{"b", "c"}: {
+		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'b'}, end: []byte{'c'}},
@@ -1437,7 +1437,7 @@ func TestDoImport(t *testing.T) {
 				},
 			},
 		},
-		[2]string{"c", "d"}: {
+		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
@@ -1470,7 +1470,7 @@ func TestDoImport(t *testing.T) {
 				},
 			},
 		},
-		[2]string{"c", "c2"}: {
+		{"c", "c2"}: {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
@@ -1500,7 +1500,7 @@ func TestDoImport(t *testing.T) {
 		jobs []*regionJob
 		err  error
 	}{
-		[2]string{"a", "b"}: {
+		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'a'}, end: []byte{'b'}},
@@ -1509,7 +1509,7 @@ func TestDoImport(t *testing.T) {
 				},
 			},
 		},
-		[2]string{"b", "c"}: {
+		{"b", "c"}: {
 			err: errors.New("meet error when generateJobForRange"),
 		},
 	}
@@ -1522,7 +1522,7 @@ func TestDoImport(t *testing.T) {
 		jobs []*regionJob
 		err  error
 	}{
-		[2]string{"a", "b"}: {
+		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'a'}, end: []byte{'a', '2'}},
@@ -1536,7 +1536,7 @@ func TestDoImport(t *testing.T) {
 				},
 			},
 		},
-		[2]string{"b", "c"}: {
+		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'b'}, end: []byte{'c'}},
@@ -1545,7 +1545,7 @@ func TestDoImport(t *testing.T) {
 				},
 			},
 		},
-		[2]string{"c", "d"}: {
+		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'c'}, end: []byte{'d'}},
@@ -1554,7 +1554,7 @@ func TestDoImport(t *testing.T) {
 				},
 			},
 		},
-		[2]string{"a", "a2"}: {
+		{"a", "a2"}: {
 			err: errors.New("meet error when generateJobForRange again"),
 		},
 	}
@@ -1569,7 +1569,7 @@ func TestDoImport(t *testing.T) {
 		jobs []*regionJob
 		err  error
 	}{
-		[2]string{"a", "b"}: {
+		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
 					keyRange:   Range{start: []byte{'a'}, end: []byte{'b'}},
@@ -1579,7 +1579,7 @@ func TestDoImport(t *testing.T) {
 				},
 			},
 		},
-		[2]string{"b", "c"}: {
+		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
 					keyRange:   Range{start: []byte{'b'}, end: []byte{'c'}},
@@ -1589,7 +1589,7 @@ func TestDoImport(t *testing.T) {
 				},
 			},
 		},
-		[2]string{"c", "d"}: {
+		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'c'}, end: []byte{'d'}},
