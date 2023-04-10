@@ -318,6 +318,7 @@
       "br/pkg/lightning/checkpoints/glue_checkpoint.go": "ignore glue_checkpoint code",
       "br/pkg/lightning/backend/local/": "ignore local code",
       "br/pkg/lightning/backend/tidb/tidb.go": "ignore tidb code",
+      "br/pkg/lightning/backend/tidb/tidb_test.go": "ignore tidb code",
       "br/pkg/lightning/checkpoints/checkpoints_test.go": "ignore checkpoints code",
       "br/pkg/lightning/checkpoints/checkpoints_sql_test.go": "ignore checkpoints code",
       "br/pkg/lightning/errormanager/errormanager_test.go": "ignore errormanager code",
