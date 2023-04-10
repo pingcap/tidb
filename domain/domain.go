@@ -732,7 +732,7 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	}
 	// Make sure the session is new.
 	if _, err := se.(sqlexec.SQLExecutor).ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), "rollback"); err != nil {
-		se.(pools.Resource).Close()
+		se.Close()
 		return
 	}
 	defer do.sysSessionPool.Put(se)
