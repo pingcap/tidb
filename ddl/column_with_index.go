@@ -290,7 +290,7 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 		switch ctidxInfos[0].State {
 		case model.StateNone:
 			// none -> delete only
-			reorgTp := pickBackfillType(w, job)
+			reorgTp := pickBackfillType(job)
 			if reorgTp.NeedMergeProcess() {
 				for _, idxInfo := range ctidxInfos {
 					// Increase telemetryAddIndexIngestUsage
