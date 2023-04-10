@@ -1114,6 +1114,19 @@ func (sc *StatementContext) UseDynamicPartitionPrune() bool {
 	return sc.UseDynamicPruneMode
 }
 
+// DetachMemDiskTracker detaches the memory and disk tracker from the sessionTracker.
+func (sc *StatementContext) DetachMemDiskTracker() {
+	if sc == nil {
+		return
+	}
+	if sc.MemTracker != nil {
+		sc.MemTracker.Detach()
+	}
+	if sc.DiskTracker != nil {
+		sc.DiskTracker.Detach()
+	}
+}
+
 // CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
