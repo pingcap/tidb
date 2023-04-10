@@ -1894,13 +1894,13 @@ func TestNonPreparedPlanCacheOrder(t *testing.T) {
 		"select a from t order by a",
 		"select a from t order by a asc",
 		"select a from t order by a desc",
-		"select a from t order by a+1,b-2",
-		"select a from t order by a desc, b+2",
 		"select a from t order by a,b desc",
 	}
 	unsupported := []string{
 		"select a from t order by 1", // order by position
 		"select a from t order by a, 1",
+		"select a from t order by a+1,b-2",
+		"select a from t order by a desc, b+2",
 	}
 
 	for _, sql := range supported {
