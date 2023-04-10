@@ -136,6 +136,7 @@ func InitInstanceAddr() string {
 }
 
 // IsComplete checks if the task is complete.
+// This is called before the reader reads the data and decides whether to skip the current task.
 func (s *CentralizedCheckpointManager) IsComplete(_ int, _, end kv.Key) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,6 +163,7 @@ func (s *CentralizedCheckpointManager) Register(taskID int, _, end kv.Key) {
 }
 
 // UpdateTotal updates the total keys of the task.
+// This is called by the reader after reading the data to update the number of rows contained in the current chunk.
 func (s *CentralizedCheckpointManager) UpdateTotal(taskID int, added int, last bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -171,6 +173,7 @@ func (s *CentralizedCheckpointManager) UpdateTotal(taskID int, added int, last b
 }
 
 // UpdateCurrent updates the current keys of the task.
+// This is called by the writer after writing the local engine to update the current number of rows written.
 func (s *CentralizedCheckpointManager) UpdateCurrent(taskID int, added int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
