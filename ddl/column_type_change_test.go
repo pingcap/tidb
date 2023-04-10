@@ -2431,12 +2431,15 @@ func TestFixDDLTxnWillConflictWithReorgTxnNotConcurrent(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk0 := testkit.NewTestKit(t, store)
 	tk0.MustExec("set @@global.tidb_enable_metadata_lock=0")
+	defer tk0.MustExec("set @@global.tidb_enable_metadata_lock = default")
 	tk0.MustExec("set @@global.tidb_enable_concurrent_ddl = off")
+	defer tk0.MustExec("set @@global.tidb_enable_concurrent_ddl = default")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF")
+	defer tk.MustExec("set global tidb_ddl_enable_fast_reorg = default")
 	tk.MustExec("alter table t add index(a)")
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert into t values(128),(129)")
@@ -2452,6 +2455,7 @@ func TestFixDDLTxnWillConflictWithReorgTxn(t *testing.T) {
 
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF")
+	defer tk.MustExec("set global tidb_ddl_enable_fast_reorg = default")
 	tk.MustExec("alter table t add index(a)")
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert into t values(128),(129)")
