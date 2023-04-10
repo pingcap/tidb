@@ -203,15 +203,12 @@ func TestWithTaskManager(t *testing.T) {
 	time.Sleep(100 * time.Microsecond)
 	require.Equal(t, int32(2), p.Running())
 	p.Tune(3)
-	time.Sleep(100 * time.Microsecond)
-	require.Equal(t, int32(3), p.Running())
+	require.Eventually(t, func() bool { return p.Running() == 3 }, 1*time.Second, 200*time.Millisecond)
 
 	// decrease the concurrency
 	p.Tune(2)
-	time.Sleep(100 * time.Microsecond)
-	require.Equal(t, int32(2), p.Running())
+	require.Eventually(t, func() bool { return p.Running() == 2 }, 1*time.Second, 200*time.Millisecond)
 	p.Tune(1)
-	time.Sleep(100 * time.Microsecond)
-	require.Equal(t, int32(1), p.Running())
+	require.Eventually(t, func() bool { return p.Running() == 1 }, 1*time.Second, 200*time.Millisecond)
 	close(fnChan)
 }
