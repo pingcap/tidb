@@ -202,12 +202,6 @@ func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, checker.cacheable
 }
 
-// NonPreparedPlanCacheable checks whether the input ast is cacheable for non-prepared plan cache with empty session context, which is mainly for testing.
-func NonPreparedPlanCacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	ok, _ := NonPreparedPlanCacheableWithCtx(nil, node, is)
-	return ok
-}
-
 var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPlanCacheableChecker{} }}
 
 // NonPreparedPlanCacheableWithCtx checks whether this SQL is cacheable for non-prepared plan cache.
@@ -215,7 +209,7 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 	var tableNames []*ast.TableName
 	switch x := node.(type) {
 	case *ast.SelectStmt:
-		tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(x)
+		tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(sctx, x)
 		if !ok {
 			return ok, reason
 		}
@@ -246,7 +240,7 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			if !ok {
 				return false, "not a select statement"
 			}
-			tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(selectStmt)
+			tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(sctx, selectStmt)
 			if !ok {
 				return ok, reason
 			}
@@ -280,16 +274,16 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 }
 
 // isSelectStmtNonPrepCacheableFastCheck checks whether the input select statement is cacheable for non-prepared plan cache.
-func isSelectStmtNonPrepCacheableFastCheck(selectStmt *ast.SelectStmt) (names []*ast.TableName, ok bool, reason string) {
+func isSelectStmtNonPrepCacheableFastCheck(sctx sessionctx.Context, selectStmt *ast.SelectStmt) (names []*ast.TableName, ok bool, reason string) {
 	if selectStmt.Kind != ast.SelectStmtKindSelect {
 		return nil, false, "not a select statement"
 	}
 	if len(selectStmt.TableHints) > 0 || // hints
 		selectStmt.Having != nil || // having
 		selectStmt.WindowSpecs != nil || // window function
-		selectStmt.Limit != nil || // limit
+		(selectStmt.Limit != nil && !sctx.GetSessionVars().EnablePlanCacheForParamLimit) || // limit
 		selectStmt.SelectIntoOpt != nil { // select-into statement
-		return nil, false, "queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
+		return nil, false, "queries that have hints, having-clause, window-function are not supported"
 	}
 	from := selectStmt.From
 	if from == nil || selectStmt.From.TableRefs == nil {
@@ -377,9 +371,15 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr, *ast.OnCondition,
-		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.Assignment,
+		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.Assignment, *ast.ParenthesesExpr, *ast.RowExpr,
 		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr:
 		return in, !checker.cacheable // skip child if un-cacheable
+	case *ast.Limit:
+		if !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
+			checker.cacheable = false
+			checker.reason = "query has 'limit ?' is un-cacheable"
+		}
+		return in, !checker.cacheable
 	case *ast.ColumnName:
 		if checker.filterCnt > 0 {
 			// this column is appearing some filters, e.g. `col = 1`

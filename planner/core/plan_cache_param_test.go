@@ -79,6 +79,18 @@ func TestParameterize(t *testing.T) {
 			`INSERT INTO t (a,B,c) VALUES (?,?,?),(?,?,?)`,
 			[]interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6)},
 		},
+
+		// keep the original format for limit clauses
+		{
+			`select * from t limit 10`,
+			`SELECT * FROM t LIMIT 10`,
+			[]interface{}{},
+		},
+		{
+			`select * from t limit 10, 20`,
+			`SELECT * FROM t LIMIT 10,20`,
+			[]interface{}{},
+		},
 		// TODO: more test cases
 	}
 
