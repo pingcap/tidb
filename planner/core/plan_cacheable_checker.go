@@ -435,18 +435,18 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		return in, !checker.cacheable
 	case *ast.GroupByClause:
 		for _, item := range node.Items {
-			if _, isPos := item.Expr.(*ast.PositionExpr); isPos {
+			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
 				checker.cacheable = false
-				checker.reason = "query has group by position"
+				checker.reason = "only support 'group by {columns}'"
 				return in, !checker.cacheable
 			}
 		}
 		return in, !checker.cacheable
 	case *ast.OrderByClause:
 		for _, item := range node.Items {
-			if _, isPos := item.Expr.(*ast.PositionExpr); isPos {
+			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
 				checker.cacheable = false
-				checker.reason = "query has order by position"
+				checker.reason = "only support 'order by {columns}'"
 				return in, !checker.cacheable
 			}
 		}
