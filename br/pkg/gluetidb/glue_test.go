@@ -62,8 +62,10 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").Check(testkit.Rows("124"))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued2'").Check(testkit.Rows("125"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").
+		Check(testkit.Rows("124"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued2'").
+		Check(testkit.Rows("125"))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 
 	// allocate new table id verification
