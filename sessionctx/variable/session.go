@@ -2467,6 +2467,7 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
+	sessionStates.ResourceGroupName = s.ResourceGroupName
 
 	// Encode StatementContext. We encode it here to avoid circle dependency.
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
@@ -2500,6 +2501,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
+	s.ResourceGroupName = sessionStates.ResourceGroupName
 
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
