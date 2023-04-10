@@ -34,7 +34,6 @@ go_library(
         "//domain/infosync",
         "//errno",
         "//executor",
-        "//executor/importer",
         "//expression",
         "//extension",
         "//infoschema",
