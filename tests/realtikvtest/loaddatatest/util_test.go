@@ -19,9 +19,11 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -62,4 +64,11 @@ func (s *mockGCSSuite) SetupSuite() {
 
 func (s *mockGCSSuite) TearDownSuite() {
 	s.server.Stop()
+}
+
+func (s *mockGCSSuite) enableFailpoint(path, term string) {
+	require.NoError(s.T(), failpoint.Enable(path, term))
+	s.T().Cleanup(func() {
+		_ = failpoint.Disable(path)
+	})
 }

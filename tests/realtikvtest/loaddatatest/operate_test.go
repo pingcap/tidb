@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package asyncloaddata_test
+package loaddatatest
 
 import (
 	"fmt"

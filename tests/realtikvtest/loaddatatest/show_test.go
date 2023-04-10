@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package asyncloaddata_test
+package loaddatatest
 
 import (
 	"context"
@@ -23,63 +23,14 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/executor"
-	. "github.com/pingcap/tidb/executor/asyncloaddata"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
-
-type mockGCSSuite struct {
-	suite.Suite
-
-	server *fakestorage.Server
-	store  kv.Storage
-	tk     *testkit.TestKit
-}
-
-var (
-	gcsHost = "127.0.0.1"
-	gcsPort = uint16(4444)
-	// for fake gcs server, we must use this endpoint format
-	// NOTE: must end with '/'
-	gcsEndpointFormat = "http://%s:%d/storage/v1/"
-	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
-)
-
-func TestAsyncLoad(t *testing.T) {
-	suite.Run(t, &mockGCSSuite{})
-}
-
-func (s *mockGCSSuite) SetupSuite() {
-	var err error
-	opt := fakestorage.Options{
-		Scheme:     "http",
-		Host:       gcsHost,
-		Port:       gcsPort,
-		PublicHost: gcsHost,
-	}
-	s.server, err = fakestorage.NewServerWithOptions(opt)
-	s.Require().NoError(err)
-	s.store = testkit.CreateMockStore(s.T())
-	s.tk = testkit.NewTestKit(s.T(), s.store)
-}
-
-func (s *mockGCSSuite) TearDownSuite() {
-	s.server.Stop()
-}
-
-func (s *mockGCSSuite) enableFailpoint(path, term string) {
-	require.NoError(s.T(), failpoint.Enable(path, term))
-	s.T().Cleanup(func() {
-		_ = failpoint.Disable(path)
-	})
-}
 
 type expectedRecord struct {
 	jobID          string
@@ -135,10 +86,10 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	}
 	s.tk.Session().GetSessionVars().User = user
 
-	backup := HeartBeatInSec
-	HeartBeatInSec = 1
+	backup := asyncloaddata.HeartBeatInSec
+	asyncloaddata.HeartBeatInSec = 1
 	s.T().Cleanup(func() {
-		HeartBeatInSec = backup
+		asyncloaddata.HeartBeatInSec = backup
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
@@ -169,8 +120,8 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	}
 	r.check(s.T(), row)
 
-	err := s.tk.QueryToErr("SHOW LOAD DATA JOB 100")
-	require.ErrorContains(s.T(), err, "Job ID 100 doesn't exist")
+	err := s.tk.QueryToErr("SHOW LOAD DATA JOB 999999999")
+	require.ErrorContains(s.T(), err, "Job ID 999999999 doesn't exist")
 
 	// repeat LOAD DATA, will get duplicate entry error
 	rows = s.tk.MustQuery(sql).Rows()
@@ -277,14 +228,14 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		userStr := tk2.Session().GetSessionVars().User.String()
 
 		// wait for the load data job to be created
-		<-TestSyncCh
+		<-asyncloaddata.TestSyncCh
 
-		jobInfos, err := GetAllJobInfo(ctx, tk2.Session(), userStr)
+		jobInfos, err := asyncloaddata.GetAllJobInfo(ctx, tk2.Session(), userStr)
 		require.NoError(s.T(), err)
 		require.Len(s.T(), jobInfos, 1)
 		info := jobInfos[0]
 		id := info.JobID
-		expected := &JobInfo{
+		expected := &asyncloaddata.JobInfo{
 			JobID:         id,
 			User:          "test-load@test-host",
 			DataSource:    "gs://test-tsv/t*.tsv",
@@ -292,7 +243,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 			TableName:     "t",
 			ImportMode:    "logical",
 			Progress:      "",
-			Status:        JobPending,
+			Status:        asyncloaddata.JobPending,
 			StatusMessage: "",
 			CreateTime:    info.CreateTime,
 			StartTime:     info.StartTime,
@@ -319,12 +270,12 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		r.checkIgnoreTimes(s.T(), row)
 
 		// resume the load data job
-		TestSyncCh <- struct{}{}
+		asyncloaddata.TestSyncCh <- struct{}{}
 
 		// wait for the load data job to be started
-		<-TestSyncCh
+		<-asyncloaddata.TestSyncCh
 
-		job := &Job{
+		job := &asyncloaddata.Job{
 			ID:   id,
 			Conn: tk2.Session(),
 			User: userStr,
@@ -333,7 +284,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		info, err = job.GetJobInfo(ctx)
 		require.NoError(s.T(), err)
 		expected.StartTime = info.StartTime
-		expected.Status = JobRunning
+		expected.Status = asyncloaddata.JobRunning
 		require.Equal(s.T(), expected, info)
 
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
@@ -343,7 +294,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		r.checkIgnoreTimes(s.T(), row)
 
 		// resume the load data job
-		TestSyncCh <- struct{}{}
+		asyncloaddata.TestSyncCh <- struct{}{}
 
 		// wait for the first task to be committed
 		<-executor.TestSyncCh
@@ -397,12 +348,12 @@ func (s *mockGCSSuite) TestInternalStatus() {
 			if err != nil {
 				return false
 			}
-			return info.Status == JobFinished
+			return info.Status == asyncloaddata.JobFinished
 		}, 6*time.Second, 100*time.Millisecond)
 
 		info, err = job.GetJobInfo(ctx)
 		require.NoError(s.T(), err)
-		expected.Status = JobFinished
+		expected.Status = asyncloaddata.JobFinished
 		expected.EndTime = info.EndTime
 		expected.StatusMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
 		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
@@ -417,10 +368,10 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		r.checkIgnoreTimes(s.T(), row)
 	}()
 
-	backup := HeartBeatInSec
-	HeartBeatInSec = 1
+	backup := asyncloaddata.HeartBeatInSec
+	asyncloaddata.HeartBeatInSec = 1
 	s.T().Cleanup(func() {
-		HeartBeatInSec = backup
+		asyncloaddata.HeartBeatInSec = backup
 	})
 	backup2 := importer.LoadDataReadBlockSize
 	importer.LoadDataReadBlockSize = 1
