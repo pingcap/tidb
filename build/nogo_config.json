@@ -358,6 +358,7 @@
       "planner/funcdep/fd_graph.go": "ignore fd_graph code",
       "planner/funcdep/doc.go": "ignore funcdep code",
       "planner/util/path.go" : "ignore path code",
+      "planner/memo/": "ignore memo code",
       "ttl/cache/ttlstatus.go": "ignore ttlstatus code",
       "ttl/ttlworker/": "ignore ttlworker code",
       "planner/core/": "ignore core code",
