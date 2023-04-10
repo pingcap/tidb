@@ -3473,6 +3473,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		dom.Close()
 		return nil, err
 	}
+
+	err = dom.InitDistTaskLoop(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return dom, err
 }
 
