@@ -355,5 +355,15 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	ddl.SetBackfillTaskChanSizeForTest(7)
 	tk.MustExec("alter table t add index idx_2(b);")
 	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 8; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustQuery("split table t by (10000),(20000),(30000),(40000),(50000),(60000);").Check(testkit.Rows("6 1"))
+	ddl.SetBackfillTaskChanSizeForTest(4)
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
 	ddl.SetBackfillTaskChanSizeForTest(1024)
 }

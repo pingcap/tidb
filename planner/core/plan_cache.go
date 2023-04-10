@@ -725,6 +725,11 @@ func containShuffleOperator(p PhysicalPlan) bool {
 	if _, isShuffleRecv := p.(*PhysicalShuffleReceiverStub); isShuffleRecv {
 		return true
 	}
+	for _, child := range p.Children() {
+		if containShuffleOperator(child) {
+			return true
+		}
+	}
 	return false
 }
 

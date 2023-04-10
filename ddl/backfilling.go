@@ -867,7 +867,8 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		if len(remains) > 0 {
 			startKey = remains[0].StartKey
 		} else {
-			startKey = kvRanges[len(kvRanges)-1].EndKey
+			rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
+			startKey = rangeEndKey.Next()
 		}
 		if startKey.Cmp(endKey) >= 0 {
 			break

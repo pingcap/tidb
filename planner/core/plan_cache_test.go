@@ -112,6 +112,18 @@ func TestGeneralPlanCacheBasically(t *testing.T) {
 	}
 }
 
+func TestIssue41626(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a year)`)
+	tk.MustExec(`insert into t values (2000)`)
+	tk.MustExec(`prepare st from 'select * from t where a<?'`)
+	tk.MustExec(`set @a=12`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows("2000"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: '12' may be converted to INT"))
+}
+
 func TestIssue38269(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -434,4 +446,86 @@ func TestIssue41032(t *testing.T) {
 	tk.MustExec(`set @a=8950167, @b=16305982`)
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestIssue42125(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, unique key(a, b))")
+
+	// should use BatchPointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b in (?, ?)'")
+	tk.MustExec("set @a=1, @b=2")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Equal(t, rows[0][0], "Batch_Point_Get_5") // use BatchPointGet
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Batch/PointGet plans may be over-optimized"))
+
+	// should use PointGet: unsafe PointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b>=? and b<=?'")
+	tk.MustExec("set @a=1, @b=1")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Equal(t, rows[0][0], "Point_Get_5") // use Point_Get_5
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot hit
+
+	// safe PointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b=? and c<?'")
+	tk.MustExec("set @a=1, @b=1")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Contains(t, rows[0][0], "Selection") // PointGet -> Selection
+	require.Contains(t, rows[1][0], "Point_Get")
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // can hit
+}
+
+func TestIssue41828(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE IDT_MULTI15840STROBJSTROBJ (
+  COL1 enum('aa', 'zzz') DEFAULT NULL,
+  COL2 smallint(6) DEFAULT NULL,
+  COL3 date DEFAULT NULL,
+  KEY U_M_COL4 (COL1,COL2),
+  KEY U_M_COL5 (COL3,COL2))`)
+
+	tk.MustExec(`INSERT INTO IDT_MULTI15840STROBJSTROBJ VALUES ('zzz',1047,'6115-06-05'),('zzz',-23221,'4250-09-03'),('zzz',27138,'1568-07-30'),('zzz',-30903,'6753-08-21'),('zzz',-26875,'6117-10-10')`)
+	tk.MustExec(`prepare stmt from 'select * from IDT_MULTI15840STROBJSTROBJ where col3 <=> ? or col1 in (?, ?, ?) and col2 not between ? and ?'`)
+	tk.MustExec(`set @a="0051-12-23", @b="none", @c="none", @d="none", @e=-32757, @f=-32757`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
+	tk.MustExec(`set @a="9795-01-10", @b="aa", @c="aa", @d="aa", @e=31928, @f=31928`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
+}
+
+func TestIssue42150(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("CREATE TABLE `t1` (`c_int` int(11) NOT NULL,  `c_str` varchar(40) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,  `c_datetime` datetime DEFAULT NULL,  `c_timestamp` timestamp NULL DEFAULT NULL,  `c_double` double DEFAULT NULL,  `c_decimal` decimal(12,6) DEFAULT NULL,  `c_enum` enum('blue','green','red','yellow','white','orange','purple') NOT NULL,  PRIMARY KEY (`c_int`,`c_enum`) /*T![clustered_index] CLUSTERED */,  KEY `c_decimal` (`c_decimal`),  UNIQUE KEY `c_datetime` (`c_datetime`),  UNIQUE KEY `c_timestamp` (`c_timestamp`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("create table t (a int, b int, primary key(a), key(b))")
+
+	tk.MustExec("prepare stmt from 'select c_enum from t1'")
+	tk.MustExec("execute stmt;")
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare st from 'select a from t use index(b)'")
+	tk.MustExec("execute st")
+	tk.MustExec("execute st")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
