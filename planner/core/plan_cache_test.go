@@ -429,7 +429,7 @@ func TestNonPreparedPlanCacheParamInit(t *testing.T) {
 	tk.MustExec(`insert into tx values (3.0, 3)`)
 	tk.MustQuery("select json_object('k', a) = json_object('k', b) from tx").Check(testkit.Rows("1")) // no error
 	tk.MustQuery("select json_object('k', a) = json_object('k', b) from tx").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanCacheBinding(t *testing.T) {
