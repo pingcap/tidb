@@ -189,7 +189,8 @@ func (s *mockTiKVStore) refreshCache() {
 	require.NoError(s.t, err)
 }
 
-func (s *mockTiKVStore) batchAddIntHandleRegions(tblID int64, regionCnt int, regionSize int, offset int64) (end kv.IntHandle) {
+func (s *mockTiKVStore) batchAddIntHandleRegions(tblID int64, regionCnt, regionSize int,
+	offset int64) (end kv.IntHandle) {
 	for i := 0; i < regionCnt; i++ {
 		start := kv.IntHandle(offset + int64(i*regionSize))
 		end = kv.IntHandle(start.IntValue() + int64(regionSize))
@@ -227,14 +228,20 @@ func bytesHandle(t *testing.T, data []byte) kv.Handle {
 
 func createTTLTable(t *testing.T, tk *testkit.TestKit, name string, option string) *cache.PhysicalTable {
 	if option == "" {
-		return createTTLTableWithSQL(t, tk, name, fmt.Sprintf("create table test.%s(t timestamp) TTL = `t` + interval 1 day", name))
+		return createTTLTableWithSQL(t, tk, name,
+			fmt.Sprintf("create table test.%s(t timestamp) TTL = `t` + interval 1 day", name))
 	}
 
-	return createTTLTableWithSQL(t, tk, name, fmt.Sprintf("create table test.%s(id %s primary key, t timestamp) TTL = `t` + interval 1 day", name, option))
+	return createTTLTableWithSQL(t, tk, name,
+		fmt.Sprintf("create table test.%s(id %s primary key, t timestamp) TTL = `t` + interval 1 day",
+			name, option))
 }
 
 func create2PKTTLTable(t *testing.T, tk *testkit.TestKit, name string, option string) *cache.PhysicalTable {
-	return createTTLTableWithSQL(t, tk, name, fmt.Sprintf("create table test.%s(id %s, id2 int, t timestamp, primary key(id, id2)) TTL = `t` + interval 1 day", name, option))
+	return createTTLTableWithSQL(t, tk, name,
+		fmt.Sprintf(
+			"create table test.%s(id %s, id2 int, t timestamp, primary key(id, id2)) TTL = `t` + interval 1 day",
+			name, option))
 }
 
 func createTTLTableWithSQL(t *testing.T, tk *testkit.TestKit, name string, sql string) *cache.PhysicalTable {
