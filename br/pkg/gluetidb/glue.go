@@ -229,8 +229,8 @@ func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr,
 	infos []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	var err error
 	d := domain.GetDomain(gs.se).DDL()
-
-	if err = d.BatchCreateTableWithInfo(gs.se, schema, infos, append(cs, ddl.OnExistIgnore)...); kv.ErrEntryTooLarge.Equal(err) {
+	err = d.BatchCreateTableWithInfo(gs.se, schema, infos, append(cs, ddl.OnExistIgnore)...)
+	if kv.ErrEntryTooLarge.Equal(err) {
 		log.Info("entry too large, split batch create table", zap.Int("num table", len(infos)))
 		if len(infos) == 1 {
 			return err
