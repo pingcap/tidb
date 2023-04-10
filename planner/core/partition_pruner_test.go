@@ -461,19 +461,21 @@ func TestIssue42273(t *testing.T) {
 	defer tk.MustExec("drop database issue42273")
 
 	tk.MustExec("use issue42273")
-	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec(`CREATE TABLE t(a tinyint unsigned,  b tinyint unsigned) PARTITION BY RANGE COLUMNS (a,b)(
 			PARTITION p0 VALUES LESS THAN (10,255),
 			PARTITION p1 VALUES LESS THAN (20,MAXVALUE),
 			PARTITION p2 VALUES LESS THAN (30,255),
 			PARTITION p3 VALUES LESS THAN (MAXVALUE, 0))`)
-	tk.MustQuery(`explain format='brief' select * from t where a = 20`).Check(testkit.Rows("TableReader 10.00 root  data:Selection",
-		"└─Selection 10.00 cop[tikv]  eq(issue42273.t.a, 20)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"))
-	tk.MustQuery(`explain format='brief' select * from t where a > 10 and a <= 20`).Check(testkit.Rows("TableReader 250.00 root  data:Selection",
-		"└─Selection 250.00 cop[tikv]  gt(issue42273.t.a, 10), le(issue42273.t.a, 20)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"))
 	tk.MustExec("insert into t values(20, 30)")
+	tk.MustExec(`analyze table t`) // Creates global stats for the table and enables the dynamic pruning
+	tk.MustQuery(`explain format='brief' select * from t where a = 20`).Check(testkit.Rows(
+		"TableReader 1.00 root partition:p1 data:Selection",
+		"└─Selection 1.00 cop[tikv]  eq(issue42273.t.a, 20)",
+		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format='brief' select * from t where a > 10 and a <= 20`).Check(testkit.Rows(
+		"TableReader 1.00 root partition:p1 data:Selection",
+		"└─Selection 1.00 cop[tikv]  gt(issue42273.t.a, 10), le(issue42273.t.a, 20)",
+		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`select * from t where a = 20`).Check(testkit.Rows("20 30"))
 	tk.MustQuery(`select * from t where a > 10 and a <= 20`).Check(testkit.Rows("20 30"))
 }
