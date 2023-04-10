@@ -5986,7 +5986,10 @@ FieldList:
 GroupByClause:
 	"GROUP" "BY" ByList
 	{
-		$$ = &ast.GroupByClause{Items: $3.([]*ast.ByItem)}
+		groupBy := &ast.GroupByClause{Items: $3.([]*ast.ByItem)}
+		startOffset := parser.startOffset(&yyS[yypt-2])
+		groupBy.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
+		$$ = groupBy
 	}
 
 HavingClause:
@@ -7076,7 +7079,10 @@ AlterOrderItem:
 OrderBy:
 	"ORDER" "BY" ByList
 	{
-		$$ = &ast.OrderByClause{Items: $3.([]*ast.ByItem)}
+		orderBy := &ast.OrderByClause{Items: $3.([]*ast.ByItem)}
+		startOffset := parser.startOffset(&yyS[yypt-2])
+		orderBy.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
+		$$ = orderBy
 	}
 
 ByList:
