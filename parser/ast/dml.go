@@ -1307,12 +1307,8 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 
 		if n.GroupBy != nil {
 			ctx.WritePlain(" ")
-			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(n.GroupBy.OriginalText()) > 0 {
-				ctx.WritePlain(n.GroupBy.OriginalText())
-			} else {
-				if err := n.GroupBy.Restore(ctx); err != nil {
-					return errors.Annotate(err, "An error occurred while restore SelectStmt.GroupBy")
-				}
+			if err := n.GroupBy.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectStmt.GroupBy")
 			}
 		}
 
@@ -1351,12 +1347,8 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 
 	if n.OrderBy != nil {
 		ctx.WritePlain(" ")
-		if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(n.OrderBy.OriginalText()) > 0 {
-			ctx.WritePlain(n.OrderBy.OriginalText())
-		} else {
-			if err := n.OrderBy.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore SelectStmt.OrderBy")
-			}
+		if err := n.OrderBy.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SelectStmt.OrderBy")
 		}
 	}
 
