@@ -7150,6 +7150,7 @@ func TestIssue29708(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test;")
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect warnings
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (a text)character set utf8 ;")
 	tk.MustExecToErr("INSERT INTO t1 VALUES  (REPEAT(0125,200000000));")
