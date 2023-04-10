@@ -365,6 +365,7 @@
       "planner/memo/": "ignore memo code",
       "ttl/cache/ttlstatus.go": "ignore ttlstatus code",
       "ttl/ttlworker/": "ignore ttlworker code",
+      "ttl/sqlbuilder/sql_test.go": "ignore sql_test code",
       "planner/core/": "ignore core code",
       "planner/optimize.go": "ignore optimize code",
       "planner/cascades/": "ignore cascades code",
