@@ -1650,13 +1650,12 @@ type addIndexIngestWorker struct {
 	writerCtx        *ingest.WriterContext
 	copReqSenderPool *copReqSenderPool
 
-	resultCh chan *backfillResult
-	jobID    int64
+	resultCh   chan *backfillResult
+	jobID      int64
+	distribute bool
 }
 
-func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.EngineInfo,
-	resultCh chan *backfillResult, jobID int64, schemaName string, indexID int64, writerID int,
-	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context) (*addIndexIngestWorker, error) {
+func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.EngineInfo, resultCh chan *backfillResult, jobID int64, schemaName string, indexID int64, writerID int, copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context, distribute bool) (*addIndexIngestWorker, error) {
 	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	lwCtx, err := ei.NewWriterCtx(writerID, indexInfo.Unique)
@@ -1675,6 +1674,7 @@ func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.Engine
 		copReqSenderPool: copReqSenderPool,
 		resultCh:         resultCh,
 		jobID:            jobID,
+		distribute:       distribute,
 	}, nil
 }
 

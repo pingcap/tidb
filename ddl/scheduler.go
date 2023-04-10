@@ -143,7 +143,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 	mockReorgInfo.elements = elements
 	mockReorgInfo.currElement = mockReorgInfo.elements[0]
 
-	ingestScheduler := newIngestBackfillScheduler(d.ctx, mockReorgInfo, parTbl.GetPartition(pid))
+	ingestScheduler := newIngestBackfillScheduler(d.ctx, mockReorgInfo, parTbl.GetPartition(pid), true)
 	defer ingestScheduler.close(true)
 
 	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
