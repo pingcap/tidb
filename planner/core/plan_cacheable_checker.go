@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
@@ -267,6 +268,11 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 
 	node.Accept(checker)
 	cacheable, reason := checker.cacheable, checker.reason
+
+	if !cacheable {
+		// this metrics can measure the extra overhead of non-prep plan cache.
+		core_metrics.GetNonPrepPlanCacheUnsupportedCounter().Inc()
+	}
 
 	// put the checker back
 	nonPrepCacheCheckerPool.Put(checker)
