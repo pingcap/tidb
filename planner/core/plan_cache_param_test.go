@@ -51,7 +51,7 @@ func TestParameterize(t *testing.T) {
 		},
 		{
 			"select a+1, sum(b) from t where a<10 group by a+1",
-			"SELECT a+1,sum(b) FROM t WHERE a<? GROUP BY a+1",
+			"SELECT a+1,sum(b) FROM t WHERE a<? group by a+1",
 			[]interface{}{int64(10)},
 		},
 		{
@@ -88,7 +88,7 @@ func TestParameterize(t *testing.T) {
 		},
 		{
 			`select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y') order by df`,
-			`SELECT date_format(d,'%Y') as df,sum(a),count(b),count(distinct c) FROM t GROUP BY date_format(d,'%Y') ORDER BY df`,
+			`SELECT date_format(d,'%Y') as df,sum(a),count(b),count(distinct c) FROM t group by date_format(d,'%Y') ORDER BY df`,
 			[]interface{}{},
 		},
 		// TODO: more test cases
