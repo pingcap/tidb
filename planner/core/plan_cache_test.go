@@ -1469,11 +1469,11 @@ func TestNonPreparedPlanCacheGroupBy(t *testing.T) {
 
 	tk.MustExec(`select sum(b) from t group by a+1`)
 	tk.MustExec(`select sum(b) from t group by a+1`)
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`select sum(b) from t group by a+2`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`select sum(b) from t group by a+2`)
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanCacheFieldNames(t *testing.T) {
