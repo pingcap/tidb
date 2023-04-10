@@ -43,7 +43,7 @@ var (
 	paramCtxPool = sync.Pool{New: func() interface{} {
 		buf := new(strings.Builder)
 		buf.Reset()
-		restoreCtx := format.NewRestoreCtx(format.RestoreForNonPrepPlanCache, buf)
+		restoreCtx := format.NewRestoreCtx(format.RestoreForNonPrepPlanCache|format.RestoreStringWithoutCharset, buf)
 		return restoreCtx
 	}}
 )
