@@ -33,11 +33,14 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.Like:                 {},
 
 	// functions below are incompatible with (non-prep) plan cache, we'll fix them one by one later.
-	ast.JSONExtract: {}, // cannot pass TestFuncJSON
-	ast.JSONObject:  {},
-	ast.JSONArray:   {},
-	ast.Coalesce:    {},
-	ast.Convert:     {},
+	ast.JSONExtract:      {}, // cannot pass TestFuncJSON
+	ast.JSONObject:       {},
+	ast.JSONArray:        {},
+	ast.Coalesce:         {},
+	ast.Convert:          {},
+	ast.TimeLiteral:      {},
+	ast.DateLiteral:      {},
+	ast.TimestampLiteral: {},
 }
 
 // unFoldableFunctions stores functions which can not be folded duration constant folding stage.
