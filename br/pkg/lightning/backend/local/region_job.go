@@ -775,7 +775,13 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 	}
 }
 
-func (q *regionJobRetryer) push(job *regionJob) {
+func (q *regionJobRetryer) push(job *regionJob) bool {
+	q.closeMu.Lock()
+	defer q.closeMu.Unlock()
+	if q.closed {
+		return false
+	}
+
 	q.qMu.Lock()
 	heap.Push(&q.q, job)
 	q.qMu.Unlock()
@@ -784,6 +790,7 @@ func (q *regionJobRetryer) push(job *regionJob) {
 	case q.reload <- struct{}{}:
 	default:
 	}
+	return true
 }
 
 // close will return the number of jobs that are not put back when first called.

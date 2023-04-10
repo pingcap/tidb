@@ -1471,6 +1471,7 @@ func (local *Local) doImport(ctx context.Context, engine *Engine, regionRanges [
 	retryer := newRegionJobRetryer(jobToWorkerCh)
 	go func() {
 		retryer.run(workerCtx)
+		// race with retryer.push(job)
 		n := retryer.close()
 		for n > 0 {
 			n--
@@ -1514,7 +1515,10 @@ func (local *Local) doImport(ctx context.Context, engine *Engine, regionRanges [
 					zap.Stringer("stage", job.stage),
 					zap.Int("retryCount", job.retryCount),
 					zap.Time("waitUntil", job.waitUntil))
-				retryer.push(job)
+				if !retryer.push(job) {
+					// retryer is closed by worker error
+					jobWg.Done()
+				}
 			case ingested:
 				jobWg.Done()
 			case needRescan:
@@ -1545,7 +1549,6 @@ func (local *Local) doImport(ctx context.Context, engine *Engine, regionRanges [
 		return firstErr.load()
 	}
 
-	// TODO: test retryer holds jobs and didn't Done the jobWg
 	jobWg.Wait()
 	close(jobToWorkerCh)
 	retryer.close()

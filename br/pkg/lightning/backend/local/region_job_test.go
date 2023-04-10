@@ -213,7 +213,8 @@ func TestRegionJobRetryer(t *testing.T) {
 		},
 		waitUntil: time.Now().Add(-time.Second),
 	}
-	retryer.push(job)
+	ok := retryer.push(job)
+	require.True(t, ok)
 	select {
 	case j := <-putBackCh:
 		require.Equal(t, job, j)
@@ -224,4 +225,6 @@ func TestRegionJobRetryer(t *testing.T) {
 	remainCnt := retryer.close()
 	require.Equal(t, 8, remainCnt)
 	<-done
+	ok = retryer.push(job)
+	require.False(t, ok)
 }

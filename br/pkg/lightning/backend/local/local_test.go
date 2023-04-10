@@ -1488,6 +1488,11 @@ func TestDoImport(t *testing.T) {
 	e := &Engine{}
 	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.NoError(t, err)
+	for _, v := range fakeRegionJobs {
+		for _, job := range v.jobs {
+			require.Len(t, job.injected, 0)
+		}
+	}
 
 	// test first call to generateJobForRange meet error
 
@@ -1544,15 +1549,6 @@ func TestDoImport(t *testing.T) {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'c'}, end: []byte{'d'}},
-					engine:   &Engine{},
-					injected: getSuccessInjectedBehaviour(),
-				},
-			},
-		},
-		[2]string{"c", "c2"}: {
-			jobs: []*regionJob{
-				{
-					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
 					engine:   &Engine{},
 					injected: getSuccessInjectedBehaviour(),
 				},
