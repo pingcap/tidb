@@ -4293,8 +4293,9 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
 				if elapsedTime > time.Minute && printLog {
 					logutil.BgLogger().Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+				} else {
+					logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
 				}
-				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
 			}
 		}
 		return true
