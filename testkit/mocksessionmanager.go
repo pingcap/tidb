@@ -149,7 +149,7 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
 	msm.mu.Lock()
 	for _, se := range msm.Conn {
-		session.RemoveLockDDLJobs(se, job2ver, job2ids)
+		session.RemoveLockDDLJobs(se, job2ver, job2ids, false)
 	}
 	msm.mu.Unlock()
 }
