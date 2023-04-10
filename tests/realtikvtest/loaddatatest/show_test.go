@@ -67,7 +67,7 @@ func (r *expectedRecord) check(t *testing.T, row []interface{}) {
 	require.NotEmpty(t, row[3])
 }
 
-func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
+func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 	s.tk.MustExec("DROP DATABASE IF EXISTS test_show;")
 	s.tk.MustExec("CREATE DATABASE test_show;")
 	s.tk.MustExec("CREATE TABLE test_show.t (i INT PRIMARY KEY);")
@@ -92,8 +92,15 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 		asyncloaddata.HeartBeatInSec = backup
 	})
 
+	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
+	withOptions := "WITH DETACHED"
+	if importMode == importer.PhysicalImportMode {
+		withOptions = "WITH DETACHED, import_mode='PHYSICAL'"
+		resultMessage = ""
+	}
+
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
-		INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
+		INTO TABLE test_show.t %s;`, gcsEndpoint, withOptions)
 	rows := s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
 	row := rows[0]
@@ -109,25 +116,31 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 		jobID:          jobID,
 		dataSource:     "gs://test-show/t.tsv",
 		targetTable:    "`test_show`.`t`",
-		importMode:     "logical",
+		importMode:     importMode,
 		createdBy:      "test-load-2@test-host",
 		jobState:       "loading",
 		jobStatus:      "finished",
 		sourceFileSize: "3B",
 		loadedFileSize: "3B",
 		resultCode:     "0",
-		resultMessage:  "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0",
+		resultMessage:  resultMessage,
 	}
 	r.check(s.T(), row)
+}
+
+func (s *mockGCSSuite) TestLogicalSimpleShowLoadDataJobs() {
+	s.simpleShowLoadDataJobs(importer.LogicalImportMode)
 
 	err := s.tk.QueryToErr("SHOW LOAD DATA JOB 999999999")
 	require.ErrorContains(s.T(), err, "Job ID 999999999 doesn't exist")
 
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
+		INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
 	// repeat LOAD DATA, will get duplicate entry error
-	rows = s.tk.MustQuery(sql).Rows()
+	rows := s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
-	row = rows[0]
-	jobID = row[0].(string)
+	row := rows[0]
+	jobID := row[0].(string)
 	require.Eventually(s.T(), func() bool {
 		rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + jobID + ";").Rows()
 		require.Len(s.T(), rows, 1)
@@ -135,12 +148,19 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 		return row[9] == "failed"
 	}, 5*time.Second, time.Second)
 
-	r.jobID = jobID
-	r.jobStatus = "failed"
-	r.sourceFileSize = "<nil>"
-	r.loadedFileSize = "<nil>"
-	r.resultCode = "1062"
-	r.resultMessage = "Duplicate entry '1' for key 't.PRIMARY'"
+	r := expectedRecord{
+		jobID:          jobID,
+		dataSource:     "gs://test-show/t.tsv",
+		targetTable:    "`test_show`.`t`",
+		importMode:     "logical",
+		createdBy:      "test-load-2@test-host",
+		jobState:       "loading",
+		jobStatus:      "failed",
+		sourceFileSize: "<nil>",
+		loadedFileSize: "<nil>",
+		resultCode:     "1062",
+		resultMessage:  "Duplicate entry '1' for key 't.PRIMARY'",
+	}
 	r.check(s.T(), row)
 
 	// test IGNORE
@@ -189,7 +209,15 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	r.check(s.T(), row)
 }
 
-func (s *mockGCSSuite) TestInternalStatus() {
+func (s *mockGCSSuite) TestPhysicalSimpleShowLoadDataJobs() {
+	s.simpleShowLoadDataJobs(importer.PhysicalImportMode)
+}
+
+func (s *mockGCSSuite) TestLogicalInternalStatus() {
+	s.testInternalStatus(importer.LogicalImportMode)
+}
+
+func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_tsv;")
 	s.tk.MustExec("CREATE DATABASE load_tsv;")
 	s.tk.MustExec("CREATE TABLE load_tsv.t (i INT);")
@@ -217,6 +245,13 @@ func (s *mockGCSSuite) TestInternalStatus() {
 	}
 	s.tk.Session().GetSessionVars().User = user
 
+	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
+	withOptions := "WITH DETACHED, batch_size=1"
+	if importMode == importer.PhysicalImportMode {
+		withOptions = "WITH DETACHED, import_mode='PHYSICAL'"
+		resultMessage = ""
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -241,7 +276,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 			DataSource:    "gs://test-tsv/t*.tsv",
 			TableSchema:   "load_tsv",
 			TableName:     "t",
-			ImportMode:    "logical",
+			ImportMode:    importMode,
 			Progress:      "",
 			Status:        asyncloaddata.JobPending,
 			StatusMessage: "",
@@ -258,7 +293,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 			jobID:          strconv.Itoa(int(id)),
 			dataSource:     "gs://test-tsv/t*.tsv",
 			targetTable:    "`load_tsv`.`t`",
-			importMode:     "logical",
+			importMode:     importMode,
 			createdBy:      "test-load@test-host",
 			jobState:       "loading",
 			jobStatus:      "pending",
@@ -355,7 +390,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		require.NoError(s.T(), err)
 		expected.Status = asyncloaddata.JobFinished
 		expected.EndTime = info.EndTime
-		expected.StatusMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
+		expected.StatusMessage = resultMessage
 		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
 		require.Equal(s.T(), expected, info)
 
@@ -388,7 +423,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterStartJob", `return`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/SyncAfterCommitOneTask", `return`)
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t*.tsv?endpoint=%s'
-		INTO TABLE load_tsv.t WITH batch_size = 1;`, gcsEndpoint)
-	s.tk.MustExec(sql)
+		INTO TABLE load_tsv.t %s;`, gcsEndpoint, withOptions)
+	s.tk.MustQuery(sql)
 	wg.Wait()
 }
