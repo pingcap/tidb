@@ -113,7 +113,6 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 		return err
 	}
 	b.bc = bc
-	d.newReorgCtx(b.job.ID, nil, &meta.Element{ID: b.index.ID, TypeKey: b.eleTypeKey}, 0)
 	return nil
 }
 
@@ -147,7 +146,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 	ingestScheduler := newIngestBackfillScheduler(d.ctx, mockReorgInfo, parTbl.GetPartition(pid))
 	defer ingestScheduler.close(true)
 
-	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil)
+	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
 	consumer.run(ingestScheduler, startKey, &b.totalRowCnt)
 
 	err = ingestScheduler.setupWorkers()
@@ -188,8 +187,6 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 
 // CleanupSubtaskExecEnv implements the Scheduler interface.
 func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
-	d, _ := GetDDL().(*ddl)
-	d.removeReorgCtx(genBackfillJobReorgCtxID(b.job.ID))
 	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
 
 	err := b.bc.FinishImport(b.index.ID, b.index.Unique, b.ptbl)
