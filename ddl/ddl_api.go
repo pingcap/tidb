@@ -4100,7 +4100,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkReorgPartitionDefs(ctx, model.ActionAlterTablePartitioning, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+	if err = checkReorgPartitionDefs(ctx, model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
 		return errors.Trace(err)
 	}
 	if err = handlePartitionPlacement(ctx, partInfo); err != nil {

@@ -288,3 +288,23 @@ func TestAlterPartitionByRange(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY KEY (`a`) PARTITIONS 5"))
 }
+
+func TestReorgRangeTimestampMaxvalue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create schema AlterPartitionBy")
+	tk.MustExec("use AlterPartitionBy")
+	tk.MustExec(`CREATE TABLE t1 (
+a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+b varchar(10),
+PRIMARY KEY (a)
+)
+PARTITION BY RANGE (UNIX_TIMESTAMP(a)) (
+PARTITION p1 VALUES LESS THAN (1199134800),
+PARTITION pmax VALUES LESS THAN MAXVALUE
+)`)
+
+	tk.MustExec(`ALTER TABLE t1 REORGANIZE PARTITION pmax INTO (
+PARTITION p3 VALUES LESS THAN (1247688000),
+PARTITION pmax VALUES LESS THAN MAXVALUE)`)
+}
