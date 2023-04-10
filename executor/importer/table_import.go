@@ -198,7 +198,7 @@ var _ io.Closer = &tableImporter{}
 func (ti *tableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, chunk.FileMeta, ti.dataStore)
+			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

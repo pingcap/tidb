@@ -60,7 +60,7 @@ func newChunkProcessor(
 ) (*chunkProcessor, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := mydump.OpenReader(ctx, chunk.FileMeta, store)
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
