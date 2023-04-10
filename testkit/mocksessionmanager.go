@@ -142,7 +142,7 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	msm.mu.Lock()
 	defer msm.mu.Unlock()
 	ret := make([]uint64, 0, len(msm.internalSessions))
-	for internalSess, _ := range msm.internalSessions {
+	for internalSess := range msm.internalSessions {
 		se := internalSess.(sessionctx.Context)
 		startTS := se.GetSessionVars().TxnCtx.StartTS
 		ret = append(ret, startTS)
