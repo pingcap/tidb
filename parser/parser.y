@@ -5862,7 +5862,8 @@ GroupByClause:
 		$$ = &ast.GroupByClause{Items: $3.([]*ast.ByItem)}
 		startOffset := parser.startOffset(&yyS[yypt-1])
 		endOffset := parser.endOffset(&yyS[yypt])
-		$$.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		groupBy := $$.(*ast.GroupByClause)
+		groupBy.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 	}
 
 HavingClause:
