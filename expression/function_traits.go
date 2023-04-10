@@ -41,6 +41,8 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.TimeLiteral:      {},
 	ast.DateLiteral:      {},
 	ast.TimestampLiteral: {},
+	ast.AesEncrypt:       {}, // affected by @@block_encryption_mode
+	ast.AesDecrypt:       {},
 }
 
 // unFoldableFunctions stores functions which can not be folded duration constant folding stage.
