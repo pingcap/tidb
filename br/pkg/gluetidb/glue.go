@@ -225,7 +225,8 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 // SplitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
 // The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
 // TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
-func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, infos []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr,
+	infos []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	var err error
 	d := domain.GetDomain(gs.se).DDL()
 
@@ -249,7 +250,8 @@ func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, infos []*model.
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
-func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbSession) CreateTables(_ context.Context,
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	var dbName model.CIStr
 
 	// Disable foreign key check when batch create tables.
@@ -290,7 +292,8 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 }
 
 // CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbSession) CreateTable(_ context.Context, dbName model.CIStr,
+	table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	d := domain.GetDomain(gs.se).DDL()
 	query, err := gs.showCreateTable(table)
 	if err != nil {
@@ -386,25 +389,27 @@ func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...i
 }
 
 // CreateDatabase implements glue.Session.
-func (s *mockSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
+func (*mockSession) CreateDatabase(_ context.Context, _ *model.DBInfo) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreatePlacementPolicy implements glue.Session.
-func (s *mockSession) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
+func (*mockSession) CreatePlacementPolicy(_ context.Context, _ *model.PolicyInfo) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
-func (s *mockSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (*mockSession) CreateTables(_ context.Context, _ map[string][]*model.TableInfo,
+	_ ...ddl.CreateTableWithInfoConfigurier) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreateTable implements glue.Session.
-func (s *mockSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (*mockSession) CreateTable(_ context.Context, _ model.CIStr,
+	_ *model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
