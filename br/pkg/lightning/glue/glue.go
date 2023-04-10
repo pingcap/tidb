@@ -72,25 +72,25 @@ func (session *sqlConnSession) Execute(ctx context.Context, sql string) ([]sqlex
 }
 
 // CommitTxn implements checkpoints.Session.CommitTxn
-func (session *sqlConnSession) CommitTxn(context.Context) error {
+func (*sqlConnSession) CommitTxn(context.Context) error {
 	return errors.New("sqlConnSession doesn't have a valid CommitTxn implementation")
 }
 
 // RollbackTxn implements checkpoints.Session.RollbackTxn
-func (session *sqlConnSession) RollbackTxn(context.Context) {}
+func (*sqlConnSession) RollbackTxn(context.Context) {}
 
 // PrepareStmt implements checkpoints.Session.PrepareStmt
-func (session *sqlConnSession) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
+func (*sqlConnSession) PrepareStmt(_ string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
 	return 0, 0, nil, errors.New("sqlConnSession doesn't have a valid PrepareStmt implementation")
 }
 
 // ExecutePreparedStmt implements checkpoints.Session.ExecutePreparedStmt
-func (session *sqlConnSession) ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error) {
+func (*sqlConnSession) ExecutePreparedStmt(_ context.Context, _ uint32, _ []types.Datum) (sqlexec.RecordSet, error) {
 	return nil, errors.New("sqlConnSession doesn't have a valid ExecutePreparedStmt implementation")
 }
 
 // DropPreparedStmt implements checkpoints.Session.DropPreparedStmt
-func (session *sqlConnSession) DropPreparedStmt(stmtID uint32) error {
+func (*sqlConnSession) DropPreparedStmt(_ uint32) error {
 	return errors.New("sqlConnSession doesn't have a valid DropPreparedStmt implementation")
 }
 
@@ -176,7 +176,7 @@ func (e *ExternalTiDBGlue) GetParser() *parser.Parser {
 }
 
 // GetTables implements Glue.GetTables.
-func (e ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
+func (ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
 	return nil, errors.New("ExternalTiDBGlue doesn't have a valid GetTables function")
 }
 
@@ -190,12 +190,12 @@ func (e *ExternalTiDBGlue) GetSession(ctx context.Context) (checkpoints.Session,
 }
 
 // OpenCheckpointsDB implements Glue.OpenCheckpointsDB.
-func (e *ExternalTiDBGlue) OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (checkpoints.DB, error) {
+func (*ExternalTiDBGlue) OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (checkpoints.DB, error) {
 	return checkpoints.OpenCheckpointsDB(ctx, cfg)
 }
 
 // OwnsSQLExecutor implements Glue.OwnsSQLExecutor.
-func (e *ExternalTiDBGlue) OwnsSQLExecutor() bool {
+func (*ExternalTiDBGlue) OwnsSQLExecutor() bool {
 	return true
 }
 
@@ -205,7 +205,7 @@ func (e *ExternalTiDBGlue) Close() {
 }
 
 // Record implements Glue.Record.
-func (e *ExternalTiDBGlue) Record(string, uint64) {
+func (*ExternalTiDBGlue) Record(string, uint64) {
 }
 
 // record key names

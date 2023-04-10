@@ -42,7 +42,7 @@ func (t *TableKVDecoder) Name() string {
 }
 
 // DecodeHandleFromRowKey implements KVDecoder.DecodeHandleFromRowKey.
-func (t *TableKVDecoder) DecodeHandleFromRowKey(key []byte) (kv.Handle, error) {
+func (*TableKVDecoder) DecodeHandleFromRowKey(key []byte) (kv.Handle, error) {
 	return tablecodec.DecodeRowKey(key)
 }
 
