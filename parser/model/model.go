@@ -1113,14 +1113,15 @@ type PartitionType int
 
 // Partition types.
 const (
+	// Actually non-partitioned, but during DDL keeping the table as
+	// a single partition
+	PartitionTypeNone PartitionType = 0
+
 	PartitionTypeRange      PartitionType = 1
 	PartitionTypeHash       PartitionType = 2
 	PartitionTypeList       PartitionType = 3
 	PartitionTypeKey        PartitionType = 4
 	PartitionTypeSystemTime PartitionType = 5
-	// Actually non-partitioned, but during DDL keeping the table as
-	// a single partition
-	PartitionTypeNone PartitionType = 6
 )
 
 func (p PartitionType) String() string {

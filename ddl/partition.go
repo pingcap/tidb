@@ -2318,9 +2318,9 @@ func (w *worker) onAlterTablePartitioning(d *ddlCtx, t *meta.Meta, job *model.Jo
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
 		newIDs := getPartitionIDsFromDefinitions(partInfo.Definitions)
 		job.CtxVars = []interface{}{physicalTableIDs, newIDs}
-		oldTblId := tblInfo.ID
+		oldTblID := tblInfo.ID
 		// If no global index this is not really needed?
-		physicalTableIDs = append(physicalTableIDs, oldTblId)
+		physicalTableIDs = append(physicalTableIDs, oldTblID)
 		err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -2346,6 +2346,9 @@ func (w *worker) onAlterTablePartitioning(d *ddlCtx, t *meta.Meta, job *model.Jo
 		tblInfo.Partition.NewTableID = 0
 
 		err = t.CreateTableOrView(job.SchemaID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		failpoint.Inject("reorgPartWriteReorgSchemaVersionUpdateFail", func(val failpoint.Value) {
 			if val.(bool) {
