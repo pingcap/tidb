@@ -30,6 +30,16 @@ func TestParameterize(t *testing.T) {
 		params   []interface{}
 	}{
 		{
+			"select * from t where a<10",
+			"SELECT * FROM t WHERE a<?",
+			[]interface{}{int64(10)},
+		},
+		{
+			"select * from t",
+			"SELECT * FROM t",
+			[]interface{}{},
+		},
+		{
 			"select * from t where a<10 and b<20 and c=30 and d>40",
 			"SELECT * FROM t WHERE a<? AND b<? AND c=? AND d>?",
 			[]interface{}{int64(10), int64(20), int64(30), int64(40)},
@@ -51,7 +61,7 @@ func TestParameterize(t *testing.T) {
 		},
 		{
 			"select a+1, sum(b) from t where a<10 group by a+1",
-			"SELECT a+1,sum(b) FROM t WHERE a<? group by a+1",
+			"SELECT a+1,sum(b) FROM t WHERE a<? GROUP BY a+1",
 			[]interface{}{int64(10)},
 		},
 		{
