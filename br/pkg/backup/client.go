@@ -408,7 +408,7 @@ func (bc *Client) BuildBackupRangeAndSchema(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
-) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
+) ([]rtree.Range, *SchemasV2, []*backuppb.PlacementPolicy, error) {
 	if bc.checkpointMeta == nil {
 		return BuildBackupRangeAndSchema(storage, tableFilter, backupTS, isFullBackup, true)
 	}
@@ -498,7 +498,7 @@ func BuildBackupRangeAndSchema(
 	backupTS uint64,
 	isFullBackup bool,
 	buildRange bool,
-) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
+) ([]rtree.Range, *SchemasV2, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
 
@@ -521,7 +521,7 @@ func BuildBackupRangeAndSchema(
 	}
 
 	ranges := make([]rtree.Range, 0)
-	backupSchemas := NewBackupSchemas()
+	schemasNum := 0
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -533,14 +533,66 @@ func BuildBackupRangeAndSchema(
 			continue
 		}
 
-		tables, err := m.ListTables(dbInfo.ID)
+		tableNum := 0
+		err = m.GetTablesDoFunc(dbInfo.ID, func(tableInfo *model.TableInfo) error {
+			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
+				// Skip tables other than the given table.
+				return nil
+			}
+
+			schemasNum += 1
+
+			if buildRange {
+				tableRanges, err := BuildTableRanges(tableInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				for _, r := range tableRanges {
+					ranges = append(ranges, rtree.Range{
+						StartKey: r.StartKey,
+						EndKey:   r.EndKey,
+					})
+				}
+			}
+
+			return nil
+		})
+
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
 
-		if len(tables) == 0 {
+		if tableNum == 0 {
 			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
-			backupSchemas.AddSchema(dbInfo, nil)
+			schemasNum += 1
+		}
+	}
+
+	if schemasNum == 0 {
+		log.Info("nothing to backup")
+		return nil, nil, nil, nil
+	}
+	return ranges, NewBackupSchemasV2(schemasNum, tableFilter, isFullBackup), policies, nil
+}
+
+func BuildBackupSchemas(
+	storage kv.Storage,
+	tableFilter filter.Filter,
+	backupTS uint64,
+	isFullBackup bool,
+	fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) error,
+) error {
+	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
+	m := meta.NewSnapshotMeta(snapshot)
+
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, dbInfo := range dbs {
+		// skip system databases
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
 			continue
 		}
 
@@ -550,10 +602,11 @@ func BuildBackupRangeAndSchema(
 			dbInfo.PlacementPolicyRef = nil
 		}
 
-		for _, tableInfo := range tables {
+		tableNum := 0
+		err = m.GetTablesDoFunc(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
-				continue
+				return nil
 			}
 
 			logger := log.L().With(
@@ -573,7 +626,7 @@ func BuildBackupRangeAndSchema(
 				globalAutoID, err = autoIDAccess.RowID().Get()
 			}
 			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			tableInfo.AutoIncID = globalAutoID + 1
 			if !isFullBackup {
@@ -590,7 +643,7 @@ func BuildBackupRangeAndSchema(
 				var globalAutoRandID int64
 				globalAutoRandID, err = autoIDAccess.RandomID().Get()
 				if err != nil {
-					return nil, nil, nil, errors.Trace(err)
+					return errors.Trace(err)
 				}
 				tableInfo.AutoRandID = globalAutoRandID + 1
 				logger.Debug("change table AutoRandID",
@@ -609,28 +662,23 @@ func BuildBackupRangeAndSchema(
 			}
 			tableInfo.Indices = tableInfo.Indices[:n]
 
-			backupSchemas.AddSchema(dbInfo, tableInfo)
+			err = fn(dbInfo, tableInfo)
+			tableNum += 1
 
-			if buildRange {
-				tableRanges, err := BuildTableRanges(tableInfo)
-				if err != nil {
-					return nil, nil, nil, errors.Trace(err)
-				}
-				for _, r := range tableRanges {
-					ranges = append(ranges, rtree.Range{
-						StartKey: r.StartKey,
-						EndKey:   r.EndKey,
-					})
-				}
-			}
+			return nil
+		})
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if tableNum == 0 {
+			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
+			fn(dbInfo, nil)
 		}
 	}
 
-	if backupSchemas.Len() == 0 {
-		log.Info("nothing to backup")
-		return nil, nil, nil, nil
-	}
-	return ranges, backupSchemas, policies, nil
+	return nil
 }
 
 // BuildFullSchema builds a full backup schemas for databases and tables.

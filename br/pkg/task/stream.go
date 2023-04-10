@@ -440,7 +440,7 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	}
 
 	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
-	err = schemas.BackupSchemas(ctx, metaWriter, nil, s.mgr.GetStorage(), nil,
+	err = backup.BackupSchemas(ctx, schemas, metaWriter, nil, s.mgr.GetStorage(), nil,
 		s.cfg.StartTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
 		return errors.Trace(err)

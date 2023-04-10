@@ -150,8 +150,8 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	}
 	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
-	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+	err = backup.BackupSchemas(
+		ctx, backupSchemas, metaWriter, nil, m.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.Equal(t, int64(1), updateCh.get())
 	require.NoError(t, err)
 	err = metaWriter.FlushBackupMeta(ctx)
@@ -179,8 +179,8 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 
 	es2 := GetRandomStorage(t)
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
-	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter2, nil, m.Storage, nil, math.MaxUint64, 2, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+	err = backup.BackupSchemas(
+		ctx, backupSchemas, metaWriter2, nil, m.Storage, nil, math.MaxUint64, 2, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.Equal(t, int64(2), updateCh.get())
 	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)
@@ -233,8 +233,8 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	es := GetRandomStorage(t)
 	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
-	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+	err = backup.BackupSchemas(
+		ctx, backupSchemas, metaWriter, nil, m.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.NoError(t, err)
 	err = metaWriter.FlushBackupMeta(ctx)
 	require.NoError(t, err)
@@ -261,8 +261,8 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	statsHandle := m.Domain.StatsHandle()
 	es2 := GetRandomStorage(t)
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
-	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter2, nil, m.Storage, statsHandle, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+	err = backup.BackupSchemas(
+		ctx, backupSchemas, metaWriter2, nil, m.Storage, statsHandle, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)
 	require.NoError(t, err)
@@ -305,7 +305,7 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 	updateCh := new(simpleProgress)
 
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
-	err = backupSchemas.BackupSchemas(ctx, metaWriter2, nil, m.Storage, nil,
+	err = backup.BackupSchemas(ctx, backupSchemas, metaWriter2, nil, m.Storage, nil,
 		math.MaxUint64, 1, variable.DefChecksumTableConcurrency, true, updateCh)
 	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)

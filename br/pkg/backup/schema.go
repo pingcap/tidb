@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -41,9 +42,14 @@ type schemaInfo struct {
 	stats      *handle.JSONTable
 }
 
+type SchemaIterator interface {
+	Iter(kv.Storage, uint64, func(*schemaInfo) error) error
+	GetCheckpointChecksum() map[int64]*checkpoint.ChecksumItem
+}
+
 // Schemas is task for backuping schemas.
 type Schemas struct {
-	// name -> schema
+	// name -> schema, not used by backup task
 	schemas map[string]*schemaInfo
 
 	// checkpoint: table id -> checksum
@@ -57,8 +63,21 @@ func NewBackupSchemas() *Schemas {
 	}
 }
 
+func (ss *Schemas) Iter(_ kv.Storage, _ uint64, fn func(*schemaInfo) error) error {
+	for _, s := range ss.schemas {
+		if err := fn(s); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 func (ss *Schemas) SetCheckpointChecksum(checkpointChecksum map[int64]*checkpoint.ChecksumItem) {
 	ss.checkpointChecksum = checkpointChecksum
+}
+
+func (ss *Schemas) GetCheckpointChecksum() map[int64]*checkpoint.ChecksumItem {
+	return ss.checkpointChecksum
 }
 
 func (ss *Schemas) AddSchema(
@@ -79,8 +98,9 @@ func (ss *Schemas) AddSchema(
 }
 
 // BackupSchemas backups table info, including checksum and stats.
-func (ss *Schemas) BackupSchemas(
+func BackupSchemas[T SchemaIterator](
 	ctx context.Context,
+	schemas T,
 	metaWriter *metautil.MetaWriter,
 	checkpointRunner *checkpoint.CheckpointRunner,
 	store kv.Storage,
@@ -102,7 +122,8 @@ func (ss *Schemas) BackupSchemas(
 	startAll := time.Now()
 	op := metautil.AppendSchema
 	metaWriter.StartWriteMetasAsync(ctx, op)
-	for _, s := range ss.schemas {
+	checkpointChecksum := schemas.GetCheckpointChecksum()
+	schemas.Iter(store, backupTS, func(s *schemaInfo) error {
 		schema := s
 		// Because schema.dbInfo is a pointer that many tables point to.
 		// Remove "add Temporary-prefix into dbName" from closure to prevent concurrent operations.
@@ -112,8 +133,8 @@ func (ss *Schemas) BackupSchemas(
 
 		var checksum *checkpoint.ChecksumItem
 		var exists bool = false
-		if ss.checkpointChecksum != nil && schema.tableInfo != nil {
-			checksum, exists = ss.checkpointChecksum[schema.tableInfo.ID]
+		if checkpointChecksum != nil && schema.tableInfo != nil {
+			checksum, exists = checkpointChecksum[schema.tableInfo.ID]
 		}
 		workerPool.ApplyOnErrorGroup(errg, func() error {
 			if schema.tableInfo != nil {
@@ -176,7 +197,8 @@ func (ss *Schemas) BackupSchemas(
 			}
 			return nil
 		})
-	}
+		return nil
+	})
 	if err := errg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
@@ -188,6 +210,44 @@ func (ss *Schemas) BackupSchemas(
 // Len returns the number of schemas.
 func (ss *Schemas) Len() int {
 	return len(ss.schemas)
+}
+
+type SchemasV2 struct {
+	size         int
+	filter       filter.Filter
+	isFullBackup bool
+	// checkpoint: table id -> checksum
+	checkpointChecksum map[int64]*checkpoint.ChecksumItem
+}
+
+func NewBackupSchemasV2(size int, filter filter.Filter, isFullBackup bool) *SchemasV2 {
+	return &SchemasV2{
+		size:               size,
+		filter:             filter,
+		isFullBackup:       isFullBackup,
+		checkpointChecksum: nil,
+	}
+}
+
+func (ss *SchemasV2) Iter(storage kv.Storage, backupTS uint64, fn func(*schemaInfo) error) error {
+	return BuildBackupSchemas(storage, ss.filter, backupTS, ss.isFullBackup, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) error {
+		return errors.Trace(fn(&schemaInfo{
+			tableInfo: tableInfo,
+			dbInfo:    dbInfo,
+		}))
+	})
+}
+
+func (ss *SchemasV2) SetCheckpointChecksum(checkpointChecksum map[int64]*checkpoint.ChecksumItem) {
+	ss.checkpointChecksum = checkpointChecksum
+}
+
+func (ss *SchemasV2) GetCheckpointChecksum() map[int64]*checkpoint.ChecksumItem {
+	return ss.checkpointChecksum
+}
+
+func (ss *SchemasV2) Len() int {
+	return ss.size
 }
 
 func (s *schemaInfo) calculateChecksum(

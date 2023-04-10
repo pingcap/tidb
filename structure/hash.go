@@ -166,6 +166,17 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	return res, errors.Trace(err)
 }
 
+func (t *TxStructure) HGetOnce(key []byte, fn func(pair HashPair) error) error {
+	return t.iterateHash(key, func(field []byte, value []byte) error {
+		pair := HashPair{
+			Field: append([]byte{}, field...),
+			Value: append([]byte{}, value...),
+		}
+
+		return fn(pair)
+	})
+}
+
 // HGetLen gets the length of hash.
 func (t *TxStructure) HGetLen(key []byte) (uint64, error) {
 	hashLen := 0
