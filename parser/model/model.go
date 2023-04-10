@@ -1171,12 +1171,15 @@ type PartitionInfo struct {
 	// Only used during ReorganizePartition so far
 	DDLState SchemaState `json:"ddl_state"`
 	// Set during ALTER TABLE ... if the table id needs to change
-	// like if there is a global index
+	// like if there is a global index or going between non-partitioned
+	// and partitioned table, to make the data dropping / range delete
+	// optimized.
 	NewTableID int64 `json:"new_table_id"`
 	// Set during ALTER TABLE ... PARTITION BY ...
-	NewType    PartitionType `json:"new_type"`
-	NewExpr    string        `json:"new_expr"`
-	NewColumns []CIStr       `json:"new_columns"`
+	// First as the new partition scheme, then in StateDeleteReorg as the old
+	DDLType    PartitionType `json:"ddl_type"`
+	DDLExpr    string        `json:"ddl_expr"`
+	DDLColumns []CIStr       `json:"ddl_columns"`
 }
 
 // Clone clones itself.

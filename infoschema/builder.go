@@ -227,6 +227,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyCreateTables(m, diff)
 	case model.ActionReorganizePartition:
 		return b.applyReorganizePartition(m, diff)
+	case model.ActionAlterTablePartitioning:
+		return b.applyReorganizePartition(m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
 	default:
@@ -411,7 +413,8 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
+	case model.ActionTruncateTable, model.ActionCreateView,
+		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:

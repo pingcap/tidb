@@ -112,7 +112,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		return nil, table.ErrUnknownPartition
 	}
 	ret := &partitionedTable{TableCommon: *tbl}
-	partitionExpr, err := newPartitionExpr(tblInfo, pi.Definitions)
+	partitionExpr, err := newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.Definitions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -147,7 +147,14 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	if pi.DDLState == model.StateDeleteReorganization {
 		origIdx := setIndexesState(ret, pi.DDLState)
 		defer unsetIndexesState(ret, origIdx)
-		ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DroppingDefinitions)
+		if pi.NewTableID != 0 {
+			if pi.DDLType != model.PartitionTypeNone {
+				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions)
+			}
+			// If PartitionTypeNone, no partition expression
+		} else {
+			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.DroppingDefinitions)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -168,7 +175,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		if len(pi.AddingDefinitions) > 0 {
 			origIdx := setIndexesState(ret, pi.DDLState)
 			defer unsetIndexesState(ret, origIdx)
-			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.AddingDefinitions)
+			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -227,7 +234,7 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 	return &newPart, nil
 }
 
-func newPartitionExpr(tblInfo *model.TableInfo, defs []model.PartitionDefinition) (*PartitionExpr, error) {
+func newPartitionExpr(tblInfo *model.TableInfo, tp model.PartitionType, expr string, partCols []model.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
 	// a partitioned table cannot rely on session context/sql modes, so use a default one!
 	ctx := mock.NewContext()
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
@@ -235,19 +242,18 @@ func newPartitionExpr(tblInfo *model.TableInfo, defs []model.PartitionDefinition
 	if err != nil {
 		return nil, err
 	}
-	pi := tblInfo.GetPartitionInfo()
-	switch pi.Type {
+	switch tp {
 	case model.PartitionTypeNone:
 		// Nothing to do
 		return nil, nil
 	case model.PartitionTypeRange:
-		return generateRangePartitionExpr(ctx, pi, defs, columns, names)
+		return generateRangePartitionExpr(ctx, expr, partCols, defs, columns, names)
 	case model.PartitionTypeHash:
-		return generateHashPartitionExpr(ctx, pi, columns, names)
+		return generateHashPartitionExpr(ctx, expr, columns, names)
 	case model.PartitionTypeKey:
-		return generateKeyPartitionExpr(ctx, pi, columns, names)
+		return generateKeyPartitionExpr(ctx, expr, partCols, columns, names)
 	case model.PartitionTypeList:
-		return generateListPartitionExpr(ctx, tblInfo, defs, columns, names)
+		return generateListPartitionExpr(ctx, tblInfo, expr, partCols, defs, columns, names)
 	}
 	panic("cannot reach here")
 }
@@ -641,25 +647,25 @@ func fixOldVersionPartitionInfo(sctx sessionctx.Context, str string) (int64, boo
 	return ret, true
 }
 
-func rangePartitionExprStrings(pi *model.PartitionInfo) []string {
+func rangePartitionExprStrings(cols []model.CIStr, expr string) []string {
 	var s []string
-	if len(pi.Columns) > 0 {
-		s = make([]string, 0, len(pi.Columns))
-		for _, col := range pi.Columns {
+	if len(cols) > 0 {
+		s = make([]string, 0, len(cols))
+		for _, col := range cols {
 			s = append(s, stringutil.Escape(col.O, mysql.ModeNone))
 		}
 	} else {
-		s = []string{pi.Expr}
+		s = []string{expr}
 	}
 	return s
 }
 
-func generateKeyPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+func generateKeyPartitionExpr(ctx sessionctx.Context, expr string, partCols []model.CIStr,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	ret := &PartitionExpr{
 		ForKeyPruning: &ForKeyPruning{},
 	}
-	_, partColumns, offset, err := extractPartitionExprColumns(ctx, pi, columns, names)
+	_, partColumns, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -669,12 +675,12 @@ func generateKeyPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	return ret, nil
 }
 
-func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+func generateRangePartitionExpr(ctx sessionctx.Context, expr string, partCols []model.CIStr,
 	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	p := parser.New()
 	schema := expression.NewSchema(columns...)
-	partStrs := rangePartitionExprStrings(pi)
+	partStrs := rangePartitionExprStrings(partCols, expr)
 	locateExprs, err := getRangeLocateExprs(ctx, p, defs, partStrs, schema, names)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -683,13 +689,13 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		UpperBounds: locateExprs,
 	}
 
-	partExpr, _, offset, err := extractPartitionExprColumns(ctx, pi, columns, names)
+	partExpr, _, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	ret.ColumnOffset = offset
 
-	if len(pi.Columns) < 1 {
+	if len(partCols) < 1 {
 		tmp, err := dataForRangePruning(ctx, defs)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -759,19 +765,19 @@ func findIdxByColUniqueID(cols []*expression.Column, col *expression.Column) int
 	return -1
 }
 
-func extractPartitionExprColumns(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, []*expression.Column, []int, error) {
+func extractPartitionExprColumns(ctx sessionctx.Context, expr string, partCols []model.CIStr, columns []*expression.Column, names types.NameSlice) (expression.Expression, []*expression.Column, []int, error) {
 	var cols []*expression.Column
 	var partExpr expression.Expression
-	if len(pi.Columns) == 0 {
+	if len(partCols) == 0 {
 		schema := expression.NewSchema(columns...)
-		exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+		exprs, err := expression.ParseSimpleExprsWithNames(ctx, expr, schema, names)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		cols = expression.ExtractColumns(exprs[0])
 		partExpr = exprs[0]
 	} else {
-		for _, col := range pi.Columns {
+		for _, col := range partCols {
 			idx := expression.FindFieldNameIdxByColName(names, col.L)
 			if idx < 0 {
 				panic("should never happen")
@@ -790,19 +796,18 @@ func extractPartitionExprColumns(ctx sessionctx.Context, pi *model.PartitionInfo
 	return partExpr, deDupCols, offset, nil
 }
 
-func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
+func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo, expr string, partCols []model.CIStr,
 	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
-	pi := tblInfo.GetPartitionInfo()
-	partExpr, exprCols, offset, err := extractPartitionExprColumns(ctx, pi, columns, names)
+	partExpr, exprCols, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names)
 	if err != nil {
 		return nil, err
 	}
 	listPrune := &ForListPruning{}
-	if len(pi.Columns) == 0 {
-		err = listPrune.buildListPruner(ctx, tblInfo, defs, exprCols, columns, names)
+	if len(partCols) == 0 {
+		err = listPrune.buildListPruner(ctx, expr, defs, exprCols, columns, names)
 	} else {
-		err = listPrune.buildListColumnsPruner(ctx, tblInfo, defs, columns, names)
+		err = listPrune.buildListColumnsPruner(ctx, tblInfo, partCols, defs, columns, names)
 	}
 	if err != nil {
 		return nil, err
@@ -838,15 +843,14 @@ func (lp *ForListPruning) Clone() *ForListPruning {
 	return &ret
 }
 
-func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model.TableInfo, defs []model.PartitionDefinition, exprCols []*expression.Column,
+func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, exprStr string, defs []model.PartitionDefinition, exprCols []*expression.Column,
 	columns []*expression.Column, names types.NameSlice) error {
-	pi := tblInfo.GetPartitionInfo()
 	schema := expression.NewSchema(columns...)
 	p := parser.New()
-	expr, err := parseSimpleExprWithNames(p, ctx, pi.Expr, schema, names)
+	expr, err := parseSimpleExprWithNames(p, ctx, exprStr, schema, names)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
-		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
+		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", exprStr), zap.Error(err))
 		return errors.Trace(err)
 	}
 	// Since need to change the column index of the expression, clone the expression first.
@@ -869,20 +873,19 @@ func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model
 }
 
 func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context,
-	tblInfo *model.TableInfo, defs []model.PartitionDefinition,
+	tblInfo *model.TableInfo, partCols []model.CIStr, defs []model.PartitionDefinition,
 	columns []*expression.Column, names types.NameSlice) error {
-	pi := tblInfo.GetPartitionInfo()
 	schema := expression.NewSchema(columns...)
 	p := parser.New()
-	colPrunes := make([]*ForListColumnPruning, 0, len(pi.Columns))
-	for colIdx := range pi.Columns {
-		colInfo := model.FindColumnInfo(tblInfo.Columns, pi.Columns[colIdx].L)
+	colPrunes := make([]*ForListColumnPruning, 0, len(partCols))
+	for colIdx := range partCols {
+		colInfo := model.FindColumnInfo(tblInfo.Columns, partCols[colIdx].L)
 		if colInfo == nil {
-			return table.ErrUnknownColumn.GenWithStackByArgs(pi.Columns[colIdx].L)
+			return table.ErrUnknownColumn.GenWithStackByArgs(partCols[colIdx].L)
 		}
-		idx := expression.FindFieldNameIdxByColName(names, pi.Columns[colIdx].L)
+		idx := expression.FindFieldNameIdxByColName(names, partCols[colIdx].L)
 		if idx < 0 {
-			return table.ErrUnknownColumn.GenWithStackByArgs(pi.Columns[colIdx].L)
+			return table.ErrUnknownColumn.GenWithStackByArgs(partCols[colIdx].L)
 		}
 		colPrune := &ForListColumnPruning{
 			ctx:      ctx,
@@ -1114,18 +1117,18 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	return locations, nil
 }
 
-func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+func generateHashPartitionExpr(ctx sessionctx.Context, exprStr string,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	schema := expression.NewSchema(columns...)
-	origExpr, err := parseExpr(parser.New(), pi.Expr)
+	origExpr, err := parseExpr(parser.New(), exprStr)
 	if err != nil {
 		return nil, err
 	}
 	exprs, err := rewritePartitionExpr(ctx, origExpr, schema, names)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
-		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
+		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", exprStr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	// build column offset.
@@ -1430,16 +1433,17 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	}
 	tblInfo := t.Meta().Clone()
 	tblInfo.Partition.Definitions = tblInfo.Partition.AddingDefinitions
+	tblInfo.Partition.Num = uint64(len(tblInfo.Partition.Definitions))
 	tblInfo.Partition.AddingDefinitions = nil
 	tblInfo.Partition.DroppingDefinitions = nil
-	if tblInfo.Partition.NewType != model.PartitionTypeNone {
-		tblInfo.Partition.Type = tblInfo.Partition.NewType
-		tblInfo.Partition.Expr = tblInfo.Partition.NewExpr
-		tblInfo.Partition.Columns = tblInfo.Partition.NewColumns
+	if tblInfo.Partition.DDLType != model.PartitionTypeNone {
+		tblInfo.Partition.Type = tblInfo.Partition.DDLType
+		tblInfo.Partition.Expr = tblInfo.Partition.DDLExpr
+		tblInfo.Partition.Columns = tblInfo.Partition.DDLColumns
 		tblInfo.ID = tblInfo.Partition.NewTableID
-		tblInfo.Partition.NewType = model.PartitionTypeNone
-		tblInfo.Partition.NewExpr = ""
-		tblInfo.Partition.NewColumns = nil
+		tblInfo.Partition.DDLType = model.PartitionTypeNone
+		tblInfo.Partition.DDLExpr = ""
+		tblInfo.Partition.DDLColumns = nil
 		tblInfo.Partition.NewTableID = 0
 	}
 	var tc TableCommon

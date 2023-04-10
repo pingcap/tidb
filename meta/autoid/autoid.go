@@ -656,6 +656,8 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 	}
 }
 
+// TODO: Handle allocators when changing Table ID during ALTER TABLE t PARTITION BY ...
+
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator

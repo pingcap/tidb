@@ -1373,6 +1373,34 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 				}
 			}
 		}
+	case model.ActionAlterTablePartitioning:
+		diff.OldTableID = job.TableID
+		if job.SchemaState == model.StateDeleteReorganization {
+			// Final part, new table id is assigned
+			partInfo := &model.PartitionInfo{}
+			var partNames []model.CIStr
+			err = job.DecodeArgs(&partNames, &partInfo)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			diff.TableID = partInfo.NewTableID
+			if len(job.CtxVars) > 0 {
+				if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
+					if addedIDs, ok := job.CtxVars[1].([]int64); ok {
+						// to use AffectedOpts we need both new and old to have the same length
+						maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
+						// Also initialize them to 0!
+						oldIDs := make([]int64, maxParts)
+						copy(oldIDs, droppedIDs)
+						newIDs := make([]int64, maxParts)
+						copy(newIDs, addedIDs)
+						diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+					}
+				}
+			}
+		} else {
+			diff.TableID = job.TableID
+		}
 	case model.ActionCreateTable:
 		diff.TableID = job.TableID
 		if len(job.Args) > 0 {

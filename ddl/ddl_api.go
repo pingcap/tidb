@@ -4016,7 +4016,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	piOld := meta.GetPartitionInfo()
 	var partNames []model.CIStr
 	if piOld != nil {
-		partNames := make([]model.CIStr, 0, len(piOld.Definitions))
+		partNames = make([]model.CIStr, 0, len(piOld.Definitions))
 		for i := range piOld.Definitions {
 			partNames = append(partNames, piOld.Definitions[i].Name)
 		}
@@ -4100,7 +4100,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkReorgPartitionDefs(ctx, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+	if err = checkReorgPartitionDefs(ctx, model.ActionAlterTablePartitioning, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
 		return errors.Trace(err)
 	}
 	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
@@ -4133,55 +4133,66 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	return errors.Trace(err)
 }
 
-func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
+func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	pi := tblInfo.Partition
 	clonedMeta := tblInfo.Clone()
 	clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
 	clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
+	if action == model.ActionAlterTablePartitioning {
+		clonedMeta.Partition = partInfo
+		clonedMeta.ID = partInfo.NewTableID
+	}
 	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
 		return errors.Trace(err)
 	}
-	if pi.Type == model.PartitionTypeRange {
-		if lastPartIdx == len(pi.Definitions)-1 {
-			// Last partition dropped, OK to change the end range
-			// Also includes MAXVALUE
-			return nil
-		}
-		// Check if the replaced end range is the same as before
-		lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
-		lastOldPartition := pi.Definitions[lastPartIdx]
-		if len(pi.Columns) > 0 {
-			newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+	if action == model.ActionReorganizePartition {
+		if pi.Type == model.PartitionTypeRange {
+			if lastPartIdx == len(pi.Definitions)-1 {
+				// Last partition dropped, OK to change the end range
+				// Also includes MAXVALUE
+				return nil
+			}
+			// Check if the replaced end range is the same as before
+			lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
+			lastOldPartition := pi.Definitions[lastPartIdx]
+			if len(pi.Columns) > 0 {
+				newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if newGtOld {
+					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				}
+				oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if oldGtNew {
+					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				}
+				return nil
+			}
+
+			isUnsigned := isPartExprUnsigned(tblInfo)
+			currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if newGtOld {
-				return errors.Trace(dbterror.ErrRangeNotIncreasing)
-			}
-			oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+			newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if oldGtNew {
+
+			if currentRangeValue != newRangeValue {
 				return errors.Trace(dbterror.ErrRangeNotIncreasing)
 			}
-			return nil
 		}
-
-		isUnsigned := isPartExprUnsigned(tblInfo)
-		currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if currentRangeValue != newRangeValue {
-			return errors.Trace(dbterror.ErrRangeNotIncreasing)
+	} else {
+		if len(pi.Definitions) != (lastPartIdx - firstPartIdx + 1) {
+			// if not ActionReorganizePartition, require all partitions to be changed.
+			return errors.Trace(dbterror.ErrAlterOperationNotSupported)
 		}
 	}
 	return nil
