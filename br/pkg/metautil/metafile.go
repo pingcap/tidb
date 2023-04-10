@@ -295,10 +295,10 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	ch := make(chan interface{}, MaxBatchSize)
 	errCh := make(chan error, 1)
 	go func() {
+		defer close(ch)
 		if err := reader.readSchemas(ctx, func(s *backuppb.Schema) { ch <- s }); err != nil {
 			errCh <- errors.Trace(err)
 		}
-		close(ch)
 	}()
 
 	cfg := readSchemaConfig{}

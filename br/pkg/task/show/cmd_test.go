@@ -4,7 +4,6 @@ package show_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -17,8 +16,8 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task/show"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 
 	"embed"
@@ -123,4 +122,18 @@ func cloneFS(f fs.FS, base string, target string) error {
 		_, err = io.Copy(dst, src)
 		return errors.Annotate(err, "failed to copy")
 	})
+}
+
+func TestShowViaSQL(t *testing.T) {
+	req := require.New(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tempBackup := tempBackupDir(t)
+	metaPath := path.Join(tempBackup, "backupmeta")
+    err := os.WriteFile(metaPath, FullMeta, 0o444)
+	req.NoError(err)
+
+    res := tk.MustQuery(fmt.Sprintf("SHOW BACKUP METADATA FROM 'local://%s'", tempBackup))
+    fmt.Println(res.Rows())
 }
