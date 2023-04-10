@@ -34,22 +34,56 @@ type Encoder struct {
 	values     []*types.Datum
 	// Enable indicates whether this encoder should be use.
 	Enable bool
+	// WithChecksum indicates whether to append checksum to the encoded row data.
+	WithChecksum bool
 }
 
 // Encode encodes a row from a datums slice.
 func (encoder *Encoder) Encode(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum, buf []byte) ([]byte, error) {
 	encoder.reset()
-	encoder.appendColVals(colIDs, values)
-	numCols, notNullIdx := encoder.reformatCols()
-	err := encoder.encodeRowCols(sc, numCols, notNullIdx)
+	err := encoder.encodeDatums(sc, colIDs, values)
 	if err != nil {
 		return nil, err
 	}
 	return encoder.row.toBytes(buf[:0]), nil
 }
 
+// EncodeWithExtraChecksum likes Encode but also appends an extra checksum if checksum is enabled.
+func (encoder *Encoder) EncodeWithExtraChecksum(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum, checksum uint32, buf []byte) ([]byte, error) {
+	encoder.reset()
+	if encoder.hasChecksum() {
+		encoder.setExtraChecksum(checksum)
+	}
+	err := encoder.encodeDatums(sc, colIDs, values)
+	if err != nil {
+		return nil, err
+	}
+	return encoder.row.toBytes(buf[:0]), nil
+}
+
+// Checksum caclulates the checksum of datumns.
+func (encoder *Encoder) Checksum(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum) (uint32, error) {
+	encoder.reset()
+	encoder.flags |= rowFlagChecksum
+	err := encoder.encodeDatums(sc, colIDs, values)
+	if err != nil {
+		return 0, err
+	}
+	return encoder.checksum1, nil
+}
+
+func (encoder *Encoder) encodeDatums(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum) error {
+	encoder.appendColVals(colIDs, values)
+	numCols, notNullIdx := encoder.reformatCols()
+	err := encoder.encodeRowCols(sc, numCols, notNullIdx)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (encoder *Encoder) reset() {
-	encoder.large = false
+	encoder.flags = 0
 	encoder.numNotNullCols = 0
 	encoder.numNullCols = 0
 	encoder.data = encoder.data[:0]
@@ -57,6 +91,12 @@ func (encoder *Encoder) reset() {
 	encoder.values = encoder.values[:0]
 	encoder.offsets32 = encoder.offsets32[:0]
 	encoder.offsets = encoder.offsets[:0]
+	encoder.checksumHeader = 0
+	encoder.checksum1 = 0
+	encoder.checksum2 = 0
+	if encoder.WithChecksum {
+		encoder.flags |= rowFlagChecksum
+	}
 }
 
 func (encoder *Encoder) appendColVals(colIDs []int64, values []types.Datum) {
@@ -67,7 +107,7 @@ func (encoder *Encoder) appendColVals(colIDs []int64, values []types.Datum) {
 
 func (encoder *Encoder) appendColVal(colID int64, d *types.Datum) {
 	if colID > 255 {
-		encoder.large = true
+		encoder.flags |= rowFlagLarge
 	}
 	if d.IsNull() {
 		encoder.numNullCols++
@@ -83,7 +123,7 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 	numCols = len(encoder.tempColIDs)
 	nullIdx := numCols - int(r.numNullCols)
 	notNullIdx = 0
-	if r.large {
+	if r.large() {
 		r.initColIDs32()
 		r.initOffsets32()
 	} else {
@@ -92,14 +132,14 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 	}
 	for i, colID := range encoder.tempColIDs {
 		if encoder.values[i].IsNull() {
-			if r.large {
+			if r.large() {
 				r.colIDs32[nullIdx] = uint32(colID)
 			} else {
 				r.colIDs[nullIdx] = byte(colID)
 			}
 			nullIdx++
 		} else {
-			if r.large {
+			if r.large() {
 				r.colIDs32[notNullIdx] = uint32(colID)
 			} else {
 				r.colIDs[notNullIdx] = byte(colID)
@@ -108,7 +148,7 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 			notNullIdx++
 		}
 	}
-	if r.large {
+	if r.large() {
 		largeNotNullSorter := (*largeNotNullSorter)(encoder)
 		sort.Sort(largeNotNullSorter)
 		if r.numNullCols > 0 {
@@ -136,7 +176,7 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 			return err
 		}
 		// handle convert to large
-		if len(r.data) > math.MaxUint16 && !r.large {
+		if len(r.data) > math.MaxUint16 && !r.large() {
 			r.initColIDs32()
 			for j := 0; j < numCols; j++ {
 				r.colIDs32[j] = uint32(r.colIDs[j])
@@ -145,13 +185,16 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 			for j := 0; j <= i; j++ {
 				r.offsets32[j] = uint32(r.offsets[j])
 			}
-			r.large = true
+			r.flags |= rowFlagLarge
 		}
-		if r.large {
+		if r.large() {
 			r.offsets32[i] = uint32(len(r.data))
 		} else {
 			r.offsets[i] = uint16(len(r.data))
 		}
+	}
+	if r.hasChecksum() {
+		return r.calcChecksum()
 	}
 	return nil
 }
