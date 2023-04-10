@@ -437,7 +437,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		for _, item := range node.Items {
 			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
 				checker.cacheable = false
-				checker.reason = "only support 'group by {columns}'"
+				checker.reason = "only support group by {columns}'"
 				return in, !checker.cacheable
 			}
 		}
@@ -446,7 +446,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		for _, item := range node.Items {
 			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
 				checker.cacheable = false
-				checker.reason = "only support 'order by {columns}'"
+				checker.reason = "only support order by {columns}'"
 				return in, !checker.cacheable
 			}
 		}
