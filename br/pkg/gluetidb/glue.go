@@ -207,8 +207,6 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }
 
-<<<<<<< HEAD
-=======
 // SplitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
 // The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
 // TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
@@ -235,10 +233,8 @@ func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, infos []*model.
 	return err
 }
 
->>>>>>> 41c1250c265 (br: reused table id is disabled when restore a brand-new cluster (#41358))
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
-	d := domain.GetDomain(gs.se).DDL()
 	var dbName model.CIStr
 
 	// Disable foreign key check when batch create tables.
@@ -266,12 +262,8 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 			cloneTables = append(cloneTables, table)
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
-<<<<<<< HEAD
-		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, append(cs, ddl.OnExistIgnore)...)
-		if err != nil {
-=======
+
 		if err := gs.SplitBatchCreateTable(dbName, cloneTables, cs...); err != nil {
->>>>>>> 41c1250c265 (br: reused table id is disabled when restore a brand-new cluster (#41358))
 			//It is possible to failure when TiDB does not support model.ActionCreateTables.
 			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
 			//we fall back to old way that creating table one by one
