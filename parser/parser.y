@@ -5859,7 +5859,7 @@ FieldList:
 GroupByClause:
 	"GROUP" "BY" ByList
 	{
-		groupBy = &ast.GroupByClause{Items: $3.([]*ast.ByItem)}
+		groupBy := &ast.GroupByClause{Items: $3.([]*ast.ByItem)}
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		groupBy.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
 		$$ = groupBy
