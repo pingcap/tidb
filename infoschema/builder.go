@@ -225,7 +225,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning:
 		return b.applyReorganizePartition(m, diff)
 	case model.ActionAlterTablePartitioning:
 		return b.applyReorganizePartition(m, diff)
@@ -718,7 +718,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	case model.ActionDropTablePartition:
 	case model.ActionTruncateTablePartition:
 	// ReorganizePartition handle the bundles in applyReorganizePartition
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning:
 	default:
 		pi := tblInfo.GetPartitionInfo()
 		if pi != nil {

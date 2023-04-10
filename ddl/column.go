@@ -1065,6 +1065,7 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 			workType := typeReorgPartitionWorker
 			switch reorgInfo.Job.Type {
 			case model.ActionReorganizePartition,
+				model.ActionRemovePartitioning,
 				model.ActionAlterTablePartitioning:
 				// Expected
 			default:

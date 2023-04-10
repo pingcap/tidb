@@ -103,6 +103,7 @@ const (
 	ActionAlterResourceGroup            ActionType = 69
 	ActionDropResourceGroup             ActionType = 70
 	ActionAlterTablePartitioning        ActionType = 71
+	ActionRemovePartitioning            ActionType = 72
 )
 
 var actionMap = map[ActionType]string{
@@ -172,6 +173,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterResourceGroup:            "alter resource group",
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
+	ActionRemovePartitioning:            "alter table remove partitioning",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -767,7 +769,8 @@ func (job *Job) NotStarted() bool {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition:
+	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition,
+		ActionRemovePartitioning:
 		return true
 	case ActionModifyColumn:
 		if len(job.CtxVars) > 0 {

@@ -3486,7 +3486,6 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk.MustGetErrCode("alter table t_part check partition p0, p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t_part remove partitioning;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part repair partition p1;", errno.ErrUnsupportedDDLOperation)
 
 	// Reduce the impact on DML when executing partition DDL
@@ -4801,4 +4800,165 @@ partition p1 values less than maxvalue)`)
 		"PARTITION BY RANGE (`colint`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (1998),\n" +
 		" PARTITION `p1` VALUES LESS THAN (MAXVALUE))"))
+}
+
+func TestRemoveRangePartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RemovePartitioning")
+	tk.MustExec("use RemovePartitioning")
+	tk.MustExec(`create table tRange (a int unsigned primary key, b varchar(255))
+partition by range (a)
+(partition p0 values less than (1000000),
+partition pMax values less than maxvalue)`)
+	tk.MustExec(`insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"), (20000000, "20000000")`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`alter table tRange remove partitioning`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestRemoveRangeColumnPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RemovePartitioning")
+	tk.MustExec("use RemovePartitioning")
+	tk.MustExec(`create table tRange (a varchar(55) primary key, b varchar(255))
+partition by range columns (a)
+(partition p0 values less than ("1000000"),
+partition pMax values less than maxvalue)`)
+	tk.MustExec(`insert into tRange values ("0", "Zero"), ("0999999", "0999999"), ("1000000", "1000000"), ("20000000", "20000000")`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` varchar(55) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN ('1000000'),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`alter table tRange remove partitioning`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` varchar(55) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestRemoveRangeColumnsPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RemovePartitioning")
+	tk.MustExec("use RemovePartitioning")
+	tk.MustExec(`create table tRange (a varchar(55), b varchar(255))
+partition by range columns (a,b)
+(partition p0 values less than ("1000000","1000000"),
+partition pMax values less than (maxvalue,1))`)
+	tk.MustExec(`insert into tRange values ("0", "0Zero"), ("0999999", "0999999"), ("1000000", "1000000"), ("20000000", "20000000")`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` varchar(55) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN ('1000000','1000000'),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,'1'))"))
+	tk.MustExec(`alter table tRange remove partitioning`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` varchar(55) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestRemoveHashPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RemovePartitioning")
+	tk.MustExec("use RemovePartitioning")
+	tk.MustExec(`create table t (a int, b varchar(255), key (a,b), key (b)) partition by hash (a) partitions 7`)
+	for i := 32; i <= 126; i++ {
+		// Fill the data with int and ascii strings
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d,char(%d,%d,%d,%d))`, i, i, i, i, i))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemovePartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 14",
+		"p1 13",
+		"p2 13",
+		"p3 13",
+		"p4 14",
+		"p5 14",
+		"p6 14"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestRemoveKeyPartitioning(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("create database RemovePartitioning")
+	tk.MustExec("use RemovePartitioning")
+	tk.MustExec(`create table t (a varchar(255), b varchar(255), key (a,b), key (b)) partition by key (a) partitions 7`)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// Fill the data with ascii strings
+	for i := 32; i <= 126; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (char(%d,%d,%d),char(%d,%d,%d,%d))`, i, i, i, i, i, i, i))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemovePartitioning", "t", "global", "0", "95"},
+		{"RemovePartitioning", "t", "p0", "0", "9"},
+		{"RemovePartitioning", "t", "p1", "0", "11"},
+		{"RemovePartitioning", "t", "p2", "0", "12"},
+		{"RemovePartitioning", "t", "p3", "0", "13"},
+		{"RemovePartitioning", "t", "p4", "0", "16"},
+		{"RemovePartitioning", "t", "p5", "0", "23"},
+		{"RemovePartitioning", "t", "p6", "0", "11"}})
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemovePartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 9",
+		"p1 11",
+		"p2 12",
+		"p3 13",
+		"p4 16",
+		"p5 23",
+		"p6 11"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` varchar(255) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Statistics are updated asynchronously
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// And also cached and lazy loaded
+	h.Clear()
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemovePartitioning", "t", "", "0", "95"}})
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemovePartitioning", "t", "", "0", "95"}})
 }
