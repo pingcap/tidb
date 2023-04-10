@@ -387,10 +387,6 @@ func (local *Local) ingest(ctx context.Context, j *regionJob) error {
 	}
 
 	failpoint.Inject("fakeRegionJobs", func() {
-		log.FromContext(ctx).Debug("ingest job",
-			zap.String("start", string(j.keyRange.start)),
-			zap.String("end", string(j.keyRange.end)),
-		)
 		front := j.injected[0]
 		j.injected = j.injected[1:]
 		j.convertStageTo(front.ingest.nextStage)
@@ -740,7 +736,6 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 
 		switch {
 		case toPutBack != nil:
-			println("lance test will put back")
 			select {
 			case <-ctx.Done():
 				return
@@ -748,7 +743,6 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 				return
 			case q.putBackCh <- toPutBack:
 				toPutBack = nil
-				println("lance test put back done")
 			}
 		case front != nil:
 			select {

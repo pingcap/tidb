@@ -1367,7 +1367,6 @@ func getNeedRescanWhenIngestBehaviour() []injectedBehaviour {
 }
 
 func TestDoImport(t *testing.T) {
-	log.InitLogger(&log.Config{Level: "debug"}, "debug")
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
