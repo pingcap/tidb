@@ -361,7 +361,7 @@
       "errno/errname.go": "ignore errname code",
       "planner/funcdep/fd_graph.go": "ignore fd_graph code",
       "planner/funcdep/doc.go": "ignore funcdep code",
-      "planner/util/path.go" : "ignore path code",
+      "planner/util/path.go": "ignore path code",
       "planner/memo/": "ignore memo code",
       "ttl/cache/ttlstatus.go": "ignore ttlstatus code",
       "ttl/ttlworker/": "ignore ttlworker code",
@@ -369,16 +369,18 @@
       "planner/core/": "ignore core code",
       "planner/optimize.go": "ignore optimize code",
       "planner/cascades/": "ignore cascades code",
+      "planner/funcdep/extract_fd_test.go": "ignore extract_fd code",
+      "planner/funcdep/only_full_group_by_test.go": "ignore only_full_group_by code",
       "dumpling/export": "ignore export code",
       "ddl/placement/": "ignore placement code"
     },
-     "only_files": {
-       "br/": "only for br code",
-       "ttl/": "only for ttl code",
-       "planner/": "only for planner code",
-       "parser/": "only for parser code",
-       "dumpling/": "only for dumpling code"
-     }
+    "only_files": {
+      "br/": "only for br code",
+      "ttl/": "only for ttl code",
+      "planner/": "only for planner code",
+      "parser/": "only for parser code",
+      "dumpling/": "only for dumpling code"
+    }
   },
   "makezero": {
     "exclude_files": {
