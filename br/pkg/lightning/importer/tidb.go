@@ -39,31 +39,13 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-// defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
-// variables from downstream which may affect KV encode result. The values record the default
-// values if missing.
-var defaultImportantVariables = map[string]string{
-	"max_allowed_packet":      "67108864",
-	"div_precision_increment": "4",
-	"time_zone":               "SYSTEM",
-	"lc_time_names":           "en_US",
-	"default_week_format":     "0",
-	"block_encryption_mode":   "aes-128-ecb",
-	"group_concat_max_len":    "1024",
-}
-
-// defaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system
-// variables from downstream in local/importer backend. The values record the default
-// values if missing.
-var defaultImportVariablesTiDB = map[string]string{
-	"tidb_row_format_version": "1",
-}
-
+// TiDBManager is a wrapper of *sql.DB which provides some helper methods for
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
 }
 
+// DBFromConfig creates a new connection to the TiDB database.
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	param := common.MySQLConnectParam{
 		Host:                     dsn.Host,
@@ -120,7 +102,8 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	return db, errors.Trace(err)
 }
 
-func NewTiDBManager(ctx context.Context, dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
+// NewTiDBManager creates a new TiDB manager.
+func NewTiDBManager(ctx context.Context, dsn config.DBStore, _ *common.TLS) (*TiDBManager, error) {
 	db, err := DBFromConfig(ctx, dsn)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -141,6 +124,7 @@ func NewTiDBManagerWithDB(db *sql.DB, sqlMode mysql.SQLMode) *TiDBManager {
 	}
 }
 
+// Close closes the underlying database connection.
 func (timgr *TiDBManager) Close() {
 	timgr.db.Close()
 }
@@ -186,6 +170,7 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 	return retStmts, nil
 }
 
+// DropTable drops a table.
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
 	sql := common.SQLWithRetry{
 		DB:     timgr.db,
@@ -194,6 +179,7 @@ func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error
 	return sql.Exec(ctx, "drop table", "DROP TABLE "+tableName)
 }
 
+// LoadSchemaInfo loads schema information from TiDB.
 func LoadSchemaInfo(
 	ctx context.Context,
 	schemas []*mydump.MDDatabaseMeta,
@@ -249,6 +235,7 @@ func LoadSchemaInfo(
 	return result, nil
 }
 
+// ObtainGCLifeTime obtains the current GC lifetime.
 func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
 	var gcLifeTime string
 	err := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}.QueryRow(
@@ -260,6 +247,7 @@ func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
 	return gcLifeTime, err
 }
 
+// UpdateGCLifeTime updates the current GC lifetime.
 func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
 	sql := common.SQLWithRetry{
 		DB:     db,
@@ -271,11 +259,12 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 	)
 }
 
+// ObtainImportantVariables obtains the important variables from TiDB.
 func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBVars bool) map[string]string {
 	var query strings.Builder
 	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
 	first := true
-	for k := range defaultImportantVariables {
+	for k := range common.DefaultImportantVariables {
 		if first {
 			first = false
 		} else {
@@ -284,7 +273,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 		query.WriteString(k)
 	}
 	if needTiDBVars {
-		for k := range defaultImportVariablesTiDB {
+		for k := range common.DefaultImportVariablesTiDB {
 			query.WriteString("','")
 			query.WriteString(k)
 		}
@@ -297,7 +286,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 	}
 
 	// convert result into a map. fill in any missing variables with default values.
-	result := make(map[string]string, len(defaultImportantVariables)+len(defaultImportVariablesTiDB))
+	result := make(map[string]string, len(common.DefaultImportantVariables)+len(common.DefaultImportVariablesTiDB))
 	for _, kv := range kvs {
 		result[kv[0]] = kv[1]
 	}
@@ -309,14 +298,15 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 			}
 		}
 	}
-	setDefaultValue(result, defaultImportantVariables)
+	setDefaultValue(result, common.DefaultImportantVariables)
 	if needTiDBVars {
-		setDefaultValue(result, defaultImportVariablesTiDB)
+		setDefaultValue(result, common.DefaultImportVariablesTiDB)
 	}
 
 	return result
 }
 
+// ObtainNewCollationEnabled obtains the new collation enabled status from TiDB.
 func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, error) {
 	newCollationEnabled := false
 	newCollationVal, err := g.ObtainStringWithLog(
@@ -364,6 +354,7 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 	return errors.Annotatef(err, "%s", query)
 }
 
+// AlterAutoRandom rebase the table auto random id
 func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64, maxAutoRandom uint64) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
 	if randomBase == maxAutoRandom+1 {

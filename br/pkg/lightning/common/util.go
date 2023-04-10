@@ -62,6 +62,7 @@ type MySQLConnectParam struct {
 	Vars                     map[string]string
 }
 
+// ToDriverConfig converts the MySQLConnectParam to a mysql.Config.
 func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
 	cfg := mysql.NewConfig()
 	cfg.Params = make(map[string]string)
@@ -129,6 +130,7 @@ func ConnectMySQL(cfg *mysql.Config) (*sql.DB, error) {
 	return nil, errors.Trace(firstErr)
 }
 
+// Connect creates a new connection to the database.
 func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	db, err := ConnectMySQL(param.ToDriverConfig())
 	if err != nil {
@@ -163,7 +165,7 @@ type SQLWithRetry struct {
 	HideQueryLog bool
 }
 
-func (t SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
+func (SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
 	return Retry(purpose, parentLogger, action)
 }
 
@@ -198,6 +200,7 @@ outside:
 	return errors.Annotatef(err, "%s failed", purpose)
 }
 
+// QueryRow executes a query that is expected to return at most one row.
 func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string, dest ...interface{}) error {
 	logger := t.Logger
 	if !t.HideQueryLog {
@@ -274,6 +277,7 @@ func EscapeIdentifier(identifier string) string {
 	return builder.String()
 }
 
+// WriteMySQLIdentifier writes a MySQL identifier into the string builder.
 // Writes a MySQL identifier into the string builder.
 // The identifier is always escaped into the form "`foo`".
 func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
@@ -293,6 +297,7 @@ func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
 	builder.WriteByte('`')
 }
 
+// InterpolateMySQLString interpolates a string into a MySQL string literal.
 func InterpolateMySQLString(s string) string {
 	var builder strings.Builder
 	builder.Grow(len(s) + 2)
@@ -444,21 +449,4 @@ func GetAutoRandomColumn(tblInfo *model.TableInfo) *model.ColumnInfo {
 		return tblInfo.Columns[offset]
 	}
 	return nil
-}
-
-// IsFailpointBuild is true if this is a failpoint build
-var IsFailpointBuild = isFailpointBuild()
-
-func isFailpointBuild() bool {
-	var result bool
-	// Hack: use a *special* switch statement to avoid unreachable code in failpoint build.
-	// The naive way is to add `failpoint.Return(true)` before the last return statement,
-	// but this will cause unreachable code in failpoint build.
-	switch {
-	case true:
-		failpoint.Fallthrough()
-	default:
-		result = true
-	}
-	return result
 }

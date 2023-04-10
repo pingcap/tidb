@@ -21,6 +21,7 @@ go_library(
         "//br/pkg/checksum",
         "//br/pkg/errors",
         "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/backend/tidb",
@@ -78,6 +79,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//:client",
         "@io_etcd_go_etcd_client_v3//:client",
@@ -111,6 +113,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/backend/noop",
         "//br/pkg/lightning/backend/tidb",

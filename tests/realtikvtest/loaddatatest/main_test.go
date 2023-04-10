@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build distributereorg
+package loaddatatest
 
-package distributereorg
+import (
+	"testing"
 
-// TiDBEnableDistributeReorg is a feature tag
-const TiDBEnableDistributeReorg bool = true
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/tests/realtikvtest"
+)
+
+func init() {
+	// need a real PD
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Path = "127.0.0.1:2379"
+	})
+}
+
+func TestMain(m *testing.M) {
+	realtikvtest.RunTestMain(m)
+}

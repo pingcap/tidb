@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -56,6 +57,7 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+// TableImporter is a helper struct to import a table.
 type TableImporter struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
@@ -70,6 +72,7 @@ type TableImporter struct {
 	ignoreColumns map[string]struct{}
 }
 
+// NewTableImporter creates a new TableImporter.
 func NewTableImporter(
 	tableName string,
 	tableMeta *mydump.MDTableMeta,
@@ -208,6 +211,7 @@ func (tr *TableImporter) importTable(
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
 }
 
+// Close implements the Importer interface.
 func (tr *TableImporter) Close() {
 	tr.encTable = nil
 	tr.logger.Info("restore done")
@@ -215,7 +219,8 @@ func (tr *TableImporter) Close() {
 
 func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	task := tr.logger.Begin(zap.InfoLevel, "load engines and files")
-	tableRegions, err := mydump.MakeTableRegions(ctx, tr.tableMeta, len(tr.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers, rc.store)
+	divideConfig := mydump.NewDataDivideConfig(rc.cfg, len(tr.tableInfo.Core.Columns), rc.ioWorkers, rc.store, tr.tableMeta)
+	tableRegions, err := mydump.MakeTableRegions(ctx, divideConfig)
 	if err == nil {
 		timestamp := time.Now().Unix()
 		failpoint.Inject("PopulateChunkTimestamp", func(v failpoint.Value) {
@@ -263,7 +268,8 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 	return err
 }
 
-func (tr *TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
+// RebaseChunkRowIDs rebase the row id of the chunks.
+func (*TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
 	}
@@ -717,7 +723,7 @@ ChunkLoop:
 			if err == nil {
 				if metrics != nil {
 					metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
-					metrics.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
+					metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
 				}
 				if dataFlushStatus != nil && indexFlushStaus != nil {
 					if dataFlushStatus.Flushed() && indexFlushStaus.Flushed() {
@@ -751,14 +757,18 @@ ChunkLoop:
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
 	totalSQLSize := int64(0)
+	logKeyName := "read(bytes)"
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
 		totalSQLSize += chunk.UnfinishedSize()
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			logKeyName = "read(rows)"
+		}
 	}
 
 	err = chunkErr.Get()
 	logTask.End(zap.ErrorLevel, err,
-		zap.Int64("read", totalSQLSize),
+		zap.Int64(logKeyName, totalSQLSize),
 		zap.Uint64("written", totalKVSize),
 	)
 
@@ -911,14 +921,19 @@ func (tr *TableImporter) postProcess(
 		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
 		// 4.5. do duplicate detection.
+		// if we came here, it must be a local backend.
+		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
+		// try to abstract it with logical mode.
+		localBackend := rc.backend.Inner().(*local.Local)
+		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
 		hasDupe := false
 		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			opts := &kv.SessionOptions{
+			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
 			var err error
-			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 				return false, err
@@ -940,11 +955,11 @@ func (tr *TableImporter) postProcess(
 		hasDupe = hasDupe || otherHasDupe
 
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			opts := &kv.SessionOptions{
+			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
-			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+			hasRemoteDupe, e := dupeController.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
 				return false, e
@@ -952,7 +967,7 @@ func (tr *TableImporter) postProcess(
 			hasDupe = hasDupe || hasRemoteDupe
 
 			if hasDupe {
-				if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+				if err = dupeController.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
 					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
 					return false, err
 				}
@@ -1014,7 +1029,7 @@ func (tr *TableImporter) postProcess(
 
 	if cp.Status < checkpoints.CheckpointStatusIndexAdded {
 		var err error
-		if rc.cfg.TikvImporter.AddIndexBySQL != nil && *rc.cfg.TikvImporter.AddIndexBySQL {
+		if rc.cfg.TikvImporter.AddIndexBySQL {
 			var db *sql.DB
 			db, err = rc.tidbGlue.GetDB()
 			if err == nil {
@@ -1238,7 +1253,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 
 	var totalRows int
 	if m, ok := metric.FromContext(ctx); ok {
-		totalRows = int(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
+		totalRows = int(metric.ReadCounter(m.RowsCounter.WithLabelValues(metric.StateRestored, tableName)))
 	}
 
 	// Try to add all indexes in one statement.
@@ -1282,7 +1297,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	return nil
 }
 
-func (tr *TableImporter) executeDDL(
+func (*TableImporter) executeDDL(
 	ctx context.Context,
 	db *sql.DB,
 	ddl string,

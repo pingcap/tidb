@@ -171,7 +171,7 @@ type Statement interface {
 	OriginText() string
 
 	// GetTextToLog gets the desensitization SQL text for logging.
-	GetTextToLog() string
+	GetTextToLog(keepHint bool) string
 
 	// Exec executes SQL and gets a Recordset.
 	Exec(ctx context.Context) (RecordSet, error)

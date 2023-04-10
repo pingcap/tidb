@@ -1084,7 +1084,7 @@ func TestMultiIngest(t *testing.T) {
 		pdCtl := &pdutil.PdController{}
 		pdCtl.SetPDClient(&mockPdClient{stores: stores})
 
-		local := &local{
+		local := &Local{
 			pdCtl: pdCtl,
 			importClientFactory: &mockImportClientFactory{
 				stores: allStores,
@@ -1105,7 +1105,7 @@ func TestMultiIngest(t *testing.T) {
 }
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
-	bak := local{}
+	bak := Local{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
@@ -1153,12 +1153,18 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 }
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
-	l := local{}
+	l := Local{}
 	require.True(t, l.isRetryableImportTiKVError(io.EOF))
 	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }
 
 func TestCheckPeersBusy(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 300
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1169,7 +1175,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		}}
 
 	createTimeStore12 := 0
-	local := &local{
+	local := &Local{
 		importClientFactory: &mockImportClientFactory{
 			stores: []*metapb.Store{
 				{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
@@ -1190,12 +1196,14 @@ func TestCheckPeersBusy(t *testing.T) {
 				return importCli
 			},
 		},
-		logger:                log.L(),
-		writeLimiter:          noopStoreWriteLimiter{},
-		bufferPool:            membuf.NewPool(),
-		supportMultiIngest:    true,
-		shouldCheckWriteStall: true,
-		tikvCodec:             keyspace.CodecV1,
+		logger:             log.L(),
+		writeLimiter:       noopStoreWriteLimiter{},
+		bufferPool:         membuf.NewPool(),
+		supportMultiIngest: true,
+		BackendConfig: BackendConfig{
+			ShouldCheckWriteStall: true,
+		},
+		tikvCodec: keyspace.CodecV1,
 	}
 
 	db, tmpPath := makePebbleDB(t, nil)
@@ -1257,7 +1265,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		waitUntil:  time.Now().Add(-time.Second),
 	}
 
-	retryJobs := make([]*regionJob, 0, 1)
+	retryJobs := make(chan *regionJob, 1)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -1265,7 +1273,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	go func() {
 		job := <-jobOutCh
 		job.retryCount++
-		retryJobs = append(retryJobs, job)
+		retryJobs <- job
 		<-jobOutCh
 		wg.Done()
 	}()
@@ -1276,11 +1284,11 @@ func TestCheckPeersBusy(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	// retryJob will be retried once and worker will sleep 30s before processing the
-	// job again, we simply hope below check is happened when worker is sleeping
-	time.Sleep(5 * time.Second)
-	require.Len(t, retryJobs, 1)
-	require.Same(t, retryJob, retryJobs[0])
+	require.Eventually(t, func() bool {
+		return len(retryJobs) == 1
+	}, 300*time.Second, time.Second)
+	j := <-retryJobs
+	require.Same(t, retryJob, j)
 	require.Equal(t, 21, retryJob.retryCount)
 	require.Equal(t, wrote, retryJob.stage)
 
@@ -1292,4 +1300,92 @@ func TestCheckPeersBusy(t *testing.T) {
 	require.Equal(t, []uint64{11, 12, 21, 22, 23, 21}, apiInvokeRecorder["MultiIngest"])
 	// region (11, 12, 13) has key range ["a", "b"), it's not finished.
 	require.Equal(t, []Range{{start: []byte("b"), end: []byte("")}}, f.finishedRanges.ranges)
+}
+
+// mockGetSizeProperties mocks that 50MB * 20 SST file.
+func mockGetSizeProperties(log.Logger, *pebble.DB, KeyAdapter) (*sizeProperties, error) {
+	props := newSizeProperties()
+	// keys starts with 0 is meta keys, so we start with 1.
+	for i := byte(1); i <= 10; i++ {
+		rangeProps := &rangeProperty{
+			Key: []byte{i},
+			rangeOffsets: rangeOffsets{
+				Size: 50 * units.MiB,
+				Keys: 100_000,
+			},
+		}
+		props.add(rangeProps)
+		rangeProps = &rangeProperty{
+			Key: []byte{i, 1},
+			rangeOffsets: rangeOffsets{
+				Size: 50 * units.MiB,
+				Keys: 100_000,
+			},
+		}
+		props.add(rangeProps)
+	}
+	return props, nil
+}
+
+type panicSplitRegionClient struct{}
+
+func (p panicSplitRegionClient) BeforeSplitRegion(context.Context, *split.RegionInfo, [][]byte) (*split.RegionInfo, [][]byte) {
+	panic("should not be called")
+}
+
+func (p panicSplitRegionClient) AfterSplitRegion(context.Context, *split.RegionInfo, [][]byte, []*split.RegionInfo, error) ([]*split.RegionInfo, error) {
+	panic("should not be called")
+}
+
+func (p panicSplitRegionClient) BeforeScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]byte, []byte, int) {
+	return key, endKey, limit
+}
+
+func (p panicSplitRegionClient) AfterScanRegions(infos []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
+	return infos, err
+}
+
+func TestSplitRangeAgain4BigRegion(t *testing.T) {
+	backup := getSizePropertiesFn
+	getSizePropertiesFn = mockGetSizeProperties
+	t.Cleanup(func() {
+		getSizePropertiesFn = backup
+	})
+
+	local := &Local{
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},      // we have one big region
+			panicSplitRegionClient{}, // make sure no further split region
+		),
+	}
+	db, tmpPath := makePebbleDB(t, nil)
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	ctx := context.Background()
+	engineCtx, cancel := context.WithCancel(context.Background())
+	f := &Engine{
+		db:           db,
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
+	}
+	// keys starts with 0 is meta keys, so we start with 1.
+	for i := byte(1); i <= 10; i++ {
+		err := f.db.Set([]byte{i}, []byte{i}, nil)
+		require.NoError(t, err)
+		err = f.db.Set([]byte{i, 1}, []byte{i, 1}, nil)
+		require.NoError(t, err)
+	}
+
+	bigRegionRange := []Range{{start: []byte{1}, end: []byte{11}}}
+	jobs, err := local.generateJobInRanges(ctx, f, bigRegionRange, 10*units.GB, 1<<30)
+	require.NoError(t, err)
+	require.Len(t, jobs, 10)
+	for i, j := range jobs {
+		require.Equal(t, []byte{byte(i + 1)}, j.keyRange.start)
+		require.Equal(t, []byte{byte(i + 2)}, j.keyRange.end)
+	}
 }
