@@ -29,59 +29,56 @@ func TestParameterize(t *testing.T) {
 		paramSQL string
 		params   []interface{}
 	}{
-		//{
-		//	"select * from t where a<10",
-		//	"SELECT * FROM t WHERE a<?",
-		//	[]interface{}{int64(10)},
-		//},
-		//{
-		//	"select * from t",
-		//	"SELECT * FROM t",
-		//	[]interface{}{},
-		//},
-		//{
-		//	"select * from t where a<10 and b<20 and c=30 and d>40",
-		//	"SELECT * FROM t WHERE a<? AND b<? AND c=? AND d>?",
-		//	[]interface{}{int64(10), int64(20), int64(30), int64(40)},
-		//},
-		//{
-		//	"select * from t where a='a' and b='bbbbbbbbbbbbbbbbbbbbbbbb'",
-		//	"SELECT * FROM t WHERE a=? AND b=?",
-		//	[]interface{}{"a", "bbbbbbbbbbbbbbbbbbbbbbbb"},
-		//},
-		//{
-		//	"select 1, 2, 3 from t where a<10",
-		//	"SELECT 1,2,3 FROM t WHERE a<?",
-		//	[]interface{}{int64(10)},
-		//},
-		//{
-		//	"select a+1 from t where a<10",
-		//	"SELECT a+1 FROM t WHERE a<?",
-		//	[]interface{}{int64(10)},
-		//},
-		//{
-		//	"select a+1, sum(b) from t where a<10 group by a+1",
-		//	"SELECT a+1,sum(b) FROM t WHERE a<? GROUP BY a+1",
-		//	[]interface{}{int64(10)},
-		//},
-		//{
-		//	`select a+ "a b c" from t`,
-		//	`SELECT a+ "a b c" FROM t`,
-		//	[]interface{}{},
-		//},
-		//{
-		//	`select a + 'a b c'+"x" from t`,
-		//	`SELECT a + 'a b c'+"x" FROM t`, // keep the original format for select fields
-		//	[]interface{}{},
-		//},
-		//{
-		//	`insert into t (a, B, c) values (1, 2, 3), (4, 5, 6)`,
-		//	`INSERT INTO t (a,B,c) VALUES (?,?,?),(?,?,?)`,
-		//	[]interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6)},
-		//},
 		{
-			`select c_bit as 'COALESCE(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)' from t`,
-			`SELECT c_bit as 'COALESCE(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)' FROM t`,
+			"select * from t where a<10 and b<20 and c=30 and d>40",
+			"SELECT * FROM t WHERE a<? AND b<? AND c=? AND d>?",
+			[]interface{}{int64(10), int64(20), int64(30), int64(40)},
+		},
+		{
+			"select * from t where a='a' and b='bbbbbbbbbbbbbbbbbbbbbbbb'",
+			"SELECT * FROM t WHERE a=? AND b=?",
+			[]interface{}{"a", "bbbbbbbbbbbbbbbbbbbbbbbb"},
+		},
+		{
+			"select 1, 2, 3 from t where a<10",
+			"SELECT 1,2,3 FROM t WHERE a<?",
+			[]interface{}{int64(10)},
+		},
+		{
+			"select a+1 from t where a<10",
+			"SELECT a+1 FROM t WHERE a<?",
+			[]interface{}{int64(10)},
+		},
+		{
+			"select a+1, sum(b) from t where a<10 group by a+1",
+			"SELECT a+1,sum(b) FROM t WHERE a<? GROUP BY a+1",
+			[]interface{}{int64(10)},
+		},
+		{
+			`select a+ "a b c" from t`,
+			`SELECT a+ "a b c" FROM t`,
+			[]interface{}{},
+		},
+		{
+			`select a + 'a b c'+"x" from t`,
+			`SELECT a + 'a b c'+"x" FROM t`, // keep the original format for select fields
+			[]interface{}{},
+		},
+		{
+			`insert into t (a, B, c) values (1, 2, 3), (4, 5, 6)`,
+			`INSERT INTO t (a,B,c) VALUES (?,?,?),(?,?,?)`,
+			[]interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6)},
+		},
+
+		// keep the original format for limit clauses
+		{
+			`select * from t limit 10`,
+			`SELECT * FROM t LIMIT 10`,
+			[]interface{}{},
+		},
+		{
+			`select * from t limit 10, 20`,
+			`SELECT * FROM t LIMIT 10,20`,
 			[]interface{}{},
 		},
 		// TODO: more test cases
