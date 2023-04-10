@@ -2295,6 +2295,7 @@ func TestTimeBuiltin(t *testing.T) {
 	_, err = tk.Exec(`delete from t where a = dayOfWeek(123)`)
 	require.NoError(t, err)
 
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=0") // affect warnings
 	tk.MustExec("insert into t value(dayOfMonth('2017-00-00'))")
 	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
