@@ -1416,7 +1416,7 @@ func (p *PhysicalTopN) checkSubScans(colsProp *property.PhysicalProperty, isDesc
 				}
 			} else {
 				idxCols, idxColLens := expression.IndexInfo2PrefixCols(x.Columns, x.Schema().Columns, tables.FindPrimaryIndex(x.Table))
-				matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, nil, colsProp)
+				matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, x.constColsByCond, colsProp)
 				if !matched {
 					return false
 				}

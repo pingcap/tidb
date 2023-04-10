@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
@@ -937,6 +938,23 @@ func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTab
 	}
 }
 
+// pruneTableWorkerTaskIdxRows prune idxRows and keep columns that will be used in byItems.
+func (w *indexMergeProcessWorker) pruneTableWorkerTaskIdxRows(task *indexMergeTableTask) {
+	if plan, ok := w.indexMerge.partialPlans[task.partialPlanID][0].(*plannercore.PhysicalTableScan); ok {
+		prune := make([]int, 0, len(w.indexMerge.byItems))
+		for _, item := range plan.ByItems {
+			c, _ := item.Expr.(*expression.Column)
+			for i, col := range plan.Schema().Columns {
+				if c.ID == col.ID {
+					prune = append(prune, i)
+					break
+				}
+			}
+		}
+		task.idxRows = task.idxRows.Prune(prune)
+	}
+}
+
 func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderByAndPushedLimit(ctx context.Context, fetchCh <-chan *indexMergeTableTask,
 	workCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished <-chan struct{}) {
 	memTracker := memory.NewTracker(w.indexMerge.id, -1)
@@ -964,6 +982,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderByAndPushedLimit(ctx co
 		if _, ok := taskMap[task.partialPlanID]; !ok {
 			taskMap[task.partialPlanID] = make([]*indexMergeTableTask, 0)
 		}
+		w.pruneTableWorkerTaskIdxRows(task)
 		taskMap[task.partialPlanID] = append(taskMap[task.partialPlanID], task)
 		for i, h := range task.handles {
 			if _, ok := distinctHandles.Get(h); !ok {

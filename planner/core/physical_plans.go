@@ -853,6 +853,11 @@ type PhysicalTableScan struct {
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
 	prop        *property.PhysicalProperty
+
+	// constColsByCond records the constant part of the index columns caused by the access conds.
+	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
+	// it's for indexMerge's tableScan only.
+	constColsByCond []bool
 }
 
 // Clone implements PhysicalPlan interface.

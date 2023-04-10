@@ -971,7 +971,7 @@ func TestOrderyByWithLimit(t *testing.T) {
 
 	tk.MustExec("create table thandle(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c))")
 	tk.MustExec("create table tpk(a int, b int, c int, d int auto_increment, primary key(d), index idx_ac(a, c), index idx_bc(b, c))")
-	tk.MustExec("create table tcommon(a int, b int, c int, d int auto_increment, primary key(d, c), index idx_ac(a, c), index idx_bc(b, c))")
+	tk.MustExec("create table tcommon(a int, b int, c int, d int auto_increment, primary key(a, c, d), index idx_ac(a, c), index idx_bc(b, c))")
 
 	valueSlice := make([]*valueStruct, 0, 2000)
 	for i := 0; i < 2000; i++ {
@@ -1004,16 +1004,23 @@ func TestOrderyByWithLimit(t *testing.T) {
 		resCommon := tk.MustQuery(queryCommon).Rows()
 		require.True(t, tk.HasPlan(queryCommon, "IndexMerge"))
 
+		queryTableScan := fmt.Sprintf("select /*+ use_index_merge(tcommon, primary, idx_bc) */ * from tcommon where a = %v or b = %v order by c limit %v", a, b, limit)
+		resTableScan := tk.MustQuery(queryTableScan).Rows()
+		require.True(t, tk.HasPlan(queryTableScan, "IndexMerge"))
+		require.True(t, tk.HasPlan(queryTableScan, "TableRangeScan"))
+
 		sliceRes := getResult(valueSlice, a, b, limit, false)
 
 		require.Equal(t, len(sliceRes), len(resHandle))
 		require.Equal(t, len(sliceRes), len(resPK))
 		require.Equal(t, len(sliceRes), len(resCommon))
+		require.Equal(t, len(sliceRes), len(resTableScan))
 		for i := range sliceRes {
 			// Only check column `c`
 			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resHandle[i][2])
 			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resPK[i][2])
 			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resCommon[i][2])
+			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resTableScan[i][2])
 		}
 	}
 }
