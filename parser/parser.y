@@ -5860,6 +5860,9 @@ GroupByClause:
 	"GROUP" "BY" ByList
 	{
 		$$ = &ast.GroupByClause{Items: $3.([]*ast.ByItem)}
+		startOffset := parser.startOffset(&yyS[yypt-1])
+		endOffset := parser.endOffset(&yyS[yypt])
+		$$.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 	}
 
 HavingClause:
