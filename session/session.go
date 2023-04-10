@@ -169,6 +169,17 @@ type Session interface {
 	SetExtensions(extensions *extension.SessionExtensions)
 }
 
+func init() {
+	executor.CreateSession = func(ctx sessionctx.Context) (sessionctx.Context, error) {
+		return CreateSession(ctx.GetStore())
+	}
+	executor.CloseSession = func(ctx sessionctx.Context) {
+		if se, ok := ctx.(Session); ok {
+			se.Close()
+		}
+	}
+}
+
 var _ Session = (*session)(nil)
 
 type stmtRecord struct {
@@ -341,7 +352,7 @@ func (s *session) cleanRetryInfo() {
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
 				bindSQL, _ := plannercore.GetBindSQL4PlanCache(s, preparedObj)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion,
-					0, bindSQL)
+					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -1201,7 +1212,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
-			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
+			s.sessionVars.PlanCacheParams.Reset()
 			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
 				return err
@@ -1212,7 +1223,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				// We print the queries at the first try only.
 				sql := sqlForLog(st.GetTextToLog(false))
 				if !sessVars.EnableRedactLog {
-					sql += sessVars.PreparedParams.String()
+					sql += sessVars.PlanCacheParams.String()
 				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -2112,6 +2123,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
+	s.currentPlan = nil // reset current plan
 	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
 	s.txn.onStmtStart(digest.String())
 	defer sessiontxn.GetTxnManager(s).OnStmtEnd()
@@ -3833,7 +3845,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 
 		query = executor.QueryReplacer.Replace(query)
 		if !vars.EnableRedactLog {
-			query += vars.PreparedParams.String()
+			query += vars.PlanCacheParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
@@ -4220,8 +4232,11 @@ func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 
 	// Decode session variables.
 	for name, val := range sessionStates.SystemVars {
-		if err := s.sessionVars.SetSystemVarWithoutValidation(name, val); err != nil {
-			return err
+		// Experimental system variables may change scope, data types, or even be removed.
+		// We just ignore the errors and continue.
+		if err := s.sessionVars.SetSystemVar(name, val); err != nil {
+			logutil.Logger(ctx).Warn("set session variable during decoding session states error",
+				zap.String("name", name), zap.String("value", val), zap.Error(err))
 		}
 	}
 

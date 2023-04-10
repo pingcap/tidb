@@ -100,7 +100,7 @@ type ParamMarker struct {
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
 func (d *ParamMarker) GetUserVar() types.Datum {
 	sessionVars := d.ctx.GetSessionVars()
-	return sessionVars.PreparedParams[d.order]
+	return sessionVars.PlanCacheParams.GetParamValue(d.order)
 }
 
 // String implements fmt.Stringer interface.
@@ -132,7 +132,7 @@ func (c *Constant) GetType() *types.FieldType {
 		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
 		tp := types.NewFieldType(mysql.TypeUnspecified)
 		dt := c.ParamMarker.GetUserVar()
-		types.DefaultParamTypeForValue(dt.GetValue(), tp)
+		types.InferParamTypeFromDatum(&dt, tp)
 		return tp
 	}
 	return c.RetType

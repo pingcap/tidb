@@ -1376,6 +1376,18 @@ func TestShowStateFail(t *testing.T) {
 	}
 }
 
+func TestInvalidSysVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// unknown is an unknown variable
+	// tidb_executor_concurrency is in wrong data type
+	// max_prepared_stmt_count is in wrong scope
+	tk.MustExec(`set session_states '{"sys-vars": {"timestamp":"100", "unknown":"100", "tidb_executor_concurrency":"hello", "max_prepared_stmt_count":"100"}}'`)
+	tk.MustQuery("select @@timestamp").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@tidb_executor_concurrency").Check(testkit.Rows("5"))
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
+}
+
 func showSessionStatesAndSet(t *testing.T, tk1, tk2 *testkit.TestKit) {
 	rows := tk1.MustQuery("show session_states").Rows()
 	require.Len(t, rows, 1)

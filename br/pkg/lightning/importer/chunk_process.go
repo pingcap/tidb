@@ -151,7 +151,7 @@ func (cr *chunkProcessor) process(
 		zap.Stringer("path", &cr.chunk.Key),
 	)
 	// Create the encoder.
-	kvEncoder, err := rc.backend.NewEncoder(ctx, &encode.EncodingConfig{
+	kvEncoder, err := rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:   rc.cfg.TiDB.SQLMode,
 			Timestamp: cr.chunk.Timestamp,
@@ -400,8 +400,8 @@ func (cr *chunkProcessor) deliverLoop(
 		zap.String("task", "deliver"),
 	)
 	// Fetch enough KV pairs from the source.
-	dataKVs := rc.backend.MakeEmptyRows()
-	indexKVs := rc.backend.MakeEmptyRows()
+	dataKVs := rc.encBuilder.MakeEmptyRows()
+	indexKVs := rc.encBuilder.MakeEmptyRows()
 
 	dataSynced := true
 	hasMoreKVs := true
@@ -574,7 +574,7 @@ func (cr *chunkProcessor) deliverLoop(
 	return
 }
 
-func (cr *chunkProcessor) maybeSaveCheckpoint(
+func (*chunkProcessor) maybeSaveCheckpoint(
 	rc *Controller,
 	t *TableImporter,
 	engineID int32,

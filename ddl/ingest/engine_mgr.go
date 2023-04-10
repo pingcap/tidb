@@ -25,19 +25,19 @@ import (
 )
 
 type engineManager struct {
-	generic.SyncMap[int64, *engineInfo]
+	generic.SyncMap[int64, *EngineInfo]
 	MemRoot  MemRoot
 	DiskRoot DiskRoot
 }
 
 func (m *engineManager) init(memRoot MemRoot, diskRoot DiskRoot) {
-	m.SyncMap = generic.NewSyncMap[int64, *engineInfo](10)
+	m.SyncMap = generic.NewSyncMap[int64, *EngineInfo](10)
 	m.MemRoot = memRoot
 	m.DiskRoot = diskRoot
 }
 
-// Register create a new engineInfo and register it to the engineManager.
-func (m *engineManager) Register(bc *BackendContext, jobID, indexID int64, schemaName, tableName string) (*engineInfo, error) {
+// Register create a new EngineInfo and register it to the engineManager.
+func (m *engineManager) Register(bc *BackendContext, jobID, indexID int64, schemaName, tableName string) (*EngineInfo, error) {
 	// Calculate lightning concurrency degree and set memory usage
 	// and pre-allocate memory usage for worker.
 	m.MemRoot.RefreshConsumption()
@@ -87,7 +87,7 @@ func (m *engineManager) Register(bc *BackendContext, jobID, indexID int64, schem
 	return en, nil
 }
 
-// Unregister delete the engineInfo from the engineManager.
+// Unregister delete the EngineInfo from the engineManager.
 func (m *engineManager) Unregister(jobID, indexID int64) {
 	ei, exist := m.Load(indexID)
 	if !exist {
@@ -101,7 +101,7 @@ func (m *engineManager) Unregister(jobID, indexID int64) {
 	m.MemRoot.Release(StructSizeEngineInfo)
 }
 
-// ResetWorkers reset the writer count of the engineInfo because
+// ResetWorkers reset the writer count of the EngineInfo because
 // the goroutines of backfill workers have been terminated.
 func (m *engineManager) ResetWorkers(bc *BackendContext, jobID, indexID int64) {
 	ei, exist := m.Load(indexID)
@@ -115,7 +115,7 @@ func (m *engineManager) ResetWorkers(bc *BackendContext, jobID, indexID int64) {
 	ei.writerCount = 0
 }
 
-// UnregisterAll delete all engineInfo from the engineManager.
+// UnregisterAll delete all EngineInfo from the engineManager.
 func (m *engineManager) UnregisterAll(jobID int64) {
 	for _, idxID := range m.Keys() {
 		m.Unregister(jobID, idxID)

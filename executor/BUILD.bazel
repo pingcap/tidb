@@ -99,7 +99,6 @@ go_library(
     deps = [
         "//bindinfo",
         "//br/pkg/glue",
-        "//br/pkg/lightning/log",
         "//br/pkg/lightning/mydump",
         "//br/pkg/storage",
         "//br/pkg/task",
@@ -181,7 +180,6 @@ go_library(
         "//util/gcutil",
         "//util/hack",
         "//util/hint",
-        "//util/intest",
         "//util/keydecoder",
         "//util/kvcache",
         "//util/logutil",
@@ -357,7 +355,6 @@ go_test(
     race = "on",
     shard_count = 50,
     deps = [
-        "//br/pkg/errors",
         "//config",
         "//ddl",
         "//ddl/placement",

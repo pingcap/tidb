@@ -59,10 +59,19 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	GlobalMemoryLimitTuner.UpdateMemoryLimit()
 	require.True(t, GlobalMemoryLimitTuner.isTuning.Load())
 	defer func() {
-		time.Sleep(1 * time.Second) // If test.count > 1, wait tuning finished.
-		require.True(t, GlobalMemoryLimitTuner.isTuning.Load())
-		require.False(t, GlobalMemoryLimitTuner.waitingReset.Load())
-		require.Equal(t, GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load(), false)
+		// If test.count > 1, wait tuning finished.
+		require.Eventually(t, func() bool {
+			//nolint: all_revive
+			return GlobalMemoryLimitTuner.isTuning.Load()
+		}, 5*time.Second, 100*time.Millisecond)
+		require.Eventually(t, func() bool {
+			//nolint: all_revive
+			return !GlobalMemoryLimitTuner.waitingReset.Load()
+		}, 5*time.Second, 100*time.Millisecond)
+		require.Eventually(t, func() bool {
+			//nolint: all_revive
+			return !GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load()
+		}, 5*time.Second, 100*time.Millisecond)
 	}()
 
 	allocator := &mockAllocator{}
