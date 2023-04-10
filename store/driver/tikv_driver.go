@@ -188,11 +188,10 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
 		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
-	pdCli = util.InterceptedPDClient{Client: pdCli}
-
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	pdCli = util.InterceptedPDClient{Client: pdCli}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
