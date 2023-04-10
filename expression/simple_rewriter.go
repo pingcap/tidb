@@ -29,6 +29,9 @@ import (
 // ParseSimpleExprWithTableInfo parses simple expression string to Expression.
 // The expression string must only reference the column in table Info.
 func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
+	if len(exprStr) == 0 {
+		return nil, nil
+	}
 	exprStr = "select " + exprStr
 	var stmts []ast.StmtNode
 	var err error

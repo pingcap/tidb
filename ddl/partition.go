@@ -1741,7 +1741,8 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if job.Type == model.ActionAddTablePartition || job.Type == model.ActionReorganizePartition {
+	if job.Type == model.ActionAddTablePartition || job.Type == model.ActionReorganizePartition ||
+		job.Type == model.ActionAlterTablePartitioning {
 		// It is rollback from reorganize partition, just remove DroppingDefinitions from tableInfo
 		tblInfo.Partition.DroppingDefinitions = nil
 		// It is rollback from adding table partition, just remove addingDefinitions from tableInfo.
@@ -1760,6 +1761,19 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		if _, err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
+		}
+		if job.Type == model.ActionAlterTablePartitioning {
+			// Also remove anything with the new table id
+			physicalTableIDs = append(physicalTableIDs, tblInfo.Partition.NewTableID)
+			// Reset if it was normal table before
+			if tblInfo.Partition.Type == model.PartitionTypeNone {
+				tblInfo.Partition = nil
+			} else {
+				tblInfo.Partition.NewTableID = 0
+				tblInfo.Partition.NewExpr = ""
+				tblInfo.Partition.NewColumns = nil
+				tblInfo.Partition.NewType = model.PartitionTypeNone
+			}
 		}
 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
@@ -2226,7 +2240,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	return ver, nil
 }
 
-func checkReorgPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, []model.CIStr, *model.PartitionInfo, []model.PartitionDefinition, []model.PartitionDefinition, error) {
+func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []model.CIStr, *model.PartitionInfo, []model.PartitionDefinition, []model.PartitionDefinition, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -2239,8 +2253,18 @@ func checkReorgPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, []mode
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, nil, errors.Trace(err)
 	}
-	addingDefs := tblInfo.Partition.AddingDefinitions
-	droppingDefs := tblInfo.Partition.DroppingDefinitions
+	var addingDefs, droppingDefs []model.PartitionDefinition
+	if tblInfo.Partition != nil {
+		addingDefs = tblInfo.Partition.AddingDefinitions
+		droppingDefs = tblInfo.Partition.DroppingDefinitions
+	} else {
+		tblInfo.Partition = getPartitionInfoTypeNone()
+		tblInfo.Partition.NewTableID = partInfo.NewTableID
+		tblInfo.Partition.Definitions[0].ID = tblInfo.ID
+		tblInfo.Partition.NewType = partInfo.Type
+		tblInfo.Partition.NewExpr = partInfo.Expr
+		tblInfo.Partition.NewColumns = partInfo.Columns
+	}
 	if len(addingDefs) == 0 {
 		addingDefs = []model.PartitionDefinition{}
 	}
@@ -2248,6 +2272,104 @@ func checkReorgPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, []mode
 		droppingDefs = []model.PartitionDefinition{}
 	}
 	return tblInfo, partNames, partInfo, droppingDefs, addingDefs, nil
+}
+
+// onAlterTablePartitioning uses onReorganizePartition to do the heavy loading,
+// and only some differences in how to finalize the table with a different partitioning scheme.
+func (w *worker) onAlterTablePartitioning(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// Handle the rolling back job
+	if job.IsRollingback() {
+		// TODO: Check and test
+		// including restoring to non-partitioned table if the original was (I.e. if the table id == first partition id)
+		ver, err = w.onDropTablePartition(d, t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return
+	}
+
+	// In order to skip maintaining the state check in partitionDefinition, TiDB use dropping/addingDefinition instead of state field.
+	// So here using `job.SchemaState` to judge what the stage of this job is.
+	switch job.SchemaState {
+	case model.StateNone, model.StateDeleteOnly, model.StateWriteOnly,
+		model.StateWriteReorganization:
+		return w.onReorganizePartition(d, t, job)
+	case model.StateDeleteReorganization:
+		// Drop the droppingDefinitions and finish the DDL
+		// This state is needed for the case where client A sees the schema
+		// with version of StateWriteReorg and would not see updates of
+		// client B that writes to the new partitions, previously
+		// addingDefinitions, since it would not double write to
+		// the droppingDefinitions during this time
+		// By adding StateDeleteReorg state, client B will write to both
+		// the new (previously addingDefinitions) AND droppingDefinitions
+
+		tblInfo, partNamesCIStr, partInfo, _, _, err1 := getReorgPartitionInfo(t, job)
+		if err1 != nil {
+			return ver, err1
+		}
+		partNames := make([]string, len(partNamesCIStr))
+		for i := range partNamesCIStr {
+			partNames[i] = partNamesCIStr[i].L
+		}
+
+		// Register the droppingDefinitions ids for rangeDelete
+		// and the addingDefinitions for handling in the updateSchemaVersion
+		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
+		newIDs := getPartitionIDsFromDefinitions(partInfo.Definitions)
+		job.CtxVars = []interface{}{physicalTableIDs, newIDs}
+		oldTblId := tblInfo.ID
+		// If no global index this is not really needed?
+		physicalTableIDs = append(physicalTableIDs, oldTblId)
+		err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// TODO: How to carrie over AUTO_INCREMENT etc.?
+		err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Del()
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// TODO: Add failpoint here
+		definitionsToAdd := tblInfo.Partition.AddingDefinitions
+		tblInfo.Partition.AddingDefinitions = nil
+		tblInfo.Partition.DroppingDefinitions = nil
+		tblInfo.Partition.Type = tblInfo.Partition.NewType
+		tblInfo.Partition.Expr = tblInfo.Partition.NewExpr
+		tblInfo.Partition.Columns = tblInfo.Partition.NewColumns
+		tblInfo.ID = tblInfo.Partition.NewTableID
+		tblInfo.Partition.NewType = model.PartitionTypeNone
+		tblInfo.Partition.NewExpr = ""
+		tblInfo.Partition.NewColumns = nil
+		tblInfo.Partition.NewTableID = 0
+
+		err = t.CreateTableOrView(job.SchemaID, tblInfo)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		failpoint.Inject("reorgPartWriteReorgSchemaVersionUpdateFail", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("Injected error by reorgPartWriteReorgSchemaVersionUpdateFail")
+			}
+		})
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateNone
+		tblInfo.Partition.DDLState = model.StateNone
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		// Register for update the statistics
+		// Seems to only trigger asynchronous.
+		// Should it actually be synchronous?
+		asyncNotifyEvent(d, &util.Event{Tp: job.Type, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToAdd}})
+		// A background job will be created to delete old partition data.
+		job.Args = []interface{}{physicalTableIDs}
+
+	default:
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
+	}
+
+	return ver, errors.Trace(err)
 }
 
 func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -2260,7 +2382,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		return ver, nil
 	}
 
-	tblInfo, partNamesCIStr, partInfo, _, addingDefinitions, err := checkReorgPartition(t, job)
+	tblInfo, partNamesCIStr, partInfo, _, addingDefinitions, err := getReorgPartitionInfo(t, job)
 	if err != nil {
 		return ver, err
 	}
@@ -2281,9 +2403,8 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// The partInfo may have been checked against an older schema version for example.
 		// If the check is done here, it does not need to be repeated, since no other
 		// DDL on the same table can be run concurrently.
-		err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) +
-			len(partInfo.Definitions) -
-			len(partNames)))
+		num := len(partInfo.Definitions) - len(partNames) + len(tblInfo.Partition.Definitions)
+		err = checkAddPartitionTooManyPartitions(uint64(num))
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -2592,22 +2713,19 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 	if pt == nil {
 		return nil, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 	}
-	partColIDs := pt.GetPartitionColumnIDs()
+	partColIDs := reorgedTbl.GetPartitionColumnIDs()
 	writeColOffsetMap := make(map[int64]int, len(partColIDs))
 	maxOffset := 0
-	for _, col := range pt.Cols() {
-		found := false
-		for _, id := range partColIDs {
+	for _, id := range partColIDs {
+		var offset int
+		for _, col := range pt.Cols() {
 			if col.ID == id {
-				found = true
+				offset = col.Offset
 				break
 			}
 		}
-		if !found {
-			continue
-		}
-		writeColOffsetMap[col.ID] = col.Offset
-		maxOffset = mathutil.Max[int](maxOffset, col.Offset)
+		writeColOffsetMap[id] = offset
+		maxOffset = mathutil.Max[int](maxOffset, offset)
 	}
 	return &reorgPartitionWorker{
 		backfillCtx:       newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.SchemaName, t, jc, "reorg_partition_rate", false),
@@ -2705,6 +2823,8 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, nil
 			}
 
+			// TODO: Extend for normal tables
+			// TODO: Extend for REMOVE PARTITIONING
 			_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
 			if err != nil {
 				return false, errors.Trace(err)

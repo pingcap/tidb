@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -241,4 +242,31 @@ func TestReorganizePartitionRollback(t *testing.T) {
 
 	// test then add index should success
 	tk.MustExec("alter table t1 add index idx_kc (k, c)")
+}
+
+func TestAlterPartitionByRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create schema AlterPartitionBy")
+	tk.MustExec("use AlterPartitionBy")
+	// Just for debug...
+	//tk.MustExec(`create table t (a int primary key, b varchar(255), key (b)) partition by range (a) (partition p0 values less than (10))`)
+	// First easy example non-partitioned -> partitioned
+	tk.MustExec(`create table t (a int primary key, b varchar(255), key (b))`)
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d,'filler%d')`, i, i/3))
+	}
+	tk.MustExec(`alter table t partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (2000000), partition pMax values less than (maxvalue))`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
+		" PARTITION `p1` VALUES LESS THAN (2000000),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 }

@@ -102,6 +102,7 @@ const (
 	ActionCreateResourceGroup           ActionType = 68
 	ActionAlterResourceGroup            ActionType = 69
 	ActionDropResourceGroup             ActionType = 70
+	ActionAlterTablePartitioning        ActionType = 71
 )
 
 var actionMap = map[ActionType]string{
@@ -170,6 +171,7 @@ var actionMap = map[ActionType]string{
 	ActionCreateResourceGroup:           "create resource group",
 	ActionAlterResourceGroup:            "alter resource group",
 	ActionDropResourceGroup:             "drop resource group",
+	ActionAlterTablePartitioning:        "alter table partition by",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.

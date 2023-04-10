@@ -1063,7 +1063,11 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
 			workType := typeReorgPartitionWorker
-			if reorgInfo.Job.Type != model.ActionReorganizePartition {
+			switch reorgInfo.Job.Type {
+			case model.ActionReorganizePartition,
+				model.ActionAlterTablePartitioning:
+				// Expected
+			default:
 				// workType = typeUpdateColumnWorker
 				// TODO: Support Modify Column on partitioned table
 				// https://github.com/pingcap/tidb/issues/38297

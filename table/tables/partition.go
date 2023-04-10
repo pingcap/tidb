@@ -237,6 +237,9 @@ func newPartitionExpr(tblInfo *model.TableInfo, defs []model.PartitionDefinition
 	}
 	pi := tblInfo.GetPartitionInfo()
 	switch pi.Type {
+	case model.PartitionTypeNone:
+		// Nothing to do
+		return nil, nil
 	case model.PartitionTypeRange:
 		return generateRangePartitionExpr(ctx, pi, defs, columns, names)
 	case model.PartitionTypeHash:
@@ -1163,6 +1166,9 @@ func (t *partitionedTable) GetPartitionColumnIDs() []int64 {
 		}
 		return colIDs
 	}
+	if t.partitionExpr == nil {
+		return nil
+	}
 
 	partitionCols := expression.ExtractColumns(t.partitionExpr.Expr)
 	colIDs := make([]int64, 0, len(partitionCols))
@@ -1426,6 +1432,16 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	tblInfo.Partition.Definitions = tblInfo.Partition.AddingDefinitions
 	tblInfo.Partition.AddingDefinitions = nil
 	tblInfo.Partition.DroppingDefinitions = nil
+	if tblInfo.Partition.NewType != model.PartitionTypeNone {
+		tblInfo.Partition.Type = tblInfo.Partition.NewType
+		tblInfo.Partition.Expr = tblInfo.Partition.NewExpr
+		tblInfo.Partition.Columns = tblInfo.Partition.NewColumns
+		tblInfo.ID = tblInfo.Partition.NewTableID
+		tblInfo.Partition.NewType = model.PartitionTypeNone
+		tblInfo.Partition.NewExpr = ""
+		tblInfo.Partition.NewColumns = nil
+		tblInfo.Partition.NewTableID = 0
+	}
 	var tc TableCommon
 	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil))
 

@@ -3440,8 +3440,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			isAlterTable := true
 			err = d.renameTable(sctx, ident, newIdent, isAlterTable)
 		case ast.AlterTablePartition:
-			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
-			err = errors.New("alter table partition is unsupported")
+			err = d.AlterTablePartitioning(sctx, ident, spec)
 		case ast.AlterTableOption:
 			var placementPolicyRef *model.PolicyRefInfo
 			for i, opt := range spec.Options {
@@ -3992,6 +3991,85 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 	}
 
 	return firstPartIdx, lastPartIdx, idMap, nil
+}
+
+func getPartitionInfoTypeNone() *model.PartitionInfo {
+	return &model.PartitionInfo{
+		Type:   model.PartitionTypeNone,
+		Enable: true,
+		Definitions: []model.PartitionDefinition{{
+			Name:    model.NewCIStr("pFullTable"),
+			Comment: "Intermediate partition during ALTER TABLE ... PARTITION BY ...",
+		}},
+		Num: 1,
+	}
+}
+
+// AlterTablePartitioning reorganize one set of partitions to a new set of partitions.
+func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta().Clone()
+	piOld := meta.GetPartitionInfo()
+	var partNames []model.CIStr
+	if piOld != nil {
+		partNames := make([]model.CIStr, 0, len(piOld.Definitions))
+		for i := range piOld.Definitions {
+			partNames = append(partNames, piOld.Definitions[i].Name)
+		}
+	} else {
+		piOld = getPartitionInfoTypeNone()
+		meta.Partition = piOld
+		partNames = append(partNames, piOld.Definitions[0].Name)
+	}
+	newMeta := meta.Clone()
+	err = buildTablePartitionInfo(ctx, spec.Partition, newMeta)
+	if err != nil {
+		return err
+	}
+	newPartInfo := newMeta.Partition
+
+	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {
+		return errors.Trace(err)
+	}
+	// A new table ID would be needed for
+	// the global index, which cannot be the same as the current table id,
+	// since this table id will be removed in the final state when removing
+	// all the data with this table id.
+	var newID []int64
+	newID, err = d.genGlobalIDs(1)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newPartInfo.NewTableID = newID[0]
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		TableName:  t.Meta().Name.L,
+		Type:       model.ActionAlterTablePartitioning,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partNames, newPartInfo},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
+	}
+
+	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	if err == nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+	}
+	return errors.Trace(err)
 }
 
 // ReorganizePartitions reorganize one set of partitions to a new set of partitions.
@@ -7064,6 +7142,8 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	switch meta.Partition.Type {
+	case model.PartitionTypeNone:
+		// OK
 	case model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
