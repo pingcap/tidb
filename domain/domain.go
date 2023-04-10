@@ -1344,6 +1344,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	return nil
 }
 
+// InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
