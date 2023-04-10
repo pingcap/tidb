@@ -81,9 +81,10 @@ func (exec *CmdExecutor) Read(ctx context.Context) (ShowResult, error) {
 	if !res.IsRawKV {
 		out := make(chan *metautil.Table, 16)
 		errc := make(chan error, 1)
-		go func() { 
-            errc <- exec.meta.ReadSchemasFiles(ctx, out, metautil.SkipFiles) 
-        }()
+		go func() {
+			errc <- exec.meta.ReadSchemasFiles(ctx, out, metautil.SkipFiles)
+			close(out)
+		}()
 		ts, err := collectResult(ctx, out, errc, convertTable)
 		if err != nil {
 			return ShowResult{}, err
@@ -115,21 +116,20 @@ func collectResult[T any, R any](ctx context.Context, c <-chan T, e <-chan error
 				return collected, nil
 			}
 			collected = append(collected, m(item))
-        case err := <-e:
-            if err != nil {
-                return nil, err
-            }
-            return collected, nil 
+		case err := <-e:
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 }
 
 func convertTable(t *metautil.Table) Table {
-    // The name table may be empty (which means this is a record for a database.)
-    tableName := ""
-    if t.Info != nil {
-        tableName = t.Info.Name.String()
-    }
+	// The name table may be empty (which means this is a record for a database.)
+	tableName := ""
+	if t.Info != nil {
+		tableName = t.Info.Name.String()
+	}
 	result := Table{
 		DBName:         t.DB.Name.String(),
 		TableName:      tableName,

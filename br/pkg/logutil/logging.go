@@ -327,4 +327,3 @@ func (b HexBytes) String() string {
 func (b HexBytes) MarshalJSON() ([]byte, error) {
 	return json.Marshal(hex.EncodeToString(b))
 }
-
