@@ -144,7 +144,7 @@ func (b *builtinGetParamStringSig) vecEvalString(input *chunk.Chunk, result *chu
 			continue
 		}
 		idxI := idxIs[i]
-		v := sessionVars.PreparedParams[idxI]
+		v := sessionVars.PlanCacheParams.GetParamValue(int(idxI))
 		str, err := v.ToString()
 		if err != nil {
 			result.AppendNull()
