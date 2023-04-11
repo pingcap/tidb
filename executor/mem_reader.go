@@ -202,7 +202,15 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *Tabl
 	if len(pkColIDs) == 0 {
 		pkColIDs = []int64{-1}
 	}
-	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, nil, us.ctx.GetSessionVars().Location())
+
+	defVal := func(i int) ([]byte, error) {
+		d, err := table.GetColOriginDefaultValue(us.ctx, us.columns[i])
+		if err != nil {
+			return nil, err
+		}
+		return tablecodec.EncodeValue(us.ctx.GetSessionVars().StmtCtx, nil, d)
+	}
+	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.ctx.GetSessionVars().Location())
 	return &memTableReader{
 		ctx:           us.ctx,
 		table:         us.table.Meta(),
