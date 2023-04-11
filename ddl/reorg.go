@@ -67,10 +67,6 @@ type reorgCtx struct {
 	// 1: job is canceled.
 	notifyCancelReorgJob int32
 
-	// element is used to record the current element in the reorg process, it can be
-	// accessed by reorg-worker and daemon-worker concurrently.
-	element atomic.Value
-
 	mu struct {
 		sync.Mutex
 		// warnings are used to store the warnings when doing the reorg job under certain SQL modes.
@@ -108,10 +104,6 @@ func (rc *reorgCtx) isReorgCanceled() bool {
 
 func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
-}
-
-func (rc *reorgCtx) setCurrentElement(element *meta.Element) {
-	rc.element.Store(element)
 }
 
 func (rc *reorgCtx) mergeWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
@@ -198,7 +190,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		if job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
-		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.StartKey, reorgInfo.currElement, reorgInfo.Job.GetRowCount())
+		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()

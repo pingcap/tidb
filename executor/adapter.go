@@ -740,12 +740,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// done in the `defer` function. If the rs is not nil, the detachment will be done in
 		// `rs.Close` in `handleStmt`
 		if handled && sc != nil && rs == nil {
-			if sc.MemTracker != nil {
-				sc.MemTracker.Detach()
-			}
-			if sc.DiskTracker != nil {
-				sc.DiskTracker.Detach()
-			}
+			sc.DetachMemDiskTracker()
 		}
 	}()
 
@@ -1419,15 +1414,7 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
-	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
-	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
-		if stmtCtx.DiskTracker != nil {
-			stmtCtx.DiskTracker.Detach()
-		}
-		if stmtCtx.MemTracker != nil {
-			stmtCtx.MemTracker.Detach()
-		}
-	}
+	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
 }
 
 // LogSlowQuery is used to print the slow query in the log files.

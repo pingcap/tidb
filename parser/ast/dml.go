@@ -1273,16 +1273,24 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(",")
 				}
-				if err := field.Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while restore SelectStmt.Fields[%d]", i)
+				if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(field.OriginalText()) > 0 {
+					ctx.WritePlain(field.OriginalText())
+				} else {
+					if err := field.Restore(ctx); err != nil {
+						return errors.Annotatef(err, "An error occurred while restore SelectStmt.Fields[%d]", i)
+					}
 				}
 			}
 		}
 
 		if n.From != nil {
 			ctx.WriteKeyWord(" FROM ")
-			if err := n.From.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore SelectStmt.From")
+			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(n.From.OriginalText()) > 0 {
+				ctx.WritePlain(n.From.OriginalText())
+			} else {
+				if err := n.From.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while restore SelectStmt.From")
+				}
 			}
 		}
 
@@ -2159,8 +2167,12 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			if err := v.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
+			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(v.OriginalText()) > 0 {
+				ctx.WritePlain(v.OriginalText())
+			} else {
+				if err := v.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
+				}
 			}
 		}
 		ctx.WritePlain(")")

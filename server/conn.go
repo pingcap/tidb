@@ -56,6 +56,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -1580,8 +1582,13 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	if loadDataWorker == nil {
 		return errors.New("load data info is empty")
 	}
-
-	err := cc.writeReq(ctx, loadDataWorker.GetInfilePath())
+	infile := loadDataWorker.GetInfilePath()
+	compressTp := mydump.ParseCompressionOnFileExtension(infile)
+	compressTp2, err := mydump.ToStorageCompressType(compressTp)
+	if err != nil {
+		return err
+	}
+	err = cc.writeReq(ctx, infile)
 	if err != nil {
 		return err
 	}
@@ -1628,7 +1635,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
 	_, err = loadDataWorker.Load(ctx, []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
-			return executor.NewSimpleSeekerOnReadCloser(r), nil
+			addedSeekReader := executor.NewSimpleSeekerOnReadCloser(r)
+			return storage.InterceptDecompressReader(addedSeekReader, compressTp2)
 		}}})
 	_ = r.Close()
 	wg.Wait()
@@ -2058,12 +2066,20 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	cc.audit(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
-	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
-	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
+	// - If rs is not nil, the statement tracker detachment from session tracker
+	//   is done in the `rs.Close` in most cases.
+	// - If the rs is nil and err is not nil, the detachment will be done in
+	//   the `handleNoDelay`.
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
+		// If error is returned during the planner phase or the executor.Open
+		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
+		// will not be detached. We need to detach them manually.
+		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
+			sv.StmtCtx.DetachMemDiskTracker()
+		}
 		return true, err
 	}
 

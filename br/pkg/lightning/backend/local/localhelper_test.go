@@ -455,7 +455,7 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 
 	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	client := initTestSplitClient(keys, hook)
-	local := &Local{
+	local := &Backend{
 		splitCli:         client,
 		regionSizeGetter: &TableRegionSizeGetterImpl{},
 		logger:           log.L(),
@@ -629,7 +629,7 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
 	client := initTestSplitClient(keys, nil)
-	local := &Local{
+	local := &Backend{
 		splitCli:         client,
 		regionSizeGetter: &TableRegionSizeGetterImpl{},
 		logger:           log.L(),
@@ -716,7 +716,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	}
 	keys = append(keys, tableEndKey, []byte(""))
 	client := initTestSplitClient(keys, hook)
-	local := &Local{
+	local := &Backend{
 		splitCli:         client,
 		regionSizeGetter: &TableRegionSizeGetterImpl{},
 		logger:           log.L(),
