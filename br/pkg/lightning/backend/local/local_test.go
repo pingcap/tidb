@@ -1481,7 +1481,7 @@ func TestDoImport(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	l := &Local{
+	l := &Backend{
 		BackendConfig: BackendConfig{WorkerConcurrency: 2},
 	}
 	e := &Engine{}
