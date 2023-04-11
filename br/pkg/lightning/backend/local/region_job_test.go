@@ -246,9 +246,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	}
 	ok = retryer.push(job)
 	require.True(t, ok)
-	require.Eventually(t, func() bool {
-		return retryer.toPutBack != nil
-	}, 5*time.Second, 100*time.Millisecond)
+	time.Sleep(3 * time.Second)
 	remainCnt = retryer.close()
 	require.Equal(t, 1, remainCnt)
 	<-done

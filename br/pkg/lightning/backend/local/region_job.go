@@ -710,10 +710,12 @@ func (h *regionJobRetryHeap) Pop() any {
 // back later, and put back when the regionJob.waitUntil is reached. It maintains
 // a heap of jobs internally based on the regionJob.waitUntil field.
 type regionJobRetryer struct {
-	q         regionJobRetryHeap
-	qMu       sync.Mutex
+	protected struct {
+		mu        sync.Mutex
+		q         regionJobRetryHeap
+		toPutBack *regionJob
+	}
 	putBackCh chan<- *regionJob
-	toPutBack *regionJob
 	reload    chan struct{}
 	done      chan struct{}
 	closed    bool
@@ -721,38 +723,25 @@ type regionJobRetryer struct {
 }
 
 func newRegionJobRetryer(putBackCh chan<- *regionJob) *regionJobRetryer {
-	return &regionJobRetryer{
-		q:         make([]*regionJob, 0, 16),
+	ret := &regionJobRetryer{
 		putBackCh: putBackCh,
 		reload:    make(chan struct{}, 1),
 		done:      make(chan struct{}),
 	}
+	ret.protected.q = make(regionJobRetryHeap, 0, 16)
+	return ret
 }
 
 func (q *regionJobRetryer) run(ctx context.Context) {
-	var (
-		front *regionJob
-	)
-
 	for {
-		q.qMu.Lock()
-		if len(q.q) > 0 {
-			front = q.q[0]
-		} else {
-			front = nil
+		var front *regionJob
+		q.protected.mu.Lock()
+		if len(q.protected.q) > 0 {
+			front = q.protected.q[0]
 		}
-		q.qMu.Unlock()
+		q.protected.mu.Unlock()
 
 		switch {
-		case q.toPutBack != nil:
-			select {
-			case <-ctx.Done():
-				return
-			case <-q.done:
-				return
-			case q.putBackCh <- q.toPutBack:
-				q.toPutBack = nil
-			}
 		case front != nil:
 			select {
 			case <-ctx.Done():
@@ -761,12 +750,22 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 				return
 			case <-q.reload:
 			case <-time.After(time.Until(front.waitUntil)):
-				q.qMu.Lock()
-				q.toPutBack = heap.Pop(&q.q).(*regionJob)
-				q.qMu.Unlock()
+				q.protected.mu.Lock()
+				q.protected.toPutBack = heap.Pop(&q.protected.q).(*regionJob)
+				select {
+				case <-ctx.Done():
+					q.protected.mu.Unlock()
+					return
+				case <-q.done:
+					q.protected.mu.Unlock()
+					return
+				case q.putBackCh <- q.protected.toPutBack:
+					q.protected.toPutBack = nil
+					q.protected.mu.Unlock()
+				}
 			}
 		default:
-			// len(q.q) == 0 && q.toPutBack == nil
+			// len(q.q) == 0
 			select {
 			case <-ctx.Done():
 				return
@@ -785,9 +784,9 @@ func (q *regionJobRetryer) push(job *regionJob) bool {
 		return false
 	}
 
-	q.qMu.Lock()
-	heap.Push(&q.q, job)
-	q.qMu.Unlock()
+	q.protected.mu.Lock()
+	heap.Push(&q.protected.q, job)
+	q.protected.mu.Unlock()
 
 	select {
 	case q.reload <- struct{}{}:
@@ -800,14 +799,17 @@ func (q *regionJobRetryer) push(job *regionJob) bool {
 func (q *regionJobRetryer) close() int {
 	q.closeMu.Lock()
 	defer q.closeMu.Unlock()
-
 	if q.closed {
 		return 0
 	}
 	q.closed = true
+
 	close(q.done)
-	ret := len(q.q)
-	if q.toPutBack != nil {
+
+	q.protected.mu.Lock()
+	defer q.protected.mu.Unlock()
+	ret := len(q.protected.q)
+	if q.protected.toPutBack != nil {
 		ret++
 	}
 	return ret
