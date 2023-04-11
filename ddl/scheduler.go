@@ -31,6 +31,7 @@ import (
 )
 
 type backfillSchedulerHandle struct {
+	d           *ddl
 	db          *model.DBInfo
 	index       *model.IndexInfo
 	job         *model.Job
@@ -62,8 +63,8 @@ func (b *BackfillMinimalTask) IsMinimalTask() {
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
-func NewBackfillSchedulerHandle(taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-	bh := &backfillSchedulerHandle{}
+func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, error) {
+	bh := &backfillSchedulerHandle{d: d}
 
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
@@ -75,7 +76,6 @@ func NewBackfillSchedulerHandle(taskMeta []byte, step int64) (scheduler.Schedule
 	jobMeta := &bgm.Job
 	bh.job = jobMeta
 
-	d, _ := GetDDL().(*ddl)
 	db, tbl, err := d.getTableByTxn(d.store, jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func NewBackfillSchedulerHandle(taskMeta []byte, step int64) (scheduler.Schedule
 // InitSubtaskExecEnv implements the Scheduler interface.
 func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning init subtask exec env")
-	d, _ := GetDDL().(*ddl)
+	d := b.d
 
 	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID, b.job.ReorgMeta.SQLMode)
 	if err != nil {
@@ -120,7 +120,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
-	d, _ := GetDDL().(*ddl)
+	d := b.d
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask, sm)
 	if err != nil {
@@ -211,8 +211,4 @@ type BackFillSubtaskExecutor struct {
 // Run implements the Executor interface.
 func (b *BackFillSubtaskExecutor) Run(ctx context.Context) error {
 	return nil
-}
-
-func init() {
-	scheduler.RegisterSchedulerConstructor("backfill", NewBackfillSchedulerHandle)
 }
