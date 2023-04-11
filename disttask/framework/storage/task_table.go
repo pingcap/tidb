@@ -195,11 +195,6 @@ func (stm *TaskManager) GetNewGlobalTask() (task *proto.Task, err error) {
 	return row2GlobeTask(rs[0]), nil
 }
 
-// UpdateGlobalTask updates the global task.
-func (stm *TaskManager) UpdateGlobalTask(task *proto.Task) error {
-	return stm.UpdateGlobalTaskAndAddSubTasks(task, nil, false)
-}
-
 // GetGlobalTasksInStates gets the tasks in the states.
 func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error) {
 	if len(states) == 0 {
@@ -377,6 +372,7 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 		}
 
 		for _, subtask := range subtasks {
+			// TODO: insert subtasks in batch
 			_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_background_subtask(task_key, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?)",
 				gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{})
 			if err != nil {
