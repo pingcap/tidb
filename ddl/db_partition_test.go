@@ -3638,8 +3638,21 @@ func TestUnsupportedPartitionManagementDDLs(t *testing.T) {
 		);
 	`)
 
-	_, err := tk.Exec("alter table test_1465 partition by hash(a)")
-	require.Regexp(t, ".*alter table partition is unsupported", err.Error())
+	tk.MustExec(`alter table test_1465 truncate partition p1`)
+	tk.MustContainErrMsg(`alter table test_1465 check partition p1`, "[ddl:8200]Unsupported check partition")
+	tk.MustContainErrMsg(`alter table test_1465 optimize partition p1`, "[ddl:8200]Unsupported optimize partition")
+	tk.MustContainErrMsg(`alter table test_1465 repair partition p1`, "[ddl:8200]Unsupported repair partition")
+	tk.MustContainErrMsg(`alter table test_1465 import partition p1 tablespace`, "[ddl:8200]Unsupported Unsupported/unknown ALTER TABLE specification")
+	tk.MustContainErrMsg(`alter table test_1465 discard partition p1 tablespace`, "[ddl:8200]Unsupported Unsupported/unknown ALTER TABLE specification")
+	tk.MustContainErrMsg(`alter table test_1465 rebuild partition p1`, "[ddl:8200]Unsupported rebuild partition")
+	tk.MustContainErrMsg(`alter table test_1465 coalesce partition 1`, "[ddl:1509]COALESCE PARTITION can only be used on HASH/KEY partitions")
+	tk.MustExec("alter table test_1465 partition by hash(a)")
+	tk.MustQuery(`show create table test_1465`).Check(testkit.Rows("" +
+		"test_1465 CREATE TABLE `test_1465` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 1"))
+	tk.MustContainErrMsg(`alter table test_1465 drop partition p0`, "[ddl:1512]DROP PARTITION can only be used on RANGE/LIST partitions")
 }
 
 func TestCommitWhenSchemaChange(t *testing.T) {
