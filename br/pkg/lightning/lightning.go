@@ -491,13 +491,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		return common.ErrInvalidTLSConfig.Wrap(err)
 	}
 
-	// initiation of default db should be after BuildTLSConfig, which is ready to be called after taskCfg.Adjust
-	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
-	db, err := importer.DBFromConfig(ctx, taskCfg.TiDB)
-	if err != nil {
-		return common.ErrDBConnect.Wrap(err)
-	}
-
 	s := o.dumpFileStorage
 	if s == nil {
 		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
@@ -544,6 +537,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
+
+	// db is only not nil in unit test
+	db := o.db
+	if db == nil {
+		// initiation of default db should be after BuildTLSConfig
+		db, err = importer.DBFromConfig(ctx, taskCfg.TiDB)
+		if err != nil {
+			return common.ErrDBConnect.Wrap(err)
+		}
+	}
 
 	var keyspaceName string
 	if taskCfg.TikvImporter.Backend == config.BackendLocal {

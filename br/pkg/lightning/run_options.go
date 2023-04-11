@@ -15,6 +15,8 @@
 package lightning
 
 import (
+	"database/sql"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/promutil"
@@ -30,6 +32,8 @@ type options struct {
 	promRegistry      promutil.Registry
 	logger            log.Logger
 	dupIndicator      *atomic.Bool
+	// only used in tests
+	db *sql.DB
 }
 
 // Option is a function that configures a lightning task.
