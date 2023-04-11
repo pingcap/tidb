@@ -4935,7 +4935,7 @@ func TestIssue37760(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect this ut
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect warnings
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
 	tk.MustExec("insert into t values (2), (4), (6)")
