@@ -2,6 +2,7 @@ package mydump
 
 import (
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -126,6 +127,20 @@ func (s SourceType) String() string {
 	default:
 		return TypeIgnore
 	}
+}
+
+// ParseCompressionOnFileExtension parses the compression type from the file extension.
+func ParseCompressionOnFileExtension(filename string) Compression {
+	fileExt := strings.ToLower(filepath.Ext(filename))
+	if len(fileExt) == 0 {
+		return CompressionNone
+	}
+	tp, err := parseCompressionType(fileExt[1:])
+	if err != nil {
+		// file extension is not a compression type, just ignore it
+		return CompressionNone
+	}
+	return tp
 }
 
 func parseCompressionType(t string) (Compression, error) {

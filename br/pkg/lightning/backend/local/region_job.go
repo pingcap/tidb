@@ -152,7 +152,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
-func (local *Local) writeToTiKV(ctx context.Context, j *regionJob) error {
+func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -380,7 +380,7 @@ func (local *Local) writeToTiKV(ctx context.Context, j *regionJob) error {
 // set job to a proper stage with nil error returned.
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
-func (local *Local) ingest(ctx context.Context, j *regionJob) error {
+func (local *Backend) ingest(ctx context.Context, j *regionJob) error {
 	splitCli := local.splitCli
 	if j.stage != wrote {
 		return nil
@@ -435,7 +435,7 @@ func (local *Local) ingest(ctx context.Context, j *regionJob) error {
 	return nil
 }
 
-func (local *Local) checkWriteStall(
+func (local *Backend) checkWriteStall(
 	ctx context.Context,
 	region *split.RegionInfo,
 ) (bool, *sst.IngestResponse, error) {
@@ -460,7 +460,7 @@ func (local *Local) checkWriteStall(
 
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
-func (local *Local) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
 	clientFactory := local.importClientFactory
 	supportMultiIngest := local.supportMultiIngest
 	shouldCheckWriteStall := local.ShouldCheckWriteStall
