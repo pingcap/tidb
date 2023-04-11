@@ -1850,7 +1850,7 @@ func TestNonPreparedPlanCacheJoin(t *testing.T) {
 	}
 }
 
-func TestNonPreparedPlanCacheAgg(t *testing.T) {
+func TestNonPreparedPlanCacheAggSort(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1862,13 +1862,17 @@ func TestNonPreparedPlanCacheAgg(t *testing.T) {
 		"select count(*) from t",
 		"select max(b) from t group by a",
 		"select count(*), a from t group by a, b",
-		"select sum(b) from t group by a+1",
-		"select count(*) from t group by a+b",
+		"select a from t order by a",
+		"select a, b, a+b from t order by a, b",
 	}
 	unsupported := []string{
+		"select sum(b) from t group by a+1",
+		"select count(*) from t group by a+b",
 		"select a, b, count(*) from t group by 1",              // group by position
 		"select a, b, count(*) from t group by 1, a",           // group by position
 		"select a, b, count(*) from t group by a having b < 1", // not support having-clause
+		"select a from t order by a+1",
+		"select a, b, a+b from t order by a + b",
 	}
 
 	for _, sql := range supported {

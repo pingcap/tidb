@@ -41,7 +41,7 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.TimeLiteral:      {},
 	ast.DateLiteral:      {},
 	ast.TimestampLiteral: {},
-	ast.AesEncrypt:       {},
+	ast.AesEncrypt:       {}, // affected by @@block_encryption_mode
 	ast.AesDecrypt:       {},
 }
 
