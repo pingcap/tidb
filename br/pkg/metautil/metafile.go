@@ -278,13 +278,16 @@ type readSchemaConfig struct {
 	skipFiles bool
 }
 
+// ReadSchemaOption describes some extra option of reading the config.
 type ReadSchemaOption func(*readSchemaConfig)
 
+// SkipFiles is the configuration which will make the schema reader skip all files.
+// This is useful when only schema information is needed.
 func SkipFiles(conf *readSchemaConfig) {
 	conf.skipFiles = true
 }
 
-// Returns a basic copy of the backup meta.
+// GetBasic returns a basic copy of the backup meta.
 func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 	return *reader.backupMeta
 }
