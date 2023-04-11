@@ -870,10 +870,10 @@ func TestFormatVersion(t *testing.T) {
 
 // TestStmtSummaryTable Test statements_summary.
 func TestStmtSummaryTable(t *testing.T) {
-	t.Skip()
 	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
@@ -894,6 +894,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test.
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -990,6 +991,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
