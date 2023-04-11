@@ -32,7 +32,6 @@ import (
 )
 
 func TestStmtSummaryTable(t *testing.T) {
-	t.Skip("")
 	setupStmtSummary()
 	defer closeStmtSummary()
 
