@@ -2131,15 +2131,14 @@ func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, fl
 
 // The size of hash table when using broadcast join is bigger than the shuffle way, which means it may bring worse performance to hash join.
 // Set a relatively conservative value by default (based on tpch benchmark).
-var broadCastJoinScaleFactor = 3.0
 
 func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
 	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	if hasSizeBC && hasSizeHash {
-		return szBC*broadCastJoinScaleFactor <= szHash
+		return szBC*float64(mppStoreCnt) <= szHash
 	}
-	return rowBC*broadCastJoinScaleFactor <= rowHash
+	return rowBC*float64(mppStoreCnt) <= rowHash
 }
 
 func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) bool {
@@ -2147,9 +2146,9 @@ func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) b
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 
 	if hasSizeBC && hasSizeHash {
-		return szBC*broadCastJoinScaleFactor <= szHash
+		return szBC*float64(mppStoreCnt) <= szHash
 	}
-	return rowBC*broadCastJoinScaleFactor <= rowHash
+	return rowBC*float64(mppStoreCnt) <= rowHash
 }
 
 // If we can use mpp broadcast join, that's our first choice.
