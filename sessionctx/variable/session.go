@@ -1321,7 +1321,6 @@ type SessionVars struct {
 	StoreBatchSize int
 
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
-	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 }
 
