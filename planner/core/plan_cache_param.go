@@ -64,7 +64,8 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.FuncCallExpr:
 		if n.FnName.L == ast.DateFormat {
 			// skip the second format argument: date_format('2020', '%Y') --> date_format(?, '%Y')
-			n.Args[0].Accept(pr)
+			ret, _ := n.Args[0].Accept(pr)
+			n.Args[0] = ret.(ast.ExprNode)
 			return in, true
 		}
 	case *driver.ValueExpr:
