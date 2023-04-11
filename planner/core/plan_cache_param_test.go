@@ -84,6 +84,11 @@ func TestParameterize(t *testing.T) {
 			`INSERT INTO t (a,B,c) VALUES (?,?,?),(?,?,?)`,
 			[]interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6)},
 		},
+		{
+			`select * from t where a < date_format('2020-02-02', '%Y-%m-%d')`,
+			`SELECT * FROM t WHERE a<date_format(?, '%Y-%m-%d')`,
+			[]interface{}{"2020-02-02"},
+		},
 
 		// keep the original format for limit clauses
 		{
