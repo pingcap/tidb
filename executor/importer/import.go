@@ -682,9 +682,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek in LOAD DATA")
 		}
+		compressTp := mydump.ParseCompressionOnFileExtension(path)
 		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
-			Path:     path,
-			FileSize: size,
+			Path:        path,
+			FileSize:    size,
+			Compression: compressTp,
 		})
 		totalSize = size
 	} else {
@@ -699,9 +701,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
+				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
 				dataFiles = append(dataFiles, &mydump.SourceFileMeta{
-					Path:     remotePath,
-					FileSize: size,
+					Path:        remotePath,
+					FileSize:    size,
+					Compression: compressTp,
 				})
 				totalSize += size
 				return nil
@@ -724,7 +728,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 		f := e.dataFiles[i]
 		result = append(result, LoadDataReaderInfo{
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-				fileReader, err2 := e.dataStore.Open(ctx, f.Path)
+				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore)
 				if err2 != nil {
 					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
 				}

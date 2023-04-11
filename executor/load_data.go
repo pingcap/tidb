@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/expression"
@@ -347,13 +348,19 @@ func newLogicalJobImporter(param *importer.JobImportParam, e *LoadDataWorker, r 
 		userSctx:       e.UserSctx,
 		controller:     e.controller,
 	}
+	compressTp := mydump.ParseCompressionOnFileExtension(e.GetInfilePath())
+	compressTp2, err := mydump.ToStorageCompressType(compressTp)
+	if err != nil {
+		return nil, err
+	}
 	if err := ji.initEncodeCommitWorkers(e); err != nil {
 		return nil, err
 	}
 	if e.controller.FileLocRef == ast.FileLocClient {
 		ji.readerInfos = []importer.LoadDataReaderInfo{{
 			Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
-				return NewSimpleSeekerOnReadCloser(r), nil
+				addedSeekReader := NewSimpleSeekerOnReadCloser(r)
+				return storage.InterceptDecompressReader(addedSeekReader, compressTp2)
 			}}}
 	} else {
 		ji.readerInfos = e.controller.GetLoadDataReaderInfos()

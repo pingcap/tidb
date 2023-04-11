@@ -40,6 +40,11 @@ func (r *ResourceManager) schedulePool(pool *util.PoolContainer) scheduler.Comma
 		case scheduler.Hold:
 			continue
 		default:
+			if cmd == scheduler.Downclock {
+				if pool.Pool.Cap() == 1 || pool.Pool.Running() > pool.Pool.Cap() {
+					continue
+				}
+			}
 			return cmd
 		}
 	}

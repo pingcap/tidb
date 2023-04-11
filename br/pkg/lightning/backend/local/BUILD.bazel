@@ -4,6 +4,7 @@ go_library(
     name = "local",
     srcs = [
         "compress.go",
+        "disk_quota.go",
         "duplicate.go",
         "engine.go",
         "iterator.go",
@@ -91,6 +92,7 @@ go_test(
     timeout = "short",
     srcs = [
         "compress_test.go",
+        "disk_quota_test.go",
         "duplicate_test.go",
         "engine_test.go",
         "iterator_test.go",
@@ -113,6 +115,7 @@ go_test(
         "//br/pkg/lightning/mydump",
         "//br/pkg/membuf",
         "//br/pkg/mock",
+        "//br/pkg/mock/mocklocal",
         "//br/pkg/pdutil",
         "//br/pkg/restore/split",
         "//br/pkg/utils",

@@ -1579,8 +1579,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	if loadDataWorker == nil {
 		return errors.New("load data info is empty")
 	}
-
-	err := cc.writeReq(ctx, loadDataWorker.GetInfilePath())
+	infile := loadDataWorker.GetInfilePath()
+	err := cc.writeReq(ctx, infile)
 	if err != nil {
 		return err
 	}
