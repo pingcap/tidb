@@ -776,7 +776,10 @@ func (c *dateFormatFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, err
 	}
 	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
-	bf.tp.SetFlen((args[1].GetType().GetFlen() + 1) / 2 * 11)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	if args[1].GetType().GetFlen() != types.UnspecifiedLength {
+		bf.tp.SetFlen((args[1].GetType().GetFlen() + 1) / 2 * 11)
+	}
 	sig := &builtinDateFormatSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DateFormatSig)
 	return sig, nil
