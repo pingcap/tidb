@@ -1711,7 +1711,6 @@ func TestArithmeticBuiltin(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (v int);")
 	tk.MustExec("INSERT IGNORE INTO t VALUE(12 MOD 0);")
-	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect warnings
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
 	tk.MustQuery("select v from t;").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select 0.000 % 0.11234500000000000000;").Check(testkit.Rows("0.00000000000000000000"))
