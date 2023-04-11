@@ -221,6 +221,7 @@ go_test(
         "point_get_plan_test.go",
         "prepare_test.go",
         "preprocess_test.go",
+        "rule_build_key_info_test.go",
         "rule_join_reorder_dp_test.go",
         "rule_join_reorder_test.go",
         "rule_result_reorder_test.go",
