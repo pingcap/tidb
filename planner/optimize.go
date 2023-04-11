@@ -107,7 +107,8 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		// Keep the original AST unchanged to avoid any side effect.
 		paramStmt, err := core.ParseParameterizedSQL(sctx, paramSQL)
 		if err != nil {
-			return nil, nil, false, err
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return nil, nil, false, nil
 		}
 		// GeneratePlanCacheStmtWithAST may evaluate these parameters so set their values into SCtx in advance.
 		if err := core.SetParameterValuesIntoSCtx(sctx, true, nil, paramExprs); err != nil {
