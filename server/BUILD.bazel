@@ -28,8 +28,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//autoid_service",
-        "//br/pkg/lightning/mydump",
-        "//br/pkg/storage",
         "//config",
         "//ddl",
         "//domain",
