@@ -1244,13 +1244,9 @@ func overwritePartialTableScanSchema(ds *DataSource, ts *PhysicalTableScan) {
 	for i := 0; i < hdColNum; i++ {
 		col := handleCols.GetCol(i)
 		exprCols = append(exprCols, col)
-		for _, c := range ds.TableInfo().Columns {
-			if c.ID == col.ID {
-				infoCols = append(infoCols, c)
-				break
-			}
-		}
-		if len(infoCols) != len(exprCols) {
+		if c := model.FindColumnInfoByID(ds.TableInfo().Columns, col.ID); c != nil {
+			infoCols = append(infoCols, c)
+		} else {
 			infoCols = append(infoCols, col.ToInfo())
 		}
 	}

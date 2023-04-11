@@ -938,7 +938,7 @@ func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTab
 	}
 }
 
-// pruneTableWorkerTaskIdxRows prune idxRows and keep columns that will be used in byItems.
+// pruneTableWorkerTaskIdxRows prune idxRows and only keep columns that will be used in byItems.
 func (w *indexMergeProcessWorker) pruneTableWorkerTaskIdxRows(task *indexMergeTableTask) {
 	if plan, ok := w.indexMerge.partialPlans[task.partialPlanID][0].(*plannercore.PhysicalTableScan); ok {
 		prune := make([]int, 0, len(w.indexMerge.byItems))

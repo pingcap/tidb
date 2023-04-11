@@ -964,7 +964,7 @@ func getResult(values []*valueStruct, a int, b int, limit int, desc bool) []*val
 	return ret
 }
 
-func TestOrderyByWithLimit(t *testing.T) {
+func TestOrderByWithLimit(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
