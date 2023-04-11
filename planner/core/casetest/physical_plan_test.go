@@ -245,8 +245,6 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "use test")
 	require.NoError(t, err)
-	_, err = se.Execute(context.Background(), "set @@tidb_enable_non_prepared_plan_cache=0")
-	require.NoError(t, err)
 
 	var input []string
 	var output []struct {
