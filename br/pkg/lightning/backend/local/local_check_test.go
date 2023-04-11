@@ -65,10 +65,12 @@ func TestCheckRequirementsTiFlash(t *testing.T) {
 	}
 	checkCtx := &backend.CheckCtx{DBMetas: dbMetas}
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(local.TiFlashReplicaQueryForTest).WillReturnRows(sqlmock.NewRows([]string{"db", "tbl"}).
 		AddRow("db", "tbl").
 		AddRow("test", "t1").
 		AddRow("test1", "tbl"))
+	mock.ExpectCommit()
 
 	err = local.CheckTiFlashVersionForTest(ctx, db, checkCtx, *semver.New("4.0.2"))
 	require.Regexp(t, "^lightning local backend doesn't support TiFlash in this TiDB version. conflict tables: \\[`test`.`t1`, `test1`.`tbl`\\]", err.Error())
