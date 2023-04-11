@@ -81,7 +81,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.Equal(t, task, task4[0])
 
 	task.State = proto.TaskStateRunning
-	err = gm.UpdateGlobalTask(task)
+	err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil, false)
 	require.NoError(t, err)
 
 	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
