@@ -13,6 +13,7 @@ go_test(
     srcs = ["format_test.go"],
     embed = [":format"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

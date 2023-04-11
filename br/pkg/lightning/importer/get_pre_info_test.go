@@ -25,6 +25,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
@@ -45,26 +46,26 @@ type colDef struct {
 
 type tableDef []*colDef
 
-func tableDefsToMockDataMap(dbTableDefs map[string]map[string]tableDef) map[string]*mock.MockDBSourceData {
-	dbMockDataMap := make(map[string]*mock.MockDBSourceData)
+func tableDefsToMockDataMap(dbTableDefs map[string]map[string]tableDef) map[string]*mock.DBSourceData {
+	dbMockDataMap := make(map[string]*mock.DBSourceData)
 	for dbName, tblDefMap := range dbTableDefs {
-		tblMockDataMap := make(map[string]*mock.MockTableSourceData)
+		tblMockDataMap := make(map[string]*mock.TableSourceData)
 		for tblName, colDefs := range tblDefMap {
 			colDefStrs := make([]string, len(colDefs))
 			for i, colDef := range colDefs {
 				colDefStrs[i] = fmt.Sprintf("%s %s", colDef.ColName, colDef.Def)
 			}
 			createSQL := fmt.Sprintf("CREATE TABLE %s.%s (%s);", dbName, tblName, strings.Join(colDefStrs, ", "))
-			tblMockDataMap[tblName] = &mock.MockTableSourceData{
+			tblMockDataMap[tblName] = &mock.TableSourceData{
 				DBName:    dbName,
 				TableName: tblName,
-				SchemaFile: &mock.MockSourceFile{
+				SchemaFile: &mock.SourceFile{
 					FileName: fmt.Sprintf("/%s/%s/%s.schema.sql", dbName, tblName, tblName),
 					Data:     []byte(createSQL),
 				},
 			}
 		}
-		dbMockDataMap[dbName] = &mock.MockDBSourceData{
+		dbMockDataMap[dbName] = &mock.DBSourceData{
 			Name:   dbName,
 			Tables: tblMockDataMap,
 		}
@@ -222,10 +223,10 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 	testMockDataMap := tableDefsToMockDataMap(dbTableDefs)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mockSrc, err := mock.NewMockImportSource(testMockDataMap)
+	mockSrc, err := mock.NewImportSource(testMockDataMap)
 	require.Nil(t, err)
 
-	mockTarget := mock.NewMockTargetInfo()
+	mockTarget := mock.NewTargetInfo()
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
@@ -253,7 +254,7 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 
 func generateParquetData(t *testing.T) []byte {
 	type parquetStruct struct {
-		Id   int64  `parquet:"name=id, type=INT64"`
+		ID   int64  `parquet:"name=id, type=INT64"`
 		Name string `parquet:"name=name, type=BYTE_ARRAY"`
 	}
 	pf, err := pqt_buf_src.NewBufferFile(make([]byte, 0))
@@ -262,7 +263,7 @@ func generateParquetData(t *testing.T) []byte {
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
 		require.NoError(t, pw.Write(parquetStruct{
-			Id:   int64(i + 1),
+			ID:   int64(i + 1),
 			Name: fmt.Sprintf("name_%d", i+1),
 		}))
 	}
@@ -366,32 +367,32 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 			ExpectColumns: []string{"id", "name"},
 		},
 	}
-	tblMockSourceData := &mock.MockTableSourceData{
+	tblMockSourceData := &mock.TableSourceData{
 		DBName:    "db01",
 		TableName: "tbl01",
-		SchemaFile: &mock.MockSourceFile{
+		SchemaFile: &mock.SourceFile{
 			FileName: "/db01/tbl01/tbl01.schema.sql",
 			Data:     []byte("CREATE TABLE db01.tbl01(id INTEGER PRIMARY KEY AUTO_INCREMENT, ival INTEGER, sval VARCHAR(64));"),
 		},
-		DataFiles: []*mock.MockSourceFile{},
+		DataFiles: []*mock.SourceFile{},
 	}
 	for _, testInfo := range testDataInfos {
-		tblMockSourceData.DataFiles = append(tblMockSourceData.DataFiles, &mock.MockSourceFile{
+		tblMockSourceData.DataFiles = append(tblMockSourceData.DataFiles, &mock.SourceFile{
 			FileName: testInfo.FileName,
 			Data:     testInfo.Data,
 		})
 	}
-	mockDataMap := map[string]*mock.MockDBSourceData{
+	mockDataMap := map[string]*mock.DBSourceData{
 		"db01": {
 			Name: "db01",
-			Tables: map[string]*mock.MockTableSourceData{
+			Tables: map[string]*mock.TableSourceData{
 				"tbl01": tblMockSourceData,
 			},
 		},
 	}
-	mockSrc, err := mock.NewMockImportSource(mockDataMap)
+	mockSrc, err := mock.NewImportSource(mockDataMap)
 	require.Nil(t, err)
-	mockTarget := mock.NewMockTargetInfo()
+	mockTarget := mock.NewTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 	ig, err := NewPreImportInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
@@ -477,32 +478,32 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`)
 	tbl01SchemaBytes := []byte("CREATE TABLE db01.tbl01(id INTEGER PRIMARY KEY AUTO_INCREMENT, ival INTEGER, sval VARCHAR(64));")
 	tbl01SchemaBytesCompressed := compressGz(t, tbl01SchemaBytes)
 
-	tblMockSourceData := &mock.MockTableSourceData{
+	tblMockSourceData := &mock.TableSourceData{
 		DBName:    "db01",
 		TableName: "tbl01",
-		SchemaFile: &mock.MockSourceFile{
+		SchemaFile: &mock.SourceFile{
 			FileName: "/db01/tbl01/tbl01.schema.sql.gz",
 			Data:     tbl01SchemaBytesCompressed,
 		},
-		DataFiles: []*mock.MockSourceFile{},
+		DataFiles: []*mock.SourceFile{},
 	}
 	for _, testInfo := range testDataInfos {
-		tblMockSourceData.DataFiles = append(tblMockSourceData.DataFiles, &mock.MockSourceFile{
+		tblMockSourceData.DataFiles = append(tblMockSourceData.DataFiles, &mock.SourceFile{
 			FileName: testInfo.FileName,
 			Data:     testInfo.Data,
 		})
 	}
-	mockDataMap := map[string]*mock.MockDBSourceData{
+	mockDataMap := map[string]*mock.DBSourceData{
 		"db01": {
 			Name: "db01",
-			Tables: map[string]*mock.MockTableSourceData{
+			Tables: map[string]*mock.TableSourceData{
 				"tbl01": tblMockSourceData,
 			},
 		},
 	}
-	mockSrc, err := mock.NewMockImportSource(mockDataMap)
+	mockSrc, err := mock.NewImportSource(mockDataMap)
 	require.Nil(t, err)
-	mockTarget := mock.NewMockTargetInfo()
+	mockTarget := mock.NewTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 	ig, err := NewPreImportInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
@@ -531,18 +532,18 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	dataFileName := "/db01/tbl01/tbl01.data.001.csv"
-	mockDataMap := map[string]*mock.MockDBSourceData{
+	mockDataMap := map[string]*mock.DBSourceData{
 		"db01": {
 			Name: "db01",
-			Tables: map[string]*mock.MockTableSourceData{
+			Tables: map[string]*mock.TableSourceData{
 				"tbl01": {
 					DBName:    "db01",
 					TableName: "tbl01",
-					SchemaFile: &mock.MockSourceFile{
+					SchemaFile: &mock.SourceFile{
 						FileName: "/db01/tbl01/tbl01.schema.sql",
 						Data:     []byte("CREATE TABLE db01.tbl01 (id INTEGER PRIMARY KEY AUTO_INCREMENT, ival INTEGER, sval VARCHAR(64));"),
 					},
-					DataFiles: []*mock.MockSourceFile{
+					DataFiles: []*mock.SourceFile{
 						{
 							FileName: dataFileName,
 							Data:     []byte(nil),
@@ -552,9 +553,9 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 			},
 		},
 	}
-	mockSrc, err := mock.NewMockImportSource(mockDataMap)
+	mockSrc, err := mock.NewImportSource(mockDataMap)
 	require.Nil(t, err)
-	mockTarget := mock.NewMockTargetInfo()
+	mockTarget := mock.NewTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 	ig, err := NewPreImportInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
@@ -604,7 +605,7 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 	}
 	for _, subTest := range subTests {
 		require.NoError(t, mockSrc.GetStorage().WriteFile(ctx, dataFileName, subTest.Data))
-		sampledIndexRatio, isRowOrderedFromSample, err := ig.sampleDataFromTable(ctx, "db01", mdTblMeta, dbInfos["db01"].Tables["tbl01"].Core, nil, defaultImportantVariables)
+		sampledIndexRatio, isRowOrderedFromSample, err := ig.sampleDataFromTable(ctx, "db01", mdTblMeta, dbInfos["db01"].Tables["tbl01"].Core, nil, common.DefaultImportantVariables)
 		require.NoError(t, err)
 		t.Logf("%v, %v", sampledIndexRatio, isRowOrderedFromSample)
 		require.Greater(t, sampledIndexRatio, 1.0)
@@ -618,18 +619,18 @@ func TestGetPreInfoSampleSourceCompressed(t *testing.T) {
 	dataFileName := "/db01/tbl01/tbl01.data.001.csv.gz"
 	schemaFileData := []byte("CREATE TABLE db01.tbl01 (id INTEGER PRIMARY KEY AUTO_INCREMENT, ival INTEGER, sval VARCHAR(64));")
 	schemaFileDataCompressed := compressGz(t, schemaFileData)
-	mockDataMap := map[string]*mock.MockDBSourceData{
+	mockDataMap := map[string]*mock.DBSourceData{
 		"db01": {
 			Name: "db01",
-			Tables: map[string]*mock.MockTableSourceData{
+			Tables: map[string]*mock.TableSourceData{
 				"tbl01": {
 					DBName:    "db01",
 					TableName: "tbl01",
-					SchemaFile: &mock.MockSourceFile{
+					SchemaFile: &mock.SourceFile{
 						FileName: "/db01/tbl01/tbl01.schema.sql.gz",
 						Data:     schemaFileDataCompressed,
 					},
-					DataFiles: []*mock.MockSourceFile{
+					DataFiles: []*mock.SourceFile{
 						{
 							FileName: dataFileName,
 							Data:     []byte(nil),
@@ -639,9 +640,9 @@ func TestGetPreInfoSampleSourceCompressed(t *testing.T) {
 			},
 		},
 	}
-	mockSrc, err := mock.NewMockImportSource(mockDataMap)
+	mockSrc, err := mock.NewImportSource(mockDataMap)
 	require.Nil(t, err)
-	mockTarget := mock.NewMockTargetInfo()
+	mockTarget := mock.NewTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 	ig, err := NewPreImportInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
@@ -698,7 +699,7 @@ func TestGetPreInfoSampleSourceCompressed(t *testing.T) {
 	}
 	for _, subTest := range subTests {
 		require.NoError(t, mockSrc.GetStorage().WriteFile(ctx, dataFileName, subTest.Data))
-		sampledIndexRatio, isRowOrderedFromSample, err := ig.sampleDataFromTable(ctx, "db01", mdTblMeta, dbInfos["db01"].Tables["tbl01"].Core, nil, defaultImportantVariables)
+		sampledIndexRatio, isRowOrderedFromSample, err := ig.sampleDataFromTable(ctx, "db01", mdTblMeta, dbInfos["db01"].Tables["tbl01"].Core, nil, common.DefaultImportantVariables)
 		require.NoError(t, err)
 		t.Logf("%v, %v", sampledIndexRatio, isRowOrderedFromSample)
 		require.Greater(t, sampledIndexRatio, 1.0)
@@ -715,18 +716,18 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 2,222,"bbb"
 `,
 	)
-	mockDataMap := map[string]*mock.MockDBSourceData{
+	mockDataMap := map[string]*mock.DBSourceData{
 		"db01": {
 			Name: "db01",
-			Tables: map[string]*mock.MockTableSourceData{
+			Tables: map[string]*mock.TableSourceData{
 				"tbl01": {
 					DBName:    "db01",
 					TableName: "tbl01",
-					SchemaFile: &mock.MockSourceFile{
+					SchemaFile: &mock.SourceFile{
 						FileName: "/db01/tbl01/tbl01.schema.sql",
 						Data:     []byte("CREATE TABLE db01.tbl01 (id INTEGER PRIMARY KEY AUTO_INCREMENT, ival INTEGER, sval VARCHAR(64));"),
 					},
-					DataFiles: []*mock.MockSourceFile{
+					DataFiles: []*mock.SourceFile{
 						{
 							FileName: dataFileName,
 							Data:     testData,
@@ -736,9 +737,9 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 			},
 		},
 	}
-	mockSrc, err := mock.NewMockImportSource(mockDataMap)
+	mockSrc, err := mock.NewImportSource(mockDataMap)
 	require.Nil(t, err)
-	mockTarget := mock.NewMockTargetInfo()
+	mockTarget := mock.NewTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 	ig, err := NewPreImportInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))

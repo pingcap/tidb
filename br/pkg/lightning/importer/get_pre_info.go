@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
@@ -112,6 +113,7 @@ const (
 	preInfoGetterKeyDBMetas preInfoGetterKey = "PRE_INFO_GETTER/DB_METAS"
 )
 
+// WithPreInfoGetterDBMetas returns a new context with the specified dbMetas.
 func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) context.Context {
 	return context.WithValue(ctx, preInfoGetterKeyDBMetas, dbMetas)
 }
@@ -270,7 +272,7 @@ type PreImportInfoGetterImpl struct {
 	getPreInfoCfg    *ropts.GetPreInfoConfig
 	srcStorage       storage.ExternalStorage
 	ioWorkers        *worker.Pool
-	encBuilder       backend.EncodingBuilder
+	encBuilder       encode.EncodingBuilder
 	targetInfoGetter TargetInfoGetter
 
 	dbMetas          []*mydump.MDDatabaseMeta
@@ -289,7 +291,7 @@ func NewPreImportInfoGetter(
 	srcStorage storage.ExternalStorage,
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
-	encBuilder backend.EncodingBuilder,
+	encBuilder encode.EncodingBuilder,
 	opts ...ropts.GetPreInfoOption,
 ) (*PreImportInfoGetterImpl, error) {
 	if ioWorkers == nil {
@@ -455,7 +457,7 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := openReader(ctx, dataFileMeta, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -566,7 +568,7 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 				if tableInfo.Core.TiFlashReplica != nil && tableInfo.Core.TiFlashReplica.Available {
 					tiflashSize += tableSize * int64(tableInfo.Core.TiFlashReplica.Count)
 				}
-				tableCount += 1
+				tableCount++
 			}
 		}
 	}
@@ -604,7 +606,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := openReader(ctx, sampleFile, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
@@ -613,11 +615,16 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	kvEncoder, err := p.encBuilder.NewEncoder(ctx, tbl, &kv.SessionOptions{
-		SQLMode:        p.cfg.TiDB.SQLMode,
-		Timestamp:      0,
-		SysVars:        sysVars,
-		AutoRandomSeed: 0,
+	logger := log.FromContext(ctx).With(zap.String("table", tableMeta.Name))
+	kvEncoder, err := p.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode:        p.cfg.TiDB.SQLMode,
+			Timestamp:      0,
+			SysVars:        sysVars,
+			AutoRandomSeed: 0,
+		},
+		Table:  tbl,
+		Logger: logger,
 	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -649,7 +656,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	}
 	//nolint: errcheck
 	defer parser.Close()
-	logTask := log.FromContext(ctx).With(zap.String("table", tableMeta.Name)).Begin(zap.InfoLevel, "sample file")
+	logger.Begin(zap.InfoLevel, "sample file")
 	igCols, err := p.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -658,8 +665,8 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	initializedColumns := false
 	var (
 		columnPermutation []int
-		kvSize            uint64 = 0
-		rowSize           uint64 = 0
+		kvSize            uint64
+		rowSize           uint64
 		extendVals        []types.Datum
 	)
 	rowCount := 0
@@ -714,7 +721,7 @@ outloop:
 		lastRow.Row = append(lastRow.Row, extendVals...)
 
 		var dataChecksum, indexChecksum verification.KVChecksum
-		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
+		kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, columnPermutation, offset)
 		if encodeErr != nil {
 			encodeErr = errMgr.RecordTypeError(ctx, log.FromContext(ctx), tableInfo.Name.O, sampleFile.Path, offset,
 				"" /* use a empty string here because we don't actually record */, encodeErr)
@@ -728,7 +735,7 @@ outloop:
 		}
 		if isRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
-			for _, kv := range kv.KvPairsFromRows(dataKVs) {
+			for _, kv := range kv.Rows2KvPairs(dataKVs) {
 				if len(lastKey) == 0 {
 					lastKey = kv.Key
 				} else if bytes.Compare(lastKey, kv.Key) > 0 {

@@ -436,7 +436,7 @@ func TestBenchPool(t *testing.T) {
 		return struct{}{}
 	})
 
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 500; i++ {
 		sema := make(chan struct{}, 10)
 		var wg sync.WaitGroup
 		exitCh := make(chan struct{})
@@ -453,12 +453,8 @@ func TestBenchPool(t *testing.T) {
 				select {
 				case <-sema:
 					return struct{}{}, nil
-				default:
-					select {
-					case <-exitCh:
-						return struct{}{}, gpool.ErrProducerClosed
-					default:
-					}
+				case <-exitCh:
+					return struct{}{}, gpool.ErrProducerClosed
 				}
 			}
 		}

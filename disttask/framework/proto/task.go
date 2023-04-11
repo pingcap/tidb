@@ -53,6 +53,7 @@ const (
 // Task represents the task of distribute framework.
 type Task struct {
 	ID              int64
+	Key             string
 	Type            string
 	State           string
 	Step            int64
@@ -61,6 +62,11 @@ type Task struct {
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
+}
+
+// IsFinished checks if the task is finished.
+func (t *Task) IsFinished() bool {
+	return t.State == TaskStateSucceed || t.State == TaskStateReverted
 }
 
 // Subtask represents the subtask of distribute framework.
@@ -96,6 +102,8 @@ type MinimalTask interface {
 const (
 	// TaskTypeExample is TaskType of Example.
 	TaskTypeExample = "Example"
+	// LoadData is TaskType of LoadData.
+	LoadData = "LoadData"
 )
 
 // Type2Int converts task type to int.
@@ -103,6 +111,8 @@ func Type2Int(t string) int {
 	switch t {
 	case TaskTypeExample:
 		return 1
+	case LoadData:
+		return 2
 	default:
 		return 0
 	}
@@ -113,6 +123,8 @@ func Int2Type(i int) string {
 	switch i {
 	case 1:
 		return TaskTypeExample
+	case 2:
+		return LoadData
 	default:
 		return ""
 	}
