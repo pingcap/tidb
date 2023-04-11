@@ -52,7 +52,6 @@ func createRestoreSchemaSuite(t *testing.T) *testRestoreSchemaSuite {
 }
 
 func TestRestoreAutoIncID(t *testing.T) {
-	t.Skip()
 	s := createRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.mock.Storage)
 	tk.MustExec("use test")
