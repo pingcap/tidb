@@ -686,16 +686,20 @@ func (j *regionJob) convertStageOnIngestError(
 
 type regionJobRetryHeap []*regionJob
 
-func (h regionJobRetryHeap) Len() int {
-	return len(h)
+var _ heap.Interface = (*regionJobRetryHeap)(nil)
+
+func (h *regionJobRetryHeap) Len() int {
+	return len(*h)
 }
 
-func (h regionJobRetryHeap) Less(i, j int) bool {
-	return h[i].waitUntil.Before(h[j].waitUntil)
+func (h *regionJobRetryHeap) Less(i, j int) bool {
+	v := *h
+	return v[i].waitUntil.Before(v[j].waitUntil)
 }
 
-func (h regionJobRetryHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
+func (h *regionJobRetryHeap) Swap(i, j int) {
+	v := *h
+	v[i], v[j] = v[j], v[i]
 }
 
 func (h *regionJobRetryHeap) Push(x any) {
