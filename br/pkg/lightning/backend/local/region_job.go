@@ -111,13 +111,9 @@ type regionJob struct {
 
 type tikvWriteResult struct {
 	sstMeta           []*sst.SSTMeta
-	rangeStats        rangeStats
+	count             int64
+	totalBytes        int64
 	remainingStartKey []byte
-}
-
-type rangeStats struct {
-	count      int64
-	totalBytes int64
 }
 
 type injectedBehaviour struct {
@@ -146,11 +142,11 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 			return
 		}
 
-		j.engine.importedKVSize.Add(j.writeResult.rangeStats.totalBytes)
-		j.engine.importedKVCount.Add(j.writeResult.rangeStats.count)
+		j.engine.importedKVSize.Add(j.writeResult.totalBytes)
+		j.engine.importedKVCount.Add(j.writeResult.count)
 		if j.metrics != nil {
 			j.metrics.BytesCounter.WithLabelValues(metric.StateImported).
-				Add(float64(j.writeResult.rangeStats.totalBytes))
+				Add(float64(j.writeResult.totalBytes))
 		}
 	case needRescan:
 		j.region = nil
@@ -186,7 +182,6 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	writeLimiter := local.writeLimiter
 
 	begin := time.Now()
-	stats := rangeStats{}
 	region := j.region.Region
 
 	firstKey, lastKey, err := j.engine.getFirstAndLastKey(j.keyRange.start, j.keyRange.end)
@@ -375,11 +370,10 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		zap.Int64("buf_size", bytesBuf.TotalSize()),
 		zap.Stringer("takeTime", time.Since(begin)))
 
-	stats.count = totalCount
-	stats.totalBytes = totalSize
 	j.writeResult = &tikvWriteResult{
 		sstMeta:           leaderPeerMetas,
-		rangeStats:        stats,
+		count:             totalCount,
+		totalBytes:        totalSize,
 		remainingStartKey: remainingStartKey,
 	}
 	j.convertStageTo(wrote)
