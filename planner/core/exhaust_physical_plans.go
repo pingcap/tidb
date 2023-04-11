@@ -2129,13 +2129,15 @@ func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, fl
 	return row1 + row2, 0, false
 }
 
+var BroadCastRatio = 5.0
+
 func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
 	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	if hasSizeBC && hasSizeHash {
-		return szBC <= szHash
+		return szBC*BroadCastRatio <= szHash
 	}
-	return rowBC <= rowHash
+	return rowBC*BroadCastRatio <= rowHash
 }
 
 func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) bool {
@@ -2143,9 +2145,9 @@ func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) b
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 
 	if hasSizeBC && hasSizeHash {
-		return szBC <= szHash
+		return szBC*BroadCastRatio <= szHash
 	}
-	return rowBC <= rowHash
+	return rowBC*BroadCastRatio <= rowHash
 }
 
 // If we can use mpp broadcast join, that's our first choice.
