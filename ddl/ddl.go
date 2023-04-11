@@ -39,6 +39,7 @@ import (
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -680,6 +681,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
 	}
+
+	scheduler.RegisterSchedulerConstructor("backfill",
+		func(taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(taskMeta, d)
+		})
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
@@ -1673,6 +1679,3 @@ func addHistoryDDLJob2Table(sess *sess.Session, job *model.Job, updateRawArgs bo
 		"insert_history")
 	return errors.Trace(err)
 }
-
-// GetDDL gets the DDL.
-var GetDDL func() DDL
