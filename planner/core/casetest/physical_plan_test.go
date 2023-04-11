@@ -683,6 +683,12 @@ func TestIssue37520(t *testing.T) {
 }
 
 func TestMPPHints(t *testing.T) {
+	ori := core.BroadCastJoinScaleFactor
+	core.BroadCastJoinScaleFactor = 1
+	defer func() {
+		core.BroadCastJoinScaleFactor = ori
+	}()
+
 	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
