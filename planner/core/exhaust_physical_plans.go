@@ -2130,7 +2130,7 @@ func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, fl
 }
 
 // The size of hash table when using broadcast join is bigger than the shuffle way, which means it may bring worse performance to hash join.
-// Set a relatively conservative value by default.
+// Set a relatively conservative value by default (based on tpch benchmark).
 var broadCastJoinScaleFactor = 3.0
 
 func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
