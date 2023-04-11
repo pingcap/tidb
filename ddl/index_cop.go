@@ -69,7 +69,7 @@ type chunkSender interface {
 type copReqSenderPool struct {
 	tasksCh       chan *reorgBackfillTask
 	chunkSender   chunkSender
-	checkpointMgr ingest.CheckpointManager
+	checkpointMgr *ingest.CheckpointManager
 
 	ctx    context.Context
 	copCtx *copContext
@@ -104,7 +104,7 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
-		if p.checkpointMgr.IsComplete(task.id, task.startKey, task.endKey) {
+		if p.checkpointMgr != nil && p.checkpointMgr.IsComplete(task.endKey) {
 			logutil.BgLogger().Info("[ddl-ingest] checkpoint detected, skip a cop-request task",
 				zap.Int("task ID", task.id),
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
@@ -128,7 +128,9 @@ func (c *copReqSender) run() {
 				panic("mock panic")
 			}
 		})
-		p.checkpointMgr.Register(task.id, task.startKey, task.endKey)
+		if p.checkpointMgr != nil {
+			p.checkpointMgr.Register(task.id, task.endKey)
+		}
 		var done bool
 		for !done {
 			srcChk := p.getChunk()
@@ -139,7 +141,9 @@ func (c *copReqSender) run() {
 				terror.Call(rs.Close)
 				return
 			}
-			p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
+			if p.checkpointMgr != nil {
+				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
+			}
 			p.chunkSender.AddTask(idxRecResult{id: task.id, chunk: srcChk, done: done})
 		}
 		terror.Call(rs.Close)
@@ -147,7 +151,7 @@ func (c *copReqSender) run() {
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
-	taskCh chan *reorgBackfillTask, checkpointMgr ingest.CheckpointManager) *copReqSenderPool {
+	taskCh chan *reorgBackfillTask, checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {

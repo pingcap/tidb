@@ -34,20 +34,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// CheckpointManager is an interface to manage checkpoints.
-type CheckpointManager interface {
-	IsComplete(taskID int, start, end kv.Key) bool
-	Status() (totalCount int, nextKey kv.Key)
-
-	Register(taskID int, start, end kv.Key)
-	UpdateTotal(taskID int, added int, last bool)
-	UpdateCurrent(taskID int, added int) error
-
-	Close()
-}
-
-// CentralizedCheckpointManager is a checkpoint manager implementation that used by non-distributed reorganization.
-type CentralizedCheckpointManager struct {
+// CheckpointManager is a checkpoint manager implementation that used by non-distributed reorganization.
+type CheckpointManager struct {
 	ctx       context.Context
 	flushCtrl FlushController
 	sessPool  *sess.Pool
@@ -94,11 +82,11 @@ type FlushController interface {
 	Flush(indexID int64) (bool, error)
 }
 
-// NewCentralizedCheckpointManager creates a new checkpoint manager.
-func NewCentralizedCheckpointManager(ctx context.Context, flushCtrl FlushController,
-	sessPool *sess.Pool, jobID, indexID int64, interval time.Duration) (*CentralizedCheckpointManager, error) {
+// NewCheckpointManager creates a new checkpoint manager.
+func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
+	sessPool *sess.Pool, jobID, indexID int64, interval time.Duration) (*CheckpointManager, error) {
 	instanceAddr := InitInstanceAddr()
-	cm := &CentralizedCheckpointManager{
+	cm := &CheckpointManager{
 		ctx:            ctx,
 		flushCtrl:      flushCtrl,
 		sessPool:       sessPool,
@@ -137,7 +125,7 @@ func InitInstanceAddr() string {
 
 // IsComplete checks if the task is complete.
 // This is called before the reader reads the data and decides whether to skip the current task.
-func (s *CentralizedCheckpointManager) IsComplete(_ int, _, end kv.Key) bool {
+func (s *CheckpointManager) IsComplete(end kv.Key) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.minKeySyncGlobal) > 0 && end.Cmp(s.minKeySyncGlobal) <= 0 {
@@ -147,14 +135,14 @@ func (s *CentralizedCheckpointManager) IsComplete(_ int, _, end kv.Key) bool {
 }
 
 // Status returns the status of the checkpoint.
-func (s *CentralizedCheckpointManager) Status() (int, kv.Key) {
+func (s *CheckpointManager) Status() (int, kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.localCnt, s.minKeySyncGlobal
 }
 
 // Register registers a new task.
-func (s *CentralizedCheckpointManager) Register(taskID int, _, end kv.Key) {
+func (s *CheckpointManager) Register(taskID int, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.checkpoints[taskID] = &TaskCheckpoint{
@@ -164,7 +152,7 @@ func (s *CentralizedCheckpointManager) Register(taskID int, _, end kv.Key) {
 
 // UpdateTotal updates the total keys of the task.
 // This is called by the reader after reading the data to update the number of rows contained in the current chunk.
-func (s *CentralizedCheckpointManager) UpdateTotal(taskID int, added int, last bool) {
+func (s *CheckpointManager) UpdateTotal(taskID int, added int, last bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := s.checkpoints[taskID]
@@ -174,7 +162,7 @@ func (s *CentralizedCheckpointManager) UpdateTotal(taskID int, added int, last b
 
 // UpdateCurrent updates the current keys of the task.
 // This is called by the writer after writing the local engine to update the current number of rows written.
-func (s *CentralizedCheckpointManager) UpdateCurrent(taskID int, added int) error {
+func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := s.checkpoints[taskID]
@@ -209,7 +197,7 @@ func (s *CentralizedCheckpointManager) UpdateCurrent(taskID int, added int) erro
 }
 
 // Close closes the checkpoint manager.
-func (s *CentralizedCheckpointManager) Close() {
+func (s *CheckpointManager) Close() {
 	s.updaterExitCh <- struct{}{}
 	s.updaterWg.Wait()
 	for id, cp := range s.checkpoints {
@@ -220,7 +208,7 @@ func (s *CentralizedCheckpointManager) Close() {
 }
 
 // Sync syncs the checkpoint.
-func (s *CentralizedCheckpointManager) Sync() {
+func (s *CheckpointManager) Sync() {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	s.updaterCh <- &wg
@@ -248,7 +236,7 @@ const (
 	JobCheckpointVersion1       = 1
 )
 
-func (s *CentralizedCheckpointManager) resumeCheckpoint() error {
+func (s *CheckpointManager) resumeCheckpoint() error {
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -294,7 +282,7 @@ func (s *CentralizedCheckpointManager) resumeCheckpoint() error {
 	})
 }
 
-func (s *CentralizedCheckpointManager) updateCheckpoint() error {
+func (s *CheckpointManager) updateCheckpoint() error {
 	s.mu.Lock()
 	currentLocalKey := s.minKeySyncLocal
 	currentGlobalKey := s.minKeySyncGlobal
@@ -347,7 +335,7 @@ func (s *CentralizedCheckpointManager) updateCheckpoint() error {
 	return err
 }
 
-func (s *CentralizedCheckpointManager) updateCheckpointLoop() {
+func (s *CheckpointManager) updateCheckpointLoop() {
 	ticker := time.NewTicker(s.updateInterval)
 	defer ticker.Stop()
 	for {

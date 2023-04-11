@@ -273,7 +273,7 @@ type ingestBackfillScheduler struct {
 	poolErr     chan error
 	backendCtx  *ingest.BackendContext
 
-	checkpointMgr ingest.CheckpointManager
+	checkpointMgr *ingest.CheckpointManager
 }
 
 func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
@@ -299,7 +299,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	b.backendCtx = bc
-	mgr, err := ingest.NewCentralizedCheckpointManager(b.ctx, bc, b.sessPool, job.ID,
+	mgr, err := ingest.NewCheckpointManager(b.ctx, bc, b.sessPool, job.ID,
 		b.reorgInfo.currElement.ID, checkpointUpdateInterval)
 	if err != nil {
 		return errors.Trace(err)
@@ -336,12 +336,12 @@ func (b *ingestBackfillScheduler) close(force bool) {
 	}
 	if b.checkpointMgr != nil {
 		b.checkpointMgr.Close()
-	}
-	// Get the latest status after all workers are closed so that the result is more accurate.
-	cnt, nextKey := b.checkpointMgr.Status()
-	b.resultCh <- &backfillResult{
-		totalCount: cnt,
-		nextKey:    nextKey,
+		// Get the latest status after all workers are closed so that the result is more accurate.
+		cnt, nextKey := b.checkpointMgr.Status()
+		b.resultCh <- &backfillResult{
+			totalCount: cnt,
+			nextKey:    nextKey,
+		}
 	}
 	close(b.resultCh)
 	if !force {
@@ -472,7 +472,7 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		w.resultCh <- result
 		return
 	}
-	count, err := w.WriteLocal(&rs)
+	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
 		result.err = err
 		w.resultCh <- result
@@ -482,14 +482,21 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task", zap.Int("id", rs.id))
 		return
 	}
-	cnt, nextKey := w.checkpointMgr.Status()
-	result.totalCount = cnt
-	result.nextKey = nextKey
-	w.metricCounter.Add(float64(cnt))
+	if w.checkpointMgr != nil {
+		cnt, nextKey := w.checkpointMgr.Status()
+		result.totalCount = cnt
+		result.nextKey = nextKey
+		result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
+		count = cnt
+	} else {
+		result.addedCount = count
+		result.scanCount = count
+		result.nextKey = nextKey
+	}
+	w.metricCounter.Add(float64(count))
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)
 	}
-	result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
 	w.resultCh <- result
 }
 
