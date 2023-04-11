@@ -491,10 +491,8 @@ func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildre
 		checker.hasSubQuery = true
 	case *ast.TableName:
 		t, err := checker.is.TableByName(node.Schema, node.Name)
-		if err != nil {
-			checker.cacheable = false
-			checker.unCacheableReason = "table not found"
-			return in, !checker.cacheable
+		if err != nil { // CTE in this case
+			return in, false
 		}
 		tStats := getStatsTable(checker.sctx, t.Meta(), t.Meta().ID)
 		checker.statsVersionHash += tableStatsVersionForPlanCache(tStats) // use '+' as the hash function for simplicity
