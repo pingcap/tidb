@@ -100,7 +100,12 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
 		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
 		ret := &PreprocessorReturn{InfoSchema: is}
-		err := Preprocess(ctx, sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
+		var err error
+		if isNonPrepared {
+			err = Preprocess(ctx, sctx, stmtAst.Stmt, WithPreprocessorReturn(ret))
+		} else {
+			err = Preprocess(ctx, sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
+		}
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}

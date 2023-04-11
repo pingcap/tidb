@@ -556,8 +556,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {
-			//	p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
-			//	return
+			p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
+			return
 		}
 	case *ast.ExplainStmt:
 		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
