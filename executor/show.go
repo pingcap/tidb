@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
-	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -2163,7 +2162,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 // fetchShowLoadDataJobs fills the result with the schema
 // {"Job_ID", "Create_Time", "Start_Time", "End_Time",
 // "Data_Source", "Target_Table", "Import_Mode", "Created_By",
-// "Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+// "Job_State", "Job_Status", "Source_File_Size", "Imported_rows",
 // "Result_Code", "Result_Message"}.
 func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.SQLExecutor)
@@ -2190,12 +2189,7 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 			e.result.AppendNull(11)
 		} else {
 			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
-			if info.ImportMode == importer.LogicalImportMode {
-				e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize.Load())))
-			} else {
-				// todo: for physical mode, we don't have the loaded file size, change to a meaningfully value later.
-				e.result.AppendString(11, units.HumanSize(float64(progress.EncodeFileSize.Load())))
-			}
+			e.result.AppendUint64(11, progress.LoadedRowCnt.Load())
 		}
 		terr := new(terror.Error)
 		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))

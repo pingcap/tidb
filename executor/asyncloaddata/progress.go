@@ -26,16 +26,12 @@ type LogicalImportProgress struct {
 	// is once-a-block and a block may generate multiple tasks that are
 	// concurrently executed, we can't know the actual loaded data size easily.
 	LoadedFileSize *atomic.Int64
-	// LoadedRowCnt is the number of rows that has been loaded.
-	LoadedRowCnt *atomic.Uint64
 }
 
 type PhysicalImportProgress struct {
 	// EncodeFileSize is the size of the file that has finished KV encoding in bytes.
 	// it should equal to SourceFileSize eventually.
 	EncodeFileSize *atomic.Int64
-	// ImportedDataSize is the size of the data that has been imported to TiKV in bytes.
-	ImportedDataSize *atomic.Int64
 }
 
 // Progress is the progress of the LOAD DATA task.
@@ -48,6 +44,11 @@ type Progress struct {
 	SourceFileSize          int64
 	*LogicalImportProgress  `json:",inline"`
 	*PhysicalImportProgress `json:",inline"`
+	// LoadedRowCnt is the number of rows that has been loaded.
+	// for physical mode, it's the number of rows that has been imported into TiKV.
+	// in SHOW LOAD JOB we call it Imported_Rows, to make it compatible with 7.0,
+	// the variable name is not changed.
+	LoadedRowCnt *atomic.Uint64
 }
 
 // NewProgress creates a new Progress.
@@ -58,18 +59,17 @@ func NewProgress(logicalImport bool) *Progress {
 	if logicalImport {
 		li = &LogicalImportProgress{
 			LoadedFileSize: atomic.NewInt64(0),
-			LoadedRowCnt:   atomic.NewUint64(0),
 		}
 	} else {
 		pi = &PhysicalImportProgress{
-			EncodeFileSize:   atomic.NewInt64(0),
-			ImportedDataSize: atomic.NewInt64(0),
+			EncodeFileSize: atomic.NewInt64(0),
 		}
 	}
 	return &Progress{
 		SourceFileSize:         -1,
 		LogicalImportProgress:  li,
 		PhysicalImportProgress: pi,
+		LoadedRowCnt:           atomic.NewUint64(0),
 	}
 }
 

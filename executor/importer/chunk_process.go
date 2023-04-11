@@ -21,7 +21,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -304,11 +303,6 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 		p.checksum.Add(kvBatch.indexChecksum)
 
 		kvBatch.reset()
-
-		failpoint.Inject("SyncAfterDeliver", func() {
-			TestSyncCh <- struct{}{}
-			<-TestSyncCh
-		})
 	}
 
 	return nil

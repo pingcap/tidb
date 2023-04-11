@@ -670,6 +670,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	dataFiles := []*mydump.SourceFileMeta{}
 	idx := strings.IndexByte(path, '*')
 	// simple path when the INFILE represent one file
+	sourceType := e.getSourceType()
 	if idx == -1 {
 		fileReader, err2 := s.Open(ctx, path)
 		if err2 != nil {
@@ -687,6 +688,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Path:        path,
 			FileSize:    size,
 			Compression: compressTp,
+			Type:        sourceType,
+			// todo: if we support compression for physical mode, should set it to size * compressRatio to better split
+			// engines
+			RealSize: size,
 		})
 		totalSize = size
 	} else {
@@ -706,6 +711,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Path:        remotePath,
 					FileSize:    size,
 					Compression: compressTp,
+					Type:        sourceType,
+					RealSize:    size,
 				})
 				totalSize += size
 				return nil
@@ -719,6 +726,18 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
+}
+
+func (e *LoadDataController) getSourceType() mydump.SourceType {
+	switch e.Format {
+	case LoadDataFormatParquet:
+		return mydump.SourceTypeParquet
+	case LoadDataFormatDelimitedData:
+		return mydump.SourceTypeCSV
+	default:
+		// LoadDataFormatSQLDump
+		return mydump.SourceTypeSQL
+	}
 }
 
 // GetLoadDataReaderInfos returns the LoadDataReaderInfo for each data file.

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -378,6 +379,11 @@ func (ti *tableImporter) importEngines(ctx context.Context) error {
 		if err2 = ti.importAndCleanup(ctx, dataClosedEngine); err2 != nil {
 			return err2
 		}
+
+		failpoint.Inject("SyncAfterImportDataEngine", func() {
+			TestSyncCh <- struct{}{}
+			<-TestSyncCh
+		})
 	}
 
 	closedIndexEngine, err := indexEngine.Close(ctx)
@@ -417,6 +423,11 @@ func (ti *tableImporter) preprocessEngine(ctx context.Context, indexEngine *back
 
 func (ti *tableImporter) importAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	if closedEngine.GetID() != common.IndexEngineID {
+		// todo: change to a finer-grain progress later.
+		kvCount := ti.backend.GetImportedKVCount(closedEngine.GetUUID())
+		ti.Progress.LoadedRowCnt.Add(uint64(kvCount))
+	}
 	// todo: if we need support checkpoint, engine should not be cleanup if import failed.
 	cleanupErr := closedEngine.Cleanup(ctx)
 	return multierr.Combine(importErr, cleanupErr)

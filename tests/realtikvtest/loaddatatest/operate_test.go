@@ -100,7 +100,7 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 		jobState:       "loading",
 		jobStatus:      "canceled",
 		sourceFileSize: row[10].(string),
-		loadedFileSize: row[11].(string),
+		importedRowCnt: row[11].(string),
 		resultCode:     "<nil>",
 		resultMessage:  "canceled by user",
 	}

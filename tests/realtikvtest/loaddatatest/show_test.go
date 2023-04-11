@@ -40,7 +40,7 @@ type expectedRecord struct {
 	jobState       string
 	jobStatus      string
 	sourceFileSize string
-	loadedFileSize string
+	importedRowCnt string
 	resultCode     string
 	resultMessage  string
 }
@@ -54,7 +54,7 @@ func (r *expectedRecord) checkIgnoreTimes(t *testing.T, row []interface{}) {
 	require.Equal(t, r.jobState, row[8])
 	require.Equal(t, r.jobStatus, row[9])
 	require.Equal(t, r.sourceFileSize, row[10])
-	require.Equal(t, r.loadedFileSize, row[11])
+	require.Equal(t, r.importedRowCnt, row[11])
 	require.Equal(t, r.resultCode, row[12])
 	require.Equal(t, r.resultMessage, row[13])
 }
@@ -120,7 +120,7 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 		jobState:       "loading",
 		jobStatus:      "finished",
 		sourceFileSize: "3B",
-		loadedFileSize: "3B",
+		importedRowCnt: "3B",
 		resultCode:     "0",
 		resultMessage:  resultMessage,
 	}
@@ -156,7 +156,7 @@ func (s *mockGCSSuite) TestLogicalSimpleShowLoadDataJobs() {
 		jobState:       "loading",
 		jobStatus:      "failed",
 		sourceFileSize: "<nil>",
-		loadedFileSize: "<nil>",
+		importedRowCnt: "<nil>",
 		resultCode:     "1062",
 		resultMessage:  "Duplicate entry '1' for key 't.PRIMARY'",
 	}
@@ -184,7 +184,7 @@ func (s *mockGCSSuite) TestLogicalSimpleShowLoadDataJobs() {
 		jobState:       "loading",
 		jobStatus:      "finished",
 		sourceFileSize: "3B",
-		loadedFileSize: "3B",
+		importedRowCnt: "3B",
 		resultCode:     "0",
 		resultMessage:  "Records: 2  Deleted: 0  Skipped: 2  Warnings: 2",
 	}
@@ -250,13 +250,13 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 
 	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
 	withOptions := "WITH DETACHED, batch_size=1"
-	progressAfterFirstBatch := `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
-	progressAfterAll := `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
+	progressAfterFirstBatch := `{"SourceFileSize":2,"LoadedFileSize":1,"ImportedRowCnt":1}`
+	progressAfterAll := `{"SourceFileSize":2,"LoadedFileSize":2,"ImportedRowCnt":2}`
 	if importMode == importer.PhysicalImportMode {
 		withOptions = "WITH DETACHED, import_mode='PHYSICAL'"
 		resultMessage = ""
-		progressAfterFirstBatch = `{"SourceFileSize":2,"EncodeFileSize":1,"ImportedDataSize":0}`
-		progressAfterAll = `{"SourceFileSize":2,"EncodeFileSize":2,"ImportedDataSize":0}`
+		progressAfterFirstBatch = `{"SourceFileSize":2,"EncodeFileSize":1,"ImportedRowCnt":1}`
+		progressAfterAll = `{"SourceFileSize":2,"EncodeFileSize":2,"ImportedRowCnt":2}`
 	}
 
 	var wg sync.WaitGroup
@@ -272,11 +272,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 		// wait for the load data job to be created
 		<-asyncloaddata.TestSyncCh
 
-		jobInfos, err := asyncloaddata.GetAllJobInfo(ctx, tk2.Session(), userStr)
-		require.NoError(s.T(), err)
-		require.Len(s.T(), jobInfos, 1)
-		info := jobInfos[0]
-		id := info.JobID
+		id := asyncloaddata.TestLastLoadDataJobID.Load()
 		expected := &asyncloaddata.JobInfo{
 			JobID:         id,
 			User:          "test-load@test-host",
@@ -287,13 +283,9 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 			Progress:      "",
 			Status:        asyncloaddata.JobPending,
 			StatusMessage: "",
-			CreateTime:    info.CreateTime,
-			StartTime:     info.StartTime,
-			EndTime:       info.EndTime,
 		}
-		require.Equal(s.T(), expected, info)
 
-		rows := tk2.MustQuery("SHOW LOAD DATA JOBS;").Rows()
+		rows := tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row := rows[0]
 		r := expectedRecord{
@@ -305,7 +297,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 			jobState:       "loading",
 			jobStatus:      "pending",
 			sourceFileSize: "<nil>",
-			loadedFileSize: "<nil>",
+			importedRowCnt: "<nil>",
 			resultCode:     "<nil>",
 			resultMessage:  "",
 		}
@@ -323,9 +315,11 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 			User: userStr,
 		}
 
-		info, err = job.GetJobInfo(ctx)
+		info, err := job.GetJobInfo(ctx)
 		require.NoError(s.T(), err)
+		expected.CreateTime = info.CreateTime
 		expected.StartTime = info.StartTime
+		expected.EndTime = info.EndTime
 		expected.Status = asyncloaddata.JobRunning
 		require.Equal(s.T(), expected, info)
 
@@ -358,7 +352,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
 		r.sourceFileSize = "2B"
-		r.loadedFileSize = "1B"
+		r.importedRowCnt = "1"
 		r.checkIgnoreTimes(s.T(), row)
 
 		// resume the load data job
@@ -379,7 +373,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
-		r.loadedFileSize = "2B"
+		r.importedRowCnt = "2"
 		r.checkIgnoreTimes(s.T(), row)
 
 		// resume the load data job
@@ -425,18 +419,19 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	s.T().Cleanup(func() {
 		config.BufferSizeScale = backup3
 	})
-	backup4 := importer.MinDeliverRowCnt
-	importer.MinDeliverRowCnt = 1
+	backup4 := config.DefaultBatchSize
+	config.DefaultBatchSize = 1
 	s.T().Cleanup(func() {
-		importer.MinDeliverRowCnt = backup4
+		config.DefaultBatchSize = backup4
 	})
 
+	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SaveLastLoadDataJobID", `return`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterCreateLoadDataJob", `return`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterStartJob", `return`)
 	if importMode == importer.LogicalImportMode {
 		s.enableFailpoint("github.com/pingcap/tidb/executor/SyncAfterCommitOneTask", `return`)
 	} else {
-		s.enableFailpoint("github.com/pingcap/tidb/executor/importer/SyncAfterDeliver", `return`)
+		s.enableFailpoint("github.com/pingcap/tidb/executor/importer/SyncAfterImportDataEngine", `return`)
 	}
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t*.tsv?endpoint=%s'
 		INTO TABLE load_tsv.t %s;`, gcsEndpoint, withOptions)
