@@ -92,7 +92,7 @@ func TestUpgradeVersion84(t *testing.T) {
 
 func TestUpgradeVersion66(t *testing.T) {
 	ctx := context.Background()
-	store, dom := session.CreateStoreAndBootstrap(t)
+	store, dom := internal.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	seV65 := internal.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
@@ -141,7 +141,7 @@ func TestUpgradeVersion74(t *testing.T) {
 
 	for _, ca := range cases {
 		func() {
-			store, dom := session.CreateStoreAndBootstrap(t)
+			store, dom := internal.CreateStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
 
 			seV73 := internal.CreateSessionAndSetID(t, store)
@@ -180,7 +180,7 @@ func TestUpgradeVersion74(t *testing.T) {
 func TestUpgradeVersion75(t *testing.T) {
 	ctx := context.Background()
 
-	store, dom := session.CreateStoreAndBootstrap(t)
+	store, dom := internal.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	seV74 := internal.CreateSessionAndSetID(t, store)

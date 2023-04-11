@@ -13,6 +13,7 @@ import (
 	atomicutil "go.uber.org/atomic"
 )
 
+// CreateStoreAndBootstrap creates a mock store and bootstrap it.
 func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	runtime.GOMAXPROCS(mathutil.Min(8, runtime.GOMAXPROCS(0)))
 	store, err := mockstore.NewMockStore()

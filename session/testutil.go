@@ -18,10 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -34,15 +31,6 @@ var (
 	// UnsetStoreBootstrapped is used in test
 	UnsetStoreBootstrapped = unsetStoreBootstrapped
 )
-
-// CreateStoreAndBootstrap creates a mock store and bootstrap it.
-func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	dom, err := BootstrapSession(store)
-	require.NoError(t, err)
-	return store, dom
-}
 
 // MustExec executes a sql statement and asserts no error occurs.
 func MustExec(t *testing.T, se Session, sql string, args ...interface{}) {
