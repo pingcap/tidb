@@ -98,7 +98,9 @@ func TestV2AndSmallTables(t *testing.T) {
 	items, err := exec.Read(ctx)
 	req.NoError(err)
 
-	t.Fatalf("meow? %v", len(items.Tables))
+    req.Len(items.Tables, 500)
+    req.EqualValues(items.ClusterID, 7211076907329653533)
+    req.EqualValues(items.EndVersion, 440691270926467074)
 }
 
 func cloneFS(f fs.FS, base string, target string) error {
