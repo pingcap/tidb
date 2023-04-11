@@ -43,27 +43,25 @@ import (
 type jobStageTp string
 
 /*
-	       +
-	       v
-	+------+------+
-
-+->+regionScanned+<------+
-|  +------+------+       |
-|         |              |
-|         |              |
-|         v              |
-|      +--+--+     +-----+----+
-|      |wrote+---->+needRescan|
-|      +--+--+     +-----+----+
-|         |              ^
-|         |              |
-|         v              |
-|     +---+----+         |
-+-----+ingested+---------+
-
-	+---+----+
-	    |
-	    v
+	          +
+	          v
+	   +------+------+
+	+->+regionScanned+<------+
+	|  +------+------+       |
+	|         |              |
+	|         |              |
+	|         v              |
+	|      +--+--+     +-----+----+
+	|      |wrote+---->+needRescan|
+	|      +--+--+     +-----+----+
+	|         |              ^
+	|         |              |
+	|         v              |
+	|     +---+----+         |
+	+-----+ingested+---------+
+	      +---+----+
+	          |
+	          v
 
 above diagram shows the state transition of a region job, here are some special
 cases:
@@ -317,7 +315,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 		if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
 			// we will shrink the key range of this job to real written range
-			if iter.Valid() && iter.Next() {
+			if iter.Next() {
 				remainingStartKey = append([]byte{}, iter.Key()...)
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
