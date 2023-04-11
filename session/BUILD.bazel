@@ -61,7 +61,6 @@ go_library(
         "//store/driver/error",
         "//store/driver/txn",
         "//store/helper",
-        "//store/mockstore",
         "//table",
         "//table/tables",
         "//table/temptable",

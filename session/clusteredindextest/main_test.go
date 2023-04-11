@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
@@ -36,7 +38,7 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
 
-	SetSchemaLease(20 * time.Millisecond)
+	session.SetSchemaLease(20 * time.Millisecond)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
