@@ -182,6 +182,7 @@ func TestNonPreparedPlanCacheParamTypeInfer(t *testing.T) {
 
 	tk.MustExec(`create table t1 (s1 char(20) character set latin1)`)
 	tk.MustExec(`insert into t1 values (date_format('2004-02-02','%M'))`) // no error
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows(`February`))
 }
 
 func TestNonPreparedPlanCacheNullValue(t *testing.T) {
