@@ -2374,12 +2374,70 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 	}
 }
 
+// TODO: Either skip this, move it to a separate directory for big tests
+// or see if there are ways to speed this up :)
+// Leaving the test here, for reference and completeness testing
+func TestPartitionByExtensivePart(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "PartitionByExtensive"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + schemaName)
+
+	tBase := `(a varchar(255) collate utf8mb4_unicode_ci, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e))`
+	t2Str := `create table t2 ` + tBase
+	tStr := `create table t ` + tBase
+
+	rows := 10000
+	pkInserts := 200
+	pkUpdates := 200
+	pkDeletes := 100 // Enough to delete half of what is inserted?
+	tStart := []string{
+		// Non partitioned
+		tStr,
+		// RANGE COLUMNS
+		tStr + ` partition by range columns (a) (partition pNull values less than (""), partition pM values less than ("M"), partition pLast values less than (maxvalue))`,
+		// KEY
+		tStr + ` partition by key(a) partitions 5`,
+	}
+	tAlter := []string{
+		// RANGE COLUMNS
+		`alter table t partition by range columns (a) (partition pH values less than ("H"), partition pLast values less than (MAXVALUE))`,
+		// RANGE COLUMNS
+		`alter table t partition by range columns (a) (partition pNull values less than (""), partition pG values less than ("G"), partition pR values less than ("R"), partition pLast values less than (maxvalue))`,
+		// KEY
+		`alter table t partition by key(a) partitions 7`,
+		`alter table t partition by key(a) partitions 3`,
+	}
+
+	for _, createSQL := range tStart {
+		for _, alterSQL := range tAlter {
+			tk.MustExec(createSQL)
+			tk.MustExec(t2Str)
+			checkDMLInAllStates(t, tk, tk2, schemaName, alterSQL, rows, pkInserts, pkUpdates, pkDeletes)
+			tk.MustExec(`drop table t`)
+			tk.MustExec(`drop table t2`)
+		}
+	}
+	for _, createSQL := range tStart[1:] {
+		tk.MustExec(createSQL)
+		tk.MustExec(t2Str)
+		checkDMLInAllStates(t, tk, tk2, schemaName, "alter table t remove partitioning", rows, pkInserts, pkUpdates, pkDeletes)
+		tk.MustExec(`drop table t`)
+		tk.MustExec(`drop table t2`)
+	}
+}
+
 func TestReorgPartExtensivePart(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + schemaName)
 	// TODO: Handle different column types?
 	// TODO: Handle index for different column types / combinations as well?
 
@@ -2432,16 +2490,22 @@ func TestReorgPartExtensivePart(t *testing.T) {
 		"  KEY `e` (`e`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
+	rows := 10000
+	pkInserts := 200
+	pkUpdates := 200
+	pkDeletes := 100 // Enough to delete half of what is inserted?
+	alterStr := `alter table t reorganize partition pNull, pM, pLast into (partition pI values less than ("I"), partition pQ values less than ("q"), partition pLast values less than (MAXVALUE))`
+	checkDMLInAllStates(t, tk, tk2, schemaName, alterStr, rows, pkInserts, pkUpdates, pkDeletes)
+}
+
+// TODO: also have the getNewPK and getValues as paramenters
+func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alterStr string, rows, pkInserts, pkUpdates, pkDeletes int) {
 	dom := domain.GetDomain(tk.Session())
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
 	hook := newTestCallBack(t, dom)
 	dom.DDL().SetHook(hook)
 
-	rows := 10000
-	pkInserts := 200
-	pkUpdates := 200
-	pkDeletes := 100 // Enough to delete half of what is inserted?
 	pkMap := make(map[string]struct{}, rows)
 	pkArray := make([]string, 0, len(pkMap))
 	seed := rand.Int63()
@@ -2505,8 +2569,6 @@ func TestReorgPartExtensivePart(t *testing.T) {
 	//  update
 	//  delete
 	// Note: update the PK so it moves between different before and after partitions
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use " + schemaName)
 	tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
 	tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
 	currentState := model.StateNone
@@ -2956,7 +3018,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
 		}
 	}
-	tk.MustExec(`alter table t reorganize partition pNull, pM, pLast into (partition pI values less than ("I"), partition pQ values less than ("q"), partition pLast values less than (MAXVALUE))`)
+	tk.MustExec(alterStr)
 	require.NoError(t, hookErr)
 	tk.MustExec(`admin check table t`)
 	tk.MustExec(`admin check table t2`)
