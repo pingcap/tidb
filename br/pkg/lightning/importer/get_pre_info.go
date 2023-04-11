@@ -146,6 +146,7 @@ func NewTargetInfoGetterImpl(
 	return &TargetInfoGetterImpl{
 		cfg:     cfg,
 		tls:     tls,
+		db:      targetDB,
 		backend: backendTargetInfoGetter,
 	}, nil
 }
