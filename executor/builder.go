@@ -4384,11 +4384,11 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		kvRanges, err := buildKvRangesForIndexJoin(e.ctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memoryTracker, interruptSignal)
+		e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 		if err != nil {
 			return nil, err
 		}
-		err = e.open(ctx, kv.NewNonParitionedKeyRanges(kvRanges))
+		err = e.Open(ctx)
 		return e, err
 	}
 
