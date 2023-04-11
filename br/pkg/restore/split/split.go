@@ -121,84 +121,10 @@ func PaginateScanRegion(
 	return regions, err
 }
 
-<<<<<<< HEAD
-=======
-// CheckPartRegionConsistency only checks the continuity of regions and the first region consistency.
-func CheckPartRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
-	// current pd can't guarantee the consistency of returned regions
-	if len(regions) == 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endKey: %s",
-			redact.Key(startKey), redact.Key(endKey))
-	}
-
-	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
-			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
-	}
-
-	cur := regions[0]
-	for _, r := range regions[1:] {
-		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
-			return errors.Annotatef(berrors.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
-				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
-		}
-		cur = r
-	}
-
-	return nil
-}
-
-func ScanRegionsWithRetry(
-	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
-) ([]*RegionInfo, error) {
-	if len(endKey) != 0 && bytes.Compare(startKey, endKey) > 0 {
-		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
-			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
-	}
-
-	var regions []*RegionInfo
-	var err error
-	// we don't need to return multierr. since there only 3 times retry.
-	// in most case 3 times retry have the same error. so we just return the last error.
-	// actually we'd better remove all multierr in br/lightning.
-	// because it's not easy to check multierr equals normal error.
-	// see https://github.com/pingcap/tidb/issues/33419.
-	_ = utils.WithRetry(ctx, func() error {
-		regions, err = client.ScanRegions(ctx, startKey, endKey, limit)
-		if err != nil {
-			err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
-				redact.Key(startKey), err.Error())
-			return err
-		}
-
-		if err = CheckPartRegionConsistency(startKey, endKey, regions); err != nil {
-			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
-			return err
-		}
-
-		return nil
-	}, NewScanRegionBackoffer())
-
-	return regions, err
-}
-
->>>>>>> 2ea6d00a56e (br: wait more time to wait spitting the region (#42182))
 type scanRegionBackoffer struct {
 	stat utils.RetryState
 }
 
-<<<<<<< HEAD
-func newScanRegionBackoffer() utils.Backoffer {
-	attempt := ScanRegionAttemptTimes
-	// only use for test.
-	failpoint.Inject("scanRegionBackoffer", func(val failpoint.Value) {
-		if val.(bool) {
-			attempt = 3
-		}
-	})
-	return &scanRegionBackoffer{
-		attempt: attempt,
-=======
 // NewScanRegionBackoffer create a backoff to retry to scan regions.
 func NewScanRegionBackoffer() utils.Backoffer {
 	return &scanRegionBackoffer{
@@ -207,7 +133,6 @@ func NewScanRegionBackoffer() utils.Backoffer {
 			time.Millisecond*10,
 			time.Second*2,
 		),
->>>>>>> 2ea6d00a56e (br: wait more time to wait spitting the region (#42182))
 	}
 }
 

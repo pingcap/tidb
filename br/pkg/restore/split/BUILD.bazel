@@ -34,15 +34,12 @@ go_library(
         "@org_uber_go_zap//:zap",
     ],
 )
-<<<<<<< HEAD
-=======
 
 go_test(
     name = "split_test",
     timeout = "short",
     srcs = [
         "split_test.go",
-        "sum_sorted_test.go",
     ],
     flaky = True,
     deps = [
@@ -53,4 +50,3 @@ go_test(
         "@com_github_stretchr_testify//require",
     ],
 )
->>>>>>> 2ea6d00a56e (br: wait more time to wait spitting the region (#42182))
