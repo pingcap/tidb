@@ -606,7 +606,7 @@ func handleOneResult(result *backfillResult, scheduler backfillScheduler, consum
 	keeper.updateNextKey(result.taskID, result.nextKey)
 	if taskSeq%(scheduler.currentWorkerSize()*4) == 0 {
 		if !consumer.distribute {
-			err := consumer.dc.isReorgRunnable(reorgInfo.ID, false)
+			err := consumer.dc.isReorgRunnable(reorgInfo.ID, consumer.distribute)
 			if err != nil {
 				logutil.BgLogger().Warn("[ddl] backfill worker is not runnable", zap.Error(err))
 				scheduler.drainTasks() // Make it quit early.
