@@ -721,6 +721,7 @@ type regionJobRetryer struct {
 	q         regionJobRetryHeap
 	qMu       sync.Mutex
 	putBackCh chan<- *regionJob
+	toPutBack *regionJob
 	reload    chan struct{}
 	done      chan struct{}
 	closed    bool
@@ -738,8 +739,7 @@ func newRegionJobRetryer(putBackCh chan<- *regionJob) *regionJobRetryer {
 
 func (q *regionJobRetryer) run(ctx context.Context) {
 	var (
-		front     *regionJob
-		toPutBack *regionJob
+		front *regionJob
 	)
 
 	for {
@@ -752,14 +752,14 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 		q.qMu.Unlock()
 
 		switch {
-		case toPutBack != nil:
+		case q.toPutBack != nil:
 			select {
 			case <-ctx.Done():
 				return
 			case <-q.done:
 				return
-			case q.putBackCh <- toPutBack:
-				toPutBack = nil
+			case q.putBackCh <- q.toPutBack:
+				q.toPutBack = nil
 			}
 		case front != nil:
 			select {
@@ -770,7 +770,7 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 			case <-q.reload:
 			case <-time.After(time.Until(front.waitUntil)):
 				q.qMu.Lock()
-				toPutBack = heap.Pop(&q.q).(*regionJob)
+				q.toPutBack = heap.Pop(&q.q).(*regionJob)
 				q.qMu.Unlock()
 			}
 		default:
@@ -814,5 +814,9 @@ func (q *regionJobRetryer) close() int {
 	}
 	q.closed = true
 	close(q.done)
-	return len(q.q)
+	ret := len(q.q)
+	if q.toPutBack != nil {
+		ret++
+	}
+	return ret
 }

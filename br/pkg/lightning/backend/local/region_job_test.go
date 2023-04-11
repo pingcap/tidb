@@ -227,4 +227,29 @@ func TestRegionJobRetryer(t *testing.T) {
 	<-done
 	ok = retryer.push(job)
 	require.False(t, ok)
+
+	// test when putBackCh is blocked, retryer.close is correct
+
+	done = make(chan struct{})
+	putBackCh = make(chan *regionJob)
+	retryer = newRegionJobRetryer(putBackCh)
+	go func() {
+		retryer.run(context.Background())
+		close(done)
+	}()
+
+	job = &regionJob{
+		keyRange: Range{
+			start: []byte("123"),
+		},
+		waitUntil: time.Now().Add(-time.Second),
+	}
+	ok = retryer.push(job)
+	require.True(t, ok)
+	require.Eventually(t, func() bool {
+		return retryer.toPutBack != nil
+	}, 5*time.Second, 100*time.Millisecond)
+	remainCnt = retryer.close()
+	require.Equal(t, 1, remainCnt)
+	<-done
 }
