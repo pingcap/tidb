@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/version/build"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
 	router "github.com/pingcap/tidb/util/table-router"
@@ -214,7 +212,6 @@ func TestPreCheckFailed(t *testing.T) {
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	g := glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 
 	targetInfoGetter := &TargetInfoGetterImpl{
 		cfg: cfg,
@@ -233,7 +230,7 @@ func TestPreCheckFailed(t *testing.T) {
 		checkpointsDB:       cpdb,
 		metaMgrBuilder:      failMetaMgrBuilder{},
 		checkTemplate:       NewSimpleTemplate(),
-		tidbGlue:            g,
+		db:                  db,
 		errorMgr:            errormanager.New(nil, cfg, log.L()),
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: theCheckBuilder,

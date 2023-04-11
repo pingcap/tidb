@@ -24,11 +24,11 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
@@ -41,7 +41,6 @@ type tidbSuite struct {
 	db     *sql.DB
 	mockDB sqlmock.Sqlmock
 	timgr  *TiDBManager
-	tiGlue glue.Glue
 }
 
 func newTiDBSuite(t *testing.T) *tidbSuite {
@@ -55,7 +54,6 @@ func newTiDBSuite(t *testing.T) *tidbSuite {
 	require.NoError(t, err)
 
 	s.timgr = NewTiDBManagerWithDB(db, defaultSQLMode)
-	s.tiGlue = glue.NewExternalTiDBGlue(db, defaultSQLMode)
 	t.Cleanup(func() {
 		s.timgr.Close()
 		require.NoError(t, s.mockDB.ExpectationsWereMet())
@@ -64,11 +62,10 @@ func newTiDBSuite(t *testing.T) *tidbSuite {
 }
 
 func TestCreateTableIfNotExistsStmt(t *testing.T) {
-	s := newTiDBSuite(t)
-
 	dbName := "testdb"
+	p := parser.New()
 	createSQLIfNotExistsStmt := func(createTable, tableName string) []string {
-		res, err := createIfNotExistsStmt(s.tiGlue.GetParser(), createTable, dbName, tableName)
+		res, err := createIfNotExistsStmt(p, createTable, dbName, tableName)
 		require.NoError(t, err)
 		return res
 	}
@@ -421,7 +418,7 @@ func TestObtainNewCollationEnabled(t *testing.T) {
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 		WillReturnError(permErr)
-	_, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+	_, err := ObtainNewCollationEnabled(ctx, s.db)
 	require.Equal(t, permErr, errors.Cause(err))
 
 	// this error can retry
@@ -431,7 +428,7 @@ func TestObtainNewCollationEnabled(t *testing.T) {
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).RowError(0, sql.ErrNoRows))
-	version, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+	version, err := ObtainNewCollationEnabled(ctx, s.db)
 	require.NoError(t, err)
 	require.Equal(t, false, version)
 
@@ -444,7 +441,7 @@ func TestObtainNewCollationEnabled(t *testing.T) {
 			ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).AddRow(k))
 
-		version, err = ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		version, err = ObtainNewCollationEnabled(ctx, s.db)
 		require.NoError(t, err)
 		require.Equal(t, v, version)
 	}
