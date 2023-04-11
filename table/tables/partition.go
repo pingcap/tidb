@@ -175,7 +175,14 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		if len(pi.AddingDefinitions) > 0 {
 			origIdx := setIndexesState(ret, pi.DDLState)
 			defer unsetIndexesState(ret, origIdx)
-			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions)
+			if pi.NewTableID != 0 {
+				if pi.DDLType != model.PartitionTypeNone {
+					ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions)
+				}
+				// If PartitionTypeNone, no partition expression
+			} else {
+				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.AddingDefinitions)
+			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
