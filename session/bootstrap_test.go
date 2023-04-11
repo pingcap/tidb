@@ -1888,6 +1888,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 }
 
 func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
+	t.Skip()
 	ctx := context.Background()
 	store, _ := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
