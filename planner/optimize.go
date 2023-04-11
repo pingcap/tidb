@@ -107,7 +107,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		// Keep the original AST unchanged to avoid any side effect.
 		paramStmt, err := core.ParseParameterizedSQL(sctx, paramSQL)
 		if err != nil {
-			// This can happen rarely, cannot parse the parameterized SQL successfully, skip the plan cache in this case.
+			// This can happen rarely, cannot parse the parameterized(restored) SQL successfully, skip the plan cache in this case.
 			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			return nil, nil, false, nil
 		}
