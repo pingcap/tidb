@@ -438,7 +438,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	// Set columns' stats status.
 	for _, table := range cache.Values() {
 		for _, col := range table.Columns {
-			if col.StatsCollected() {
+			if col.StatsAvailable() {
 				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
 					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 				} else {

@@ -397,7 +397,7 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 		}
 		// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
 		colHist.Count = int64(colHist.TotalRowCount())
-		if colHist.StatsCollected() {
+		if colHist.StatsAvailable() {
 			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 		}
 		w.col = colHist

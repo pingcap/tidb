@@ -371,7 +371,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
-			if col.StatsCollected() {
+			if col.StatsAvailable() {
 				col.StatsLoadedStatus = NewStatsAllEvictedStatus()
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
@@ -410,7 +410,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
-			if col.StatsCollected() {
+			if col.StatsAvailable() {
 				col.StatsLoadedStatus = NewStatsFullLoadStatus()
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
