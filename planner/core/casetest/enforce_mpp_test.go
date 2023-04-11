@@ -500,7 +500,7 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 	defer func() {
 		core.BroadCastJoinScaleFactor = ori
 	}()
-	
+
 	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
