@@ -56,7 +56,7 @@ type PreprocessOpt func(*preprocessor)
 
 // InPrepare is a PreprocessOpt that indicates preprocess is executing under prepare statement.
 func InPrepare(p *preprocessor) {
-	//p.flag |= inPrepare
+	p.flag |= inPrepare
 }
 
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
@@ -555,10 +555,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
-		//if p.flag&inPrepare == 0 {
-		//	p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
-		//	return
-		//}
+		if p.flag&inPrepare == 0 {
+			//	p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
+			//	return
+		}
 	case *ast.ExplainStmt:
 		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
 			break
