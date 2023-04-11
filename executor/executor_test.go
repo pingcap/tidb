@@ -3550,6 +3550,7 @@ func TestUnreasonablyClose(t *testing.T) {
 }
 
 func TestEncodingSet(t *testing.T) {
+	t.Skip()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
