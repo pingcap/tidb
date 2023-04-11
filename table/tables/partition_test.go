@@ -2303,9 +2303,7 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 		"PARTITION BY KEY(col3) PARTITIONS 4")
 	tk.MustExec("INSERT INTO tkey16 values(1,1,1,1),(1,1,2,2),(3,3,3,3),(3,3,4,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,14,14)")
 
-	err := tk.ExecToErr("ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4")
-	require.Regexp(t, "alter table partition is unsupported", err)
-	err = tk.ExecToErr("ALTER TABLE tkey14 ADD PARTITION PARTITIONS 1")
+	err := tk.ExecToErr("ALTER TABLE tkey14 ADD PARTITION PARTITIONS 1")
 	require.Regexp(t, "Unsupported add partitions", err)
 	err = tk.ExecToErr("ALTER TABLE tkey14 DROP PARTITION p4")
 	require.Regexp(t, "DROP PARTITION can only be used on RANGE/LIST partitions", err)
@@ -2331,8 +2329,8 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 	require.Regexp(t, "Unsupported reorganize partition", err)
 	err = tk.ExecToErr("ALTER TABLE tkey16 REORGANIZE PARTITION p0 INTO (PARTITION p4)")
 	require.Regexp(t, "Unsupported reorganize partition", err)
-	err = tk.ExecToErr("ALTER TABLE tkey16 REMOVE PARTITIONING")
-	require.Regexp(t, "Unsupported remove partitioning", err)
+	tk.MustExec("ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4")
+	tk.MustExec("ALTER TABLE tkey16 REMOVE PARTITIONING")
 
 	tk.MustExec("CREATE TABLE tkey17 (" +
 		"id INT NOT NULL PRIMARY KEY," +
