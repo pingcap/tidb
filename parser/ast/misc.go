@@ -3136,6 +3136,7 @@ const (
 	BRIEOptionSendCreds
 	BRIEOptionCheckpoint
 	BRIEOptionStartTS
+	BRIEOptionEndTS
 	BRIEOptionUntilTS
 	// backup options
 	BRIEOptionBackupTimeAgo
@@ -3263,6 +3264,8 @@ func (kind BRIEOptionType) String() string {
 		return "RESTORED_TS"
 	case BRIEOptionStartTS:
 		return "START_TS"
+	case BRIEOptionEndTS:
+		return "END_TS"
 	case BRIEOptionUntilTS:
 		return "UNTIL_TS"
 	case BRIEOptionGCTTL:
@@ -3289,13 +3292,14 @@ type BRIEOption struct {
 	Tp        BRIEOptionType
 	StrValue  string
 	UintValue uint64
+	IntValue  int64
 }
 
 func (opt *BRIEOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(opt.Tp.String())
 	ctx.WritePlain(" = ")
 	switch opt.Tp {
-	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL:
+	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionEndTS, BRIEOptionUntilTS:
 		ctx.WriteString(opt.StrValue)
 	case BRIEOptionBackupTimeAgo:
 		ctx.WritePlainf("%d ", opt.UintValue/1000)
@@ -3314,6 +3318,8 @@ func (opt *BRIEOption) Restore(ctx *format.RestoreCtx) error {
 	case BRIEOptionChecksum, BRIEOptionAnalyze:
 		// BACKUP/RESTORE doesn't support OPTIONAL value for now, should warn at executor
 		ctx.WriteKeyWord(BRIEOptionLevel(opt.UintValue).String())
+	case BRIEOptionGCTTL:
+		ctx.WritePlainf("%d", opt.IntValue)
 	default:
 		ctx.WritePlainf("%d", opt.UintValue)
 	}

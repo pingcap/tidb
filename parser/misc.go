@@ -330,6 +330,7 @@ var tokenMap = map[string]int{
 	"ENCLOSED":                 enclosed,
 	"ENCRYPTION":               encryption,
 	"END":                      end,
+	"END_TS":                   endTS,
 	"ENFORCED":                 enforced,
 	"ENGINE":                   engine,
 	"ENGINES":                  engines,

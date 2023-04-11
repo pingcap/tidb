@@ -670,6 +670,7 @@ import (
 	defined               "DEFINED"
 	dotType               "DOT"
 	dump                  "DUMP"
+	endTS                 "END_TS"
 	exact                 "EXACT"
 	exprPushdownBlacklist "EXPR_PUSHDOWN_BLACKLIST"
 	extract               "EXTRACT"
@@ -5472,6 +5473,13 @@ BRIEOption:
 			StrValue: $3,
 		}
 	}
+|	"END_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionEndTS,
+			StrValue: $3,
+		}
+	}
 |	"UNTIL_TS" EqOpt stringLit
 	{
 		$$ = &ast.BRIEOption{
@@ -5479,11 +5487,11 @@ BRIEOption:
 			StrValue: $3,
 		}
 	}
-|	"GC_TTL" EqOpt stringLit
+|	"GC_TTL" EqOpt Int64Num
 	{
 		$$ = &ast.BRIEOption{
 			Tp:       ast.BRIEOptionGCTTL,
-			StrValue: $3,
+			IntValue: $3.(int64),
 		}
 	}
 
@@ -6706,6 +6714,7 @@ NotKeywordToken:
 |	"BR"
 |	"GC_TTL"
 |	"METADATA"
+|	"END_TS"
 |	"START_TS"
 |	"UNTIL_TS"
 |	"RESTORED_TS"
