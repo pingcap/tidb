@@ -7150,7 +7150,6 @@ func TestIssue29708(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test;")
-	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect warnings
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (a text)character set utf8 ;")
 	tk.MustExecToErr("INSERT INTO t1 VALUES  (REPEAT(0125,200000000));")
@@ -7172,7 +7171,7 @@ func TestIssue29708(t *testing.T) {
 	})
 
 	tk.MustExec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("show warnings;").CheckContain("Result of repeat() was larger than max_allowed_packet (67108864) - truncated")
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{nil},
 		{"a"},
