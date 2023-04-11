@@ -19,10 +19,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
@@ -61,7 +59,7 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 			return nil, err
 		}
 
-		bcCtx := newBackendContext(ctx, jobID, &bd, cfg.Lightning, defaultImportantVariables, m.memRoot, m.diskRoot)
+		bcCtx := newBackendContext(ctx, jobID, bd, cfg.Lightning, defaultImportantVariables, m.memRoot, m.diskRoot)
 		m.Store(jobID, bcCtx)
 
 		m.memRoot.Consume(StructSizeBackendCtx)
@@ -74,26 +72,22 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 	return bc, nil
 }
 
-func createLocalBackend(ctx context.Context, cfg *Config) (backend.Backend, error) {
+func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error) {
 	tls, err := cfg.Lightning.ToTLS()
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Error(err))
-		return backend.Backend{}, err
+		return nil, err
 	}
 
 	logutil.BgLogger().Info("[ddl-ingest] create local backend for adding index", zap.String("keyspaceName", cfg.KeyspaceName))
-	db, err := glue.GetDB()
-	if err != nil {
-		return backend.Backend{}, err
-	}
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
-		DB: db,
+		DB: nil,
 	}
 	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName)
-	return local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter)
+	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 
-func newBackendContext(ctx context.Context, jobID int64, be *backend.Backend,
+func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
 	cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot) *BackendContext {
 	bc := &BackendContext{
 		jobID:    jobID,
@@ -129,7 +123,7 @@ func (m *backendCtxManager) TotalDiskUsage() uint64 {
 	for _, key := range m.Keys() {
 		bc, exists := m.Load(key)
 		if exists {
-			_, _, bcDiskUsed, _ := bc.backend.CheckDiskQuota(math.MaxInt64)
+			_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
 			totalDiskUsed += uint64(bcDiskUsed)
 		}
 	}

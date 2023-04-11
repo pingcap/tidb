@@ -51,7 +51,7 @@ type MinimalTaskMeta struct {
 	Format Format
 	Dir    string
 	Chunk  Chunk
-	Writer *backend.LocalEngineWriter
+	Writer backend.EngineWriter
 }
 
 // IsMinimalTask implements the MinimalTask interface.

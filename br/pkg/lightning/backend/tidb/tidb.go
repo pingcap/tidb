@@ -256,6 +256,8 @@ type tidbBackend struct {
 	errorMgr    *errormanager.ErrorManager
 }
 
+var _ backend.Backend = (*tidbBackend)(nil)
+
 // NewTiDBBackend creates a new TiDB backend using the given database.
 //
 // The backend does not take ownership of `db`. Caller should close `db`
@@ -267,11 +269,11 @@ func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMg
 		log.FromContext(ctx).Warn("unsupported action on duplicate, overwrite with `replace`")
 		onDuplicate = config.ReplaceOnDup
 	}
-	return backend.MakeBackend(&tidbBackend{
+	return &tidbBackend{
 		db:          db,
 		onDuplicate: onDuplicate,
 		errorMgr:    errorMgr,
-	})
+	}
 }
 
 func (row tidbRow) Size() uint64 {
@@ -600,10 +602,6 @@ rowLoop:
 	return nil
 }
 
-func (*tidbBackend) TotalMemoryConsume() int64 {
-	return 0
-}
-
 type stmtTask struct {
 	rows tidbRows
 	stmt string
@@ -724,11 +722,6 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 	return nil
 }
 
-// EngineFileSizes returns the size of each engine file.
-func (*tidbBackend) EngineFileSizes() []backend.EngineFileSize {
-	return nil
-}
-
 // FlushEngine flushes the data in the engine to the underlying storage.
 func (*tidbBackend) FlushEngine(context.Context, uuid.UUID) error {
 	return nil
@@ -747,15 +740,16 @@ func (*tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
 // LocalWriter returns a writer that writes data to local storage.
 func (be *tidbBackend) LocalWriter(
 	_ context.Context,
-	_ *backend.LocalWriterConfig,
+	cfg *backend.LocalWriterConfig,
 	_ uuid.UUID,
 ) (backend.EngineWriter, error) {
-	return &Writer{be: be}, nil
+	return &Writer{be: be, tableName: cfg.TableName}, nil
 }
 
 // Writer is a writer that writes data to local storage.
 type Writer struct {
-	be *tidbBackend
+	be        *tidbBackend
+	tableName string
 }
 
 // Close implements the EngineWriter interface.
@@ -764,8 +758,8 @@ func (*Writer) Close(_ context.Context) (backend.ChunkFlushStatus, error) {
 }
 
 // AppendRows implements the EngineWriter interface.
-func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
-	return w.be.WriteRows(ctx, tableName, columnNames, rows)
+func (w *Writer) AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
+	return w.be.WriteRows(ctx, w.tableName, columnNames, rows)
 }
 
 // IsSynced implements the EngineWriter interface.
