@@ -208,12 +208,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.NewGlobalConnID(0, true),
 		internalSessions:  make(map[interface{}]struct{}, 100),
-<<<<<<< HEAD
-=======
-		health:            uatomic.NewBool(true),
-		inShutdownMode:    uatomic.NewBool(false),
 		printMDLLogTime:   time.Now(),
->>>>>>> 856648ace6a (domain, session: print more MDL log and make MDL more stable (#42891))
 	}
 	s.capability = defaultCapability
 	setTxnScope()
