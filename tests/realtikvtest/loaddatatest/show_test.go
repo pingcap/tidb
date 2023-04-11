@@ -250,13 +250,13 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 
 	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
 	withOptions := "WITH DETACHED, batch_size=1"
-	progressAfterFirstBatch := `{"SourceFileSize":2,"LoadedFileSize":1,"ImportedRowCnt":1}`
-	progressAfterAll := `{"SourceFileSize":2,"LoadedFileSize":2,"ImportedRowCnt":2}`
+	progressAfterFirstBatch := `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
+	progressAfterAll := `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
 	if importMode == importer.PhysicalImportMode {
 		withOptions = "WITH DETACHED, import_mode='PHYSICAL'"
 		resultMessage = ""
-		progressAfterFirstBatch = `{"SourceFileSize":2,"EncodeFileSize":1,"ImportedRowCnt":1}`
-		progressAfterAll = `{"SourceFileSize":2,"EncodeFileSize":2,"ImportedRowCnt":2}`
+		progressAfterFirstBatch = `{"SourceFileSize":2,"EncodeFileSize":1,"LoadedRowCnt":1}`
+		progressAfterAll = `{"SourceFileSize":2,"EncodeFileSize":2,"LoadedRowCnt":2}`
 	}
 
 	var wg sync.WaitGroup
