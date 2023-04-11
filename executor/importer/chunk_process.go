@@ -114,8 +114,8 @@ type chunkProcessor struct {
 	chunkInfo   *checkpoints.ChunkCheckpoint
 	logger      *zap.Logger
 	kvsCh       chan []deliveredRow
-	dataWriter  *backend.LocalEngineWriter
-	indexWriter *backend.LocalEngineWriter
+	dataWriter  backend.EngineWriter
+	indexWriter backend.EngineWriter
 
 	checksum verify.KVChecksum
 	encoder  kvEncoder
@@ -258,13 +258,13 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 
 		err := func() error {
 			// todo: disk quota related code from lightning, removed temporary
-			if err := p.dataWriter.WriteRows(ctx, nil, &kvBatch.dataKVs); err != nil {
+			if err := p.dataWriter.AppendRows(ctx, nil, &kvBatch.dataKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to data engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
 			}
-			if err := p.indexWriter.WriteRows(ctx, nil, &kvBatch.indexKVs); err != nil {
+			if err := p.indexWriter.AppendRows(ctx, nil, &kvBatch.indexKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to index engine failed", log.ShortError(err))
 				}

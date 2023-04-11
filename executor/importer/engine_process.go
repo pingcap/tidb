@@ -32,7 +32,7 @@ import (
 type engineProcessor struct {
 	engineID      int32
 	fullTableName string
-	backend       backend.Backend
+	backend       *local.Backend
 	tableInfo     *checkpoints.TidbTableInfo
 	logger        *zap.Logger
 	tableImporter *tableImporter
@@ -53,7 +53,8 @@ func (ep *engineProcessor) process(ctx context.Context) (*backend.ClosedEngine, 
 		dataEngineCfg.Local.CompactConcurrency = 4
 		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
 	}
-	dataEngine, err := ep.backend.OpenEngine(ctx, dataEngineCfg, ep.fullTableName, ep.engineID)
+	mgr := backend.MakeEngineManager(ep.backend)
+	dataEngine, err := mgr.OpenEngine(ctx, dataEngineCfg, ep.fullTableName, ep.engineID)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +90,7 @@ func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.Op
 		var (
 			parser                  mydump.Parser
 			encoder                 kvEncoder
-			dataWriter, indexWriter *backend.LocalEngineWriter
+			dataWriter, indexWriter backend.EngineWriter
 		)
 		closer.reset()
 		parser, err = ep.tableImporter.getParser(ctx, chunk)
