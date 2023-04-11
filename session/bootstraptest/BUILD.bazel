@@ -13,7 +13,6 @@ go_test(
         "//config",
         "//meta",
         "//session",  #keep
-        "//session/internal",
         "//testkit",  #keep
         "//testkit/testmain",
         "//testkit/testsetup",

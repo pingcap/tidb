@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/session/internal"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -37,14 +36,14 @@ import (
 
 // This test file have many problem.
 // 1. Please use testkit to create dom, session and store.
-// 2. Don't use internal.CreateStoreAndBootstrap and BootstrapSession together. It will cause data race.
+// 2. Don't use CreateStoreAndBootstrap and BootstrapSession together. It will cause data race.
 // Please do not add any test here. You can add test case at the bootstrap_update_test.go. After All problem fixed,
 // We will overwrite this file by update_test.go.
 func TestBootstrap(t *testing.T) {
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 	mustExec(t, se, "set global tidb_txn_mode=''")
 	mustExec(t, se, "use mysql")
 	r := mustExecToRecodeSet(t, se, "select * from user")
@@ -175,7 +174,7 @@ func TestBootstrapWithError(t *testing.T) {
 	require.NoError(t, err)
 	defer dom1.Close()
 
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 	mustExec(t, se, "USE mysql")
 	r := mustExecToRecodeSet(t, se, `select * from user`)
 	req := r.NewChunk(nil)
@@ -224,9 +223,9 @@ func TestBootstrapWithError(t *testing.T) {
 }
 
 func TestDDLTableCreateBackfillTable(t *testing.T) {
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -247,7 +246,7 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
 
-	se = internal.CreateSessionAndSetID(t, store)
+	se = CreateSessionAndSetID(t, store)
 	mustExec(t, se, "select * from mysql.tidb_background_subtask")
 	mustExec(t, se, "select * from mysql.tidb_background_subtask_history")
 	dom.Close()
@@ -257,9 +256,9 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 func TestUpgrade(t *testing.T) {
 	ctx := context.Background()
 
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 
 	mustExec(t, se, "USE mysql")
 
@@ -274,7 +273,7 @@ func TestUpgrade(t *testing.T) {
 	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
-	se1 := internal.CreateSessionAndSetID(t, store)
+	se1 := CreateSessionAndSetID(t, store)
 	ver, err := getBootstrapVersion(se1)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -308,7 +307,7 @@ func TestUpgrade(t *testing.T) {
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
 
-	se2 := internal.CreateSessionAndSetID(t, store)
+	se2 := CreateSessionAndSetID(t, store)
 	r = mustExecToRecodeSet(t, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
@@ -337,10 +336,10 @@ func TestUpgrade(t *testing.T) {
 func TestIssue17979_1(t *testing.T) {
 	ctx := context.Background()
 
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	// test issue 20900, upgrade from v3.0 to v4.0.11+
-	seV3 := internal.CreateSessionAndSetID(t, store)
+	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -358,7 +357,7 @@ func TestIssue17979_1(t *testing.T) {
 	dom.Close()
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
-	seV4 := internal.CreateSessionAndSetID(t, store)
+	seV4 := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -372,11 +371,11 @@ func TestIssue17979_1(t *testing.T) {
 func TestIssue17979_2(t *testing.T) {
 	ctx := context.Background()
 
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// test issue 20900, upgrade from v4.0.11 to v4.0.11
-	seV3 := internal.CreateSessionAndSetID(t, store)
+	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -395,7 +394,7 @@ func TestIssue17979_2(t *testing.T) {
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domV4.Close()
-	seV4 := internal.CreateSessionAndSetID(t, store)
+	seV4 := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -414,11 +413,11 @@ func TestIssue17979_2(t *testing.T) {
 func TestIssue20900_2(t *testing.T) {
 	ctx := context.Background()
 
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// test issue 20900, upgrade from v4.0.8 to v4.0.9+
-	seV3 := internal.CreateSessionAndSetID(t, store)
+	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -436,7 +435,7 @@ func TestIssue20900_2(t *testing.T) {
 	dom.Close()
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
-	seV4 := internal.CreateSessionAndSetID(t, store)
+	seV4 := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -453,9 +452,9 @@ func TestIssue20900_2(t *testing.T) {
 }
 
 func TestANSISQLMode(t *testing.T) {
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 
 	mustExec(t, se, "USE mysql")
 	mustExec(t, se, `set @@global.sql_mode="NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,ANSI"`)
@@ -474,7 +473,7 @@ func TestANSISQLMode(t *testing.T) {
 	dom1, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer dom1.Close()
-	se = internal.CreateSessionAndSetID(t, store)
+	se = CreateSessionAndSetID(t, store)
 	mustExec(t, se, "select @@global.sql_mode")
 	se.Close()
 }
@@ -488,7 +487,7 @@ func TestOldPasswordUpgrade(t *testing.T) {
 }
 
 func TestBootstrapInitExpensiveQueryHandle(t *testing.T) {
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -502,10 +501,10 @@ func TestBootstrapInitExpensiveQueryHandle(t *testing.T) {
 
 func TestStmtSummary(t *testing.T) {
 	ctx := context.Background()
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 
 	r := mustExecToRecodeSet(t, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
 	req := r.NewChunk(nil)
@@ -553,10 +552,10 @@ func TestUpdateBindInfo(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 
 	mustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
 	mustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
@@ -594,10 +593,10 @@ func TestUpdateBindInfo(t *testing.T) {
 
 func TestUpdateDuplicateBindInfo(t *testing.T) {
 	ctx := context.Background()
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 	mustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
 	mustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
 
@@ -640,10 +639,10 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 }
 
 func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	seV67 := internal.CreateSessionAndSetID(t, store)
+	seV67 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -663,7 +662,7 @@ func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 
 	domV68, err := BootstrapSession(store)
 	require.NoError(t, err)
-	seV68 := internal.CreateSessionAndSetID(t, store)
+	seV68 := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV68)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -690,7 +689,7 @@ func TestForIssue23387(t *testing.T) {
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
 	mustExec(t, se, "create user quatest")
 	dom.Close()
@@ -700,7 +699,7 @@ func TestForIssue23387(t *testing.T) {
 	require.NoError(t, err)
 	defer dom.Close()
 
-	se = internal.CreateSessionAndSetID(t, store)
+	se = CreateSessionAndSetID(t, store)
 	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
 	rs, err := exec(se, "show grants for quatest")
 	require.NoError(t, err)
@@ -711,10 +710,10 @@ func TestForIssue23387(t *testing.T) {
 }
 
 func TestReferencesPrivilegeOnColumn(t *testing.T) {
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 
 	defer func() {
 		mustExec(t, se, "drop user if exists issue28531")
@@ -730,12 +729,12 @@ func TestReferencesPrivilegeOnColumn(t *testing.T) {
 
 func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	ctx := context.Background()
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// Upgrade from 3.0.0 to 5.1+ or above.
 	ver300 := 33
-	seV3 := internal.CreateSessionAndSetID(t, store)
+	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -761,7 +760,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -786,7 +785,7 @@ func TestIndexMergeInNewCluster(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 
 	// In a new created cluster(above 5.4+), tidb_enable_index_merge is 1 by default.
 	mustExec(t, se, "use test;")
@@ -805,12 +804,12 @@ func TestIndexMergeInNewCluster(t *testing.T) {
 
 func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	ctx := context.Background()
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// Upgrade from 3.0.0 to 5.4+.
 	ver300 := 33
-	seV3 := internal.CreateSessionAndSetID(t, store)
+	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -836,7 +835,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -856,12 +855,12 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		func() {
 			ctx := context.Background()
-			store, dom := internal.CreateStoreAndBootstrap(t)
+			store, dom := CreateStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
 
 			// upgrade from 4.0.0 to 5.4+.
 			ver400 := 46
-			seV4 := internal.CreateSessionAndSetID(t, store)
+			seV4 := CreateSessionAndSetID(t, store)
 			txn, err := store.Begin()
 			require.NoError(t, err)
 			m := meta.NewMeta(txn)
@@ -898,7 +897,7 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 			domCurVer, err := BootstrapSession(store)
 			require.NoError(t, err)
 			defer domCurVer.Close()
-			seCurVer := internal.CreateSessionAndSetID(t, store)
+			seCurVer := CreateSessionAndSetID(t, store)
 			ver, err = getBootstrapVersion(seCurVer)
 			require.NoError(t, err)
 			require.Equal(t, currentBootstrapVersion, ver)
@@ -922,10 +921,10 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 
 func TestUpgradeToVer85(t *testing.T) {
 	ctx := context.Background()
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 	mustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
 	mustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
 
@@ -1002,7 +1001,7 @@ func testInitSystemVariable(t *testing.T) {
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer dom.Close()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 	ctx := context.Background()
 	r, err := exec(se, `SHOW VARIABLES LIKE 'query_cache_type'`)
 	require.NoError(t, err)
@@ -1090,7 +1089,7 @@ DROP USER root;
 	// Bootstrap with the first sql file
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 	ctx := context.Background()
 	// 'cloud_admin' has been created successfully
 	r, err := exec(se, `select user from mysql.user where user = 'cloud_admin'`)
@@ -1118,7 +1117,7 @@ DROP USER root;
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
-	se = internal.CreateSessionAndSetID(t, store)
+	se = CreateSessionAndSetID(t, store)
 	r, err = exec(se, `select user from mysql.user where user = 'cloud_admin'`)
 	require.NoError(t, err)
 	req = r.NewChunk(nil)
@@ -1181,7 +1180,7 @@ insert into test.t values ("abc"); -- invalid statement
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 	ctx := context.Background()
 	_, err = exec(se, `use test;`)
 	require.NoError(t, err)
@@ -1207,8 +1206,8 @@ insert into test.t values ("abc"); -- invalid statement
 }
 
 func TestTiDBEnablePagingVariable(t *testing.T) {
-	store, dom := internal.CreateStoreAndBootstrap(t)
-	se := internal.CreateSessionAndSetID(t, store)
+	store, dom := CreateStoreAndBootstrap(t)
+	se := CreateSessionAndSetID(t, store)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 
@@ -1236,12 +1235,12 @@ func TestTiDBEnablePagingVariable(t *testing.T) {
 
 func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	ctx := context.Background()
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// Upgrade from v6.3.0 to v6.4.0+.
 	ver94 := 94
-	seV630 := internal.CreateSessionAndSetID(t, store)
+	seV630 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -1267,7 +1266,7 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -1294,12 +1293,12 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 
 func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
 	ctx := context.Background()
-	store, dom := internal.CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// Upgrade from v6.6.0 to v7.0.0+.
 	ver134 := 134
-	seV660 := internal.CreateSessionAndSetID(t, store)
+	seV660 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -1325,7 +1324,7 @@ func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -1359,7 +1358,7 @@ func TestTiDBOptAdvancedJoinHintInNewCluster(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 
 	// In a new created cluster(above 7.0+), tidb_opt_advanced_join_hint is true by default.
 	mustExec(t, se, "use test;")
@@ -1385,7 +1384,7 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := internal.CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 
 	// In a new created cluster(above 6.5+), tidb_cost_model_version is 2 by default.
 	mustExec(t, se, "use test;")
@@ -1404,12 +1403,12 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 
 func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	ctx := context.Background()
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// Upgrade from 3.0.0 to 6.5+.
 	ver300 := 33
-	seV3 := internal.CreateSessionAndSetID(t, store)
+	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -1435,7 +1434,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -1455,12 +1454,12 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		func() {
 			ctx := context.Background()
-			store, dom := internal.CreateStoreAndBootstrap(t)
+			store, dom := CreateStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
 
 			// upgrade from 6.1 to 6.5+.
 			ver61 := 91
-			seV61 := internal.CreateSessionAndSetID(t, store)
+			seV61 := CreateSessionAndSetID(t, store)
 			txn, err := store.Begin()
 			require.NoError(t, err)
 			m := meta.NewMeta(txn)
@@ -1498,7 +1497,7 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 			domCurVer, err := BootstrapSession(store)
 			require.NoError(t, err)
 			defer domCurVer.Close()
-			seCurVer := internal.CreateSessionAndSetID(t, store)
+			seCurVer := CreateSessionAndSetID(t, store)
 			ver, err = getBootstrapVersion(seCurVer)
 			require.NoError(t, err)
 			require.Equal(t, currentBootstrapVersion, ver)
@@ -1523,12 +1522,12 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 
 func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	ctx := context.Background()
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.3 to 6.5+.
 	ver63 := version93
-	seV63 := internal.CreateSessionAndSetID(t, store)
+	seV63 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -1558,7 +1557,7 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -1576,12 +1575,12 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 
 func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	ctx := context.Background()
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.5.0 to 6.5.1+.
 	ver132 := version132
-	seV132 := internal.CreateSessionAndSetID(t, store)
+	seV132 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -1611,7 +1610,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -1629,12 +1628,12 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 
 func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	ctx := context.Background()
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.5.0 to 6.5.1+.
 	ver132 := version132
-	seV132 := internal.CreateSessionAndSetID(t, store)
+	seV132 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -1664,7 +1663,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -1682,12 +1681,12 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 
 func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 	ctx := context.Background()
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.3.0 to 6.6.0.
 	ver630 := version93
-	seV630 := internal.CreateSessionAndSetID(t, store)
+	seV630 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -1724,7 +1723,7 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seV660 := internal.CreateSessionAndSetID(t, store)
+	seV660 := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV660)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -1747,12 +1746,12 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		func() {
 			ctx := context.Background()
-			store, dom := internal.CreateStoreAndBootstrap(t)
+			store, dom := CreateStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
 
 			// upgrade from 6.5 to 6.6.
 			ver65 := version132
-			seV65 := internal.CreateSessionAndSetID(t, store)
+			seV65 := CreateSessionAndSetID(t, store)
 			txn, err := store.Begin()
 			require.NoError(t, err)
 			m := meta.NewMeta(txn)
@@ -1790,7 +1789,7 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 			domCurVer, err := BootstrapSession(store)
 			require.NoError(t, err)
 			defer domCurVer.Close()
-			seCurVer := internal.CreateSessionAndSetID(t, store)
+			seCurVer := CreateSessionAndSetID(t, store)
 			ver, err = getBootstrapVersion(seCurVer)
 			require.NoError(t, err)
 			require.Equal(t, currentBootstrapVersion, ver)
@@ -1814,13 +1813,13 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer136(t *testing.T) {
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
 
 	ver135 := version135
-	seV135 := internal.CreateSessionAndSetID(t, store)
+	seV135 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -1844,7 +1843,7 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer140(t *testing.T) {
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -1867,7 +1866,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	}
 
 	// drop column task_key and then upgrade
-	s := internal.CreateSessionAndSetID(t, store)
+	s := CreateSessionAndSetID(t, store)
 	mustExec(t, s, "alter table mysql.tidb_global_task drop column task_key")
 	resetTo139(s)
 	dom, err := BootstrapSession(store)
@@ -1878,7 +1877,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	dom.Close()
 
 	// upgrade with column task_key exists
-	s = internal.CreateSessionAndSetID(t, store)
+	s = CreateSessionAndSetID(t, store)
 	resetTo139(s)
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
@@ -1890,12 +1889,12 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 
 func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	ctx := context.Background()
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// bootstrap to 5.4
 	ver54 := version82
-	seV54 := internal.CreateSessionAndSetID(t, store)
+	seV54 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -1914,7 +1913,7 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -1941,12 +1940,12 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 
 func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	ctx := context.Background()
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.1 to 6.5+.
 	ver61 := version91
-	seV61 := internal.CreateSessionAndSetID(t, store)
+	seV61 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -1976,7 +1975,7 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -1994,11 +1993,11 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 
 func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 	ctx := context.Background()
-	store, _ := internal.CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	ver137 := version137
-	seV137 := internal.CreateSessionAndSetID(t, store)
+	seV137 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -2027,7 +2026,7 @@ func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
-	seCurVer := internal.CreateSessionAndSetID(t, store)
+	seCurVer := CreateSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
