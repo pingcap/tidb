@@ -65,8 +65,6 @@ func TestIndexAdvise(t *testing.T) {
 	require.Equal(t, uint64(4), ia.MaxIndexNum.PerTable)
 	require.Equal(t, uint64(5), ia.MaxIndexNum.PerDB)
 }
-<<<<<<< HEAD
-=======
 
 func TestIndexJoinProjPattern(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -101,10 +99,10 @@ and b.pnbrn_cnaps = a.pnbrn_cnaps
 and b.txn_accno = a.new_accno;`
 	rows := [][]interface{}{
 		{"Update_8"},
-		{"└─IndexJoin_14"},
-		{"  ├─TableReader_25(Build)"},
-		{"  │ └─Selection_24"},
-		{"  │   └─TableFullScan_23"},
+		{"└─IndexJoin_13"},
+		{"  ├─TableReader_23(Build)"},
+		{"  │ └─Selection_22"},
+		{"  │   └─TableFullScan_21"},
 		{"  └─IndexReader_12(Probe)"},
 		{"    └─Selection_11"},
 		{"      └─IndexRangeScan_10"},
@@ -182,15 +180,14 @@ txn_dt date default null
 	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF'")
 	tk.MustQuery("explain "+sql).CheckAt([]int{0}, rows)
 	rows = [][]interface{}{
-		{"IndexJoin_13"},
-		{"├─TableReader_25(Build)"},
-		{"│ └─Selection_24"},
-		{"│   └─TableRangeScan_23"},
-		{"└─Selection_12(Probe)"},
-		{"  └─IndexLookUp_11"},
-		{"    ├─IndexRangeScan_8(Build)"},
-		{"    └─Selection_10(Probe)"},
-		{"      └─TableRowIDScan_9"},
+		{"IndexJoin_12"},
+		{"├─TableReader_23(Build)"},
+		{"│ └─Selection_22"},
+		{"│   └─TableRangeScan_21"},
+		{"└─IndexLookUp_11(Probe)"},
+		{"  ├─IndexRangeScan_8(Build)"},
+		{"  └─Selection_10(Probe)"},
+		{"    └─TableRowIDScan_9"},
 	}
 	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='ON'")
 	tk.MustQuery("explain "+sql).CheckAt([]int{0}, rows)
@@ -198,4 +195,3 @@ txn_dt date default null
 	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF'")
 	tk.MustQuery(sql).Check(testkit.Rows("1 2022-12-01 123 1 2022-12-01 123 1 <nil>"))
 }
->>>>>>> 982a6163a1 (sysvar: introduce variable tidb_enable_inl_join_inner_multi_pattern (#41319))
