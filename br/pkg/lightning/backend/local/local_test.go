@@ -385,11 +385,11 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		rows2 = kvs[6000:12000]
 		rows3 = kvs[12000:]
 	}
-	err = w.AppendRows(ctx, "", []string{}, kv.MakeRowsFromKvPairs(rows1))
+	err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows1))
 	require.NoError(t, err)
-	err = w.AppendRows(ctx, "", []string{}, kv.MakeRowsFromKvPairs(rows2))
+	err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows2))
 	require.NoError(t, err)
-	err = w.AppendRows(ctx, "", []string{}, kv.MakeRowsFromKvPairs(rows3))
+	err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows3))
 	require.NoError(t, err)
 	flushStatus, err := w.Close(context.Background())
 	require.NoError(t, err)
@@ -1084,7 +1084,7 @@ func TestMultiIngest(t *testing.T) {
 		pdCtl := &pdutil.PdController{}
 		pdCtl.SetPDClient(&mockPdClient{stores: stores})
 
-		local := &Local{
+		local := &Backend{
 			pdCtl: pdCtl,
 			importClientFactory: &mockImportClientFactory{
 				stores: allStores,
@@ -1105,7 +1105,7 @@ func TestMultiIngest(t *testing.T) {
 }
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
-	bak := Local{}
+	bak := Backend{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
@@ -1153,7 +1153,7 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 }
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
-	l := Local{}
+	l := Backend{}
 	require.True(t, l.isRetryableImportTiKVError(io.EOF))
 	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }
@@ -1175,7 +1175,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		}}
 
 	createTimeStore12 := 0
-	local := &Local{
+	local := &Backend{
 		importClientFactory: &mockImportClientFactory{
 			stores: []*metapb.Store{
 				{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
@@ -1352,7 +1352,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		getSizePropertiesFn = backup
 	})
 
-	local := &Local{
+	local := &Backend{
 		splitCli: initTestSplitClient(
 			[][]byte{{1}, {11}},      // we have one big region
 			panicSplitRegionClient{}, // make sure no further split region
