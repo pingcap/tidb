@@ -63,6 +63,8 @@ func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers
 			param.Datum = val
 			param.InExecute = true
 		}
+		// NOTE: an implicit assumption here is that parameter types of Non-Prep are already initialized by Parser,
+		// while parameter types of Prep are not initialized yet.
 		if isNonPrep {
 			vars.PlanCacheParams.AppendParam(val, *usingParam.GetType()) // reuse the parsed type from Parser
 		} else {
