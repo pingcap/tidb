@@ -17,6 +17,7 @@ package session
 import (
 	"flag"
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -80,6 +82,7 @@ func GetClusteredIndexSuiteData() testdata.TestData {
 }
 
 func createStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
+	runtime.GOMAXPROCS(mathutil.Min(8, runtime.GOMAXPROCS(0)))
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	dom, err := BootstrapSession(store)

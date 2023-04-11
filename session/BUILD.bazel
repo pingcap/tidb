@@ -164,6 +164,7 @@ go_test(
         "//util/chunk",
         "//util/collate",
         "//util/logutil",
+        "//util/mathutil",
         "//util/sqlexec",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
