@@ -1698,11 +1698,6 @@ func (p *PlanCacheParamList) SetForNonPrepCache(flag bool) {
 	p.forNonPrepCache = flag
 }
 
-// ForNonPrepCache returns the flag forNonPrepCache.
-func (p *PlanCacheParamList) ForNonPrepCache() bool {
-	return p.forNonPrepCache
-}
-
 // GetParamValue returns the value of the parameter at the specified index.
 func (p *PlanCacheParamList) GetParamValue(idx int) types.Datum {
 	return p.paramValues[idx]
