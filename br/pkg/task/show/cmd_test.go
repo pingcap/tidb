@@ -98,9 +98,9 @@ func TestV2AndSmallTables(t *testing.T) {
 	items, err := exec.Read(ctx)
 	req.NoError(err)
 
-    req.Len(items.Tables, 500)
-    req.EqualValues(items.ClusterID, 7211076907329653533)
-    req.EqualValues(items.EndVersion, 440691270926467074)
+	req.Len(items.Tables, 500)
+	req.EqualValues(items.ClusterID, 7211076907329653533)
+	req.EqualValues(items.EndVersion, 440691270926467074)
 }
 
 func cloneFS(f fs.FS, base string, target string) error {
@@ -143,10 +143,10 @@ func TestShowViaSQL(t *testing.T) {
 		{"tpcc", "district", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "history", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "item", "0", "0", "<nil>", "2023-04-10 11:18:21"},
-        {"tpcc", "new_order", "0", "0", "<nil>", "2023-04-10 11:18:21"},
+		{"tpcc", "new_order", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "order_line", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "orders", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "stock", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "warehouse", "0", "0", "<nil>", "2023-04-10 11:18:21"},
-    })
+	})
 }

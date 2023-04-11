@@ -214,7 +214,6 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 	return oracle.GoTimeToTS(t1), nil
 }
 
-
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	e := &BRIEExec{
 		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
@@ -223,10 +222,10 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		},
 	}
 
-    if s.Kind == ast.BRIEKindShowBackupMeta {
-        e.fillByShowMetadata(s)
-        return e 
-    }
+	if s.Kind == ast.BRIEKindShowBackupMeta {
+		e.fillByShowMetadata(s)
+		return e
+	}
 
 	tidbCfg := config.GetGlobalConfig()
 	cfg := task.Config{
@@ -361,52 +360,52 @@ type BRIEExec struct {
 
 	backupCfg  *task.BackupConfig
 	restoreCfg *task.RestoreConfig
-    showConfig *show.Config
+	showConfig *show.Config
 	info       *brieTaskInfo
 }
 
 func (e *BRIEExec) fillByShowMetadata(s *ast.BRIEStmt) {
-    if s.Kind != ast.BRIEKindShowBackupMeta {
-        panic(fmt.Sprintf("precondition failed: `fillByShowMetadata` should always called by a ast.BRIEKindShowBackupMeta, but it is %s.", s.Kind))
-    }
+	if s.Kind != ast.BRIEKindShowBackupMeta {
+		panic(fmt.Sprintf("precondition failed: `fillByShowMetadata` should always called by a ast.BRIEKindShowBackupMeta, but it is %s.", s.Kind))
+	}
 
-    store := s.Storage
-    e.showConfig = &show.Config{
-    	Storage:    store,
-    	Cipher:     backuppb.CipherInfo{
-            CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
-        },
-    }
-    e.info.kind = ast.BRIEKindShowBackupMeta
+	store := s.Storage
+	e.showConfig = &show.Config{
+		Storage: store,
+		Cipher: backuppb.CipherInfo{
+			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+		},
+	}
+	e.info.kind = ast.BRIEKindShowBackupMeta
 }
 
 func (e *BRIEExec) runShowMetadata(ctx context.Context, req *chunk.Chunk) error {
-    exe, err := show.CreateExec(ctx, *e.showConfig)
-    if err != nil {
-        return errors.Annotate(err, "failed to create show exec")
-    }
-    res, err := exe.Read(ctx)
-    if err != nil {
-        return errors.Annotate(err, "failed to read metadata from backupmeta")
-    }
+	exe, err := show.CreateExec(ctx, *e.showConfig)
+	if err != nil {
+		return errors.Annotate(err, "failed to create show exec")
+	}
+	res, err := exe.Read(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to read metadata from backupmeta")
+	}
 
-    startTime := oracle.GetTimeFromTS(uint64(res.StartVersion))
-    endTime := oracle.GetTimeFromTS(uint64(res.EndVersion))
+	startTime := oracle.GetTimeFromTS(uint64(res.StartVersion))
+	endTime := oracle.GetTimeFromTS(uint64(res.EndVersion))
 
-    for _, table := range res.Tables {
-        req.AppendString(0, table.DBName)
-        req.AppendString(1, table.TableName)
-        req.AppendInt64(2, int64(table.KVCount))
-        req.AppendInt64(3, int64(table.KVSize))
-        if res.StartVersion > 0 {
-            req.AppendTime(4, types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, 0))
-        } else {
-            req.AppendNull(4)
-        }
-        req.AppendTime(5, types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, 0))
-    }
-    e.info = nil
-    return nil
+	for _, table := range res.Tables {
+		req.AppendString(0, table.DBName)
+		req.AppendString(1, table.TableName)
+		req.AppendInt64(2, int64(table.KVCount))
+		req.AppendInt64(3, int64(table.KVSize))
+		if res.StartVersion > 0 {
+			req.AppendTime(4, types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, 0))
+		} else {
+			req.AppendNull(4)
+		}
+		req.AppendTime(5, types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, 0))
+	}
+	e.info = nil
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -416,12 +415,12 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-    if e.info.kind == ast.BRIEKindShowBackupMeta {
-        // This should be able to execute without the queue.
-        // NOTE: maybe extract the procedure of executing task in queue
-        // into a function, make it more tidy.
-        return e.runShowMetadata(ctx, req)
-    }
+	if e.info.kind == ast.BRIEKindShowBackupMeta {
+		// This should be able to execute without the queue.
+		// NOTE: maybe extract the procedure of executing task in queue
+		// into a function, make it more tidy.
+		return e.runShowMetadata(ctx, req)
+	}
 
 	bq := globalBRIEQueue
 	bq.clearTask(e.ctx.GetSessionVars().StmtCtx)
