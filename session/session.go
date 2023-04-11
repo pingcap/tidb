@@ -4147,7 +4147,7 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
-func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string) {
+func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string, printLog bool) {
 	sv := s.GetSessionVars()
 	if sv.InRestrictedSQL {
 		return
@@ -4162,7 +4162,12 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 			ids := util.Str2Int64Map(job2ids[jobID])
 			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
 				delete(job2ver, jobID)
-				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", sv.ConnectionID))
+				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
+				if elapsedTime > time.Minute && printLog {
+					logutil.BgLogger().Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+				} else {
+					logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+				}
 			}
 		}
 		return true
