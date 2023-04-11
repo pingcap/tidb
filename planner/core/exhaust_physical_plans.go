@@ -2129,8 +2129,10 @@ func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, fl
 	return row1 + row2, 0, false
 }
 
-// The size of hash table when using broadcast join is bigger than the shuffle way, which means it may bring worse performance to hash join.
-// Set a relatively conservative value by default (based on tpch benchmark).
+// The size of `Build` hash table when using broadcast join is `X`.
+// The size of `Build` hash table when using shuffle join is `X / (mppStoreCnt)`.
+// It will cost more time to search `Probe` data in hash table.
+// Set a scale factor (`mppStoreCnt^*`) when estimating broadcast join in `isJoinFitMPPBCJ` and `isJoinChildFitMPPBCJ` (based on TPCH benchmark, it has been verified in Q9).
 
 func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
 	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
