@@ -354,7 +354,7 @@ func TestIssue42619(t *testing.T) {
 			"PARTITION `p3` VALUES LESS THAN (MAXVALUE))")
 	tk.MustQuery("SELECT TABLE_SCHEMA, TABLE_NAME, PEER_COUNT, REGION_COUNT, EMPTY_REGION_COUNT, TABLE_SIZE, TABLE_KEYS " +
 		"FROM information_schema.TABLE_STORAGE_STATS " +
-		"WHERE TABLE_SCHEMA = 'test'").Check(
+		"WHERE TABLE_SCHEMA = 'test'").Sort().Check(
 		testkit.Rows(
 			"test t 1 1 1 1 1",
 			"test tp 1 1 1 1 1",

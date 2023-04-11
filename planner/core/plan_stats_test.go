@@ -304,6 +304,7 @@ func TestPlanStatsStatusRecord(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect this ut
 	tk.MustExec(`create table t (b int,key b(b))`)
 	tk.MustExec("insert into t (b) values (1)")
 	tk.MustExec("analyze table t")
