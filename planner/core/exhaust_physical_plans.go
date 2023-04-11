@@ -2132,7 +2132,7 @@ func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, fl
 // BroadCastJoinScaleFactor indicates the factor used to estimate the approximate cost of broadcast join
 // The size of hash table when using broadcast join is bigger than the shuffle way, which means it may bring worse performance.
 // Set a relatively conservative value by default.
-var BroadCastJoinScaleFactor = 5.0
+var BroadCastJoinScaleFactor = 4.0
 
 func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
 	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
