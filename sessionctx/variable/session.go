@@ -1663,12 +1663,13 @@ func (p PartitionPruneMode) Update() PartitionPruneMode {
 // Use attached methods to access or modify parameter values instead of accessing them directly.
 type PlanCacheParamList struct {
 	paramValues     []types.Datum
+	paramTypes      []types.FieldType
 	forNonPrepCache bool
 }
 
 // NewPlanCacheParamList creates a new PlanCacheParams.
 func NewPlanCacheParamList() *PlanCacheParamList {
-	p := &PlanCacheParamList{paramValues: make([]types.Datum, 0, 8)}
+	p := &PlanCacheParamList{paramValues: make([]types.Datum, 0, 8), paramTypes: make([]types.FieldType, 0, 8)}
 	p.Reset()
 	return p
 }
@@ -1676,6 +1677,7 @@ func NewPlanCacheParamList() *PlanCacheParamList {
 // Reset resets the PlanCacheParams.
 func (p *PlanCacheParamList) Reset() {
 	p.paramValues = p.paramValues[:0]
+	p.paramTypes = p.paramTypes[:0]
 	p.forNonPrepCache = false
 }
 
@@ -1688,9 +1690,19 @@ func (p *PlanCacheParamList) String() string {
 	return " [arguments: " + types.DatumsToStrNoErr(p.paramValues) + "]"
 }
 
+// AppendParam appends a parameter value and type to the PlanCacheParamList.
+func (p *PlanCacheParamList) AppendParam(v types.Datum, t types.FieldType) {
+	p.paramValues = append(p.paramValues, v)
+	p.paramTypes = append(p.paramTypes, t)
+}
+
 // Append appends a parameter value to the PlanCacheParams.
 func (p *PlanCacheParamList) Append(vs ...types.Datum) {
-	p.paramValues = append(p.paramValues, vs...)
+	for _, v := range vs {
+		var t types.FieldType
+		types.InferParamTypeFromDatum(&v, &t)
+		p.AppendParam(v, t)
+	}
 }
 
 // SetForNonPrepCache sets the flag forNonPrepCache.

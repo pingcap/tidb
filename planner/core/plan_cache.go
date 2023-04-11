@@ -63,7 +63,7 @@ func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers
 			param.Datum = val
 			param.InExecute = true
 		}
-		vars.PlanCacheParams.Append(val)
+		vars.PlanCacheParams.AppendParam(val, *usingParam.GetType())
 	}
 	vars.PlanCacheParams.SetForNonPrepCache(isNonPrep)
 	return nil
