@@ -3,6 +3,7 @@
 package show_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -29,6 +30,9 @@ var (
 
 	//go:embed testdata/v2/*
 	V2ManyTables embed.FS
+
+	//go:embed testdata/v2-enc/*
+	V2Encrypted embed.FS
 )
 
 func tempBackupDir(t *testing.T) string {
@@ -101,6 +105,46 @@ func TestV2AndSmallTables(t *testing.T) {
 	req.Len(items.Tables, 500)
 	req.EqualValues(items.ClusterID, 7211076907329653533)
 	req.EqualValues(items.EndVersion, 440691270926467074)
+}
+
+func TestV2Encrypted(t *testing.T) {
+	req := require.New(t)
+	tempBackup := tempBackupDir(t)
+
+	req.NoError(cloneFS(V2Encrypted, "testdata/v2-enc", tempBackup))
+	cfg := show.Config{
+		Storage: fmt.Sprintf("local://%s", tempBackup),
+		Cipher: backuppb.CipherInfo{
+			CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+			CipherKey:  bytes.Repeat([]byte{0x42}, 32),
+		},
+	}
+
+	ctx := context.Background()
+	exec, err := show.CreateExec(ctx, cfg)
+	req.NoError(err)
+	items, err := exec.Read(ctx)
+	req.NoError(err)
+
+	req.EqualValues(items.ClusterID, 7211076907329653533)
+	req.EqualValues(items.ClusterVersion, "\"7.1.0-alpha\"\n")
+	tableNames := make([]string, 0, len(items.Tables))
+	for _, tbl := range items.Tables {
+		req.Equal(tbl.DBName, "tpcc")
+		tableNames = append(tableNames, tbl.TableName)
+	}
+	req.ElementsMatch(tableNames, []string{
+		"customer",
+		"district",
+		"history",
+		"item",
+		"new_order",
+		"order_line",
+		"orders",
+		"stock",
+		"warehouse",
+	})
+
 }
 
 func cloneFS(f fs.FS, base string, target string) error {
