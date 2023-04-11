@@ -40,7 +40,7 @@ type EngineInfo struct {
 	uuid         uuid.UUID
 	cfg          *backend.EngineConfig
 	writerCount  int
-	writerCache  generic.SyncMap[int, *backend.LocalEngineWriter]
+	writerCache  generic.SyncMap[int, backend.EngineWriter]
 	memRoot      MemRoot
 	diskRoot     DiskRoot
 	rowSeq       atomic.Int64
@@ -58,7 +58,7 @@ func NewEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 		openedEngine: en,
 		uuid:         uuid,
 		writerCount:  wCnt,
-		writerCache:  generic.NewSyncMap[int, *backend.LocalEngineWriter](wCnt),
+		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](wCnt),
 		memRoot:      memRoot,
 		diskRoot:     diskRoot,
 	}
@@ -162,7 +162,7 @@ func (ei *EngineInfo) ImportAndClean() error {
 type WriterContext struct {
 	ctx    context.Context
 	unique bool
-	lWrite *backend.LocalEngineWriter
+	lWrite backend.EngineWriter
 }
 
 // NewWriterCtx creates a new WriterContext.
@@ -238,5 +238,5 @@ func (wCtx *WriterContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) er
 		kvs[0].RowID = handle.Encoded()
 	}
 	row := kv.MakeRowsFromKvPairs(kvs)
-	return wCtx.lWrite.WriteRows(wCtx.ctx, nil, row)
+	return wCtx.lWrite.AppendRows(wCtx.ctx, nil, row)
 }
