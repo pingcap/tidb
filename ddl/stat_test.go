@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
@@ -209,7 +210,11 @@ func TestIssue42268(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
+<<<<<<< HEAD
 	hook := &ddl.TestDDLCallback{}
+=======
+	hook := &callback.TestDDLCallback{Do: dom}
+>>>>>>> b7330bdc15f (*: fix bug that table name in 'admin show ddl jobs' is missing for ongoing drop table operation (#42904))
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
