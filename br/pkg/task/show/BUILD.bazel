@@ -23,9 +23,10 @@ go_test(
     data = glob(["testdata/**"]),
     embedsrcs = [
         "testdata/full-schema.meta",
-        "testdata/v2/backup.lock",
         "testdata/v2/backupmeta",
         "testdata/v2/backupmeta.schema.000000001",
+        "testdata/v2-enc/backupmeta",
+        "testdata/v2-enc/backupmeta.schema.000000001",
     ],
     flaky = True,
     deps = [

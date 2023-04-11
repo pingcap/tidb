@@ -5,6 +5,7 @@ package show_test
 import (
 	"bytes"
 	"context"
+	"embed"
 	"fmt"
 	"io"
 	"io/fs"
@@ -20,8 +21,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task/show"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-
-	"embed"
 )
 
 var (
@@ -144,7 +143,6 @@ func TestV2Encrypted(t *testing.T) {
 		"stock",
 		"warehouse",
 	})
-
 }
 
 func cloneFS(f fs.FS, base string, target string) error {
