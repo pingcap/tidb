@@ -550,6 +550,7 @@ func TestPreparedDelete(t *testing.T) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect hit counter in this UT.
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
 
