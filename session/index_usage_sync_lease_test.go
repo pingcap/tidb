@@ -17,11 +17,12 @@ package session
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/session/internal"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIndexUsageSyncLease(t *testing.T) {
-	store, dom := createStoreAndBootstrap(t)
+	store, dom := internal.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 

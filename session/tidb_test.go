@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session/internal"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ func TestDomapHandleNil(t *testing.T) {
 }
 
 func TestSysSessionPoolGoroutineLeak(t *testing.T) {
-	store, dom := createStoreAndBootstrap(t)
+	store, dom := internal.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 

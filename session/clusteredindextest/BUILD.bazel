@@ -1,23 +1,26 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "bootstraptest_test",
+    name = "clusteredindextest_test",
     timeout = "short",
     srcs = [
-        "bootstrap_upgrade_test.go",  #keep
+        "clustered_index_test.go",
         "main_test.go",
     ],
+    data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 5,
+    shard_count = 23,
     deps = [
         "//config",
-        "//meta",
-        "//session",  #keep
-        "//session/internal",
-        "//testkit",  #keep
+        "//errno",
+        "//kv",
+        "//sessionctx/variable",
+        "//testkit",
+        "//testkit/testdata",
         "//testkit/testmain",
         "//testkit/testsetup",
-        "@com_github_stretchr_testify//require",  #keep
+        "//util/collate",
+        "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
     ],

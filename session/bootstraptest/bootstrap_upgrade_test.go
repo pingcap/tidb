@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -93,7 +94,7 @@ func TestUpgradeVersion66(t *testing.T) {
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	seV65 := session.CreateSessionAndSetID(t, store)
+	seV65 := internal.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -112,7 +113,7 @@ func TestUpgradeVersion66(t *testing.T) {
 	domV66, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
-	seV66 := session.CreateSessionAndSetID(t, store)
+	seV66 := internal.CreateSessionAndSetID(t, store)
 	ver, err = session.GetBootstrapVersion(seV66)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
@@ -143,7 +144,7 @@ func TestUpgradeVersion74(t *testing.T) {
 			store, dom := session.CreateStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
 
-			seV73 := session.CreateSessionAndSetID(t, store)
+			seV73 := internal.CreateSessionAndSetID(t, store)
 			txn, err := store.Begin()
 			require.NoError(t, err)
 			m := meta.NewMeta(txn)
@@ -162,7 +163,7 @@ func TestUpgradeVersion74(t *testing.T) {
 			domV74, err := session.BootstrapSession(store)
 			require.NoError(t, err)
 			defer domV74.Close()
-			seV74 := session.CreateSessionAndSetID(t, store)
+			seV74 := internal.CreateSessionAndSetID(t, store)
 			ver, err = session.GetBootstrapVersion(seV74)
 			require.NoError(t, err)
 			require.Equal(t, session.CurrentBootstrapVersion, ver)
@@ -182,7 +183,7 @@ func TestUpgradeVersion75(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	seV74 := session.CreateSessionAndSetID(t, store)
+	seV74 := internal.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -209,7 +210,7 @@ func TestUpgradeVersion75(t *testing.T) {
 	domV75, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domV75.Close()
-	seV75 := session.CreateSessionAndSetID(t, store)
+	seV75 := internal.CreateSessionAndSetID(t, store)
 	ver, err = session.GetBootstrapVersion(seV75)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)

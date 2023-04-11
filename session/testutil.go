@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 )
 
 var (
@@ -43,16 +42,6 @@ func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	return store, dom
-}
-
-var sessionKitIDGenerator atomic.Uint64
-
-// CreateSessionAndSetID creates a session and set connection ID.
-func CreateSessionAndSetID(t *testing.T, store kv.Storage) Session {
-	se, err := CreateSession4Test(store)
-	se.SetConnectionID(sessionKitIDGenerator.Inc())
-	require.NoError(t, err)
-	return se
 }
 
 // MustExec executes a sql statement and asserts no error occurs.
