@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"io"
 	"math"
 	"net"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -265,17 +265,17 @@ func (*encodingBuilder) MakeEmptyRows() encode.Rows {
 }
 
 type targetInfoGetter struct {
-	tls          *common.TLS
-	targetDBGlue glue.Glue
-	pdAddr       string
+	tls      *common.TLS
+	targetDB *sql.DB
+	pdAddr   string
 }
 
 // NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
-func NewTargetInfoGetter(tls *common.TLS, g glue.Glue, pdAddr string) backend.TargetInfoGetter {
+func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdAddr string) backend.TargetInfoGetter {
 	return &targetInfoGetter{
-		tls:          tls,
-		targetDBGlue: g,
-		pdAddr:       pdAddr,
+		tls:      tls,
+		targetDB: db,
+		pdAddr:   pdAddr,
 	}
 }
 
@@ -289,8 +289,7 @@ func (g *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 // It implements the `TargetInfoGetter` interface.
 func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
 	// TODO: support lightning via SQL
-	db, _ := g.targetDBGlue.GetDB()
-	versionStr, err := version.FetchVersion(ctx, db)
+	versionStr, err := version.FetchVersion(ctx, g.targetDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -305,7 +304,7 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	}
 
 	serverInfo := version.ParseServerInfo(versionStr)
-	return checkTiFlashVersion(ctx, g.targetDBGlue, checkCtx, *serverInfo.ServerVersion)
+	return checkTiFlashVersion(ctx, g.targetDB, checkCtx, *serverInfo.ServerVersion)
 }
 
 func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
@@ -343,12 +342,42 @@ var CheckTiFlashVersionForTest = checkTiFlashVersion
 
 // check TiFlash replicas.
 // local backend doesn't support TiFlash before tidb v4.0.5
-func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.CheckCtx, tidbVersion semver.Version) error {
+func checkTiFlashVersion(ctx context.Context, db *sql.DB, checkCtx *backend.CheckCtx, tidbVersion semver.Version) error {
 	if tidbVersion.Compare(tiFlashMinVersion) >= 0 {
 		return nil
 	}
 
-	res, err := g.GetSQLExecutor().QueryStringsWithLog(ctx, tiFlashReplicaQuery, "fetch tiflash replica info", log.FromContext(ctx))
+	exec := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.FromContext(ctx),
+	}
+
+	res := make([][]string, 0, 4)
+	err := exec.Transact(ctx, "fetch tiflash replica info", func(c context.Context, tx *sql.Tx) (txErr error) {
+		rows, err := tx.QueryContext(c, tiFlashReplicaQuery)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		colNames, err := rows.Columns()
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			row := make([]string, len(colNames))
+			refs := make([]interface{}, 0, len(row))
+			for i := range row {
+				refs = append(refs, &row[i])
+			}
+			if err := rows.Scan(refs...); err != nil {
+				return err
+			}
+			res = append(res, row)
+		}
+
+		return rows.Err()
+	})
 	if err != nil {
 		return errors.Annotate(err, "fetch tiflash replica info failed")
 	}

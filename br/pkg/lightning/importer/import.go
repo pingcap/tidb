@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
@@ -56,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/driver"
@@ -203,7 +203,7 @@ type Controller struct {
 	checksumWorks *worker.Pool
 	pauser        *common.Pauser
 	backend       backend.Backend
-	tidbGlue      glue.Glue
+	db            *sql.DB
 
 	alterTableLock sync.Mutex
 	sysVars        map[string]string
@@ -263,8 +263,8 @@ type ControllerParam struct {
 	OwnExtStorage bool
 	// used by lightning server mode to pause tasks
 	Pauser *common.Pauser
-	// lightning via SQL will implement its glue, to let lightning use host TiDB's environment
-	Glue glue.Glue
+	// DB is a connection pool to TiDB
+	DB *sql.DB
 	// storage interface to write file checkpoints
 	CheckpointStorage storage.ExternalStorage
 	// when CheckpointStorage is not nil, save file checkpoint to it with this name
@@ -304,7 +304,7 @@ func NewImportControllerWithPauser(
 			return nil, common.ErrOpenCheckpoint.Wrap(err).GenWithStackByArgs()
 		}
 	} else {
-		cpdb, err = p.Glue.OpenCheckpointsDB(ctx, cfg)
+		cpdb, err = checkpoints.OpenCheckpointsDB(ctx, cfg)
 		if err != nil {
 			if berrors.Is(err, common.ErrUnknownCheckpointDriver) {
 				return nil, err
@@ -325,11 +325,7 @@ func NewImportControllerWithPauser(
 		cfg.TaskID = taskCp.TaskID
 	}
 
-	// TODO: support Lightning via SQL
-	db, err := p.Glue.GetDB()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	db := p.DB
 	errorMgr := errormanager.New(db, cfg, log.FromContext(ctx))
 	if err := errorMgr.Init(ctx); err != nil {
 		return nil, common.ErrInitErrManager.Wrap(err).GenWithStackByArgs()
@@ -402,16 +398,16 @@ func NewImportControllerWithPauser(
 
 	var wrapper backend.TargetInfoGetter
 	if cfg.TikvImporter.Backend == config.BackendLocal {
-		wrapper = local.NewTargetInfoGetter(tls, p.Glue, cfg.TiDB.PdAddr)
+		wrapper = local.NewTargetInfoGetter(tls, db, cfg.TiDB.PdAddr)
 	} else {
 		wrapper = tidb.NewTargetInfoGetter(db)
 	}
 	ioWorkers := worker.NewPool(ctx, cfg.App.IOConcurrency, "io")
 	targetInfoGetter := &TargetInfoGetterImpl{
-		cfg:          cfg,
-		targetDBGlue: p.Glue,
-		tls:          tls,
-		backend:      wrapper,
+		cfg:     cfg,
+		db:      db,
+		tls:     tls,
+		backend: wrapper,
 	}
 	preInfoGetter, err := NewPreImportInfoGetter(
 		cfg,
@@ -440,7 +436,7 @@ func NewImportControllerWithPauser(
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        p.Pauser,
 		backend:       backendObj,
-		tidbGlue:      p.Glue,
+		db:            db,
 		sysVars:       common.DefaultImportantVariables,
 		tls:           tls,
 		checkTemplate: NewSimpleTemplate(),
@@ -474,7 +470,7 @@ func NewImportControllerWithPauser(
 // Close closes the controller.
 func (rc *Controller) Close() {
 	rc.backend.Close()
-	rc.tidbGlue.GetSQLExecutor().Close()
+	_ = rc.db.Close()
 }
 
 // Run starts the restore task.
@@ -559,12 +555,13 @@ type restoreSchemaWorker struct {
 	jobCh  chan *schemaJob
 	errCh  chan error
 	wg     sync.WaitGroup
-	glue   glue.Glue
+	db     *sql.DB
+	parser *parser.Parser
 	store  storage.ExternalStorage
 }
 
 func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
-	stmts, err := createIfNotExistsStmt(worker.glue.GetParser(), sqlStr, job.dbName, job.tblName)
+	stmts, err := createIfNotExistsStmt(worker.parser, sqlStr, job.dbName, job.tblName)
 	if err != nil {
 		worker.logger.Warn("failed to rewrite statement, will use raw input instead",
 			zap.String("db", job.dbName),
@@ -690,11 +687,7 @@ loop:
 			if session == nil {
 				session, err = func() (*sql.Conn, error) {
 					// TODO: support lightning in SQL
-					db, err := worker.glue.GetDB()
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					return db.Conn(worker.ctx)
+					return worker.db.Conn(worker.ctx)
 				}()
 				if err != nil {
 					worker.wg.Done()
@@ -801,13 +794,16 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	logTask := log.FromContext(ctx).Begin(zap.InfoLevel, "restore all schema")
 	concurrency := mathutil.Min(rc.cfg.App.RegionConcurrency, 8)
 	childCtx, cancel := context.WithCancel(ctx)
+	p := parser.New()
+	p.SetSQLMode(rc.cfg.TiDB.SQLMode)
 	worker := restoreSchemaWorker{
 		ctx:    childCtx,
 		quit:   cancel,
 		logger: log.FromContext(ctx),
 		jobCh:  make(chan *schemaJob, concurrency),
 		errCh:  make(chan error),
-		glue:   rc.tidbGlue,
+		db:     rc.db,
+		parser: p,
 		store:  rc.store,
 	}
 	for i := 0; i < concurrency; i++ {
@@ -1018,7 +1014,6 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 		m.ProcessedEngineCounter.WithLabelValues(metric.ChunkStateEstimated, metric.TableResultSuccess).
 			Add(float64(estimatedEngineCnt))
 	}
-	rc.tidbGlue.Record(glue.RecordEstimatedChunk, uint64(estimatedChunkCount))
 	return nil
 }
 
@@ -1187,11 +1182,6 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 		})
 		logProgressChan = logProgressTicker.C
 	}
-
-	glueProgressTicker := time.NewTicker(3 * time.Second)
-	closeFuncs = append(closeFuncs, func() {
-		glueProgressTicker.Stop()
-	})
 
 	var switchModeChan <-chan time.Time
 	// tidb backend don't need to switch tikv to import mode
@@ -1371,12 +1361,6 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					// verify the total space occupied by sorted-kv-dir is below the quota,
 					// otherwise we perform an emergency import.
 					rc.enforceDiskQuota(ctx)
-
-				case <-glueProgressTicker.C:
-					if m, ok := metric.FromContext(ctx); ok {
-						finished := metric.ReadCounter(m.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
-						rc.tidbGlue.Record(glue.RecordFinishedChunk, uint64(finished))
-					}
 				}
 			}
 		}, func(do bool) {
@@ -1839,9 +1823,13 @@ loop:
 			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, common.EscapeIdentifier(idxInfo.Name.O))
 		}
 
-		db := rc.tidbGlue.GetSQLExecutor()
 		logger.Info("drop index", zap.String("sql", sqlStr))
-		if err := db.ExecuteWithLog(ctx, sqlStr, "drop index", logger); err != nil {
+		exec := common.SQLWithRetry{
+			DB:     rc.db,
+			Logger: logger,
+		}
+
+		if err := exec.Exec(ctx, "drop index", sqlStr); err != nil {
 			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
 				switch merr.Number {
 				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
@@ -2076,7 +2064,7 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 		return nil
 	}
 	// set new collation flag base on tidb config
-	enabled, err := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
+	enabled, err := ObtainNewCollationEnabled(ctx, rc.db)
 	if err != nil {
 		return err
 	}
@@ -2226,7 +2214,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		}
 	}
 
-	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
+	if rc.cfg.App.CheckRequirements {
 		fmt.Println(rc.checkTemplate.Output())
 	}
 	if !rc.checkTemplate.Success() {

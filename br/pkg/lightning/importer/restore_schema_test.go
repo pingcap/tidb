@@ -149,18 +149,7 @@ func (s *restoreSchemaSuite) SetupTest() {
 	for i := 0; i < 17; i++ {
 		sqlMock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(int64(i), 1))
 	}
-	mockTiDBGlue := mock.NewMockGlue(s.controller)
-	mockTiDBGlue.EXPECT().GetDB().AnyTimes().Return(mockDB, nil)
-	mockTiDBGlue.EXPECT().
-		OwnsSQLExecutor().
-		AnyTimes().
-		Return(true)
-	parser := parser.New()
-	mockTiDBGlue.EXPECT().
-		GetParser().
-		AnyTimes().
-		Return(parser)
-	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
+	s.targetInfoGetter.db = mockDB
 	s.rc.tidbGlue = mockTiDBGlue
 }
 

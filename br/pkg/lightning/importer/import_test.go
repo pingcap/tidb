@@ -217,8 +217,8 @@ func TestPreCheckFailed(t *testing.T) {
 	g := glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 
 	targetInfoGetter := &TargetInfoGetterImpl{
-		cfg:          cfg,
-		targetDBGlue: g,
+		cfg: cfg,
+		db:  db,
 	}
 	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              cfg,

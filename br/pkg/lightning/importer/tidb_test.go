@@ -38,6 +38,7 @@ import (
 )
 
 type tidbSuite struct {
+	db     *sql.DB
 	mockDB sqlmock.Sqlmock
 	timgr  *TiDBManager
 	tiGlue glue.Glue
@@ -48,6 +49,7 @@ func newTiDBSuite(t *testing.T) *tidbSuite {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
+	s.db = db
 	s.mockDB = mock
 	defaultSQLMode, err := tmysql.GetSQLMode(tmysql.DefaultSQLMode)
 	require.NoError(t, err)
@@ -317,10 +319,10 @@ func TestAlterAutoInc(t *testing.T) {
 	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
+	err := AlterAutoIncrement(ctx, s.db, "`db`.`table`", 12345)
 	require.NoError(t, err)
 
-	err = AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1)
+	err = AlterAutoIncrement(ctx, s.db, "`db`.`table`", uint64(math.MaxInt64)+1)
 	require.NoError(t, err)
 }
 
@@ -337,14 +339,14 @@ func TestAlterAutoRandom(t *testing.T) {
 	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345, 288230376151711743)
+	err := AlterAutoRandom(ctx, s.db, "`db`.`table`", 12345, 288230376151711743)
 	require.NoError(t, err)
 
 	// insert 288230376151711743 and try rebase to 288230376151711744
-	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 288230376151711744, 288230376151711743)
+	err = AlterAutoRandom(ctx, s.db, "`db`.`table`", 288230376151711744, 288230376151711743)
 	require.NoError(t, err)
 
-	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1, 288230376151711743)
+	err = AlterAutoRandom(ctx, s.db, "`db`.`table`", uint64(math.MaxInt64)+1, 288230376151711743)
 	require.NoError(t, err)
 }
 
@@ -370,7 +372,7 @@ func TestObtainRowFormatVersionSucceed(t *testing.T) {
 	s.mockDB.
 		ExpectClose()
 
-	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
+	sysVars := ObtainImportantVariables(ctx, s.db, true)
 	require.Equal(t, map[string]string{
 		"tidb_row_format_version": "2",
 		"max_allowed_packet":      "1073741824",
@@ -397,7 +399,7 @@ func TestObtainRowFormatVersionFailure(t *testing.T) {
 	s.mockDB.
 		ExpectClose()
 
-	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
+	sysVars := ObtainImportantVariables(ctx, s.db, true)
 	require.Equal(t, map[string]string{
 		"tidb_row_format_version": "1",
 		"max_allowed_packet":      "67108864",
