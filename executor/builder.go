@@ -4388,7 +4388,8 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		if err != nil {
 			return nil, err
 		}
-		err = e.open(ctx, kvRanges)
+		e.kvRanges = kvRanges
+		err = e.open(ctx, kv.NewNonParitionedKeyRanges(kvRanges))
 		return e, err
 	}
 
