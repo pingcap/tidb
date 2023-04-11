@@ -21,7 +21,8 @@ import (
 )
 
 func TestProgressMarshalUnmarshal(t *testing.T) {
-	p := NewProgress()
+	p := NewProgress(true)
+	require.Nil(t, p.PhysicalImportProgress)
 	p.SourceFileSize = 123
 	p.LoadedFileSize.Store(456)
 	p.LoadedRowCnt.Store(789)
@@ -35,4 +36,20 @@ func TestProgressMarshalUnmarshal(t *testing.T) {
 	require.Equal(t, int64(111), p2.SourceFileSize)
 	require.Equal(t, int64(222), p2.LoadedFileSize.Load())
 	require.Equal(t, uint64(333), p2.LoadedRowCnt.Load())
+
+	p = NewProgress(false)
+	require.Nil(t, p.LogicalImportProgress)
+	p.SourceFileSize = 123
+	p.EncodeFileSize.Store(100)
+	p.ImportedDataSize.Store(789)
+
+	s = p.String()
+	require.Equal(t, `{"SourceFileSize":123,"EncodeFileSize":100,"ImportedDataSize":789}`, s)
+
+	s2 = `{"SourceFileSize":111,"EncodeFileSize":222,"ImportedDataSize":333}`
+	p2, err = ProgressFromJSON([]byte(s2))
+	require.NoError(t, err)
+	require.Equal(t, int64(111), p2.SourceFileSize)
+	require.Equal(t, int64(222), p2.EncodeFileSize.Load())
+	require.Equal(t, int64(333), p2.ImportedDataSize.Load())
 }

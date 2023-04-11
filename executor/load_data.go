@@ -152,7 +152,7 @@ func NewLoadDataWorker(
 			Columns:     plan.Columns,
 			GenColExprs: plan.GenCols.Exprs,
 		},
-		progress: asyncloaddata.NewProgress(),
+		progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
 	}
 	return loadDataWorker, nil
 }
@@ -259,6 +259,7 @@ func (e *LoadDataWorker) getJobImporter(ctx context.Context, job *asyncloaddata.
 		Group:    group,
 		GroupCtx: groupCtx,
 		Done:     make(chan struct{}),
+		Progress: e.progress,
 	}
 
 	if e.controller.ImportMode == importer.LogicalImportMode {
@@ -826,9 +827,6 @@ func (w *encodeWorker) parserData2TableData(
 	return newRow, nil
 }
 
-// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
-var TestSyncCh = make(chan struct{})
-
 // commitWorker is a sub-worker of LoadDataWorker that dedicated to commit data.
 type commitWorker struct {
 	*InsertValues
@@ -881,8 +879,8 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 			)
 			failpoint.Inject("AfterCommitOneTask", nil)
 			failpoint.Inject("SyncAfterCommitOneTask", func() {
-				TestSyncCh <- struct{}{}
-				<-TestSyncCh
+				importer.TestSyncCh <- struct{}{}
+				<-importer.TestSyncCh
 			})
 		}
 	}

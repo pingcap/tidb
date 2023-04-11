@@ -20,15 +20,8 @@ import (
 	"go.uber.org/atomic"
 )
 
-// Progress is the progress of the LOAD DATA task.
-type Progress struct {
-	// SourceFileSize is the size of the source file in bytes. When we can't get
-	// the size of the source file, it will be set to -1.
-	// Currently, the value is read by seek(0, end), when LOAD DATA LOCAL we wrap
-	// SimpleSeekerOnReadCloser on MySQL client connection which doesn't support
-	// it.
-	SourceFileSize int64
-	// LoadedFileSize is the size of the data that will be loaded in bytes. It's
+type LogicalImportProgress struct {
+	// LoadedFileSize is the size of the data that's loaded in bytes. It's
 	// larger than the actual loaded data size, but due to the fact that reading
 	// is once-a-block and a block may generate multiple tasks that are
 	// concurrently executed, we can't know the actual loaded data size easily.
@@ -37,12 +30,46 @@ type Progress struct {
 	LoadedRowCnt *atomic.Uint64
 }
 
+type PhysicalImportProgress struct {
+	// EncodeFileSize is the size of the file that has finished KV encoding in bytes.
+	// it should equal to SourceFileSize eventually.
+	EncodeFileSize *atomic.Int64
+	// ImportedDataSize is the size of the data that has been imported to TiKV in bytes.
+	ImportedDataSize *atomic.Int64
+}
+
+// Progress is the progress of the LOAD DATA task.
+type Progress struct {
+	// SourceFileSize is the size of the source file in bytes. When we can't get
+	// the size of the source file, it will be set to -1.
+	// Currently, the value is read by seek(0, end), when LOAD DATA LOCAL we wrap
+	// SimpleSeekerOnReadCloser on MySQL client connection which doesn't support
+	// it.
+	SourceFileSize          int64
+	*LogicalImportProgress  `json:",inline"`
+	*PhysicalImportProgress `json:",inline"`
+}
+
 // NewProgress creates a new Progress.
-func NewProgress() *Progress {
+// todo: better pass import mode, but it causes import cycle.
+func NewProgress(logicalImport bool) *Progress {
+	var li *LogicalImportProgress
+	var pi *PhysicalImportProgress
+	if logicalImport {
+		li = &LogicalImportProgress{
+			LoadedFileSize: atomic.NewInt64(0),
+			LoadedRowCnt:   atomic.NewUint64(0),
+		}
+	} else {
+		pi = &PhysicalImportProgress{
+			EncodeFileSize:   atomic.NewInt64(0),
+			ImportedDataSize: atomic.NewInt64(0),
+		}
+	}
 	return &Progress{
-		SourceFileSize: -1,
-		LoadedFileSize: atomic.NewInt64(0),
-		LoadedRowCnt:   atomic.NewUint64(0),
+		SourceFileSize:         -1,
+		LogicalImportProgress:  li,
+		PhysicalImportProgress: pi,
 	}
 }
 

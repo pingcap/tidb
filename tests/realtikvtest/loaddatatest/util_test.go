@@ -49,6 +49,7 @@ func TestLoadRemote(t *testing.T) {
 }
 
 func (s *mockGCSSuite) SetupSuite() {
+	s.Require().True(*realtikvtest.WithRealTiKV)
 	var err error
 	opt := fakestorage.Options{
 		Scheme:     "http",

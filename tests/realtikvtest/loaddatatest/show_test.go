@@ -24,7 +24,6 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
@@ -217,6 +216,10 @@ func (s *mockGCSSuite) TestLogicalInternalStatus() {
 	s.testInternalStatus(importer.LogicalImportMode)
 }
 
+func (s *mockGCSSuite) TestPhysicalInternalStatus() {
+	s.testInternalStatus(importer.PhysicalImportMode)
+}
+
 func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_tsv;")
 	s.tk.MustExec("CREATE DATABASE load_tsv;")
@@ -247,16 +250,20 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 
 	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
 	withOptions := "WITH DETACHED, batch_size=1"
+	progressAfterFirstBatch := `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
+	progressAfterAll := `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
 	if importMode == importer.PhysicalImportMode {
 		withOptions = "WITH DETACHED, import_mode='PHYSICAL'"
 		resultMessage = ""
+		progressAfterFirstBatch = `{"SourceFileSize":2,"EncodeFileSize":1,"ImportedDataSize":0}`
+		progressAfterAll = `{"SourceFileSize":2,"EncodeFileSize":2,"ImportedDataSize":0}`
 	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer close(executor.TestSyncCh)
+		defer close(importer.TestSyncCh)
 
 		tk2 := testkit.NewTestKit(s.T(), s.store)
 		tk2.Session().GetSessionVars().User = user
@@ -332,7 +339,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 		asyncloaddata.TestSyncCh <- struct{}{}
 
 		// wait for the first task to be committed
-		<-executor.TestSyncCh
+		<-importer.TestSyncCh
 
 		// wait for UpdateJobProgress
 		require.Eventually(s.T(), func() bool {
@@ -340,11 +347,11 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 			if err != nil {
 				return false
 			}
-			return info.Progress == `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
+			return info.Progress == progressAfterFirstBatch
 		}, 6*time.Second, time.Millisecond*100)
 		info, err = job.GetJobInfo(ctx)
 		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
+		expected.Progress = progressAfterFirstBatch
 		require.Equal(s.T(), expected, info)
 
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
@@ -355,10 +362,10 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 		r.checkIgnoreTimes(s.T(), row)
 
 		// resume the load data job
-		executor.TestSyncCh <- struct{}{}
+		importer.TestSyncCh <- struct{}{}
 
 		// wait for the second task to be committed
-		<-executor.TestSyncCh
+		<-importer.TestSyncCh
 
 		// wait for UpdateJobProgress
 		require.Eventually(s.T(), func() bool {
@@ -366,7 +373,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 			if err != nil {
 				return false
 			}
-			return info.Progress == `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
+			return info.Progress == progressAfterAll
 		}, 6*time.Second, time.Millisecond*100)
 
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
@@ -376,7 +383,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 		r.checkIgnoreTimes(s.T(), row)
 
 		// resume the load data job
-		executor.TestSyncCh <- struct{}{}
+		importer.TestSyncCh <- struct{}{}
 
 		require.Eventually(s.T(), func() bool {
 			info, err = job.GetJobInfo(ctx)
@@ -391,7 +398,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 		expected.Status = asyncloaddata.JobFinished
 		expected.EndTime = info.EndTime
 		expected.StatusMessage = resultMessage
-		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
+		expected.Progress = progressAfterAll
 		require.Equal(s.T(), expected, info)
 
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
@@ -399,7 +406,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 		row = rows[0]
 		r.jobStatus = "finished"
 		r.resultCode = "0"
-		r.resultMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
+		r.resultMessage = resultMessage
 		r.checkIgnoreTimes(s.T(), row)
 	}()
 
@@ -418,10 +425,19 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	s.T().Cleanup(func() {
 		config.BufferSizeScale = backup3
 	})
+	backup4 := importer.MinDeliverRowCnt
+	importer.MinDeliverRowCnt = 1
+	s.T().Cleanup(func() {
+		importer.MinDeliverRowCnt = backup4
+	})
 
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterCreateLoadDataJob", `return`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterStartJob", `return`)
-	s.enableFailpoint("github.com/pingcap/tidb/executor/SyncAfterCommitOneTask", `return`)
+	if importMode == importer.LogicalImportMode {
+		s.enableFailpoint("github.com/pingcap/tidb/executor/SyncAfterCommitOneTask", `return`)
+	} else {
+		s.enableFailpoint("github.com/pingcap/tidb/executor/importer/SyncAfterDeliver", `return`)
+	}
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t*.tsv?endpoint=%s'
 		INTO TABLE load_tsv.t %s;`, gcsEndpoint, withOptions)
 	s.tk.MustQuery(sql)

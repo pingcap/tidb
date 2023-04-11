@@ -843,6 +843,8 @@ type JobImportParam struct {
 	GroupCtx context.Context
 	// should be closed in the end of the job.
 	Done chan struct{}
+
+	Progress *asyncloaddata.Progress
 }
 
 // JobImporter is the interface for importing a job.
@@ -876,3 +878,6 @@ func GetMsgFromBRError(err error) string {
 	}
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
+
+// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
+var TestSyncCh = make(chan struct{})

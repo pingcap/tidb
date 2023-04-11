@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -2189,7 +2190,12 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 			e.result.AppendNull(11)
 		} else {
 			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
-			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize.Load())))
+			if info.ImportMode == importer.LogicalImportMode {
+				e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize.Load())))
+			} else {
+				// todo: for physical mode, we don't have the loaded file size, change to a meaningfully value later.
+				e.result.AppendString(11, units.HumanSize(float64(progress.EncodeFileSize.Load())))
+			}
 		}
 		terr := new(terror.Error)
 		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))
