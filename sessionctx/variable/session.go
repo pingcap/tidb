@@ -1715,6 +1715,11 @@ func (p *PlanCacheParamList) GetParamValue(idx int) types.Datum {
 	return p.paramValues[idx]
 }
 
+// GetParamType returns the type of the parameter at the specified index.
+func (p *PlanCacheParamList) GetParamType(idx int) types.FieldType {
+	return p.paramTypes[idx]
+}
+
 // AllParamValues returns all parameter values.
 func (p *PlanCacheParamList) AllParamValues() []types.Datum {
 	return p.paramValues

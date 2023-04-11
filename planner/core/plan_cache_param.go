@@ -151,15 +151,12 @@ func RestoreASTWithParams(ctx context.Context, _ sessionctx.Context, stmt ast.St
 }
 
 // Params2Expressions converts these parameters to an expression list.
-func Params2Expressions(params []*driver.ValueExpr, needInferType bool) []expression.Expression {
+// This function assumes that ValueExpr.Type is initialized.
+func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
 	exprs := make([]expression.Expression, 0, len(params))
 	for _, p := range params {
 		tp := new(types.FieldType)
-		if needInferType {
-			types.InferParamTypeFromDatum(&p.Datum, tp)
-		} else {
-			*tp = p.Type
-		}
+		*tp = p.Type
 		exprs = append(exprs, &expression.Constant{
 			Value:   p.Datum,
 			RetType: tp,
