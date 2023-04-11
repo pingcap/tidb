@@ -380,7 +380,7 @@ func (e *BRIEExec) fillByShowMetadata(s *ast.BRIEStmt) {
     e.info.kind = ast.BRIEKindShowBackupMeta
 }
 
-func (e *BRIEExec) RunShowMetadata(ctx context.Context, req *chunk.Chunk) error {
+func (e *BRIEExec) runShowMetadata(ctx context.Context, req *chunk.Chunk) error {
     exe, err := show.CreateExec(ctx, *e.showConfig)
     if err != nil {
         return errors.Annotate(err, "failed to create show exec")
@@ -420,7 +420,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
         // This should be able to execute without the queue.
         // NOTE: maybe extract the procedure of executing task in queue
         // into a function, make it more tidy.
-        return e.RunShowMetadata(ctx, req)
+        return e.runShowMetadata(ctx, req)
     }
 
 	bq := globalBRIEQueue
