@@ -42,26 +42,39 @@ import (
 
 type jobStageTp string
 
-// nil -> regionScanned: create a new region job initially
-//
-// regionScanned -> wrote: successfully wrote some or all the data to TiKV.
-// regionScanned -> ingested: if the keyRange has no data, the job is directly
-// jumped to ingested.
-// regionScanned -> needRescan: meet error during writing the data, maybe region
-// is changed
-//
-// wrote -> ingested: successfully ingested the written data to TiKV, note that
-// the remaining data still needs to be written.
-// wrote -> needRescan: meet error during ingesting, maybe region is changed
-//
-// ingested -> nil: if all the data is processed, finish the job
-// ingested -> wrote: if last time only part of the data is written, continue to
-// write the remaining data and succeed
-// ingested -> needRescan: if last time only part of the data is written,
-// continue to write the remaining data and meet error
-//
-// needRescan -> regionScanned(+regionScanned...): rescan the corresponding
-// region, may output multiple jobs when region split
+/*
+	       +
+	       v
+	+------+------+
+
++->+regionScanned+<------+
+|  +------+------+       |
+|         |              |
+|         |              |
+|         v              |
+|      +--+--+     +-----+----+
+|      |wrote+---->+needRescan|
+|      +--+--+     +-----+----+
+|         |              ^
+|         |              |
+|         v              |
+|     +---+----+         |
++-----+ingested+---------+
+
+	+---+----+
+	    |
+	    v
+
+above diagram shows the state transition of a region job, here are some special
+cases:
+  - regionScanned can directly jump to ingested if the keyRange has no data
+  - regionScanned can only transit to wrote. TODO: check if it should be transited
+    to needRescan
+  - if a job only partially writes the data, after it becomes ingested, it will
+    update its keyRange and transits to regionScanned to continue the remaining
+    data
+  - needRescan may output multiple regionScanned jobs when the old region is split
+*/
 const (
 	regionScanned jobStageTp = "regionScanned"
 	wrote         jobStageTp = "wrote"
