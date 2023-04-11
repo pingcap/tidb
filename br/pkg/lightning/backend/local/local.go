@@ -1424,25 +1424,6 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 	return err
 }
 
-type firstError struct {
-	err error
-	mu  sync.Mutex
-}
-
-func (e *firstError) save(err error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.err == nil {
-		e.err = err
-	}
-}
-
-func (e *firstError) load() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.err
-}
-
 func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges []Range, regionSplitSize, regionSplitKeys int64) error {
 	/*
 	   [prepareAndSendJob]-----jobToWorkerCh--->[workers]
@@ -1458,7 +1439,7 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 		// workerCtx.Done() means workflow is canceled by error. It may be caused
 		// by calling workerCancel() or workers in workGroup meets error.
 		workGroup, workerCtx = errgroup.WithContext(ctx2)
-		firstErr             = new(firstError)
+		firstErr             common.OnceError
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
 		// owned by them.
 		jobToWorkerCh   = make(chan *regionJob)
@@ -1501,7 +1482,7 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 			case regionScanned, wrote:
 				job.retryCount++
 				if job.retryCount > maxWriteAndIngestRetryTimes {
-					firstErr.save(job.lastRetryableErr)
+					firstErr.Set(job.lastRetryableErr)
 					workerCancel()
 					jobWg.Done()
 					continue
@@ -1546,17 +1527,17 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 		&jobWg,
 	)
 	if err != nil {
-		firstErr.save(err)
+		firstErr.Set(err)
 		workerCancel()
 		_ = workGroup.Wait()
-		return firstErr.load()
+		return firstErr.Get()
 	}
 
 	jobWg.Wait()
 	close(jobToWorkerCh)
 	retryer.close()
-	firstErr.save(workGroup.Wait())
-	return firstErr.load()
+	firstErr.Set(workGroup.Wait())
+	return firstErr.Get()
 }
 
 // ResetEngine reset the engine and reclaim the space.
