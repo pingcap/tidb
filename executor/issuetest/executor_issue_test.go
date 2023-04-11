@@ -1352,7 +1352,6 @@ func TestIssue40158(t *testing.T) {
 	tk.MustQuery("select * from t1 where c1 is null and _id < 1;").Check(testkit.Rows())
 }
 
-<<<<<<< HEAD
 func TestIssue42662(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1394,7 +1393,8 @@ func TestIssue42662(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/servermemorylimit/issue42662_2"))
-=======
+}
+
 func TestIssue40596(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1430,5 +1430,4 @@ PARTITION BY HASH (c5) PARTITIONS 4;`)
 	tk.MustQuery("select    /*+ inl_join( t1 , t2 ) */ avg(   t2.c5 ) as r0 , repeat( t2.c7 , t2.c5 ) as r1 , locate( t2.c7 , t2.c7 ) as r2 , unhex( t1.c1 ) as r3 from t1 right join t2 on t1.c2 = t2.c5 where not( t2.c5 in ( -7860 ,-13384 ,-12940 ) ) and not( t1.c2 between '4s7ht' and 'mj' );").Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	// Again, a simpler reproduce.
 	tk.MustQuery("select /*+ inl_join (t1, t2) */ t2.c5 from t1 right join t2 on t1.c2 = t2.c5 where not( t1.c2 between '4s7ht' and 'mj' );").Check(testkit.Rows())
->>>>>>> 5cb64fd09a9 (executor: fix buildTableReaderForIndexJoin on partition table (#40674))
 }
