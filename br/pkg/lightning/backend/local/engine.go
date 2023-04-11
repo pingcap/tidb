@@ -1146,7 +1146,7 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 }
 
 // AppendRows appends rows to the SST file.
-func (w *Writer) AppendRows(ctx context.Context, _ string, columnNames []string, rows encode.Rows) error {
+func (w *Writer) AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
 	kvs := kv.Rows2KvPairs(rows)
 	if len(kvs) == 0 {
 		return nil

@@ -147,7 +147,7 @@ func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImpo
 
 	// todo: use a real region size getter
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
-	localBackend, err := local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter)
+	localBackend, err := local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImpo
 
 type tableImporter struct {
 	*LoadDataController
-	backend   backend.Backend
+	backend   *local.Backend
 	tableCp   *checkpoints.TableCheckpoint
 	tableInfo *checkpoints.TidbTableInfo
 	tableMeta *mydump.MDTableMeta
@@ -198,7 +198,7 @@ var _ io.Closer = &tableImporter{}
 func (ti *tableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, chunk.FileMeta, ti.dataStore)
+			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -339,7 +339,8 @@ func (ti *tableImporter) importEngines(ctx context.Context) error {
 	// todo: cleanup all engine data on any error since we don't support checkpoint for now
 	// some return path, didn't make sure all data engine and index engine are cleaned up.
 	// maybe we can add this in upper level to clean the whole local-sort directory
-	indexEngine, err := ti.backend.OpenEngine(ctx, idxEngineCfg, fullTableName, common.IndexEngineID)
+	mgr := backend.MakeEngineManager(ti.backend)
+	indexEngine, err := mgr.OpenEngine(ctx, idxEngineCfg, fullTableName, common.IndexEngineID)
 	if err != nil {
 		return errors.Trace(err)
 	}
