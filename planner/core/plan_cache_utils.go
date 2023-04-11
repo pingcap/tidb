@@ -93,12 +93,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	ret := &PreprocessorReturn{InfoSchema: is} // is can be nil, and
-	var err error
-	if isPrepStmt {
-		err = Preprocess(ctx, sctx, paramStmt, InPrepare, WithPreprocessorReturn(ret))
-	} else {
-		err = Preprocess(ctx, sctx, paramStmt, WithPreprocessorReturn(ret))
-	}
+	err := Preprocess(ctx, sctx, paramStmt, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, 0, err
 	}
