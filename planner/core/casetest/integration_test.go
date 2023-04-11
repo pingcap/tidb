@@ -1042,12 +1042,6 @@ func TestViewHintScope(t *testing.T) {
 }
 
 func TestAllViewHintType(t *testing.T) {
-	ori := core.BroadCastJoinScaleFactor
-	core.BroadCastJoinScaleFactor = 1
-	defer func() {
-		core.BroadCastJoinScaleFactor = ori
-	}()
-
 	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
@@ -1113,12 +1107,6 @@ func TestAllViewHintType(t *testing.T) {
 }
 
 func TestJoinHintCompatibility(t *testing.T) {
-	ori := core.BroadCastJoinScaleFactor
-	core.BroadCastJoinScaleFactor = 1
-	defer func() {
-		core.BroadCastJoinScaleFactor = ori
-	}()
-
 	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 

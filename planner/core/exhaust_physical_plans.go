@@ -2129,18 +2129,17 @@ func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, fl
 	return row1 + row2, 0, false
 }
 
-// BroadCastJoinScaleFactor indicates the factor used to estimate the approximate cost of broadcast join
-// The size of hash table when using broadcast join is bigger than the shuffle way, which means it may bring worse performance.
+// The size of hash table when using broadcast join is bigger than the shuffle way, which means it may bring worse performance to hash join.
 // Set a relatively conservative value by default.
-var BroadCastJoinScaleFactor = 3.0
+var broadCastJoinScaleFactor = 3.0
 
 func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
 	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	if hasSizeBC && hasSizeHash {
-		return szBC*BroadCastJoinScaleFactor <= szHash
+		return szBC*broadCastJoinScaleFactor <= szHash
 	}
-	return rowBC*BroadCastJoinScaleFactor <= rowHash
+	return rowBC*broadCastJoinScaleFactor <= rowHash
 }
 
 func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) bool {
@@ -2148,9 +2147,9 @@ func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) b
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 
 	if hasSizeBC && hasSizeHash {
-		return szBC*BroadCastJoinScaleFactor <= szHash
+		return szBC*broadCastJoinScaleFactor <= szHash
 	}
-	return rowBC*BroadCastJoinScaleFactor <= rowHash
+	return rowBC*broadCastJoinScaleFactor <= rowHash
 }
 
 // If we can use mpp broadcast join, that's our first choice.

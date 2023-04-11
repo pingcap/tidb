@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/core/internal"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit"
@@ -495,12 +494,6 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 //
 //	since it doesn't change the schema out (index ref is still the right), so by now it's fine. SEE case: EXPLAIN select count(distinct a), count(distinct b), sum(c) from t.
 func TestMPPMultiDistinct3Stage(t *testing.T) {
-	ori := core.BroadCastJoinScaleFactor
-	core.BroadCastJoinScaleFactor = 1
-	defer func() {
-		core.BroadCastJoinScaleFactor = ori
-	}()
-
 	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
@@ -559,12 +552,6 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 
 // Test null-aware semi join push down for MPP mode
 func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
-	ori := core.BroadCastJoinScaleFactor
-	core.BroadCastJoinScaleFactor = 1
-	defer func() {
-		core.BroadCastJoinScaleFactor = ori
-	}()
-
 	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 

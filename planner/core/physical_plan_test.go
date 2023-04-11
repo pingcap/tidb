@@ -218,12 +218,6 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 }
 
 func TestMPPHintsWithBinding(t *testing.T) {
-	ori := core.BroadCastJoinScaleFactor
-	core.BroadCastJoinScaleFactor = 1
-	defer func() {
-		core.BroadCastJoinScaleFactor = ori
-	}()
-
 	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -273,12 +267,6 @@ func TestMPPHintsWithBinding(t *testing.T) {
 }
 
 func TestJoinHintCompatibilityWithBinding(t *testing.T) {
-	ori := core.BroadCastJoinScaleFactor
-	core.BroadCastJoinScaleFactor = 1
-	defer func() {
-		core.BroadCastJoinScaleFactor = ori
-	}()
-	
 	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
