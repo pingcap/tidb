@@ -1113,6 +1113,7 @@ func (do *Domain) Init(
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
+
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			do.ddl = d
