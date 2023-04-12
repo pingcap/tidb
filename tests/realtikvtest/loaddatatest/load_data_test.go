@@ -15,11 +15,14 @@
 package loaddatatest
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func (s *mockGCSSuite) prepareAndUseDB(db string) {
@@ -328,5 +331,49 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string) {
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 [1, 2, 3]",
 		"2 [2, 3, 4]",
+	))
+}
+
+func (s *mockGCSSuite) TestMixedCompression() {
+	s.testMixedCompression(importer.LogicalImportMode)
+	s.testMixedCompression(importer.PhysicalImportMode)
+}
+
+func (s *mockGCSSuite) testMixedCompression(importMode string) {
+	withOptions := fmt.Sprintf("WITH thread=1, import_mode='%s'", importMode)
+	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
+	s.tk.MustExec("CREATE DATABASE multi_load;")
+	s.tk.MustExec("CREATE TABLE multi_load.t (i INT PRIMARY KEY, s varchar(32));")
+
+	// gzip content
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	_, err := w.Write([]byte("1\ttest1\n" +
+		"2\ttest2"))
+	require.NoError(s.T(), err)
+	err = w.Close()
+	require.NoError(s.T(), err)
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-multi-load",
+			Name:       "compress.001.tsv.gz",
+		},
+		Content: buf.Bytes(),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-multi-load",
+			Name:       "compress.002.tsv",
+		},
+		Content: []byte("3\ttest3\n" +
+			"4\ttest4"),
+	})
+
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/compress.*?endpoint=%s'
+		INTO TABLE multi_load.t %s;`, gcsEndpoint, withOptions)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
+		"1 test1", "2 test2", "3 test3", "4 test4",
 	))
 }
