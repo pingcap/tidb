@@ -932,7 +932,9 @@ func (h *BindHandle) CaptureBaselines() {
 		if bindSQL == "" {
 			continue
 		}
+		h.sctx.Lock()
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
+		h.sctx.Unlock()
 		binding := Binding{
 			BindSQL:   bindSQL,
 			Status:    Enabled,
