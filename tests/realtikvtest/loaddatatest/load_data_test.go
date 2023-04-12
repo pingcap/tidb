@@ -348,8 +348,10 @@ func (s *mockGCSSuite) testMixedCompression(importMode string) {
 	// gzip content
 	var buf bytes.Buffer
 	w := gzip.NewWriter(&buf)
-	_, err := w.Write([]byte("1\ttest1\n" +
-		"2\ttest2"))
+	_, err := w.Write([]byte(`1,test1
+2,test2
+3,test3
+4,test4`))
 	require.NoError(s.T(), err)
 	err = w.Close()
 	require.NoError(s.T(), err)
@@ -366,15 +368,28 @@ func (s *mockGCSSuite) testMixedCompression(importMode string) {
 			BucketName: "test-multi-load",
 			Name:       "compress.002.tsv",
 		},
-		Content: []byte("3\ttest3\n" +
-			"4\ttest4"),
+		Content: []byte(`5,test5
+6,test6
+7,test7
+8,test8
+9,test9`),
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/compress.*?endpoint=%s'
-		INTO TABLE multi_load.t %s;`, gcsEndpoint, withOptions)
+		INTO TABLE multi_load.t fields terminated by ',' %s;`, gcsEndpoint, withOptions)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"1 test1", "2 test2", "3 test3", "4 test4",
+		"5 test5", "6 test6", "7 test7", "8 test8", "9 test9",
+	))
+
+	s.tk.MustExec("truncate table multi_load.t")
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/compress.*?endpoint=%s'
+		INTO TABLE multi_load.t fields terminated by ',' ignore 3 lines %s;`, gcsEndpoint, withOptions)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
+		"4 test4",
+		"8 test8", "9 test9",
 	))
 }
 

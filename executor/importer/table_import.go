@@ -118,12 +118,12 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti JobImpor
 		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
 		// set to false when we fix it.
 		CheckpointEnabled:       true,
-		MemTableSize:            int(config.DefaultEngineMemCacheSize),
+		MemTableSize:            config.DefaultEngineMemCacheSize,
 		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:         true,
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
-		StoreWriteBWLimit:       0,
+		StoreWriteBWLimit:       int(e.maxWriteSpeed),
 		// todo: we can set it false when we support switch import mode.
 		ShouldCheckWriteStall: true,
 		MaxOpenFiles:          int(util.GenRLimit()),
@@ -232,17 +232,9 @@ func (ti *tableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	if err != nil {
 		return nil, err
 	}
-	if chunk.FileMeta.Compression == mydump.CompressionNone {
-		// todo: when support checkpoint, we should set pos too.
-		// WARN: parser.SetPos can only be set before we read anything now. should fix it before set pos.
-		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
-	} else {
-		// todo: chunk.Chunk.Offset is not set, if we ignore N lines, should set it.
-		if err := mydump.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
-			return nil, errors.Trace(err)
-		}
-		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
-	}
+	// todo: when support checkpoint, we should set pos too.
+	// WARN: parser.SetPos can only be set before we read anything now. should fix it before set pos.
+	parser.SetRowID(chunk.Chunk.PrevRowIDMax)
 	return parser, nil
 }
 
