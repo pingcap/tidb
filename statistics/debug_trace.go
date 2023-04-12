@@ -125,7 +125,7 @@ func TraceStatsTbl(statsTbl *Table) *StatsTblInfo {
 	traceInfo := &StatsTblInfo{
 		PhysicalId:  statsTbl.PhysicalID,
 		Version:     statsTbl.Version,
-		Count:       statsTbl.Count,
+		Count:       statsTbl.RealtimeCount,
 		ModifyCount: statsTbl.ModifyCount,
 		Columns:     make([]*statsTblColOrIdxInfo, colNum),
 		Indexes:     make([]*statsTblColOrIdxInfo, idxNum),

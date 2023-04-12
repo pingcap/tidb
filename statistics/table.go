@@ -685,7 +685,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 		debug_trace.DebugTraceAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", idx.Histogram.notNullCount(),
 			"TopN total count", idx.TopN.TotalCount(),
-			"Increase Factor", idx.GetIncreaseFactor(coll.Count),
+			"Increase Factor", idx.GetIncreaseFactor(coll.RealtimeCount),
 		)
 	}
 	if idx.CMSketch != nil && idx.StatsVer == Version1 {
