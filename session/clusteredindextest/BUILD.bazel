@@ -1,24 +1,28 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "unstabletest_test",
+    name = "clusteredindextest_test",
     timeout = "short",
     srcs = [
+        "clustered_index_test.go",
         "main_test.go",
-        "memory_test.go",
-        "unstable_test.go",
     ],
+    data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 4,
+    shard_count = 23,
     deps = [
         "//config",
-        "//meta/autoid",
+        "//errno",
+        "//kv",
+        "//session",
+        "//sessionctx/variable",
         "//testkit",
-        "//util",
-        "//util/memory",
+        "//testkit/testdata",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "//util/collate",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
-        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )
