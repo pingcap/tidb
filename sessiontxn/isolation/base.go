@@ -266,7 +266,9 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	sessVars := p.sctx.GetSessionVars()
+	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
+	sessVars.TxnCtxMu.Unlock()
 	if sessVars.MemDBFootprint != nil {
 		sessVars.MemDBFootprint.Detach()
 	}
