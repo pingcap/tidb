@@ -85,9 +85,8 @@ const (
 
 	batchAddingJobs = 10
 
-	reorgWorkerCnt    = 10
-	generalWorkerCnt  = 1
-	backfillWorkerCnt = 32
+	reorgWorkerCnt   = 10
+	generalWorkerCnt = 1
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
@@ -508,13 +507,6 @@ type reorgContexts struct {
 	reorgCtxMap map[int64]*reorgCtx
 }
 
-func getReorgCtx(reorgCtxs *reorgContexts, jobID int64) *reorgCtx {
-	reorgCtxs.RLock()
-	defer reorgCtxs.RUnlock()
-	return reorgCtxs.reorgCtxMap[jobID]
-}
-
-// TODO: Using getReorgCtx instead of dc.getReorgCtx.
 func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()

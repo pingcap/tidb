@@ -41,7 +41,6 @@ import (
 
 var (
 	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
-	addingBackfillJob           = "/tidb/ddl/add_backfill_job"
 	dispatchLoopWaitingDuration = 1 * time.Second
 )
 

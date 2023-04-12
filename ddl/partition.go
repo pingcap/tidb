@@ -572,10 +572,10 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 
 	var (
 		interval  ast.PartitionInterval
-		startIdx  int    = 0
-		endIdx    int    = len(tbInfo.Partition.Definitions) - 1
-		isIntType bool   = true
-		minVal    string = "0"
+		startIdx  = 0
+		endIdx    = len(tbInfo.Partition.Definitions) - 1
+		isIntType = true
+		minVal    = "0"
 	)
 	if len(tbInfo.Partition.Columns) > 0 {
 		partCol := findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
