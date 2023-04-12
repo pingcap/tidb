@@ -300,12 +300,14 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	b.backendCtx = bc
-	mgr, err := ingest.NewCheckpointManager(b.ctx, bc, b.sessPool, job.ID,
-		b.reorgInfo.currElement.ID, checkpointUpdateInterval)
-	if err != nil {
-		return errors.Trace(err)
+	if !b.distribute {
+		mgr, err := ingest.NewCheckpointManager(b.ctx, bc, b.sessPool, job.ID,
+			b.reorgInfo.currElement.ID, checkpointUpdateInterval)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		b.checkpointMgr = mgr
 	}
-	b.checkpointMgr = mgr
 	copReqSenderPool, err := b.createCopReqSenderPool()
 	if err != nil {
 		return errors.Trace(err)
