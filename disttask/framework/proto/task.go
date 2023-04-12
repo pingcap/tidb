@@ -53,6 +53,7 @@ const (
 // Task represents the task of distribute framework.
 type Task struct {
 	ID              int64
+	Key             string
 	Type            string
 	State           string
 	Step            int64
@@ -61,6 +62,11 @@ type Task struct {
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
+}
+
+// IsFinished checks if the task is finished.
+func (t *Task) IsFinished() bool {
+	return t.State == TaskStateSucceed || t.State == TaskStateReverted
 }
 
 // Subtask represents the subtask of distribute framework.

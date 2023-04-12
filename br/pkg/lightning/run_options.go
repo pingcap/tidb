@@ -34,6 +34,7 @@ type options struct {
 	dupIndicator      *atomic.Bool
 }
 
+// Option is a function that configures a lightning task.
 type Option func(*options)
 
 // WithGlue sets the glue to a lightning task.

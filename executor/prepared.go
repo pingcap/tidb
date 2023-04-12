@@ -116,7 +116,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 	}
-	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.ctx, true, stmt0.Text(), stmt0)
+	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.ctx, true, stmt0.Text(), stmt0, nil)
 	if err != nil {
 		return err
 	}

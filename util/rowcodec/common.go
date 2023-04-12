@@ -27,7 +27,10 @@ import (
 // CodecVer is the constant number that represent the new row format.
 const CodecVer = 128
 
-var errInvalidCodecVer = errors.New("invalid codec version")
+var (
+	errInvalidCodecVer    = errors.New("invalid codec version")
+	errInvalidChecksumVer = errors.New("invalid checksum version")
+)
 
 // First byte in the encoded value which specifies the encoding type.
 const (

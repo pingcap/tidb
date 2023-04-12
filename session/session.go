@@ -169,6 +169,17 @@ type Session interface {
 	SetExtensions(extensions *extension.SessionExtensions)
 }
 
+func init() {
+	executor.CreateSession = func(ctx sessionctx.Context) (sessionctx.Context, error) {
+		return CreateSession(ctx.GetStore())
+	}
+	executor.CloseSession = func(ctx sessionctx.Context) {
+		if se, ok := ctx.(Session); ok {
+			se.Close()
+		}
+	}
+}
+
 var _ Session = (*session)(nil)
 
 type stmtRecord struct {
@@ -1201,7 +1212,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
-			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
+			s.sessionVars.PlanCacheParams.Reset()
 			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
 				return err
@@ -1212,7 +1223,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				// We print the queries at the first try only.
 				sql := sqlForLog(st.GetTextToLog(false))
 				if !sessVars.EnableRedactLog {
-					sql += sessVars.PreparedParams.String()
+					sql += sessVars.PlanCacheParams.String()
 				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -2130,6 +2141,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
+	s.currentPlan = nil // reset current plan
 	s.SetProcessInfo(stmtNode.Text(), time.Now(), cmdByte, 0)
 	s.txn.onStmtStart(digest.String())
 	defer sessiontxn.GetTxnManager(s).OnStmtEnd()
@@ -3474,6 +3486,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		dom.Close()
 		return nil, err
 	}
+
+	err = dom.InitDistTaskLoop(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return dom, err
 }
 
@@ -3851,7 +3868,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 
 		query = executor.QueryReplacer.Replace(query)
 		if !vars.EnableRedactLog {
-			query += vars.PreparedParams.String()
+			query += vars.PlanCacheParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
@@ -4238,8 +4255,11 @@ func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 
 	// Decode session variables.
 	for name, val := range sessionStates.SystemVars {
-		if err := s.sessionVars.SetSystemVarWithoutValidation(name, val); err != nil {
-			return err
+		// Experimental system variables may change scope, data types, or even be removed.
+		// We just ignore the errors and continue.
+		if err := s.sessionVars.SetSystemVar(name, val); err != nil {
+			logutil.Logger(ctx).Warn("set session variable during decoding session states error",
+				zap.String("name", name), zap.String("value", val), zap.Error(err))
 		}
 	}
 
@@ -4278,7 +4298,7 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
-func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string) {
+func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string, printLog bool) {
 	sv := s.GetSessionVars()
 	if sv.InRestrictedSQL {
 		return
@@ -4293,7 +4313,12 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 			ids := util.Str2Int64Map(job2ids[jobID])
 			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
 				delete(job2ver, jobID)
-				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", sv.ConnectionID))
+				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
+				if elapsedTime > time.Minute && printLog {
+					logutil.BgLogger().Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+				} else {
+					logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+				}
 			}
 		}
 		return true

@@ -1065,7 +1065,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 		Indices:       make(map[int64]*Index),
 		Idx2ColumnIDs: coll.Idx2ColumnIDs,
 		ColID2IdxIDs:  coll.ColID2IdxIDs,
-		Count:         coll.Count,
+		RealtimeCount: coll.RealtimeCount,
 	}
 	for _, node := range statsNodes {
 		if node.Tp == IndexType {
@@ -1659,7 +1659,9 @@ func (s StatsLoadedStatus) IsLoadNeeded() bool {
 	if s.statsInitialized {
 		return s.evictedStatus > allLoaded
 	}
-	return true
+	// If statsInitialized is false, it means there is no stats for the column/index in the storage.
+	// Hence, we don't need to trigger the task of loading the column/index stats.
+	return false
 }
 
 // IsEssentialStatsLoaded indicates whether the essential statistics is loaded.

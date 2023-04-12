@@ -720,10 +720,15 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowIndex() error {
+	do := domain.GetDomain(e.ctx)
+	h := do.StatsHandle()
+
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	statsTbl := h.GetTableStats(tb.Meta())
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
@@ -739,6 +744,11 @@ func (e *ShowExec) fetchShowIndex() error {
 				break
 			}
 		}
+		colStats, ok := statsTbl.Columns[pkCol.ID]
+		var ndv int64
+		if ok {
+			ndv = colStats.NDV
+		}
 		e.appendRow([]interface{}{
 			tb.Meta().Name.O, // Table
 			0,                // Non_unique
@@ -746,7 +756,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			1,                // Seq_in_index
 			pkCol.Name.O,     // Column_name
 			"A",              // Collation
-			0,                // Cardinality
+			ndv,              // Cardinality
 			nil,              // Sub_part
 			nil,              // Packed
 			"",               // Null
@@ -796,6 +806,12 @@ func (e *ShowExec) fetchShowIndex() error {
 				expression = tblCol.GeneratedExprString
 			}
 
+			colStats, ok := statsTbl.Columns[tblCol.ID]
+			var ndv int64
+			if ok {
+				ndv = colStats.NDV
+			}
+
 			e.appendRow([]interface{}{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
@@ -803,7 +819,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				i + 1,                  // Seq_in_index
 				colName,                // Column_name
 				"A",                    // Collation
-				0,                      // Cardinality
+				ndv,                    // Cardinality
 				subPart,                // Sub_part
 				nil,                    // Packed
 				nullVal,                // Null
@@ -2173,7 +2189,7 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 			e.result.AppendNull(11)
 		} else {
 			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
-			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize)))
+			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize.Load())))
 		}
 		terr := new(terror.Error)
 		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))

@@ -511,6 +511,7 @@ import (
 	per_table             "PER_TABLE"
 	pipesAsOr
 	plugins               "PLUGINS"
+	point                 "POINT"
 	policy                "POLICY"
 	preSplitRegions       "PRE_SPLIT_REGIONS"
 	preceding             "PRECEDING"
@@ -656,6 +657,7 @@ import (
 	bitOr                 "BIT_OR"
 	bitXor                "BIT_XOR"
 	bound                 "BOUND"
+	br                    "BR"
 	briefType             "BRIEF"
 	burstable             "BURSTABLE"
 	cast                  "CAST"
@@ -675,7 +677,9 @@ import (
 	follower              "FOLLOWER"
 	followerConstraints   "FOLLOWER_CONSTRAINTS"
 	followers             "FOLLOWERS"
+	fullBackupStorage     "FULL_BACKUP_STORAGE"
 	getFormat             "GET_FORMAT"
+	gcTTL                 "GC_TTL"
 	groupConcat           "GROUP_CONCAT"
 	next_row_id           "NEXT_ROW_ID"
 	inplace               "INPLACE"
@@ -690,6 +694,7 @@ import (
 	learners              "LEARNERS"
 	min                   "MIN"
 	max                   "MAX"
+	metadata              "METADATA"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
@@ -700,10 +705,12 @@ import (
 	primaryRegion         "PRIMARY_REGION"
 	recent                "RECENT"
 	replayer              "REPLAYER"
+	restoredTS            "RESTORED_TS"
 	running               "RUNNING"
 	s3                    "S3"
 	schedule              "SCHEDULE"
 	staleness             "STALENESS"
+	startTS               "START_TS"
 	std                   "STD"
 	stddev                "STDDEV"
 	stddevPop             "STDDEV_POP"
@@ -731,6 +738,7 @@ import (
 	tokudbZstd            "TOKUDB_ZSTD"
 	top                   "TOP"
 	trim                  "TRIM"
+	untilTS               "UNTIL_TS"
 	variance              "VARIANCE"
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
@@ -1014,6 +1022,7 @@ import (
 	Boolean                                "Boolean (0, 1, false, true)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
+	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
 	ColumnDef                              "table column definition"
 	ColumnDefList                          "table column definition list"
 	ColumnName                             "column name"
@@ -5105,10 +5114,94 @@ BRIEStmt:
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
+|	"BACKUP" "LOGS" "TO" stringLit BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamStart
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"STOP" "BACKUP" "LOGS"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamStop
+		$$ = stmt
+	}
+|	"PAUSE" "BACKUP" "LOGS" BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamPause
+		stmt.Options = $4.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"RESUME" "BACKUP" "LOGS"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamResume
+		$$ = stmt
+	}
+|	"PURGE" "BACKUP" "LOGS" "FROM" stringLit BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamPurge
+		stmt.Storage = $5
+		stmt.Options = $6.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"SHOW" "BACKUP" "LOGS" "STATUS"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamStatus
+		$$ = stmt
+	}
+|	"SHOW" "BACKUP" "LOGS" "METADATA" "FROM" stringLit
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamMetaData
+		stmt.Storage = $6
+		$$ = stmt
+	}
+|	"SHOW" "BR" "JOB" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowJob
+		stmt.JobID = $4.(int64)
+		$$ = stmt
+	}
+|	"SHOW" "BR" "JOB" "QUERY" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowQuery
+		stmt.JobID = $5.(int64)
+		$$ = stmt
+	}
+|	"CANCEL" "BR" "JOB" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindCancelJob
+		stmt.JobID = $4.(int64)
+		$$ = stmt
+	}
+|	"SHOW" "BACKUP" "METADATA" "FROM" stringLit
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowBackupMeta
+		stmt.Storage = $5
+		$$ = stmt
+	}
 |	"RESTORE" BRIETables "FROM" stringLit BRIEOptions
 	{
 		stmt := $2.(*ast.BRIEStmt)
 		stmt.Kind = ast.BRIEKindRestore
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"RESTORE" "POINT" "FROM" stringLit BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindRestorePIT
 		stmt.Storage = $4
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
@@ -5356,6 +5449,41 @@ BRIEOption:
 		$$ = &ast.BRIEOption{
 			Tp:        ast.BRIEOptionAnalyze,
 			UintValue: uint64($3.(ast.BRIEOptionLevel)),
+		}
+	}
+|	"FULL_BACKUP_STORAGE" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionFullBackupStorage,
+			StrValue: $3,
+		}
+	}
+|	"RESTORED_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionRestoredTS,
+			StrValue: $3,
+		}
+	}
+|	"START_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionStartTS,
+			StrValue: $3,
+		}
+	}
+|	"UNTIL_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionUntilTS,
+			StrValue: $3,
+		}
+	}
+|	"GC_TTL" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionGCTTL,
+			StrValue: $3,
 		}
 	}
 
@@ -5837,7 +5965,7 @@ FieldList:
 	{
 		field := $1.(*ast.SelectField)
 		field.Offset = parser.startOffset(&yyS[yypt])
-		if field.Expr != nil && field.AsName.O == "" {
+		if field.Expr != nil {
 			endOffset := parser.yylval.offset
 			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
@@ -5848,7 +5976,7 @@ FieldList:
 		fl := $1.([]*ast.SelectField)
 		field := $3.(*ast.SelectField)
 		field.Offset = parser.startOffset(&yyS[yypt])
-		if field.Expr != nil && field.AsName.O == "" {
+		if field.Expr != nil {
 			endOffset := parser.yylval.offset
 			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
@@ -6174,6 +6302,7 @@ UnReservedKeyword:
 |	"START"
 |	"STATUS"
 |	"OPEN"
+|	"POINT"
 |	"SUBPARTITIONS"
 |	"SUBPARTITION"
 |	"TABLES"
@@ -6574,6 +6703,13 @@ NotKeywordToken:
 |	"MEDIUM"
 |	"LOW"
 |	"BURSTABLE"
+|	"BR"
+|	"GC_TTL"
+|	"METADATA"
+|	"START_TS"
+|	"UNTIL_TS"
+|	"RESTORED_TS"
+|	"FULL_BACKUP_STORAGE"
 
 /************************************************************************************
  *
@@ -6852,6 +6988,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -6876,6 +7013,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -6892,6 +7030,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -7361,6 +7500,7 @@ FunctionNameConflict:
 |	"MINUTE"
 |	"MONTH"
 |	builtinNow
+|	"POINT"
 |	"QUARTER"
 |	"REPEAT"
 |	"REPLACE"
@@ -13723,6 +13863,7 @@ LoadDataStmt:
 			Format:             $6.(*string),
 			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
 			Table:              $10.(*ast.TableName),
+			Charset:            $11.(*string),
 			FieldsInfo:         $12.(*ast.FieldsClause),
 			LinesInfo:          $13.(*ast.LinesClause),
 			IgnoreLines:        $14.(*uint64),
@@ -13770,8 +13911,14 @@ IgnoreLines:
 	}
 
 CharsetOpt:
-	{}
+	{
+		$$ = (*string)(nil)
+	}
 |	"CHARACTER" "SET" CharsetName
+	{
+		v := $3
+		$$ = &v
+	}
 
 LocalOpt:
 	{
@@ -14673,5 +14820,4 @@ CalibrateResourceStmt:
 	{
 		$$ = &ast.CalibrateResourceStmt{}
 	}
-
 %%

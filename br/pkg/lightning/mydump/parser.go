@@ -94,7 +94,9 @@ type ChunkParser struct {
 
 // Chunk represents a portion of the data file.
 type Chunk struct {
-	Offset     int64
+	Offset int64
+	// for parquet file, it's the total row count
+	// see makeParquetFileRegion
 	EndOffset  int64
 	RealOffset int64
 	// we estimate row-id range of the chunk using file-size divided by some factor(depends on column count)
@@ -650,8 +652,11 @@ func ReadUntil(parser Parser, pos int64) error {
 }
 
 // OpenReader opens a reader for the given file and storage.
-func OpenReader(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (
-	reader storage.ReadSeekCloser, err error) {
+func OpenReader(
+	ctx context.Context,
+	fileMeta *SourceFileMeta,
+	store storage.ExternalStorage,
+) (reader storage.ReadSeekCloser, err error) {
 	switch {
 	case fileMeta.Type == SourceTypeParquet:
 		reader, err = OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)

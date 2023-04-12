@@ -42,6 +42,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":perfschema"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//kv",
         "//parser/terror",

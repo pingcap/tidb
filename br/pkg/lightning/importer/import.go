@@ -71,6 +71,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// compact levels
 const (
 	FullLevelCompact = -1
 	Level1Compact    = 1
@@ -85,6 +86,7 @@ const (
 	compactStateDoing
 )
 
+// task related table names and create table statements.
 const (
 	TaskMetaTableName  = "task_meta_v2"
 	TableMetaTableName = "table_meta"
@@ -188,6 +190,7 @@ const (
 	diskQuotaStateImporting
 )
 
+// Controller controls the whole import process.
 type Controller struct {
 	taskCtx       context.Context
 	cfg           *config.Config
@@ -199,6 +202,7 @@ type Controller struct {
 	ioWorkers     *worker.Pool
 	checksumWorks *worker.Pool
 	pauser        *common.Pauser
+	engineMgr     backend.EngineManager
 	backend       backend.Backend
 	tidbGlue      glue.Glue
 
@@ -230,6 +234,7 @@ type Controller struct {
 
 	preInfoGetter       PreImportInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
+	encBuilder          encode.EncodingBuilder
 
 	keyspaceName string
 }
@@ -271,6 +276,7 @@ type ControllerParam struct {
 	KeyspaceName string
 }
 
+// NewImportController creates a new Controller instance.
 func NewImportController(
 	ctx context.Context,
 	cfg *config.Config,
@@ -280,6 +286,7 @@ func NewImportController(
 	return NewImportControllerWithPauser(ctx, cfg, param)
 }
 
+// NewImportControllerWithPauser creates a new Controller instance with a pauser.
 func NewImportControllerWithPauser(
 	ctx context.Context,
 	cfg *config.Config,
@@ -329,17 +336,19 @@ func NewImportControllerWithPauser(
 		return nil, common.ErrInitErrManager.Wrap(err).GenWithStackByArgs()
 	}
 
-	var backend backend.Backend
+	var encodingBuilder encode.EncodingBuilder
+	var backendObj backend.Backend
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
-		backend = tidb.NewTiDBBackend(ctx, db, cfg.TikvImporter.OnDuplicate, errorMgr)
+		encodingBuilder = tidb.NewEncodingBuilder()
+		backendObj = tidb.NewTiDBBackend(ctx, db, cfg.TikvImporter.OnDuplicate, errorMgr)
 	case config.BackendLocal:
-		var rLimit local.Rlim_t
+		var rLimit local.RlimT
 		rLimit, err = local.GetSystemRLimit()
 		if err != nil {
 			return nil, err
 		}
-		maxOpenFiles := int(rLimit / local.Rlim_t(cfg.App.TableConcurrency))
+		maxOpenFiles := int(rLimit / local.RlimT(cfg.App.TableConcurrency))
 		// check overflow
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
@@ -356,8 +365,12 @@ func NewImportControllerWithPauser(
 			}
 		}
 
-		encodingBuilder := local.NewEncodingBuilder(ctx)
-		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName, encodingBuilder)
+		encodingBuilder = local.NewEncodingBuilder(ctx)
+		regionSizeGetter := &local.TableRegionSizeGetterImpl{
+			DB: db,
+		}
+		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName)
+		backendObj, err = local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -387,12 +400,19 @@ func NewImportControllerWithPauser(
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
+
+	var wrapper backend.TargetInfoGetter
+	if cfg.TikvImporter.Backend == config.BackendLocal {
+		wrapper = local.NewTargetInfoGetter(tls, p.Glue, cfg.TiDB.PdAddr)
+	} else {
+		wrapper = tidb.NewTargetInfoGetter(db)
+	}
 	ioWorkers := worker.NewPool(ctx, cfg.App.IOConcurrency, "io")
 	targetInfoGetter := &TargetInfoGetterImpl{
 		cfg:          cfg,
 		targetDBGlue: p.Glue,
 		tls:          tls,
-		backend:      backend,
+		backend:      wrapper,
 	}
 	preInfoGetter, err := NewPreImportInfoGetter(
 		cfg,
@@ -400,7 +420,7 @@ func NewImportControllerWithPauser(
 		p.DumpFileStorage,
 		targetInfoGetter,
 		ioWorkers,
-		backend,
+		encodingBuilder,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -420,9 +440,10 @@ func NewImportControllerWithPauser(
 		ioWorkers:     ioWorkers,
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        p.Pauser,
-		backend:       backend,
+		engineMgr:     backend.MakeEngineManager(backendObj),
+		backend:       backendObj,
 		tidbGlue:      p.Glue,
-		sysVars:       defaultImportantVariables,
+		sysVars:       common.DefaultImportantVariables,
 		tls:           tls,
 		checkTemplate: NewSimpleTemplate(),
 
@@ -444,6 +465,7 @@ func NewImportControllerWithPauser(
 
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
+		encBuilder:          encodingBuilder,
 
 		keyspaceName: p.KeyspaceName,
 	}
@@ -451,11 +473,13 @@ func NewImportControllerWithPauser(
 	return rc, nil
 }
 
+// Close closes the controller.
 func (rc *Controller) Close() {
 	rc.backend.Close()
 	rc.tidbGlue.GetSQLExecutor().Close()
 }
 
+// Run starts the restore task.
 func (rc *Controller) Run(ctx context.Context) error {
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
@@ -504,6 +528,7 @@ outside:
 
 type schemaStmtType int
 
+// String implements fmt.Stringer interface.
 func (stmtType schemaStmtType) String() string {
 	switch stmtType {
 	case schemaCreateDatabase:
@@ -1966,6 +1991,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 		return
 	}
 
+	localBackend := rc.backend.(*local.Backend)
 	go func() {
 		// locker is assigned when we detect the disk quota is exceeded.
 		// before the disk quota is confirmed exceeded, we keep the diskQuotaLock
@@ -1993,7 +2019,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			}
 
 			quota := int64(rc.cfg.TikvImporter.DiskQuota)
-			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := rc.backend.CheckDiskQuota(quota)
+			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := local.CheckDiskQuota(localBackend, quota)
 			if m, ok := metric.FromContext(ctx); ok {
 				m.LocalStorageUsageBytesGauge.WithLabelValues("disk").Set(float64(totalDiskSize))
 				m.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
@@ -2024,7 +2050,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			}
 
 			// flush all engines so that checkpoints can be updated.
-			if err := rc.backend.FlushAll(ctx); err != nil {
+			if err := rc.backend.FlushAllEngines(ctx); err != nil {
 				logger.Error("flush engine for disk quota failed, check again later", log.ShortError(err))
 				return
 			}
@@ -2037,7 +2063,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			var importErr error
 			for _, engine := range largeEngines {
 				// Use a larger split region size to avoid split the same region by many times.
-				if err := rc.backend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
+				if err := localBackend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
 					importErr = multierr.Append(importErr, err)
 				}
 			}

@@ -4338,7 +4338,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	// 2. table row count from statistics is zero.
-	if statsTbl.Count == 0 {
+	if statsTbl.RealtimeCount == 0 {
 		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
 		return statistics.PseudoTable(tblInfo)

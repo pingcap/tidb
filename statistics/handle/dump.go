@@ -224,7 +224,7 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 		TableName:    tableInfo.Name.L,
 		Columns:      make(map[string]*jsonColumn, len(tbl.Columns)),
 		Indices:      make(map[string]*jsonColumn, len(tbl.Indices)),
-		Count:        tbl.Count,
+		Count:        tbl.RealtimeCount,
 		ModifyCount:  tbl.ModifyCount,
 		Version:      tbl.Version,
 	}
@@ -324,7 +324,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 	if err != nil || tbl == nil {
 		return nil, err
 	}
-	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, snapshot)
+	tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = h.statsMetaByTableIDFromStorage(physicalID, snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -377,18 +377,18 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 
 	for _, col := range tbl.Columns {
 		// loadStatsFromJSON doesn't support partition table now.
-		// The table level Count and Modify_count would be overridden by the SaveMetaToStorage below, so we don't need
+		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
 		// loadStatsFromJSON doesn't support partition table now.
-		// The table level Count and Modify_count would be overridden by the SaveMetaToStorage below, so we don't need
+		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -397,7 +397,7 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return h.SaveMetaToStorage(tbl.PhysicalID, tbl.Count, tbl.ModifyCount, StatsMetaHistorySourceLoadStats)
+	return h.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, StatsMetaHistorySourceLoadStats)
 }
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
@@ -405,7 +405,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 	newHistColl := statistics.HistColl{
 		PhysicalID:     physicalID,
 		HavePhysicalID: true,
-		Count:          jsonTbl.Count,
+		RealtimeCount:  jsonTbl.Count,
 		ModifyCount:    jsonTbl.ModifyCount,
 		Columns:        make(map[int64]*statistics.Column, len(jsonTbl.Columns)),
 		Indices:        make(map[int64]*statistics.Index, len(jsonTbl.Indices)),

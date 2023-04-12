@@ -385,11 +385,11 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		rows2 = kvs[6000:12000]
 		rows3 = kvs[12000:]
 	}
-	err = w.AppendRows(ctx, "", []string{}, kv.MakeRowsFromKvPairs(rows1))
+	err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows1))
 	require.NoError(t, err)
-	err = w.AppendRows(ctx, "", []string{}, kv.MakeRowsFromKvPairs(rows2))
+	err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows2))
 	require.NoError(t, err)
-	err = w.AppendRows(ctx, "", []string{}, kv.MakeRowsFromKvPairs(rows3))
+	err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows3))
 	require.NoError(t, err)
 	flushStatus, err := w.Close(context.Background())
 	require.NoError(t, err)
@@ -1084,7 +1084,7 @@ func TestMultiIngest(t *testing.T) {
 		pdCtl := &pdutil.PdController{}
 		pdCtl.SetPDClient(&mockPdClient{stores: stores})
 
-		local := &local{
+		local := &Backend{
 			pdCtl: pdCtl,
 			importClientFactory: &mockImportClientFactory{
 				stores: allStores,
@@ -1105,7 +1105,7 @@ func TestMultiIngest(t *testing.T) {
 }
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
-	bak := local{}
+	bak := Backend{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
@@ -1153,12 +1153,18 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 }
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
-	l := local{}
+	l := Backend{}
 	require.True(t, l.isRetryableImportTiKVError(io.EOF))
 	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }
 
 func TestCheckPeersBusy(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 300
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1169,7 +1175,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		}}
 
 	createTimeStore12 := 0
-	local := &local{
+	local := &Backend{
 		importClientFactory: &mockImportClientFactory{
 			stores: []*metapb.Store{
 				{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
@@ -1190,12 +1196,14 @@ func TestCheckPeersBusy(t *testing.T) {
 				return importCli
 			},
 		},
-		logger:                log.L(),
-		writeLimiter:          noopStoreWriteLimiter{},
-		bufferPool:            membuf.NewPool(),
-		supportMultiIngest:    true,
-		shouldCheckWriteStall: true,
-		tikvCodec:             keyspace.CodecV1,
+		logger:             log.L(),
+		writeLimiter:       noopStoreWriteLimiter{},
+		bufferPool:         membuf.NewPool(),
+		supportMultiIngest: true,
+		BackendConfig: BackendConfig{
+			ShouldCheckWriteStall: true,
+		},
+		tikvCodec: keyspace.CodecV1,
 	}
 
 	db, tmpPath := makePebbleDB(t, nil)
@@ -1257,7 +1265,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		waitUntil:  time.Now().Add(-time.Second),
 	}
 
-	retryJobs := make([]*regionJob, 0, 1)
+	retryJobs := make(chan *regionJob, 1)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -1265,7 +1273,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	go func() {
 		job := <-jobOutCh
 		job.retryCount++
-		retryJobs = append(retryJobs, job)
+		retryJobs <- job
 		<-jobOutCh
 		wg.Done()
 	}()
@@ -1276,11 +1284,11 @@ func TestCheckPeersBusy(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	// retryJob will be retried once and worker will sleep 30s before processing the
-	// job again, we simply hope below check is happened when worker is sleeping
-	time.Sleep(5 * time.Second)
-	require.Len(t, retryJobs, 1)
-	require.Same(t, retryJob, retryJobs[0])
+	require.Eventually(t, func() bool {
+		return len(retryJobs) == 1
+	}, 300*time.Second, time.Second)
+	j := <-retryJobs
+	require.Same(t, retryJob, j)
 	require.Equal(t, 21, retryJob.retryCount)
 	require.Equal(t, wrote, retryJob.stage)
 
@@ -1344,7 +1352,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		getSizePropertiesFn = backup
 	})
 
-	local := &local{
+	local := &Backend{
 		splitCli: initTestSplitClient(
 			[][]byte{{1}, {11}},      // we have one big region
 			panicSplitRegionClient{}, // make sure no further split region

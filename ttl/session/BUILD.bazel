@@ -28,7 +28,7 @@ go_test(
         "sysvar_test.go",
     ],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         ":session",
         "//sessionctx/variable",
