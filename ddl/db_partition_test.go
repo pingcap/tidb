@@ -3542,6 +3542,24 @@ func TestCoalescePartition(t *testing.T) {
 		"p5 20",
 		"p6 20",
 		"p7 22"))
+	tk.MustQuery("" +
+		`(select 'p0', count(*) from t partition (p0) UNION` +
+		` select 'p1', count(*) from t partition (p1) UNION` +
+		` select 'p2', count(*) from t partition (p2) UNION` +
+		` select 'p3', count(*) from t partition (p3) UNION` +
+		` select 'p4', count(*) from t partition (p4) UNION` +
+		` select 'p5', count(*) from t partition (p5) UNION` +
+		` select 'p6', count(*) from t partition (p6) UNION` +
+		` select 'p7', count(*) from t partition (p7)` +
+		`) ORDER BY 1`).Check(testkit.Rows(""+
+		"p0 20",
+		"p1 30",
+		"p2 30",
+		"p3 27",
+		"p4 31",
+		"p5 20",
+		"p6 20",
+		"p7 22"))
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (
 		id int,
@@ -3565,6 +3583,24 @@ func TestCoalescePartition(t *testing.T) {
 		"PARTITION BY KEY (`signed`,`fname`) PARTITIONS 8"))
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_name = 't' and table_schema = 'coalescePart'`).Sort().Check(testkit.Rows(""+
+		"p0 26",
+		"p1 28",
+		"p2 22",
+		"p3 24",
+		"p4 30",
+		"p5 27",
+		"p6 22",
+		"p7 21"))
+	tk.MustQuery("" +
+		`(select 'p0', count(*) from t partition (p0) UNION` +
+		` select 'p1', count(*) from t partition (p1) UNION` +
+		` select 'p2', count(*) from t partition (p2) UNION` +
+		` select 'p3', count(*) from t partition (p3) UNION` +
+		` select 'p4', count(*) from t partition (p4) UNION` +
+		` select 'p5', count(*) from t partition (p5) UNION` +
+		` select 'p6', count(*) from t partition (p6) UNION` +
+		` select 'p7', count(*) from t partition (p7)` +
+		`) ORDER BY 1`).Check(testkit.Rows(""+
 		"p0 26",
 		"p1 28",
 		"p2 22",
@@ -3618,7 +3654,9 @@ func TestAddHashPartition(t *testing.T) {
 	tk.MustExec(`create placement policy tworeplicas followers=1`)
 	tk.MustExec(`create placement policy threereplicas followers=2`)
 	tk.MustExec(`create placement policy fourreplicas followers=3`)
-	tk.MustExec("alter table t add partition (partition p13 comment 'p13' placement policy tworeplicas, partition p14 comment 'p14' placement policy threereplicas, partition p15 comment 'p15' placement policy fourreplicas)")
+	tk.MustExec("alter table t add partition (partition pp13 comment 'p13' placement policy tworeplicas, partition pp14 comment 'p14' placement policy threereplicas, partition pp15 comment 'p15' placement policy fourreplicas)")
+	tk.MustExec(`alter table t add partition partitions 1`)
+	tk.MustExec(`alter table t coalesce partition 1`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
@@ -3642,9 +3680,9 @@ func TestAddHashPartition(t *testing.T) {
 		" PARTITION `p9`,\n" +
 		" PARTITION `p10`,\n" +
 		" PARTITION `p11`,\n" +
-		" PARTITION `p13` COMMENT 'p13' /*T![placement] PLACEMENT POLICY=`tworeplicas` */,\n" +
-		" PARTITION `p14` COMMENT 'p14' /*T![placement] PLACEMENT POLICY=`threereplicas` */,\n" +
-		" PARTITION `p15` COMMENT 'p15' /*T![placement] PLACEMENT POLICY=`fourreplicas` */)"))
+		" PARTITION `pp13` COMMENT 'p13' /*T![placement] PLACEMENT POLICY=`tworeplicas` */,\n" +
+		" PARTITION `pp14` COMMENT 'p14' /*T![placement] PLACEMENT POLICY=`threereplicas` */,\n" +
+		" PARTITION `pp15` COMMENT 'p15' /*T![placement] PLACEMENT POLICY=`fourreplicas` */)"))
 	// MySQL keeps the comments, so we should keep all options connected to the remaining partitions too!
 	// So once you added any partition option,
 	// it will never go back to just a number of partitions in MySQL!
@@ -3672,8 +3710,12 @@ func TestAddHashPartition(t *testing.T) {
 		" PARTITION `p9`,\n" +
 		" PARTITION `p10`,\n" +
 		" PARTITION `p11`,\n" +
-		" PARTITION `p13` COMMENT 'p13' /*T![placement] PLACEMENT POLICY=`tworeplicas` */)"))
+		" PARTITION `pp13` COMMENT 'p13' /*T![placement] PLACEMENT POLICY=`tworeplicas` */)"))
 	// If no extra options, it will go back to just numbers in TiDB:
+	tk.MustExec("alter table t coalesce partition 1")
+	tk.MustExec(`alter table t add partition (partition p13 comment 'p13')`)
+	tk.MustContainErrMsg(`alter table t add partition partitions 1`,
+		"[ddl:1517]Duplicate partition name p13")
 	tk.MustExec("alter table t coalesce partition 1")
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -3716,6 +3758,8 @@ func TestAddHashPartition(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY KEY (`hired`) PARTITIONS 12"))
 	tk.MustExec("alter table t add partition (partition p13)")
+	tk.MustContainErrMsg(`alter table t add partition partitions 1`,
+		"[ddl:1517]Duplicate partition name p13")
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `id` int(11) NOT NULL,\n" +

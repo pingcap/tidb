@@ -1115,33 +1115,45 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 	return nil
 }
 
+func isNonDefaultPartitionOptionsUsed(defs []model.PartitionDefinition) bool {
+	for i := range defs {
+		orgDef := defs[i]
+		if orgDef.Name.O != fmt.Sprintf("p%d", i) {
+			return true
+		}
+		if len(orgDef.Comment) > 0 {
+			return true
+		}
+		if orgDef.PlacementPolicyRef != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, numParts uint64) ([]model.PartitionDefinition, error) {
 	if err := checkAddPartitionTooManyPartitions(tbInfo.Partition.Num); err != nil {
 		return nil, err
 	}
 
 	definitions := make([]model.PartitionDefinition, numParts)
-	if len(defs) == 0 {
-		for i := 0; i < len(definitions); i++ {
-			definitions[i].Name = model.NewCIStr(fmt.Sprintf("p%d", i))
-		}
-		return definitions, nil
-	}
 	// So start by re-using the existing ones
 	// For COALESCE, it will copy the remaining ones
 	// For ADD it will copy the existing ones
 	copy(definitions, tbInfo.Partition.Definitions)
-	offset := len(tbInfo.Partition.Definitions)
+	offset := uint64(len(tbInfo.Partition.Definitions))
 
-	if uint64(len(tbInfo.Partition.Definitions)) < numParts {
-		// ADD PARTITION needs to add the new partitions
-		for i := 0; i < len(defs); i++ {
-			def := defs[i]
-			definitions[i+offset].Name = def.Name
-			definitions[i+offset].Comment, _ = def.Comment()
-			if err := setPartitionPlacementFromOptions(&definitions[i+offset], def.Options); err != nil {
+	// ADD PARTITION needs to add the new partitions
+	for i := offset; i < numParts; i++ {
+		if (i - offset) < uint64(len(defs)) {
+			def := defs[i-offset]
+			definitions[i].Name = def.Name
+			definitions[i].Comment, _ = def.Comment()
+			if err := setPartitionPlacementFromOptions(&definitions[i], def.Options); err != nil {
 				return nil, err
 			}
+		} else {
+			definitions[i].Name = model.NewCIStr(fmt.Sprintf("p%d", i))
 		}
 	}
 	return definitions, nil

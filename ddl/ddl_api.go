@@ -4193,26 +4193,7 @@ func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, 
 		if newSpec.Num >= uint64(len(pi.Definitions)) {
 			return dbterror.ErrDropLastPartition
 		}
-		// Generate all partition definitions from the remaining existing partitions,
-		// I.e. keep the options like comment, placement rules etc.
-		newNum := uint64(len(pi.Definitions)) - newSpec.Num
-		nonDefaultOptions := false
-		for i := uint64(0); i < newNum; i++ {
-			orgDef := pi.Definitions[i]
-			if orgDef.Name.O != fmt.Sprintf("p%d", i) {
-				nonDefaultOptions = true
-				break
-			}
-			if len(orgDef.Comment) > 0 {
-				nonDefaultOptions = true
-				break
-			}
-			if orgDef.PlacementPolicyRef != nil {
-				nonDefaultOptions = true
-				break
-			}
-		}
-		if nonDefaultOptions {
+		if isNonDefaultPartitionOptionsUsed(pi.Definitions) {
 			// The partition definitions will be copied in buildHashPartitionDefinitions()
 			// if there is a non-empty list of definitions
 			newSpec.PartDefinitions = []*ast.PartitionDefinition{{}}
