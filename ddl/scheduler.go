@@ -212,3 +212,5 @@ type BackFillSubtaskExecutor struct {
 func (b *BackFillSubtaskExecutor) Run(ctx context.Context) error {
 	return nil
 }
+
+const BackfillTaskType = "backfill"
