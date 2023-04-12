@@ -549,7 +549,7 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 		return nil, nil
 	}
 
-	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.table, m.columns)
+	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.ctx, m.table, m.columns)
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
 		table:         m.table.Meta(),
@@ -596,7 +596,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 	memReaders := make([]memReader, 0, indexCount)
 	for i := 0; i < indexCount; i++ {
 		if indexMergeReader.indexes[i] == nil {
-			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.table, indexMergeReader.columns)
+			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.ctx, indexMergeReader.table, indexMergeReader.columns)
 			memReaders = append(memReaders, &memTableReader{
 				ctx:           us.ctx,
 				table:         indexMergeReader.table.Meta(),
@@ -686,7 +686,7 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 	if numHandles == 0 {
 		return nil, nil
 	}
-	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.table, m.columns)
+	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.ctx, m.table, m.columns)
 
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
@@ -780,13 +780,13 @@ func (m *memIndexMergeReader) getMemRowsHandle() ([]kv.Handle, error) {
 	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexMergeReader")
 }
 
-func getColIDAndPkColIDs(table table.Table, columns []*model.ColumnInfo) (map[int64]int, []int64, *rowcodec.BytesDecoder) {
+func getColIDAndPkColIDs(ctx sessionctx.Context, tbl table.Table, columns []*model.ColumnInfo) (map[int64]int, []int64, *rowcodec.BytesDecoder) {
 	colIDs := make(map[int64]int, len(columns))
 	for i, col := range columns {
 		colIDs[col.ID] = i
 	}
 
-	tblInfo := table.Meta()
+	tblInfo := tbl.Meta()
 	colInfos := make([]rowcodec.ColInfo, 0, len(columns))
 	for i := range columns {
 		col := columns[i]
@@ -800,6 +800,13 @@ func getColIDAndPkColIDs(table table.Table, columns []*model.ColumnInfo) (map[in
 	if len(pkColIDs) == 0 {
 		pkColIDs = []int64{-1}
 	}
-	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, nil, nil)
+	defVal := func(i int) ([]byte, error) {
+		d, err := table.GetColOriginDefaultValue(ctx, columns[i])
+		if err != nil {
+			return nil, err
+		}
+		return tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, d)
+	}
+	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, defVal, ctx.GetSessionVars().Location())
 	return colIDs, pkColIDs, rd
 }
