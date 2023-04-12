@@ -377,3 +377,41 @@ func (s *mockGCSSuite) testMixedCompression(importMode string) {
 		"1 test1", "2 test2", "3 test3", "4 test4",
 	))
 }
+
+func (s *mockGCSSuite) TestLoadSQLDump() {
+	s.testLoadSQLDump(importer.LogicalImportMode)
+	s.testLoadSQLDump(importer.PhysicalImportMode)
+}
+
+func (s *mockGCSSuite) testLoadSQLDump(importMode string) {
+	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec("CREATE TABLE load_csv.t (" +
+		"id INT, c VARCHAR(20));")
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load-parquet",
+			Name:       "p",
+		},
+		Content: []byte(`insert into tbl values (1, 'a'), (2, 'b');`),
+	})
+
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-parquet/p?endpoint=%s'
+		FORMAT 'SQL file' INTO TABLE load_csv.t %s;`, gcsEndpoint, withOptions)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
+		"1 a",
+		"2 b",
+	))
+	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
+
+	rows := s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs;").Rows()
+	require.Greater(s.T(), len(rows), 0)
+	jobID := rows[len(rows)-1][0].(string)
+	err := s.tk.ExecToErr("CANCEL LOAD DATA JOB " + jobID)
+	require.ErrorContains(s.T(), err, "The current job status cannot perform the operation. need status running or paused, but got finished")
+	s.tk.MustExec("DROP LOAD DATA JOB " + jobID)
+	s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs WHERE job_id = " + jobID).Check(testkit.Rows())
+}
