@@ -476,10 +476,12 @@ func initRewriteRules() *restore.RewriteRules {
 
 // expected regions after split:
 //
-//	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
+//	[aa, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
+//	[bbj, cca), [cca, xx), [xx, xxe), [xxe, xxz), [xxz, )
+//
+// Please note that "aa" has been rewritten to "xx", so the "bb" rewrite rule split point won't be included.
 func validateRegions(regions map[uint64]*split.RegionInfo) bool {
-	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "bbj", "cca", "xxe", "xxz", ""}
+	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "bbj", "cca", "xx", "xxe", "xxz", ""}
 	return validateRegionsExt(regions, keys[:], false)
 }
 
