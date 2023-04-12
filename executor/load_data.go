@@ -244,6 +244,8 @@ func (e *LoadDataWorker) importJob(ctx context.Context, jobImporter importer.Job
 
 	// UpdateJobProgress goroutine.
 	group.Go(func() error {
+		// ProgressUpdateRoutineFn must be run in this group, since on job cancel/drop, we depend on it to trigger
+		// the cancel of the other routines in this group.
 		return job.ProgressUpdateRoutineFn(ctx, done, groupCtx.Done(), e.progress)
 	})
 	jobImporter.Import()

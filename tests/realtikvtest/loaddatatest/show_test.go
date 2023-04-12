@@ -120,14 +120,16 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 		jobState:       "loading",
 		jobStatus:      "finished",
 		sourceFileSize: "3B",
-		importedRowCnt: "3B",
+		importedRowCnt: "2",
 		resultCode:     "0",
 		resultMessage:  resultMessage,
 	}
 	r.check(s.T(), row)
 }
 
-func (s *mockGCSSuite) TestLogicalSimpleShowLoadDataJobs() {
+func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
+	s.simpleShowLoadDataJobs(importer.PhysicalImportMode)
+
 	s.simpleShowLoadDataJobs(importer.LogicalImportMode)
 
 	err := s.tk.QueryToErr("SHOW LOAD DATA JOB 999999999")
@@ -184,7 +186,7 @@ func (s *mockGCSSuite) TestLogicalSimpleShowLoadDataJobs() {
 		jobState:       "loading",
 		jobStatus:      "finished",
 		sourceFileSize: "3B",
-		importedRowCnt: "3B",
+		importedRowCnt: "2",
 		resultCode:     "0",
 		resultMessage:  "Records: 2  Deleted: 0  Skipped: 2  Warnings: 2",
 	}
@@ -208,15 +210,8 @@ func (s *mockGCSSuite) TestLogicalSimpleShowLoadDataJobs() {
 	r.check(s.T(), row)
 }
 
-func (s *mockGCSSuite) TestPhysicalSimpleShowLoadDataJobs() {
-	s.simpleShowLoadDataJobs(importer.PhysicalImportMode)
-}
-
-func (s *mockGCSSuite) TestLogicalInternalStatus() {
+func (s *mockGCSSuite) TestInternalStatus() {
 	s.testInternalStatus(importer.LogicalImportMode)
-}
-
-func (s *mockGCSSuite) TestPhysicalInternalStatus() {
 	s.testInternalStatus(importer.PhysicalImportMode)
 }
 

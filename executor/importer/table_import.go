@@ -380,6 +380,7 @@ func (ti *tableImporter) importEngines(ctx context.Context) error {
 			return err2
 		}
 
+		failpoint.Inject("AfterImportDataEngine", nil)
 		failpoint.Inject("SyncAfterImportDataEngine", func() {
 			TestSyncCh <- struct{}{}
 			<-TestSyncCh
