@@ -44,8 +44,8 @@ func TryConvertToBRError(err error) error {
 	if err == nil {
 		return nil
 	}
-	err = errors.Cause(err)
-	if e, ok := err.(*wrappedError); ok {
+	err2 := errors.Cause(err)
+	if e, ok := err2.(*wrappedError); ok {
 		return errors.Annotatef(e.brError, e.text)
 	}
 	return err
