@@ -208,7 +208,8 @@ func MakeEngineManager(ab Backend) EngineManager {
 }
 
 // OpenEngine opens an engine with the given table name and engine ID.
-func (be EngineManager) OpenEngine(ctx context.Context, config *EngineConfig, tableName string, engineID int32) (*OpenedEngine, error) {
+func (be EngineManager) OpenEngine(ctx context.Context, config *EngineConfig,
+	tableName string, engineID int32) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, engineID)
 	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
 
@@ -231,7 +232,9 @@ func (be EngineManager) OpenEngine(ctx context.Context, config *EngineConfig, ta
 
 			closedCount := metric.ReadCounter(closedCounter)
 			if injectValue := val.(int); openCount-closedCount > float64(injectValue) {
-				panic(fmt.Sprintf("forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d", openCount, closedCount, injectValue))
+				panic(fmt.Sprintf(
+					"forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d",
+					openCount, closedCount, injectValue))
 			}
 		}
 	})
@@ -274,7 +277,8 @@ func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterCon
 // (Open -> Write -> Close -> Import). This method should only be used when one
 // knows via other ways that the engine has already been opened, e.g. when
 // resuming from a checkpoint.
-func (be EngineManager) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig, tableName string, engineID int32) (*ClosedEngine, error) {
+func (be EngineManager) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig,
+	tableName string, engineID int32) (*ClosedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, engineID)
 	return be.UnsafeCloseEngineWithUUID(ctx, cfg, tag, engineUUID, engineID)
 }
@@ -284,7 +288,8 @@ func (be EngineManager) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig
 // (Open -> Write -> Close -> Import). This method should only be used when one
 // knows via other ways that the engine has already been opened, e.g. when
 // resuming from a checkpoint.
-func (be EngineManager) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *EngineConfig, tag string, engineUUID uuid.UUID, id int32) (*ClosedEngine, error) {
+func (be EngineManager) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *EngineConfig, tag string,
+	engineUUID uuid.UUID, id int32) (*ClosedEngine, error) {
 	return engine{
 		backend: be.backend,
 		logger:  makeLogger(log.FromContext(ctx), tag, engineUUID),

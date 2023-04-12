@@ -82,7 +82,7 @@ func runLll(pass *analysis.Pass, settings *settings) error {
 			if err != nil {
 				return fmt.Errorf("can't get file %s contents: %s", i.Filename, err)
 			}
-			pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), i.Line, 0)), "too long")
+			pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), i.Line, 1)), "too long")
 		}
 	}
 
