@@ -222,6 +222,15 @@ func TestHash(t *testing.T) {
 		{Field: []byte("1"), Value: []byte("1")},
 		{Field: []byte("2"), Value: []byte("2")}}, res)
 
+	idx := 0
+	err = tx.HGetIter(key, func(pair structure.HashPair) error {
+		require.Less(t, idx, 2)
+		require.Equal(t, res[idx], pair)
+		idx += 1
+		return nil
+	})
+	require.NoError(t, err)
+
 	res, err = tx.HGetLastN(key, 1)
 	require.NoError(t, err)
 	require.Equal(t, []structure.HashPair{

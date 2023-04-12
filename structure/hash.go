@@ -166,7 +166,8 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	return res, errors.Trace(err)
 }
 
-func (t *TxStructure) HGetOnce(key []byte, fn func(pair HashPair) error) error {
+// HGetIter iterates all the fields and values in hash.
+func (t *TxStructure) HGetIter(key []byte, fn func(pair HashPair) error) error {
 	return t.iterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
 			Field: append([]byte{}, field...),

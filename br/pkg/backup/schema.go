@@ -43,7 +43,7 @@ type schemaInfo struct {
 }
 
 type SchemaIterator interface {
-	Iter(kv.Storage, uint64, func(*schemaInfo) error) error
+	Iter(kv.Storage, func(*schemaInfo) error) error
 	GetCheckpointChecksum() map[int64]*checkpoint.ChecksumItem
 }
 
@@ -63,7 +63,7 @@ func NewBackupSchemas() *Schemas {
 	}
 }
 
-func (ss *Schemas) Iter(_ kv.Storage, _ uint64, fn func(*schemaInfo) error) error {
+func (ss *Schemas) Iter(_ kv.Storage, fn func(*schemaInfo) error) error {
 	for _, s := range ss.schemas {
 		if err := fn(s); err != nil {
 			return errors.Trace(err)
@@ -123,7 +123,7 @@ func BackupSchemas[T SchemaIterator](
 	op := metautil.AppendSchema
 	metaWriter.StartWriteMetasAsync(ctx, op)
 	checkpointChecksum := schemas.GetCheckpointChecksum()
-	schemas.Iter(store, backupTS, func(s *schemaInfo) error {
+	schemas.Iter(store, func(s *schemaInfo) error {
 		schema := s
 		// Because schema.dbInfo is a pointer that many tables point to.
 		// Remove "add Temporary-prefix into dbName" from closure to prevent concurrent operations.
@@ -213,24 +213,26 @@ func (ss *Schemas) Len() int {
 }
 
 type SchemasV2 struct {
-	size         int
+	backupTS     uint64
 	filter       filter.Filter
+	size         int
 	isFullBackup bool
 	// checkpoint: table id -> checksum
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 }
 
-func NewBackupSchemasV2(size int, filter filter.Filter, isFullBackup bool) *SchemasV2 {
+func NewBackupSchemasV2(size int, backupTS uint64, filter filter.Filter, isFullBackup bool) *SchemasV2 {
 	return &SchemasV2{
-		size:               size,
+		backupTS:           backupTS,
 		filter:             filter,
+		size:               size,
 		isFullBackup:       isFullBackup,
 		checkpointChecksum: nil,
 	}
 }
 
-func (ss *SchemasV2) Iter(storage kv.Storage, backupTS uint64, fn func(*schemaInfo) error) error {
-	return BuildBackupSchemas(storage, ss.filter, backupTS, ss.isFullBackup, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) error {
+func (ss *SchemasV2) Iter(storage kv.Storage, fn func(*schemaInfo) error) error {
+	return BuildBackupSchemas(storage, ss.filter, ss.backupTS, ss.isFullBackup, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) error {
 		return errors.Trace(fn(&schemaInfo{
 			tableInfo: tableInfo,
 			dbInfo:    dbInfo,

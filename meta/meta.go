@@ -872,13 +872,14 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
-func (m *Meta) GetTablesDoFunc(dbID int64, fn func(info *model.TableInfo) error) error {
+// IterTables iterates all the table at once, in order to avoid oom.
+func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	err := m.txn.HGetOnce(dbKey, func(r structure.HashPair) error {
+	err := m.txn.HGetIter(dbKey, func(r structure.HashPair) error {
 		// only handle table meta
 		tableKey := string(r.Field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {

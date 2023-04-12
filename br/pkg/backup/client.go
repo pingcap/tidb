@@ -534,14 +534,14 @@ func BuildBackupRangeAndSchema(
 		}
 
 		tableNum := 0
-		err = m.GetTablesDoFunc(dbInfo.ID, func(tableInfo *model.TableInfo) error {
+		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
 			}
 
 			schemasNum += 1
-
+			tableNum += 1
 			if buildRange {
 				tableRanges, err := BuildTableRanges(tableInfo)
 				if err != nil {
@@ -572,7 +572,7 @@ func BuildBackupRangeAndSchema(
 		log.Info("nothing to backup")
 		return nil, nil, nil, nil
 	}
-	return ranges, NewBackupSchemasV2(schemasNum, tableFilter, isFullBackup), policies, nil
+	return ranges, NewBackupSchemasV2(schemasNum, backupTS, tableFilter, isFullBackup), policies, nil
 }
 
 func BuildBackupSchemas(
@@ -603,7 +603,7 @@ func BuildBackupSchemas(
 		}
 
 		tableNum := 0
-		err = m.GetTablesDoFunc(dbInfo.ID, func(tableInfo *model.TableInfo) error {
+		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
