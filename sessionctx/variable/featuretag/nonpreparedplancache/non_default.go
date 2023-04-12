@@ -14,7 +14,7 @@
 
 //go:build nonpreparedplancache
 
-package disttask
+package nonpreparedplancache
 
 // TiDBEnableNonPreparedPlanCache is a feature tag
 const TiDBEnableNonPreparedPlanCache bool = false
