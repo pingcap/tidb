@@ -621,13 +621,8 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	var newTableID int64
-<<<<<<< HEAD
-	err := job.DecodeArgs(&newTableID)
-=======
-	var fkCheck bool
 	var newPartitionIDs []int64
-	err := job.DecodeArgs(&newTableID, &fkCheck, &newPartitionIDs)
->>>>>>> c1ce67d7eaa (ddl: Fix issue with truncate table and partitions and tiflash (#42957))
+	err := job.DecodeArgs(&newTableID, &newPartitionIDs)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
