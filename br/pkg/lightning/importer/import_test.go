@@ -236,11 +236,9 @@ func TestPreCheckFailed(t *testing.T) {
 		precheckItemBuilder: theCheckBuilder,
 	}
 
-	mock.ExpectBegin()
 	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
 			AddRow("tidb_row_format_version", "2"))
-	mock.ExpectCommit()
 	// precheck failed, will not do init checkpoint.
 	err = ctl.Run(context.Background())
 	require.Regexp(t, ".*mock init meta failure", err.Error())
@@ -248,11 +246,9 @@ func TestPreCheckFailed(t *testing.T) {
 
 	// clear the sys variable cache
 	preInfoGetter.sysVarsCache = nil
-	mock.ExpectBegin()
 	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
 			AddRow("tidb_row_format_version", "2"))
-	mock.ExpectCommit()
 	ctl.saveCpCh = make(chan saveCp)
 	// precheck failed, will not do init checkpoint.
 	err1 := ctl.Run(context.Background())

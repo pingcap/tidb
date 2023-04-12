@@ -352,8 +352,6 @@ func TestObtainRowFormatVersionSucceed(t *testing.T) {
 	ctx := context.Background()
 
 	s.mockDB.
-		ExpectBegin()
-	s.mockDB.
 		ExpectQuery(`SHOW VARIABLES WHERE Variable_name IN \(.*'tidb_row_format_version'.*\)`).
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
 			AddRow("tidb_row_format_version", "2").
@@ -364,8 +362,6 @@ func TestObtainRowFormatVersionSucceed(t *testing.T) {
 			AddRow("default_week_format", "1").
 			AddRow("block_encryption_mode", "aes-256-cbc").
 			AddRow("group_concat_max_len", "1073741824"))
-	s.mockDB.
-		ExpectCommit()
 	s.mockDB.
 		ExpectClose()
 
@@ -387,12 +383,8 @@ func TestObtainRowFormatVersionFailure(t *testing.T) {
 	ctx := context.Background()
 
 	s.mockDB.
-		ExpectBegin()
-	s.mockDB.
 		ExpectQuery(`SHOW VARIABLES WHERE Variable_name IN \(.*'tidb_row_format_version'.*\)`).
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).AddRow("time_zone", "+00:00"))
-	s.mockDB.
-		ExpectCommit()
 	s.mockDB.
 		ExpectClose()
 
