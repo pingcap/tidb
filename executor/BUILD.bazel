@@ -266,7 +266,6 @@ go_test(
     timeout = "moderate",
     srcs = [
         "adapter_test.go",
-        "admin_test.go",
         "aggregate_test.go",
         "analyze_test.go",
         "apply_cache_test.go",
@@ -421,7 +420,6 @@ go_test(
         "//util/gcutil",
         "//util/hack",
         "//util/logutil",
-        "//util/logutil/consistency",
         "//util/mathutil",
         "//util/memory",
         "//util/mock",
@@ -464,7 +462,6 @@ go_test(
         "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
-        "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
 )
