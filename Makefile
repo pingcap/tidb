@@ -455,6 +455,10 @@ bazel_coverage_test: check-bazel-prepare failpoint-enable bazel_ci_prepare
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) --jobs=35 --build_tests_only --test_keep_going=false \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,nonpreparedplancache \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin
