@@ -17,10 +17,12 @@ package lll
 import (
 	"bufio"
 	"fmt"
+	"go/token"
 	"os"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -76,10 +78,11 @@ func runLll(pass *analysis.Pass, settings *settings) error {
 		}
 
 		for _, i := range lintIssues {
-			pass.Report(analysis.Diagnostic{
-				Pos:     1,
-				Message: fmt.Sprintf("%s:%d:0 too long", i.Filename, i.Line),
-			})
+			fileContent, tf, err := util.ReadFile(pass.Fset, i.Filename)
+			if err != nil {
+				return fmt.Errorf("can't get file %s contents: %s", i.Filename, err)
+			}
+			pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), i.Line, 0)), "too long")
 		}
 	}
 
