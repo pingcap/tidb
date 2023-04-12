@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "azblob.go",
         "compress.go",
+        "errors.go",
         "flags.go",
         "gcs.go",
         "hdfs.go",

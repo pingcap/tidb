@@ -23,6 +23,7 @@ go_library(
         "//br/pkg/redact",
         "//br/pkg/restore",
         "//br/pkg/rtree",
+        "//br/pkg/storage",
         "//br/pkg/streamhelper/config",
         "//br/pkg/summary",
         "//br/pkg/task",
