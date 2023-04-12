@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/disttask"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/nonpreparedplancache"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
@@ -1260,7 +1261,7 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = true
+	DefTiDBEnableNonPreparedPlanCache              = nonpreparedplancache.TiDBEnableNonPreparedPlanCache
 	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
