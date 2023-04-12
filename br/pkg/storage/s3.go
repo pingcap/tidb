@@ -371,7 +371,7 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 				req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
 			}
 		}
-		region, err = s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
+		region, err = s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
 		}
