@@ -3726,7 +3726,8 @@ type CalibrateResourceType int
 
 // calibrate resource [ workload < TPCC | OLTP_READ_WRITE | OLTP_READ_ONLY | OLTP_WRITE_ONLY> ]
 const (
-	TPCC CalibrateResourceType = iota
+	WorkloadNone CalibrateResourceType = iota
+	TPCC
 	OLTPREADWRITE
 	OLTPREADONLY
 	OLTPWRITEONLY

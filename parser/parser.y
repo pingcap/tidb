@@ -14837,7 +14837,7 @@ CalibrateResourceStmt:
 CalibrateResourceWorkloadOption:
 	/* empty */
 	{
-		$$ = ast.TPCC
+		$$ = ast.WorkloadNone
 	}
 |	"WORKLOAD" "TPCC"
 	{

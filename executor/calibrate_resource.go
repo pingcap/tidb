@@ -41,7 +41,7 @@ var workloadBaseRUCostMap = map[ast.CalibrateResourceType]*baseResourceCost{
 		writeReqCount: 1750,
 	},
 	ast.OLTPREADWRITE: {
-		tidbCPU:       0.8,
+		tidbCPU:       1.25,
 		kvCPU:         0.35,
 		readBytes:     units.MiB * 4.25,
 		writeBytes:    units.MiB / 3,
@@ -49,7 +49,7 @@ var workloadBaseRUCostMap = map[ast.CalibrateResourceType]*baseResourceCost{
 		writeReqCount: 1400,
 	},
 	ast.OLTPREADONLY: {
-		tidbCPU:       0.4,
+		tidbCPU:       2,
 		kvCPU:         0.52,
 		readBytes:     units.MiB * 28,
 		writeBytes:    0,
@@ -115,9 +115,13 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 		return err
 	}
 
+	// The default workload to calculate the RU capacity.
+	if e.workloadType == ast.WorkloadNone {
+		e.workloadType = ast.TPCC
+	}
 	baseCost, ok := workloadBaseRUCostMap[e.workloadType]
 	if !ok {
-		return errors.Errorf("unknown workload '%v'", e.workloadType)
+		return errors.Errorf("unknown workload '%T'", e.workloadType)
 	}
 
 	if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
