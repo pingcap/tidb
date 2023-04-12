@@ -996,7 +996,7 @@ func (n *ProcedureLabelBlock) Restore(ctx *format.RestoreCtx) error {
 		return err
 	}
 	if n.LableError {
-		return errors.Errorf("The same label has different names,begin: %s,end: %s.", n.LableName, n.LableEnd)
+		return errors.Errorf("the same label has different names,begin: %s,end: %s", n.LableName, n.LableEnd)
 	}
 	ctx.WriteKeyWord(" ")
 	ctx.WriteName(n.LableName)
@@ -1058,7 +1058,7 @@ func (n *ProcedureLabelLoop) Restore(ctx *format.RestoreCtx) error {
 		return err
 	}
 	if n.LableError {
-		return errors.Errorf("The same label has different names,begin: %s,end: %s.", n.LableName, n.LableEnd)
+		return errors.Errorf("the same label has different names,begin: %s,end: %s", n.LableName, n.LableEnd)
 	}
 	ctx.WriteKeyWord(" ")
 	ctx.WriteName(n.LableName)
