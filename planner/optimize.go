@@ -443,7 +443,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
-
 	}
 
 	// build logical plan

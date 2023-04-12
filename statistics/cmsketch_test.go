@@ -16,15 +16,16 @@ package statistics
 
 import (
 	"fmt"
+	"math"
+	"math/rand"
+	"testing"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
-	"math"
-	"math/rand"
-	"testing"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
