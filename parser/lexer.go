@@ -80,6 +80,9 @@ type Scanner struct {
 
 	// true if a dot follows an identifier
 	identifierDot bool
+
+	// keepHint, if true, Scanner will keep hint when normalizing .
+	keepHint bool
 }
 
 // Errors returns the errors and warns during a scan.
@@ -341,6 +344,11 @@ func (s *Scanner) EnableWindowFunc(val bool) {
 	s.supportWindowFunc = val
 }
 
+// setKeepHint set the keepHint flag when normalizing.
+func (s *Scanner) setKeepHint(val bool) {
+	s.keepHint = val
+}
+
 // InheritScanner returns a new scanner object which inherits configurations from the parent scanner.
 func (s *Scanner) InheritScanner(sql string) *Scanner {
 	return &Scanner{
@@ -533,7 +541,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 
 	case '+': // '/*+' optimizer hints
 		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
-		if _, ok := hintedTokens[s.lastKeyword]; ok {
+		if _, ok := hintedTokens[s.lastKeyword]; ok || s.keepHint {
 			// only recognize optimizers hints directly followed by certain
 			// keywords like SELECT, INSERT, etc., only a special case "FOR UPDATE" needs to be handled
 			// we will report a warning in order to match MySQL's behavior, but the hint content will be ignored
@@ -547,6 +555,8 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 			} else {
 				isOptimizerHint = true
 			}
+		} else {
+			s.AppendWarn(ErrWarnOptimizerHintWrongPos)
 		}
 
 	case '*': // '/**' if the next char is '/' it would close the comment.
@@ -618,7 +628,11 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		tok, lit = scanIdentifierOrString(s)
 		switch tok {
 		case stringLit, quotedIdentifier:
-			tok, lit = doubleAtIdentifier, "@@"+prefix+lit
+			var sb strings.Builder
+			sb.WriteString("@@")
+			sb.WriteString(prefix)
+			sb.WriteString(lit)
+			tok, lit = doubleAtIdentifier, sb.String()
 		case identifier:
 			tok, lit = doubleAtIdentifier, s.r.data(&pos)
 		}

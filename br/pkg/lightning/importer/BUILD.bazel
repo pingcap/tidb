@@ -21,6 +21,7 @@ go_library(
         "//br/pkg/checksum",
         "//br/pkg/errors",
         "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/backend/tidb",
@@ -112,8 +113,8 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
-        "//br/pkg/lightning/backend/noop",
         "//br/pkg/lightning/backend/tidb",
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/common",

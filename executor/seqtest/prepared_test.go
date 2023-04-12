@@ -420,14 +420,14 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(0), hit) // insert-values-stmt cannot use the plan cache
+			require.Equal(t, float64(1), hit)
 		}
 		tk.MustExec(`set @a=3,@b=3; execute stmt_insert using @a, @b;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(0), hit)
+			require.Equal(t, float64(2), hit)
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -443,21 +443,21 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(0), hit)
+			require.Equal(t, float64(2), hit)
 		}
 		tk.MustExec(`set @a=2; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(1), hit)
+			require.Equal(t, float64(3), hit)
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(2), hit)
+			require.Equal(t, float64(4), hit)
 		}
 
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)
@@ -478,6 +478,7 @@ func TestPreparedUpdate(t *testing.T) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect hit counter in this UT.
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
 
@@ -550,6 +551,7 @@ func TestPreparedDelete(t *testing.T) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect hit counter in this UT.
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
 

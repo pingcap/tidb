@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -94,8 +95,8 @@ func (bj *BackfillJob) AbbrStr() string {
 }
 
 // GetOracleTimeWithStartTS returns the current time with txn's startTS.
-func GetOracleTimeWithStartTS(se *session) (time.Time, error) {
-	txn, err := se.Txn(true)
+func GetOracleTimeWithStartTS(se *sess.Session) (time.Time, error) {
+	txn, err := se.Txn()
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -142,7 +143,7 @@ func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, worker
 
 	for i := 0; i < workerCnt; i++ {
 		var se sessionctx.Context
-		se, err = d.sessPool.get()
+		se, err = d.sessPool.Get()
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] new backfill worker context, get a session failed", zap.Int64("jobID", jobID), zap.Error(err))
 			return nil, errors.Trace(err)
@@ -157,10 +158,6 @@ func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, worker
 		var bf backfiller
 		bf, err = bfFunc(newBackfillCtx(d.ddlCtx, 0, se, schemaName, tbl, d.jobContext(jobID), "add_idx_rate", true))
 		if err != nil {
-			if canSkipError(jobID, len(bwCtx.backfillWorkers), err) {
-				err = nil
-				continue
-			}
 			logutil.BgLogger().Error("[ddl] new backfill worker context, do bfFunc failed", zap.Int64("jobID", jobID), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
@@ -190,7 +187,7 @@ func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
 	return bw
 }
 
-func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendContext, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
+func runBackfillJobs(d *ddl, se *sess.Session, ingestBackendCtx *ingest.BackendContext, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
 	dbInfo, tbl, err := d.getTableByTxn(d.store, bJob.Meta.SchemaID, bJob.Meta.TableID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs gets table failed", zap.String("bfJob", bJob.AbbrStr()), zap.Error(err))
@@ -217,7 +214,7 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 	}
 	proFunc := func() ([]*reorgBackfillTask, error) {
 		// TODO: After BackfillJob replaces reorgBackfillTask, use backfiller's GetTasks instead of it.
-		return GetTasks(d.ddlCtx, sess, tbl, bJob.JobID, &runningPID, workerCnt+5)
+		return GetTasks(d.ddlCtx, se, tbl, bJob.JobID, &runningPID, workerCnt+5)
 	}
 	// add new task
 	resultCh, control := d.backfillWorkerPool.AddProduceBySlice(proFunc, 0, workerCtx, spmc.WithConcurrency(workerCnt))
@@ -232,7 +229,7 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 
 func (bwCtx *backfillWorkerContext) close(d *ddl) {
 	for _, s := range bwCtx.sessCtxs {
-		d.sessPool.put(s)
+		d.sessPool.Put(s)
 	}
 	for _, w := range bwCtx.backfillWorkers {
 		d.backfillCtxPool.put(w)
@@ -318,11 +315,11 @@ func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBac
 }
 
 // GetTasks gets the backfill tasks associated with the non-runningJobID.
-func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, runningPID *int64, concurrency int) ([]*reorgBackfillTask, error) {
+func GetTasks(d *ddlCtx, se *sess.Session, tbl table.Table, runningJobID int64, runningPID *int64, concurrency int) ([]*reorgBackfillTask, error) {
 	// TODO: At present, only add index is processed. In the future, different elements need to be distinguished.
 	var err error
 	for i := 0; i < retrySQLTimes; i++ {
-		bJobs, err := GetAndMarkBackfillJobsForOneEle(sess, concurrency, runningJobID, d.uuid, *runningPID, InstanceLease)
+		bJobs, err := GetAndMarkBackfillJobsForOneEle(se, concurrency, runningJobID, d.uuid, *runningPID, InstanceLease)
 		if err != nil {
 			// TODO: add test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
 			if dbterror.ErrDDLJobNotFound.Equal(err) {

@@ -69,13 +69,14 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 
 // MDTableMeta contains some parsed metadata for a table in the source by MyDumper Loader.
 type MDTableMeta struct {
-	DB           string
-	Name         string
-	SchemaFile   FileInfo
-	DataFiles    []FileInfo
-	charSet      string
-	TotalSize    int64
-	IndexRatio   float64
+	DB         string
+	Name       string
+	SchemaFile FileInfo
+	DataFiles  []FileInfo
+	charSet    string
+	TotalSize  int64
+	IndexRatio float64
+	// default to true, and if we do precheck, this var is updated using data sampling result, so it's not accurate.
 	IsRowOrdered bool
 }
 

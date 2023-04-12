@@ -29,10 +29,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -698,6 +699,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
+		logutil.BgLogger().Info("[ddl] run add index job done",
+			zap.String("charset", job.Charset),
+			zap.String("collation", job.Collate))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
@@ -747,10 +751,10 @@ func canUseIngest() bool {
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
 func IngestJobsNotExisted(ctx sessionctx.Context) bool {
-	sess := session{ctx}
+	se := sess.NewSession(ctx)
 	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
 	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
-	rows, err := sess.execute(context.Background(), sql, "check-pitr")
+	rows, err := se.Execute(context.Background(), sql, "check-pitr")
 	if err != nil {
 		logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
 		return false
@@ -968,13 +972,13 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 	})
 
-	sctx, err1 := w.sessPool.get()
+	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
 		err = err1
 		return
 	}
-	defer w.sessPool.put(sctx)
-	rh := newReorgHandler(newSession(sctx))
+	defer w.sessPool.Put(sctx)
+	rh := newReorgHandler(sess.NewSession(sctx))
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return false, ver, errors.Trace(err)
@@ -1196,34 +1200,6 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 	return nil
 }
 
-// CheckDropIndexOnAutoIncrementColumn checks if the index to drop is on auto_increment column.
-func CheckDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
-	cols := tblInfo.Columns
-	for _, idxCol := range indexInfo.Columns {
-		flag := cols[idxCol.Offset].GetFlag()
-		if !mysql.HasAutoIncrementFlag(flag) {
-			continue
-		}
-		// check the count of index on auto_increment column.
-		count := 0
-		for _, idx := range tblInfo.Indices {
-			for _, c := range idx.Columns {
-				if c.Name.L == idxCol.Name.L {
-					count++
-					break
-				}
-			}
-		}
-		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(flag) {
-			count++
-		}
-		if count < 2 {
-			return autoid.ErrWrongAutoKey
-		}
-	}
-	return nil
-}
-
 func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, model.CIStr, error) {
 	var from, to model.CIStr
 	schemaID := job.SchemaID
@@ -1346,9 +1322,9 @@ func (w *baseIndexWorker) String() string {
 }
 
 func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
-	s := newSession(w.backfillCtx.sessCtx)
+	s := sess.NewSession(w.backfillCtx.sessCtx)
 
-	return s.runInTxn(func(se *session) error {
+	return s.RunInTxn(func(se *sess.Session) error {
 		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%s'", bfJob.keyString()), "update_backfill_task")
 		if err != nil {
 			return err
@@ -1370,9 +1346,9 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 }
 
 func (w *baseIndexWorker) FinishTask(bfJob *BackfillJob) error {
-	s := newSession(w.backfillCtx.sessCtx)
-	return s.runInTxn(func(se *session) error {
-		txn, err := se.txn()
+	s := sess.NewSession(w.backfillCtx.sessCtx)
+	return s.RunInTxn(func(se *sess.Session) error {
+		txn, err := se.Txn()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1665,149 +1641,86 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 }
 
 type addIndexIngestWorker struct {
-	*backfillCtx
+	d             *ddlCtx
+	metricCounter prometheus.Counter
+	sessCtx       sessionctx.Context
 
+	tbl              table.PhysicalTable
 	index            table.Index
 	writerCtx        *ingest.WriterContext
 	copReqSenderPool *copReqSenderPool
+
+	resultCh   chan *backfillResult
+	jobID      int64
+	distribute bool
 }
 
-func newAddIndexIngestWorker(t table.PhysicalTable, bfCtx *backfillCtx, jobID, eleID int64, eleTypeKey []byte) (*addIndexIngestWorker, error) {
-	if !bytes.Equal(eleTypeKey, meta.IndexElementKey) {
-		logutil.BgLogger().Error("Element type for addIndexIngestWorker incorrect",
-			zap.Int64("job ID", jobID), zap.ByteString("element type", eleTypeKey), zap.Int64("element ID", eleID))
-		return nil, errors.Errorf("element type is not index, typeKey: %v", eleTypeKey)
-	}
-	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, eleID)
+func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.EngineInfo, resultCh chan *backfillResult, jobID int64, schemaName string, indexID int64, writerID int, copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context, distribute bool) (*addIndexIngestWorker, error) {
+	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-
-	var lwCtx *ingest.WriterContext
-	bc, ok := ingest.LitBackCtxMgr.Load(jobID)
-	if !ok {
-		return nil, errors.Trace(errors.New(ingest.LitErrGetBackendFail))
-	}
-	ei, err := bc.EngMgr.Register(bc, jobID, eleID, bfCtx.schemaName, t.Meta().Name.O)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	lwCtx, err = ei.NewWriterCtx(bfCtx.id, indexInfo.Unique)
+	lwCtx, err := ei.NewWriterCtx(writerID, indexInfo.Unique)
 	if err != nil {
 		return nil, err
 	}
 
 	return &addIndexIngestWorker{
-		backfillCtx: bfCtx,
-		index:       index,
-		writerCtx:   lwCtx,
+		d:       d,
+		sessCtx: sessCtx,
+		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
+			metrics.GenerateReorgLabel("add_idx_rate", schemaName, t.Meta().Name.O)),
+		tbl:              t,
+		index:            index,
+		writerCtx:        lwCtx,
+		copReqSenderPool: copReqSenderPool,
+		resultCh:         resultCh,
+		jobID:            jobID,
+		distribute:       distribute,
 	}, nil
 }
 
-func (w *addIndexIngestWorker) AddMetricInfo(count float64) {
-	w.metricCounter.Add(count)
-}
-
-func (*addIndexIngestWorker) GetTasks() ([]*BackfillJob, error) {
-	return nil, nil
-}
-func (w *addIndexIngestWorker) UpdateTask(bfJob *BackfillJob) error {
-	s := newSession(w.backfillCtx.sessCtx)
-
-	return s.runInTxn(func(se *session) error {
-		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%s'", bfJob.keyString()), "update_backfill_task")
-		if err != nil {
-			return err
-		}
-		if len(jobs) == 0 {
-			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job")
-		}
-		if jobs[0].InstanceID != bfJob.InstanceID {
-			return dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get a backfill job %v, want instance ID %s", jobs[0], bfJob.InstanceID))
-		}
-
-		currTime, err := GetOracleTimeWithStartTS(se)
-		if err != nil {
-			return err
-		}
-		bfJob.InstanceLease = GetLeaseGoTime(currTime, InstanceLease)
-		return updateBackfillJob(se, BackgroundSubtaskTable, bfJob, "update_backfill_task")
-	})
-}
-func (w *addIndexIngestWorker) FinishTask(bfJob *BackfillJob) error {
-	s := newSession(w.backfillCtx.sessCtx)
-	return s.runInTxn(func(se *session) error {
-		txn, err := se.txn()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		bfJob.StateUpdateTS = txn.StartTS()
-		err = RemoveBackfillJob(se, false, bfJob)
-		if err != nil {
-			return err
-		}
-		return AddBackfillHistoryJob(se, []*BackfillJob{bfJob})
-	})
-}
-func (w *addIndexIngestWorker) GetCtx() *backfillCtx {
-	return w.backfillCtx
-}
-
-func (*addIndexIngestWorker) String() string {
-	return "ingest index"
-}
-
-// BackfillData will ingest index records through lightning engine.
-func (w *addIndexIngestWorker) BackfillData(handleRange reorgBackfillTask) (backfillTaskContext, error) {
-	var taskCtx backfillTaskContext
+// WriteLocal will write index records to lightning engine.
+func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey kv.Key, err error) {
 	oprStartTime := time.Now()
-	defer func() {
-		logSlowOperations(time.Since(oprStartTime), "writeIndexKVsToLocal", 3000)
-	}()
-	copChunk, nextKey, taskDone, err := w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
-	if err != nil {
-		return taskCtx, err
-	}
-	taskCtx.nextKey = nextKey
-	taskCtx.done = taskDone
-	if copChunk == nil {
-		return taskCtx, nil
-	}
-	defer w.copReqSenderPool.recycleChunk(copChunk)
-
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	count, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, copChunk)
-	if err != nil {
-		return taskCtx, err
+	cnt, lastHandle, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, rs.chunk)
+	if err != nil || cnt == 0 {
+		w.copReqSenderPool.recycleChunk(rs.chunk)
+		return 0, nil, err
 	}
-	taskCtx.scanCount = count
-	taskCtx.addedCount = count
-	return taskCtx, nil
+	w.copReqSenderPool.recycleChunk(rs.chunk)
+	w.metricCounter.Add(float64(cnt))
+	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
+	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
+	return cnt, nextKey, nil
 }
 
 func writeChunkToLocal(writerCtx *ingest.WriterContext,
 	index table.Index, copCtx *copContext, vars *variable.SessionVars,
-	copChunk *chunk.Chunk) (int, error) {
+	copChunk *chunk.Chunk) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
 	iter := chunk.NewIterator4Chunk(copChunk)
 	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
 	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
 	count := 0
+	var lastHandle kv.Handle
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		idxDataBuf, handleDataBuf = idxDataBuf[:0], handleDataBuf[:0]
 		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, idxDataBuf)
 		handleDataBuf := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, handleDataBuf)
 		handle, err := buildHandle(handleDataBuf, copCtx.tblInfo, copCtx.pkInfo, sCtx)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, nil, errors.Trace(err)
 		}
 		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, handleDataBuf)
 		err = writeOneKVToLocal(writerCtx, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, nil, errors.Trace(err)
 		}
 		count++
+		lastHandle = handle
 	}
-	return count, nil
+	return count, lastHandle, nil
 }
 
 func writeOneKVToLocal(writerCtx *ingest.WriterContext,
@@ -2008,7 +1921,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 // updateReorgInfo will find the next partition according to current reorgInfo.
 // If no more partitions, or table t is not a partitioned table, returns true to
 // indicate that the reorganize work is finished.
-func updateReorgInfo(sessPool *sessionPool, t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
+func updateReorgInfo(sessPool *sess.Pool, t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
 	pid, startKey, endKey, err := getNextPartitionInfo(reorg, t, reorg.PhysicalTableID)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -2212,7 +2125,7 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, jobCtx *JobContext) error {
+func runBackfillJobsWithLightning(d *ddl, sess *sess.Session, bfJob *BackfillJob, jobCtx *JobContext) error {
 	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, bfJob.Meta.IsUnique, bfJob.JobID, bfJob.Meta.SQLMode)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))

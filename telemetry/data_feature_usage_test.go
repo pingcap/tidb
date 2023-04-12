@@ -597,8 +597,8 @@ func TestDistReorgUsage(t *testing.T) {
 	require.NoError(t, err)
 	initCount := usage.DDLUsageCounter.DistReorgUsed
 
-	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = off")
-	allow := variable.DDLEnableDistributeReorg.Load()
+	tk.MustExec("set @@global.tidb_enable_dist_task = off")
+	allow := variable.EnableDistTask.Load()
 	require.Equal(t, false, allow)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tele_t")
@@ -609,8 +609,8 @@ func TestDistReorgUsage(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, initCount, usage.DDLUsageCounter.DistReorgUsed)
 
-	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = on")
-	allow = variable.DDLEnableDistributeReorg.Load()
+	tk.MustExec("set @@global.tidb_enable_dist_task = on")
+	allow = variable.EnableDistTask.Load()
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
