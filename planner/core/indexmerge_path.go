@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -38,8 +38,8 @@ import (
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
 func (ds *DataSource) generateIndexMergePath() error {
 	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(ds.ctx)
-		defer debug_trace.LeaveContextCommon(ds.ctx)
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
 	}
 	var warningMsg string
 	stmtCtx := ds.ctx.GetSessionVars().StmtCtx

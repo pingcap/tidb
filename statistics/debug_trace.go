@@ -3,7 +3,7 @@ package statistics
 import (
 	"encoding/json"
 
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
@@ -115,6 +115,7 @@ func traceIdxStats(idxStats *Index, id int64, out *statsTblColOrIdxInfo) {
 	out.CMSketchInfo = traceCMSketchInfo(idxStats.CMSketch)
 }
 
+// TraceStatsTbl converts a Table to StatsTblInfo, which is suitable for the debug trace.
 func TraceStatsTbl(statsTbl *Table) *StatsTblInfo {
 	if statsTbl == nil {
 		return nil
@@ -156,7 +157,7 @@ func TraceStatsTbl(statsTbl *Table) *StatsTblInfo {
 }
 
 /*
- Debug trace for GetRowCountByXXX().
+ Below is debug trace for GetRowCountByXXX().
 */
 
 type getRowCountInput struct {
@@ -169,7 +170,7 @@ func debugTraceGetRowCountInput(
 	id int64,
 	ranges ranger.Ranges,
 ) {
-	root := debug_trace.GetOrInitDebugTraceRoot(s)
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	newCtx := &getRowCountInput{
 		ID:     id,
 		Ranges: make([]string, len(ranges)),
@@ -179,6 +180,10 @@ func debugTraceGetRowCountInput(
 	}
 	root.AppendStepToCurrentContext(newCtx)
 }
+
+/*
+ Below is debug trace for the estimation for each single range inside GetRowCountByXXX().
+*/
 
 type startEstimateRangeInfo struct {
 	CurrentRowCount  float64
@@ -193,7 +198,7 @@ func debugTraceStartEstimateRange(
 	lowBytes, highBytes []byte,
 	currentCount float64,
 ) {
-	root := debug_trace.GetOrInitDebugTraceRoot(s)
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &startEstimateRangeInfo{
 		CurrentRowCount:  currentCount,
 		Range:            r.String(),
@@ -237,13 +242,17 @@ func debugTraceEndEstimateRange(
 	count float64,
 	AddType debugTraceAddRowCountType,
 ) {
-	root := debug_trace.GetOrInitDebugTraceRoot(s)
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &endEstimateRangeInfo{
 		RowCount: count,
 		Type:     AddType,
 	}
 	root.AppendStepWithNameToCurrentContext(traceInfo, "End estimate range")
 }
+
+/*
+ Below is debug trace for (*Histogram).locateBucket().
+*/
 
 type locateBucketInfo struct {
 	Value          string
@@ -261,7 +270,7 @@ func debugTraceLocateBucket(
 	inBucket bool,
 	matchLastValue bool,
 ) {
-	root := debug_trace.GetOrInitDebugTraceRoot(s)
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &locateBucketInfo{
 		Value:          value.String(),
 		Exceed:         exceed,
@@ -272,6 +281,10 @@ func debugTraceLocateBucket(
 	root.AppendStepWithNameToCurrentContext(traceInfo, "Locate value in buckets")
 }
 
+/*
+ Below is debug trace for used buckets in the histograms during estimation.
+*/
+
 type bucketInfo struct {
 	Index  int
 	Count  int64
@@ -279,7 +292,7 @@ type bucketInfo struct {
 }
 
 func debugTraceBuckets(s sessionctx.Context, hg *Histogram, bucketIdxs []int) {
-	root := debug_trace.GetOrInitDebugTraceRoot(s)
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	buckets := make([]bucketInfo, len(bucketIdxs))
 	for i := range buckets {
 		idx := bucketIdxs[i]
@@ -296,6 +309,10 @@ func debugTraceBuckets(s sessionctx.Context, hg *Histogram, bucketIdxs []int) {
 	root.AppendStepWithNameToCurrentContext(buckets, "Related Buckets in Histogram")
 }
 
+/*
+ Below is debug trace for used TopN entries during estimation.
+*/
+
 type topNInfo struct {
 	Idx     int
 	Encoded []byte
@@ -303,7 +320,7 @@ type topNInfo struct {
 }
 
 func debugTraceTopNRange(s sessionctx.Context, t *TopN, startIdx, endIdx int) {
-	root := debug_trace.GetOrInitDebugTraceRoot(s)
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	topNRange := make([]topNInfo, endIdx-startIdx+1)
 	for topNIdx, i := startIdx, 0; topNIdx < endIdx; {
 		topNRange[i].Idx = topNIdx

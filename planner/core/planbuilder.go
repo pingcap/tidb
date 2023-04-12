@@ -4865,7 +4865,8 @@ const (
 
 	// TracePlanTargetEstimation indicates CE trace target for optimizer trace.
 	TracePlanTargetEstimation = "estimation"
-	TracePlanTargetDebug      = "debug"
+	// TracePlanTargetDebug indicates debug trace target for optimizer trace.
+	TracePlanTargetDebug = "debug"
 )
 
 // buildTrace builds a trace plan. Inside this method, it first optimize the

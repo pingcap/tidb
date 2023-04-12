@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/cascades"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -137,8 +137,8 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
-		defer debug_trace.LeaveContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
 	}
 
 	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
@@ -211,7 +211,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	bindRecord, scope, match := matchSQLBinding(sctx, stmtNode)
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.DebugTraceAnyValuesWithNames(sctx,
 			"Used binding", useBinding,
 			"Enable binding", enableUseBinding,
 			"IsStmtNode", isStmtNode,
@@ -441,8 +441,8 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	})
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
-		defer debug_trace.LeaveContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
 
 	}
 

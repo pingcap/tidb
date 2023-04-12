@@ -35,7 +35,7 @@ go_library(
         "//parser/mysql",
         "//parser/terror",
         "//planner/util",
-        "//planner/util/debug_trace",
+        "//planner/util/debugtrace",
         "//sessionctx",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",

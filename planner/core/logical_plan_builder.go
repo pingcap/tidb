@@ -44,7 +44,7 @@ import (
 	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -4310,9 +4310,9 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(ctx)
+		debugtrace.EnterContextCommon(ctx)
 		defer func() {
-			DebugTraceGetStatsTbl(ctx,
+			debugTraceGetStatsTbl(ctx,
 				tblInfo,
 				pid,
 				statsHandle == nil,
@@ -4322,7 +4322,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 				pseudoStatsForOutdated,
 				statsTbl,
 			)
-			debug_trace.LeaveContextCommon(ctx)
+			debugtrace.LeaveContextCommon(ctx)
 		}()
 	}
 	// 1. tidb-server started and statistics handle has not been initialized.

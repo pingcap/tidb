@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -126,15 +126,15 @@ func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool)
 	var notAccurate bool
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx,
+			debugtrace.DebugTraceAnyValuesWithNames(sctx,
 				"IsInvalid", res,
 				"CollPseudo", collPseudo,
 				"NotAccurate", notAccurate,
 				"TotalCount", totalCount,
 			)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	notAccurate = idx.ErrorRate.NotAccurate()
@@ -179,11 +179,11 @@ var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 
 func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
-		debug_trace.DebugTraceAnyValuesWithNames(sctx, "Encoded Value", b)
+		debugtrace.EnterContextCommon(sctx)
+		debugtrace.DebugTraceAnyValuesWithNames(sctx, "Encoded Value", b)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	if len(idx.Info.Columns) == 1 {
@@ -228,10 +228,10 @@ func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCo
 func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) {
 	idx.checkStats()
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	h1, h2 := murmur3.Sum128(d)
@@ -254,8 +254,8 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
-		debug_trace.EnterContextCommon(sctx)
-		defer debug_trace.LeaveContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
 	}
 	totalCount := float64(0)
 	isSingleCol := len(idx.Info.Columns) == 1
@@ -378,14 +378,14 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
 func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, indexRange *ranger.Range) (sel float64, success bool, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx,
+			debugtrace.DebugTraceAnyValuesWithNames(sctx,
 				"Result", sel,
 				"Success", success,
 				"error", err,
 			)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	tmpRan := []*ranger.Range{

@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -121,16 +121,16 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 	var ndv int64
 	var inValidForCollPseudo, essentialLoaded bool
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx,
+			debugtrace.DebugTraceAnyValuesWithNames(sctx,
 				"IsInvalid", res,
 				"InValidForCollPseudo", inValidForCollPseudo,
 				"TotalCount", totalCount,
 				"NDV", ndv,
 				"EssentialLoaded", essentialLoaded,
 			)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	if collPseudo && c.NotAccurate() {
@@ -161,11 +161,11 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
-		debug_trace.DebugTraceAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
+		debugtrace.EnterContextCommon(sctx)
+		debugtrace.DebugTraceAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Result", result, "Error", err)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result, "Error", err)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	if val.IsNull() {
@@ -217,8 +217,8 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
-		debug_trace.EnterContextCommon(sctx)
-		defer debug_trace.LeaveContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
 	}
 	var rowCount float64
 	for _, rg := range ranges {

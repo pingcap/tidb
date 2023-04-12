@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -562,11 +562,11 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		debugTraceGetRowCountInput(sctx, colID, intRanges)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Name", name, "Result", result)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	sc := sctx.GetSessionVars().StmtCtx
@@ -592,7 +592,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 		return result, nil
 	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.DebugTraceAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", c.Histogram.notNullCount(),
 			"TopN total count", c.TopN.TotalCount(),
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
@@ -609,11 +609,11 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID int64, colRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		debugTraceGetRowCountInput(sctx, colID, colRanges)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Name", name, "Result", result)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	sc := sctx.GetSessionVars().StmtCtx
@@ -632,7 +632,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID i
 		return result, err
 	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.DebugTraceAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", c.Histogram.notNullCount(),
 			"TopN total count", c.TopN.TotalCount(),
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
@@ -649,11 +649,11 @@ func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID i
 func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID int64, indexRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		debugTraceGetRowCountInput(sctx, idxID, indexRanges)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Name", name, "Result", result)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	sc := sctx.GetSessionVars().StmtCtx
@@ -682,7 +682,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 		return result, err
 	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.DebugTraceAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", idx.Histogram.notNullCount(),
 			"TopN total count", idx.TopN.TotalCount(),
 			"Increase Factor", idx.GetIncreaseFactor(coll.RealtimeCount),
@@ -1019,10 +1019,10 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func outOfRangeEQSelectivity(sctx sessionctx.Context, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	increaseRowCount := realtimeRowCount - columnRowCount
@@ -1051,20 +1051,20 @@ func (coll *HistColl) crossValidationSelectivity(
 	err error,
 ) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
 			var idxName string
 			if idx != nil && idx.Info != nil {
 				idxName = idx.Info.Name.O
 			}
-			debug_trace.DebugTraceAnyValuesWithNames(
+			debugtrace.DebugTraceAnyValuesWithNames(
 				sctx,
 				"Index Name", idxName,
 				"minRowCount", minRowCount,
 				"crossValidationSelectivity", crossValidationSelectivity,
 				"error", err,
 			)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	minRowCount = math.MaxFloat64
@@ -1106,13 +1106,13 @@ func (coll *HistColl) crossValidationSelectivity(
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
 func (coll *HistColl) getEqualCondSelectivity(sctx sessionctx.Context, idx *Index, bytes []byte, usedColsLen int, idxPointRange *ranger.Range) (result float64, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
 			var idxName string
 			if idx != nil && idx.Info != nil {
 				idxName = idx.Info.Name.O
 			}
-			debug_trace.DebugTraceAnyValuesWithNames(
+			debugtrace.DebugTraceAnyValuesWithNames(
 				sctx,
 				"Index Name", idxName,
 				"Encoded", bytes,
@@ -1121,7 +1121,7 @@ func (coll *HistColl) getEqualCondSelectivity(sctx sessionctx.Context, idx *Inde
 				"Result", result,
 				"error", err,
 			)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	coverAll := len(idx.Info.Columns) == usedColsLen
@@ -1166,8 +1166,8 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
-		debug_trace.EnterContextCommon(sctx)
-		defer debug_trace.LeaveContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
 	}
 	idx := coll.Indices[idxID]
 	totalCount := float64(0)

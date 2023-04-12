@@ -854,8 +854,6 @@ func dumpDebugTrace(zw *zip.Writer, debugTrace interface{}) error {
 	jsonEncoder := json.NewEncoder(fw)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)
-	if err = jsonEncoder.Encode(debugTrace); err != nil {
-		return err
-	}
-	return nil
+	err = jsonEncoder.Encode(debugTrace)
+	return err
 }

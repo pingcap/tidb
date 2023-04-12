@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -276,15 +276,15 @@ func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (resul
 	min := uint32(math.MaxUint32)
 	useDefaultValue := false
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx,
+			debugtrace.DebugTraceAnyValuesWithNames(sctx,
 				"Origin Values", originVals,
 				"Values", vals,
 				"Use default value", useDefaultValue,
 				"Result", result,
 			)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	// We want that when res is 0 before the noise is eliminated, the default value is not used.
@@ -600,10 +600,10 @@ type TopNMeta struct {
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, found bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Result", result, "Found", found)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result, "Found", found)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	if c == nil {
@@ -611,7 +611,7 @@ func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, foun
 	}
 	idx := c.findTopN(d)
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.DebugTraceAnyValuesWithNames(sctx, "FindTopN idx", idx)
+		debugtrace.DebugTraceAnyValuesWithNames(sctx, "FindTopN idx", idx)
 	}
 	if idx < 0 {
 		return 0, false
@@ -657,10 +657,10 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (c *TopN) BetweenCount(sctx sessionctx.Context, l, r []byte) (result uint64) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	if c == nil {

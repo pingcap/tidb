@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -366,10 +366,10 @@ func (hg *Histogram) ToString(idxCols int) string {
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (hg *Histogram) equalRowCount(sctx sessionctx.Context, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Count", count, "Matched", matched)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Count", count, "Matched", matched)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	_, bucketIdx, inBucket, match := hg.locateBucket(sctx, value)
@@ -447,10 +447,10 @@ func (hg *Histogram) locateBucket(sctx sessionctx.Context, value types.Datum) (e
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types.Datum) (result float64, bucketIdx int) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Result", result, "Bucket idx", bucketIdx)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result, "Bucket idx", bucketIdx)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	// All the values are null.
@@ -826,15 +826,15 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount int64) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
-		debug_trace.EnterContextCommon(sctx)
-		debug_trace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.EnterContextCommon(sctx)
+		debugtrace.DebugTraceAnyValuesWithNames(sctx,
 			"lDatum", lDatum.String(),
 			"rDatum", rDatum.String(),
 			"modifyCount", modifyCount,
 		)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
-			debug_trace.LeaveContextCommon(sctx)
+			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	if hg.Len() == 0 {
@@ -869,7 +869,7 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	}
 
 	if debugTrace {
-		debug_trace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.DebugTraceAnyValuesWithNames(sctx,
 			"commonPrefix", commonPrefix,
 			"lScalar", l,
 			"rScalar", r,
@@ -893,7 +893,7 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 
 	var leftPercent, rightPercent, rowCount float64
 	if debugTrace {
-		defer debug_trace.DebugTraceAnyValuesWithNames(sctx,
+		defer debugtrace.DebugTraceAnyValuesWithNames(sctx,
 			"histL", histL,
 			"histR", histR,
 			"boundL", boundL,

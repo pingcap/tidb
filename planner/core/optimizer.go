@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -281,8 +281,8 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(sctx)
-		defer debug_trace.LeaveContextCommon(sctx)
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
 
 	}
 
@@ -1082,8 +1082,8 @@ func LogicalOptimizeTest(ctx context.Context, flag uint64, logic LogicalPlan) (L
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(logic.SCtx())
-		defer debug_trace.LeaveContextCommon(logic.SCtx())
+		debugtrace.EnterContextCommon(logic.SCtx())
+		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
 	opt := defaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
@@ -1122,8 +1122,8 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 
 func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan PhysicalPlan, cost float64, err error) {
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(logic.SCtx())
-		defer debug_trace.LeaveContextCommon(logic.SCtx())
+		debugtrace.EnterContextCommon(logic.SCtx())
+		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
 	if _, err := logic.recursiveDeriveStats(nil); err != nil {
 		return nil, 0, err

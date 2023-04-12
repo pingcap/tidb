@@ -2,13 +2,15 @@ package core
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/hint"
@@ -19,14 +21,50 @@ import (
  It records the input to the optimizer at the very beginning of query optimization.
 */
 
+type receivedCmdInfo struct {
+	Command         string
+	ExecutedASTText string
+	ExecuteStmtInfo *executeInfo
+}
+
+type executeInfo struct {
+	PreparedSQL      string
+	BinaryParamsInfo []binaryParamInfo
+	UseCursor        bool
+}
+
+type binaryParamInfo struct {
+	Type  string
+	Value string
+}
+
+func (info *binaryParamInfo) MarshalSON() ([]byte, error) {
+	infoForMarshal := new(binaryParamInfo)
+	quote := `"`
+	// We only need the escape functionality of %q, the quoting is not needed,
+	// so we trim the \" prefix and suffix here.
+	infoForMarshal.Type = strings.TrimSuffix(
+		strings.TrimPrefix(
+			strconv.Quote(info.Type),
+			quote),
+		quote)
+	infoForMarshal.Value = strings.TrimSuffix(
+		strings.TrimPrefix(
+			strconv.Quote(info.Value),
+			quote),
+		quote)
+	return json.Marshal(infoForMarshal)
+}
+
+// DebugTraceReceivedCommand records the received command from the client to the debug trace.
 func DebugTraceReceivedCommand(s sessionctx.Context, cmd byte, stmtNode ast.StmtNode) {
 	sessionVars := s.GetSessionVars()
-	trace := debug_trace.GetOrInitDebugTraceRoot(s)
+	trace := debugtrace.GetOrInitDebugTraceRoot(s)
+	traceInfo := new(receivedCmdInfo)
+	traceInfo.Command = mysql.Command2Str[cmd]
+	traceInfo.ExecutedASTText = stmtNode.Text()
 
-	trace.ReceivedCommand.Command = mysql.Command2Str[cmd]
-	trace.ReceivedCommand.ExecutedASTText = stmtNode.Text()
-
-	// Collect information for execute stmt, and record it in debug_trace.ExecuteInfo.
+	// Collect information for execute stmt, and record it in executeInfo.
 	var binaryParams []expression.Expression
 	var planCacheStmt *PlanCacheStmt
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
@@ -38,24 +76,29 @@ func DebugTraceReceivedCommand(s sessionctx.Context, cmd byte, stmtNode ast.Stmt
 		}
 	}
 	useCursor := mysql.HasCursorExistsFlag(sessionVars.Status)
-	// If none of them needs record, we don't need a debug_trace.ExecuteInfo.
+	// If none of them needs record, we don't need a executeInfo.
 	if binaryParams == nil && planCacheStmt == nil && !useCursor {
 		return
 	}
-	execInfo := &debug_trace.ExecuteInfo{}
-	trace.ReceivedCommand.ExecuteStmtInfo = execInfo
+	execInfo := &executeInfo{}
+	traceInfo.ExecuteStmtInfo = execInfo
 	execInfo.UseCursor = useCursor
 	if planCacheStmt != nil {
 		execInfo.PreparedSQL = planCacheStmt.StmtText
 	}
 	if len(binaryParams) > 0 {
-		execInfo.BinaryParamsInfo = make([]debug_trace.BinaryParamInfo, len(binaryParams))
+		execInfo.BinaryParamsInfo = make([]binaryParamInfo, len(binaryParams))
 		for i, param := range binaryParams {
 			execInfo.BinaryParamsInfo[i].Type = param.GetType().String()
 			execInfo.BinaryParamsInfo[i].Value = param.String()
 		}
 	}
+	trace.AppendStepWithNameToCurrentContext(traceInfo, "Received Command")
 }
+
+/*
+ Below is debug trace for the hint that matches the current query.
+*/
 
 type bindingHint struct {
 	Hint   *hint.HintsSet
@@ -73,11 +116,12 @@ func (b *bindingHint) MarshalJSON() ([]byte, error) {
 	} else {
 		tmp["Best Hint"] = hintStr
 	}
-	return debug_trace.EncodeJSONCommon(tmp)
+	return debugtrace.EncodeJSONCommon(tmp)
 }
 
+// DebugTraceTryBinding records the hint that might be chosen to the debug trace.
 func DebugTraceTryBinding(s sessionctx.Context, binding *hint.HintsSet) {
-	root := debug_trace.GetOrInitDebugTraceRoot(s)
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
 		Hint:   binding,
 		trying: true,
@@ -85,8 +129,9 @@ func DebugTraceTryBinding(s sessionctx.Context, binding *hint.HintsSet) {
 	root.AppendStepToCurrentContext(traceInfo)
 }
 
+// DebugTraceBestBinding records the chosen hint to the debug trace.
 func DebugTraceBestBinding(s sessionctx.Context, binding *hint.HintsSet) {
-	root := debug_trace.GetOrInitDebugTraceRoot(s)
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
 		Hint:   binding,
 		trying: false,
@@ -111,7 +156,7 @@ type getStatsTblInfo struct {
 	StatsTblInfo      *statistics.StatsTblInfo
 }
 
-func DebugTraceGetStatsTbl(
+func debugTraceGetStatsTbl(
 	s sessionctx.Context,
 	tblInfo *model.TableInfo,
 	pid int64,
@@ -122,7 +167,7 @@ func DebugTraceGetStatsTbl(
 	outdated bool,
 	statsTbl *statistics.Table,
 ) {
-	root := debug_trace.GetOrInitDebugTraceRoot(s)
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &getStatsTblInfo{
 		TableName:         tblInfo.Name.O,
 		TblInfoID:         tblInfo.ID,
@@ -136,6 +181,10 @@ func DebugTraceGetStatsTbl(
 	}
 	root.AppendStepToCurrentContext(traceInfo)
 }
+
+/*
+ Below is debug trace for AccessPath.
+*/
 
 type accessPathForDebugTrace struct {
 	IndexName        string `json:",omitempty"`
@@ -162,11 +211,11 @@ func convertAccessPathForDebugTrace(path *util.AccessPath, out *accessPathForDeb
 	}
 }
 
-func DebugTraceAccessPaths(s sessionctx.Context, paths []*util.AccessPath) {
-	root := debug_trace.GetOrInitDebugTraceRoot(s)
+func debugTraceAccessPaths(s sessionctx.Context, paths []*util.AccessPath) {
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := make([]accessPathForDebugTrace, len(paths))
 	for i, partialPath := range paths {
 		convertAccessPathForDebugTrace(partialPath, &traceInfo[i])
 	}
-	root.AppendStepToCurrentContext(traceInfo)
+	root.AppendStepWithNameToCurrentContext(traceInfo, "Access paths")
 }

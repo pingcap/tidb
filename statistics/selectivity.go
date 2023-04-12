@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
 	planutil "github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -191,12 +191,12 @@ func (coll *HistColl) Selectivity(
 ) {
 	var exprStrs []string
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debug_trace.EnterContextCommon(ctx)
+		debugtrace.EnterContextCommon(ctx)
 		exprStrs = expression.ExprsToStringsForDisplay(exprs)
-		debug_trace.DebugTraceAnyValuesWithNames(ctx, "Expressions", exprStrs)
+		debugtrace.DebugTraceAnyValuesWithNames(ctx, "Input Expressions", exprStrs)
 		defer func() {
-			debug_trace.DebugTraceAnyValuesWithNames(ctx, "Result", result)
-			debug_trace.LeaveContextCommon(ctx)
+			debugtrace.DebugTraceAnyValuesWithNames(ctx, "Result", result)
+			debugtrace.LeaveContextCommon(ctx)
 		}()
 	}
 	// If table's count is zero or conditions are empty, we should return 100% selectivity.
@@ -242,7 +242,7 @@ func (coll *HistColl) Selectivity(
 			sel = 1.0 / pseudoEqualRate
 		}
 		if sc.EnableOptimizerDebugTrace {
-			debug_trace.DebugTraceAnyValuesWithNames(ctx, "Expression", expr.String(), "Selectivity", sel)
+			debugtrace.DebugTraceAnyValuesWithNames(ctx, "Expression", expr.String(), "Selectivity", sel)
 		}
 		ret *= sel
 	}
@@ -346,7 +346,7 @@ func (coll *HistColl) Selectivity(
 					strs = append(strs, remainedExprStrs[i])
 				}
 			}
-			debug_trace.DebugTraceAnyValuesWithNames(ctx,
+			debugtrace.DebugTraceAnyValuesWithNames(ctx,
 				"Expressions", strs,
 				"Selectivity", set.Selectivity,
 				"partial cover", set.partCover,
@@ -463,7 +463,7 @@ OUTER:
 			// Tracing for the expression estimation results of this DNF.
 			CETraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.RealtimeCount))
 		} else if sc.EnableOptimizerDebugTrace {
-			debug_trace.DebugTraceAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", selectivity)
+			debugtrace.DebugTraceAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", selectivity)
 		}
 
 		if selectivity != 0 {
@@ -493,7 +493,7 @@ OUTER:
 			mask &^= 1 << uint64(i)
 			delete(notCoveredStrMatch, i)
 			if sc.EnableOptimizerDebugTrace {
-				debug_trace.DebugTraceAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", sel)
+				debugtrace.DebugTraceAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", sel)
 			}
 		}
 		for i, scalarCond := range notCoveredNegateStrMatch {
@@ -508,7 +508,7 @@ OUTER:
 			mask &^= 1 << uint64(i)
 			delete(notCoveredNegateStrMatch, i)
 			if sc.EnableOptimizerDebugTrace {
-				debug_trace.DebugTraceAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", sel)
+				debugtrace.DebugTraceAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", sel)
 			}
 		}
 	}
@@ -530,7 +530,7 @@ OUTER:
 		}
 		ret *= minSelectivity
 		if sc.EnableOptimizerDebugTrace {
-			debug_trace.DebugTraceAnyValuesWithNames(ctx, "Default Selectivity", minSelectivity)
+			debugtrace.DebugTraceAnyValuesWithNames(ctx, "Default Selectivity", minSelectivity)
 		}
 	}
 
