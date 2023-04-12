@@ -384,6 +384,11 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	if cp.Status < checkpoints.CheckpointStatusIndexImported {
 		var err error
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
+			failpoint.Inject("FailBeforeStartImportingIndexEngine", func() {
+				errMsg := "fail before importing index KV data"
+				tr.logger.Warn(errMsg)
+				failpoint.Return(errors.New(errMsg))
+			})
 			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
 			failpoint.Inject("FailBeforeIndexEngineImported", func() {
 				finished := rc.status.FinishedFileSize.Load()
@@ -732,8 +737,8 @@ func (tr *TableRestore) postProcess(
 		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
 		var err error
-		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
-			ft := &tblInfo.GetPkColInfo().FieldType
+		if tblInfo.ContainsAutoRandomBits() {
+			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
 			shardFmt := autoid.NewShardIDFormat(ft, tblInfo.AutoRandomBits, tblInfo.AutoRandomRangeBits)
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
@@ -789,11 +794,19 @@ func (tr *TableRestore) postProcess(
 			}
 			hasDupe = hasLocalDupe
 		}
+		failpoint.Inject("SlowDownCheckDupe", func(v failpoint.Value) {
+			sec := v.(int)
+			tr.logger.Warn("start to sleep several seconds before checking other dupe",
+				zap.Int("seconds", sec))
+			time.Sleep(time.Duration(sec) * time.Second)
+		})
 
-		needChecksum, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
+		otherHasDupe, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
 		if err != nil {
 			return false, err
 		}
+		needChecksum := !otherHasDupe && needRemoteDupe
+		hasDupe = hasDupe || otherHasDupe
 
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			opts := &kv.SessionOptions{
@@ -807,9 +820,11 @@ func (tr *TableRestore) postProcess(
 			}
 			hasDupe = hasDupe || hasRemoteDupe
 
-			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
-				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
-				return false, err
+			if hasDupe {
+				if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
+					return false, err
+				}
 			}
 		}
 

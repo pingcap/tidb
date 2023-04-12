@@ -5702,14 +5702,18 @@ func TestIssue29221(t *testing.T) {
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
 		"└─IndexMerge 3.00 root  type: union",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
 		"└─IndexMerge 3.00 root  type: union",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustExec("set @@session.sql_select_limit=18446744073709551615;")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
@@ -5720,8 +5724,10 @@ func TestIssue29221(t *testing.T) {
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
 		"└─IndexMerge 3.00 root  type: union",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
 		"IndexMerge 19.99 root  type: union",
@@ -5731,8 +5737,10 @@ func TestIssue29221(t *testing.T) {
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
 		"└─IndexMerge 3.00 root  type: union",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
@@ -7792,8 +7800,6 @@ func TestPlanCacheForTableRangeFallback(t *testing.T) {
 	tk.MustExec("set @a=10, @b=20, @c=30, @d=40, @e=50")
 	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-		"Warning 1105 skip plan-cache: in-list is too long",
-		"Warning 1105 skip plan-cache: in-list is too long",
 		"Warning 1105 skip plan-cache: in-list is too long"))
 	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
 	// The plan with range fallback is not cached.
@@ -7842,7 +7848,6 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	tk.MustExec("set @a='aa', @b='bb', @c='cc', @d='dd', @e='ee', @f='ff', @g='gg', @h='hh', @i='ii', @j='jj'")
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 1330 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-		"Warning 1105 skip plan-cache: in-list is too long",
 		"Warning 1105 skip plan-cache: in-list is too long"))
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -8000,10 +8005,6 @@ func TestPlanCacheForIndexJoinRangeFallback(t *testing.T) {
 	tk.MustExec("set @a='a', @b='b', @c='c', @d='d', @e='e'")
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 1275 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-		"Warning 1105 skip plan-cache: in-list is too long",
-		"Warning 1105 skip plan-cache: in-list is too long",
-		"Warning 1105 skip plan-cache: in-list is too long",
-		"Warning 1105 skip plan-cache: in-list is too long",
 		"Warning 1105 skip plan-cache: in-list is too long"))
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -8101,4 +8102,144 @@ func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
 		CHECK (id IN (0, 1)),
 		KEY idx_autoinc_id (id)
 	)`)
+}
+
+// https://github.com/pingcap/tidb/issues/41273
+func TestIssue41273(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+    	a set('nwbk','r5','1ad3u','van','ir1z','y','9m','f1','z','e6yd','wfev') NOT NULL DEFAULT 'ir1z,f1,e6yd',
+    	b enum('soo2','4s4j','qi9om','8ue','i71o','qon','3','3feh','6o1i','5yebx','d') NOT NULL DEFAULT '8ue',
+    	c varchar(66) DEFAULT '13mdezixgcn',
+    	PRIMARY KEY (a,b) /*T![clustered_index] CLUSTERED */,
+    	UNIQUE KEY ib(b),
+    	KEY ia(a)
+    )ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin;`)
+	tk.MustExec("INSERT INTO t VALUES('ir1z,f1,e6yd','i71o','13mdezixgcn'),('ir1z,f1,e6yd','d','13mdezixgcn'),('nwbk','8ue','13mdezixgcn');")
+	expectedRes := []string{"ir1z,f1,e6yd d 13mdezixgcn", "ir1z,f1,e6yd i71o 13mdezixgcn", "nwbk 8ue 13mdezixgcn"}
+	tk.MustQuery("select * from t where a between 'e6yd' and 'z' or b <> '8ue';").Sort().Check(testkit.Rows(expectedRes...))
+	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';").Sort().Check(testkit.Rows(expectedRes...))
+	// For now tidb doesn't support push set type to TiKV, and column a is a set type, so we shouldn't generate a IndexMerge path.
+	require.False(t, tk.HasPlanForLastExecution("IndexMerge"))
+}
+
+// https://github.com/pingcap/tidb/issues/41355
+// The "virtual generated column" push down is not supported now.
+// This test covers: TopN, Projection, Selection.
+func TestVirtualExprPushDown(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (c1 int DEFAULT 0, c2 int GENERATED ALWAYS AS (abs(c1)) VIRTUAL);")
+	tk.MustExec("insert into t(c1) values(1), (-1), (2), (-2), (99), (-99);")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tikv'")
+
+	// TopN to tikv.
+	rows := [][]interface{}{
+		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader_13", "root", "data:TableFullScan_12"},
+		{"  └─TableFullScan_12", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+
+	// Projection to tikv.
+	rows = [][]interface{}{
+		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
+		{"└─TableReader_5", "root", "data:TableFullScan_4"},
+		{"  └─TableFullScan_4", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustExec("set session tidb_opt_projection_push_down='ON';")
+	tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
+
+	// Selection to tikv.
+	rows = [][]interface{}{
+		{"Selection_7", "root", "gt(test.t.c2, 1)"},
+		{"└─TableReader_6", "root", "data:TableFullScan_5"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	// TopN to tiflash.
+	rows = [][]interface{}{
+		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader_15", "root", "data:TableFullScan_14"},
+		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+
+	// Projection to tiflash.
+	rows = [][]interface{}{
+		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
+		{"└─TableReader_6", "root", "data:TableFullScan_5"},
+		{"  └─TableFullScan_5", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustExec("set session tidb_opt_projection_push_down='ON';")
+	tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
+
+	// Selection to tiflash.
+	rows = [][]interface{}{
+		{"Selection_8", "root", "gt(test.t.c2, 1)"},
+		{"└─TableReader_7", "root", "data:TableFullScan_6"},
+		{"  └─TableFullScan_6", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+// https://github.com/pingcap/tidb/issues/41458
+func TestIssue41458(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
+	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")
+	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';").Sort().Rows()
+	plan := rawRows[0][0].(string)
+	rows := strings.Split(plan, "\n")
+	rows = rows[1:]
+	expectedRes := []string{
+		"Projection",
+		"└─HashJoin",
+		"  ├─HashJoin",
+		"  │ ├─HashJoin",
+		"  │ │ ├─IndexLookUp",
+		"  │ │ │ ├─IndexRangeScan",
+		"  │ │ │ └─Selection",
+		"  │ │ │   └─TableRowIDScan",
+		"  │ │ └─IndexLookUp",
+		"  │ │   ├─IndexRangeScan",
+		"  │ │   └─Selection",
+		"  │ │     └─TableRowIDScan",
+		"  │ └─TableReader",
+		"  │   └─Selection",
+		"  │     └─TableFullScan",
+		"  └─TableReader",
+		"    └─Selection",
+		"      └─TableFullScan",
+	}
+	for i, row := range rows {
+		fields := strings.Split(row, "\t")
+		fields = strings.Split(fields[1], "_")
+		op := fields[0]
+		require.Equalf(t, expectedRes[i], op, fmt.Sprintf("Mismatch at index %d.", i))
+	}
 }

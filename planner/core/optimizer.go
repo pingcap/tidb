@@ -390,9 +390,9 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, err
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(sctx, plan)
-	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
+	disableReuseChunkIfNeeded(sctx, plan)
 	return plan, nil
 }
 
@@ -776,17 +776,6 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 	}
 }
 
-// checkPlanCacheable used to check whether a plan can be cached. Plans that
-// meet the following characteristics cannot be cached:
-// 1. Use the TiFlash engine.
-// Todo: make more careful check here.
-func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
-	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
-		sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: TiFlash plan is un-cacheable"))
-	}
-}
-
 // propagateProbeParents doesn't affect the execution plan, it only sets the probeParents field of a PhysicalPlan.
 // It's for handling the inconsistency between row count in the statsInfo and the recorded actual row count. Please
 // see comments in PhysicalPlan for details.
@@ -821,26 +810,6 @@ func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
 			propagateProbeParents(child, probeParents)
 		}
 	}
-}
-
-// useTiFlash used to check whether the plan use the TiFlash engine.
-func useTiFlash(p PhysicalPlan) bool {
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		switch x.StoreType {
-		case kv.TiFlash:
-			return true
-		default:
-			return false
-		}
-	default:
-		if len(p.Children()) > 0 {
-			for _, plan := range p.Children() {
-				return useTiFlash(plan)
-			}
-		}
-	}
-	return false
 }
 
 func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
@@ -1051,4 +1020,57 @@ func init() {
 	expression.RewriteAstExpr = rewriteAstExpr
 	DefaultDisabledLogicalRulesList = new(atomic.Value)
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
+}
+
+func disableReuseChunkIfNeeded(sctx sessionctx.Context, plan PhysicalPlan) {
+	if !sctx.GetSessionVars().IsAllocValid() {
+		return
+	}
+
+	if checkOverlongColType(sctx, plan) {
+		return
+	}
+
+	for _, child := range plan.Children() {
+		disableReuseChunkIfNeeded(sctx, child)
+	}
+}
+
+// checkOverlongColType Check if read field type is long field.
+func checkOverlongColType(sctx sessionctx.Context, plan PhysicalPlan) bool {
+	if plan == nil {
+		return false
+	}
+	switch plan.(type) {
+	case *PhysicalTableReader, *PhysicalIndexReader,
+		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGetPlan:
+		if existsOverlongType(plan.Schema()) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true
+		}
+	}
+	return false
+}
+
+// existsOverlongType Check if exists long type column.
+func existsOverlongType(schema *expression.Schema) bool {
+	if schema == nil {
+		return false
+	}
+	for _, column := range schema.Columns {
+		switch column.RetType.GetType() {
+		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+			mysql.TypeBlob, mysql.TypeJSON:
+			return true
+		case mysql.TypeVarString, mysql.TypeVarchar:
+			// if the column is varchar and the length of
+			// the column is defined to be more than 1000,
+			// the column is considered a large type and
+			// disable chunk_reuse.
+			if column.RetType.GetFlen() > 1000 {
+				return true
+			}
+		}
+	}
+	return false
 }

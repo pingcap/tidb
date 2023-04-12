@@ -1207,6 +1207,9 @@ type SessionVars struct {
 	EnableNewCostInterface bool
 	// CostModelVersion is a internal switch to indicates the Cost Model Version.
 	CostModelVersion int
+	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
+	IndexJoinDoubleReadPenaltyCostRate float64
+
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
@@ -1352,6 +1355,16 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 		return
 	}
 	s.ChunkPool.Alloc = alloc
+}
+
+// IsAllocValid check if chunk reuse is enable or ChunkPool is inused.
+func (s *SessionVars) IsAllocValid() bool {
+	if !s.EnableReuseCheck {
+		return false
+	}
+	s.ChunkPool.mu.Lock()
+	defer s.ChunkPool.mu.Unlock()
+	return s.ChunkPool.Alloc != nil
 }
 
 // ClearAlloc indicates stop reuse chunk

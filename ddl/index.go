@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -815,8 +817,14 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 			if err != nil {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+					logutil.BgLogger().Warn("[ddl] found duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+				} else {
+					err = tryFallbackToTxnMerge(job, err)
+				}
 				ingest.LitBackCtxMgr.Unregister(job.ID)
-				err = tryFallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
 			}
 			if !done {
@@ -824,6 +832,9 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
 			if err != nil {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+				}
 				if kv.ErrKeyExists.Equal(err) {
 					logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
@@ -866,10 +877,58 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 }
 
+func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	tErr, ok := errors.Cause(originErr).(*terror.Error)
+	if !ok {
+		return originErr
+	}
+	if len(tErr.Args()) != 2 {
+		return originErr
+	}
+	key, keyIsByte := tErr.Args()[0].([]byte)
+	value, valIsByte := tErr.Args()[1].([]byte)
+	if !keyIsByte || !valIsByte {
+		return originErr
+	}
+	return genKeyExistsErr(key, value, idxInfo, tblInfo)
+}
+
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
+	var rh *reorgHandler
+	if w.concurrentDDL {
+		sctx, err1 := w.sessPool.get()
+		if err1 != nil {
+			err = err1
+			return
+		}
+		defer w.sessPool.put(sctx)
+		sess := newSession(sctx)
+		err = sess.begin()
+		if err != nil {
+			return
+		}
+		defer sess.rollback()
+		txn, err1 := sess.txn()
+		if err1 != nil {
+			err = err1
+			return
+		}
+		newMeta := meta.NewMeta(txn)
+		rh = newReorgHandler(newMeta, sess, w.concurrentDDL)
+	} else {
+		rh = newReorgHandler(t, w.sess, w.concurrentDDL)
+	}
+
+	failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && indexInfo.BackfillState == model.BackfillStateMerging &&
+			MockDMLExecutionStateMerging != nil {
+			MockDMLExecutionStateMerging()
+		}
+	})
+
 	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, mergingTmpIdx)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
@@ -1223,7 +1282,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		lwCtx, err = ei.NewWriterCtx(id)
+		lwCtx, err = ei.NewWriterCtx(id, indexInfo.Unique)
 		if err != nil {
 			return nil, err
 		}
@@ -1408,17 +1467,26 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 	if hasBeenBackFilled {
 		return nil
 	}
+	return genKeyExistsErr(key, value, idxInfo, tblInfo)
+}
+
+func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	idxColLen := len(idxInfo.Columns)
+	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
 	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn("decode index key value failed", zap.String("index", indexName),
+			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
+		return kv.ErrKeyExists.FastGenByArgs(key, indexName)
 	}
-	indexName := fmt.Sprintf("%s.%s", w.index.TableMeta().Name.String(), w.index.Meta().Name.String())
 	valueStr := make([]string, 0, idxColLen)
 	for i, val := range values[:idxColLen] {
 		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
 		if err != nil {
-			return kv.ErrKeyExists.FastGenByArgs(key.String(), indexName)
+			logutil.BgLogger().Warn("decode column value failed", zap.String("index", indexName),
+				zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
+			return kv.ErrKeyExists.FastGenByArgs(key, indexName)
 		}
 		str, err := d.ToString()
 		if err != nil {
@@ -1596,6 +1664,12 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 // MockDMLExecution is only used for test.
 var MockDMLExecution func()
+
+// MockDMLExecutionMerging is only used for test.
+var MockDMLExecutionMerging func()
+
+// MockDMLExecutionStateMerging is only used for test.
+var MockDMLExecutionStateMerging func()
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {

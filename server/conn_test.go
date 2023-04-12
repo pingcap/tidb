@@ -524,7 +524,7 @@ func TestDispatchClientProtocol41(t *testing.T) {
 			com: mysql.ComStmtFetch,
 			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 			err: nil,
-			out: []byte{0x5, 0x0, 0x0, 0x9, 0xfe, 0x0, 0x0, 0x82, 0x0},
+			out: []byte{0x5, 0x0, 0x0, 0x9, 0xfe, 0x0, 0x0, 0x42, 0x0},
 		},
 		{
 			com: mysql.ComStmtReset,
@@ -917,8 +917,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 
 	// test COM_STMT_FETCH (cursor mode)
-	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}))
-	require.Error(t, cc.handleStmtFetch(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	require.Error(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}))
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
 	require.Error(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"))
@@ -1798,4 +1797,36 @@ func TestExtensionChangeUser(t *testing.T) {
 	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
 	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
 	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
+}
+
+func TestProcessInfoForExecuteCommand(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	ctx := context.Background()
+
+	tk.MustExec("use test")
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	tk.MustExec("create table t (col1 int)")
+
+	// simple prepare and execute
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t"))
+	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t")
+
+	// prepare and execute with params
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t where col1 < ? and col1 > 100"))
+	// 1 params, length of nullBitMap is 1, `0x8, 0x0` represents the type, and the following `0x10, 0x0....` is the param
+	// 10
+	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x2, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0,
+		0x1, 0x8, 0x0,
+		0x0A, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}))
+	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t where col1 < ? and col1 > 100")
 }

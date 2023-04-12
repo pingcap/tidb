@@ -6709,5 +6709,119 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "Name": "TestIndexMergeOrderPushDown",
+    "Cases": [
+      {
+        "SQL": "select * from t where a = 1 or b = 1 order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 19.99 root  type: union",
+          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where a = 1 or b in (1, 2, 3) order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 2.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 2.00 cop[tikv]  test.t.c, offset:0, count:2",
+          "    └─TableRowIDScan 39.97 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where a in (1, 2, 3) or b = 1 order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 2.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 2.00 cop[tikv]  test.t.c, offset:0, count:2",
+          "    └─TableRowIDScan 39.97 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where a in (1, 2, 3) or b in (1, 2, 3) order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 2.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 2.00 cop[tikv]  test.t.c, offset:0, count:2",
+          "    └─TableRowIDScan 59.91 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 10.10 root  type: union",
+          "  ├─Limit(Build) 0.10 cop[tikv]  offset:0, count:2",
+          "  │ └─IndexRangeScan 0.10 cop[tikv] table:t, index:idx(a, c) range:[1 2,1 2], keep order:true, stats:pseudo",
+          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.10 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 2.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:idx(a, c) range:[1 2,1 2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 2.00 cop[tikv]  test.t.c, offset:0, count:2",
+          "    └─TableRowIDScan 30.10 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2",
+        "Plan": [
+          "TopN 0.40 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 0.40 root  type: union",
+          "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:idx(a, c) range:[1 2,1 2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 0.30 cop[tikv] table:t, index:idx2(b, c) range:[1 3,1 3], [2 3,2 3], [3 3,3 3], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 0.40 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2",
+        "Plan": [
+          "TopN 0.02 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 0.02 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx2(b, c) range:[2,2], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.02 cop[tikv]  eq(test.t.c, 3)",
+          "    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2",
+        "Plan": [
+          "TopN 0.06 root  test.t.c, offset:0, count:2",
+          "└─IndexMerge 0.06 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx2(b, c) range:[2,2], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.06 cop[tikv]  in(test.t.c, 1, 2, 3)",
+          "    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
   }
 ]

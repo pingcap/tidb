@@ -2321,11 +2321,15 @@ func TestColumnTypeChangeBetweenFloatAndDouble(t *testing.T) {
 	prepare := func(createTableStmt string) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec(createTableStmt)
-		tk.MustExec("insert into t values (36.4), (24.1);")
+		tk.MustExec("insert into t values (36.43), (24.1);")
 	}
 
 	prepare("create table t (a float(6,2));")
 	tk.MustExec("alter table t modify a double(6,2)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.43", "24.1"))
+
+	prepare("create table t (a float(6,2));")
+	tk.MustExec("alter table t modify a float(6,1)")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
 
 	prepare("create table t (a double(6,2));")
@@ -2421,4 +2425,41 @@ func TestColumnTypeChangeTimestampToInt(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 20160313033000"))
 	tk.MustExec("alter table t add index idx1(id, c1);")
 	tk.MustExec("admin check table t")
+}
+
+func TestFixDDLTxnWillConflictWithReorgTxnNotConcurrent(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set @@global.tidb_enable_metadata_lock=0")
+	defer tk0.MustExec("set @@global.tidb_enable_metadata_lock = default")
+	tk0.MustExec("set @@global.tidb_enable_concurrent_ddl = off")
+	defer tk0.MustExec("set @@global.tidb_enable_concurrent_ddl = default")
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF")
+	defer tk.MustExec("set global tidb_ddl_enable_fast_reorg = default")
+	tk.MustExec("alter table t add index(a)")
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("insert into t values(128),(129)")
+	tk.MustExec("alter table t modify column a tinyint")
+
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 2 warnings with this error code, first warning: constant 128 overflows tinyint"))
+}
+
+func TestFixDDLTxnWillConflictWithReorgTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF")
+	defer tk.MustExec("set global tidb_ddl_enable_fast_reorg = default")
+	tk.MustExec("alter table t add index(a)")
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("insert into t values(128),(129)")
+	tk.MustExec("alter table t modify column a tinyint")
+
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 2 warnings with this error code, first warning: constant 128 overflows tinyint"))
 }

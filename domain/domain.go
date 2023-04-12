@@ -640,10 +640,15 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
 		return
 	}
+	// Make sure the session is new.
+	if _, err := se.(sqlexec.SQLExecutor).ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), "rollback"); err != nil {
+		se.Close()
+		return
+	}
 	defer do.sysSessionPool.Put(se)
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
-	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
@@ -1738,8 +1743,8 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
+func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
+	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
 	if err != nil {
 		return err
 	}
@@ -1802,8 +1807,8 @@ func (do *Domain) SetupAnalyzeExec(ctxs []sessionctx.Context) {
 }
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
-func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
+func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx sessionctx.Context) error {
+	if err := do.UpdateTableStatsLoop(ctxs[0], initStatsCtx); err != nil {
 		return err
 	}
 	do.StartLoadStatsSubWorkers(ctxs[1:])
@@ -1813,9 +1818,9 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
+func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
+	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
 	if err != nil {
 		return err
 	}

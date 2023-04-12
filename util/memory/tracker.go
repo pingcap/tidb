@@ -302,6 +302,9 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 
 // Detach de-attach the tracker child from its parent, then set its parent property as nil
 func (t *Tracker) Detach() {
+	if t == nil {
+		return
+	}
 	parent := t.getParent()
 	if parent == nil {
 		return
@@ -310,7 +313,7 @@ func (t *Tracker) Detach() {
 		t.DetachFromGlobalTracker()
 		return
 	}
-	if parent.IsRootTrackerOfSess && t.label == LabelForSQLText {
+	if parent.IsRootTrackerOfSess && t.label != LabelForMemDB {
 		parent.actionMuForHardLimit.Lock()
 		parent.actionMuForHardLimit.actionOnExceed = nil
 		parent.actionMuForHardLimit.Unlock()
@@ -446,6 +449,7 @@ func (t *Tracker) Consume(bs int64) {
 				currentAction = nextAction
 				nextAction = currentAction.GetFallback()
 			}
+			logutil.BgLogger().Warn("global memory controller, lastAction", zap.Any("action", currentAction))
 			currentAction.Action(tracker)
 		}
 	}
@@ -471,6 +475,7 @@ func (t *Tracker) Consume(bs int64) {
 				}
 				oldTracker = MemUsageTop1Tracker.Load()
 			}
+			logutil.BgLogger().Error("global memory controller, update the Top1 session", zap.Int64("memUsage", memUsage), zap.Uint64("conn", sessionRootTracker.SessionID), zap.Uint64("limitSessMinSize", limitSessMinSize))
 		}
 	}
 
@@ -739,8 +744,14 @@ func (t *Tracker) DetachFromGlobalTracker() {
 
 // ReplaceBytesUsed replace bytesConsume for the tracker
 func (t *Tracker) ReplaceBytesUsed(bytes int64) {
-	t.Consume(-t.BytesConsumed())
-	t.Consume(bytes)
+	t.Consume(bytes - t.BytesConsumed())
+}
+
+// Reset detach the tracker from the old parent and clear the old children. The label and byteLimit would not be reset.
+func (t *Tracker) Reset() {
+	t.Detach()
+	t.ReplaceBytesUsed(0)
+	t.mu.children = nil
 }
 
 func (t *Tracker) getParent() *Tracker {

@@ -614,7 +614,7 @@ func TestOrderByandLimit(t *testing.T) {
 		x := rand.Intn(1099)
 		y := rand.Intn(2000) + 1
 		queryRangePartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
-		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
+		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from thash use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
 		require.True(t, tk.HasPlan(queryRangePartition, "IndexReader")) // check if indexReader is used
 		require.True(t, tk.HasPlan(queryHashPartition, "IndexReader"))
@@ -635,6 +635,17 @@ func TestOrderByandLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryPartition, "IndexMerge")) // check if indexMerge is used
 		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
+}
+
+func TestOrderByOnUnsignedPk(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tunsigned_hash(a bigint unsigned primary key) partition by hash(a) partitions 6")
+	tk.MustExec("insert into tunsigned_hash values(25), (9279808998424041135)")
+	tk.MustQuery("select min(a) from tunsigned_hash").Check(testkit.Rows("25"))
+	tk.MustQuery("select max(a) from tunsigned_hash").Check(testkit.Rows("9279808998424041135"))
 }
 
 func TestBatchGetandPointGetwithHashPartition(t *testing.T) {

@@ -393,7 +393,8 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	if cfg.PitrBatchSize == 0 {
 		cfg.PitrBatchSize = defaultPiTRBatchSize
 	}
-
+	// another goroutine is used to iterate the backup file
+	cfg.PitrConcurrency += 1
 	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
 	cfg.Config.Concurrency = cfg.PitrConcurrency
 }
@@ -473,10 +474,17 @@ func IsStreamRestore(cmdName string) bool {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	if err := checkTaskExists(c, cfg); err != nil {
+		return errors.Annotate(err, "failed to check task exits")
+	}
+
 	if IsStreamRestore(cmdName) {
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
+	return runRestore(c, g, cmdName, cfg)
+}
 
+func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -504,10 +512,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		mergeRegionSize, mergeRegionCount = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
 	}
 
 	keepaliveCfg.PermitWithoutStream = true

@@ -553,6 +553,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			schemaName = job.BinlogInfo.DBInfo.Name.L
 		}
 	}
+	if len(tableName) == 0 {
+		tableName = job.TableName
+	}
 	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
 	if len(schemaName) == 0 {
 		schemaName = getSchemaName(e.is, job.SchemaID)
@@ -1537,7 +1540,11 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 }
 
 func (e *SelectionExec) open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.childResult = tryNewCacheChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
@@ -1933,7 +1940,7 @@ func (e *UnionExec) Close() error {
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	var sc *stmtctx.StatementContext
-	if vars.TxnCtx.CouldRetry {
+	if vars.TxnCtx.CouldRetry || mysql.HasCursorExistsFlag(vars.Status) {
 		// Must construct new statement context object, the retry history need context for every statement.
 		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
 		sc = &stmtctx.StatementContext{}
@@ -2168,6 +2175,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.ClearStmtVars()
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
+	vars.CurrInsertBatchExtraCols = nil
+	vars.CurrInsertValues = chunk.Row{}
 	return
 }
 

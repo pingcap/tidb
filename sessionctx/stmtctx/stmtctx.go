@@ -171,7 +171,6 @@ type StatementContext struct {
 	InNullRejectCheck             bool
 	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
-	SkipPlanCache                 bool
 	IgnoreExplainIDSuffix         bool
 	SkipUTF8Check                 bool
 	SkipASCIICheck                bool
@@ -595,6 +594,15 @@ func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
 func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHintSet = true
 	sc.planHint = hint
+}
+
+// SetSkipPlanCache sets to skip the plan cache and records the reason.
+func (sc *StatementContext) SetSkipPlanCache(reason error) {
+	if !sc.UseCache {
+		return // avoid unnecessary warnings
+	}
+	sc.UseCache = false
+	sc.AppendWarning(reason)
 }
 
 // TableEntry presents table in db.
@@ -1092,9 +1100,8 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
 	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
-	sc.SkipPlanCache = true
 	if sc.UseCache {
-		sc.AppendWarning(errors.Errorf("skip plan-cache: in-list is too long"))
+		sc.SetSkipPlanCache(errors.Errorf("skip plan-cache: in-list is too long"))
 	}
 	if !sc.RangeFallback {
 		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
@@ -1105,6 +1112,19 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 // UseDynamicPartitionPrune indicates whether dynamic partition is used during the query
 func (sc *StatementContext) UseDynamicPartitionPrune() bool {
 	return sc.UseDynamicPruneMode
+}
+
+// DetachMemDiskTracker detaches the memory and disk tracker from the sessionTracker.
+func (sc *StatementContext) DetachMemDiskTracker() {
+	if sc == nil {
+		return
+	}
+	if sc.MemTracker != nil {
+		sc.MemTracker.Detach()
+	}
+	if sc.DiskTracker != nil {
+		sc.DiskTracker.Detach()
+	}
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.

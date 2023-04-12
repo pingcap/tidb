@@ -172,6 +172,7 @@ func newClientConn(s *Server) *clientConn {
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
 		authPlugin:   mysql.AuthNativePassword,
+		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
 }
 
@@ -215,6 +216,9 @@ type clientConn struct {
 		cancelFunc context.CancelFunc
 	}
 	extensions *extension.SessionExtensions
+
+	// Proxy Protocol Enabled
+	ppEnabled bool
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -622,6 +626,21 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
+	// After read packets we should update the client's host and port to grab
+	// real client's IP and port from PROXY Protocol header if PROXY Protocol is enabled.
+	_, _, err = cc.PeerHost("", true)
+	if err != nil {
+		terror.Log(err)
+		return err
+	}
+	// If enable proxy protocol check audit plugins after update real IP
+	if cc.ppEnabled {
+		err = cc.server.checkAuditPlugin(cc)
+		if err != nil {
+			return err
+		}
+	}
+
 	if resp.Capability&mysql.ClientSSL > 0 {
 		tlsConfig := (*tls.Config)(atomic.LoadPointer(&cc.server.tlsConfig))
 		if tlsConfig != nil {
@@ -824,7 +843,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, port, err := cc.PeerHost(hasPassword)
+
+	host, port, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return err
 	}
@@ -875,7 +895,8 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, _, err := cc.PeerHost(hasPassword)
+
+	host, _, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return nil, err
 	}
@@ -947,9 +968,17 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	return nil, nil
 }
 
-func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
+func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port string, err error) {
+	// already get peer host
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, cc.peerPort, nil
+		// Proxy protocol enabled and not update
+		if cc.ppEnabled && !update {
+			return cc.peerHost, cc.peerPort, nil
+		}
+		// Proxy protocol not enabled
+		if !cc.ppEnabled {
+			return cc.peerHost, cc.peerPort, nil
+		}
 	}
 	host = variable.DefHostname
 	if cc.isUnixSocket {
@@ -2092,12 +2121,20 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	cc.audit(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
-	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
-	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
+	// - If rs is not nil, the statement tracker detachment from session tracker
+	//   is done in the `rs.Close` in most cases.
+	// - If the rs is nil and err is not nil, the detachment will be done in
+	//   the `handleNoDelay`.
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
+		// If error is returned during the planner phase or the executor.Open
+		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
+		// will not be detached. We need to detach them manually.
+		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
+			sv.StmtCtx.DetachMemDiskTracker()
+		}
 		return true, err
 	}
 
@@ -2376,34 +2413,12 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
-	// if fetchedRows is not enough, getting data from recordSet.
-	// NOTE: chunk should not be allocated from the allocator
-	// the allocator will reset every statement
-	// but it maybe stored in the result set among statements
-	// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
-	// Here server.tidbResultSet implements Next method.
-	req := rs.NewChunk(nil)
-	for len(fetchedRows) < fetchSize {
-		if err := rs.Next(ctx, req); err != nil {
-			return err
-		}
-		rowCount := req.NumRows()
-		if rowCount == 0 {
-			break
-		}
-		// filling fetchedRows with chunk
-		for i := 0; i < rowCount; i++ {
-			fetchedRows = append(fetchedRows, req.GetRow(i))
-		}
-		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
-	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
 	if len(fetchedRows) == 0 {
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
-		terror.Call(rs.Close)
 		return cc.writeEOF(ctx, serverStatus)
 	}
 

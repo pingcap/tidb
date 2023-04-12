@@ -296,8 +296,8 @@ def go_deps():
         name = "com_github_blacktear23_go_proxyprotocol",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/blacktear23/go-proxyprotocol",
-        sum = "h1:zR7PZeoU0wAkElcIXenFiy3R56WB6A+UEVi4c6RH8wo=",
-        version = "v1.0.2",
+        sum = "h1:moi4x1lJlrQj2uYUJdEyCxqj9UNmaSKZwaGZIXnbAis=",
+        version = "v1.0.5",
     )
     go_repository(
         name = "com_github_blizzy78_varnamelen",
@@ -3527,8 +3527,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:/glZOHs/K2pkCioDVae+aThUHFYRYQkEgY4NUTgfh+s=",
-        version = "v2.0.3",
+        sum = "h1:AyFCezjYx4KYXuyPM5o38lYqh5UdR0OM36UEocOx+Hs=",
+        version = "v2.0.4-0.20230131081004-cd83d1507d70",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

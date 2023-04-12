@@ -189,7 +189,12 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 	}
 	var dump int
 	err = exec.QueryRow(ctx, "check table empty",
-		fmt.Sprintf("SELECT 1 FROM %s LIMIT 1", common.UniqueTable(schemaName, tableName)),
+		// Here we use the `USE INDEX()` hint to skip fetch the record from index.
+		// In Lightning, if previous importing is halted half-way, it is possible that
+		// the data is partially imported, but the index data has not been imported.
+		// In this situation, if no hint is added, the SQL executor might fetch the record from index,
+		// which is empty.  This will result in missing check.
+		fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(schemaName, tableName)),
 		&dump,
 	)
 

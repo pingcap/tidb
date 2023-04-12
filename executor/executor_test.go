@@ -2424,7 +2424,7 @@ func TestTimestampDefaultValueTimeZone(t *testing.T) {
 	tk.MustExec(`set time_zone = '+00:00'`)
 	timeIn0 := tk.MustQuery("select b from t").Rows()[0][0]
 	require.NotEqual(t, timeIn8, timeIn0)
-	datumTimeIn8, err := expression.GetTimeValue(tk.Session(), timeIn8, mysql.TypeTimestamp, 0)
+	datumTimeIn8, err := expression.GetTimeValue(tk.Session(), timeIn8, mysql.TypeTimestamp, 0, nil)
 	require.NoError(t, err)
 	tIn8To0 := datumTimeIn8.GetMysqlTime()
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
