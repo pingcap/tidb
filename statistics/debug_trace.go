@@ -2,6 +2,7 @@ package statistics
 
 import (
 	"encoding/json"
+
 	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"

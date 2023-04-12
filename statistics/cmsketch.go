@@ -17,7 +17,6 @@ package statistics
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"math"
 	"reflect"
 	"sort"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"

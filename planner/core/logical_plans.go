@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"math"
 	"unsafe"
 
@@ -29,6 +28,7 @@ import (
 	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"

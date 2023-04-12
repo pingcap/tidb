@@ -16,7 +16,6 @@ package statistics
 
 import (
 	"bytes"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"math"
 	"strings"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"

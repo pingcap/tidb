@@ -16,7 +16,6 @@ package statistics
 
 import (
 	"bytes"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"math"
 	"math/bits"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
 	planutil "github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"

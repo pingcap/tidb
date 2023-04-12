@@ -17,7 +17,6 @@ package planner
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"math"
 	"math/rand"
 	"strings"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/cascades"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"

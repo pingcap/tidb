@@ -15,13 +15,13 @@
 package statistics
 
 import (
-	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"math"
 	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/debug_trace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
