@@ -147,4 +147,5 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check index t idx;")
+	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
