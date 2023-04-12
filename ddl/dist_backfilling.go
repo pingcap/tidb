@@ -187,7 +187,7 @@ func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
 	return bw
 }
 
-func runBackfillJobs(d *ddl, se *sess.Session, ingestBackendCtx *ingest.BackendContext, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
+func runBackfillJobs(d *ddl, se *sess.Session, ingestBackendCtx ingest.BackendCtx, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
 	dbInfo, tbl, err := d.getTableByTxn(d.store, bJob.Meta.SchemaID, bJob.Meta.TableID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs gets table failed", zap.String("bfJob", bJob.AbbrStr()), zap.Error(err))
@@ -250,7 +250,7 @@ func newBackfilWorkerManager(bwCtx *backfillWorkerContext) *backfilWorkerManager
 	}
 }
 
-func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult, ingestBackendCtx *ingest.BackendContext, eleID int64,
+func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult, ingestBackendCtx ingest.BackendCtx, eleID int64,
 	tControl pooltask.TaskController[*reorgBackfillTask, *backfillResult, int, *backfillWorker, *backfillWorkerContext]) {
 	bwm.wg.Run(func() {
 		i := 0
