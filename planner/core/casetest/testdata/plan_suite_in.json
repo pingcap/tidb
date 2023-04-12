@@ -136,6 +136,16 @@
     ]
   },
   {
+    "name": "TestMPPPreferBCJ",
+    "cases": [
+      "explain select * from t1, t2 where t1.a=t2.b",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+      "explain select * from t1, t2 where t1.a=t2.b",
+      "insert into t2 values (9); analyze table t2;",
+      "explain select * from t1, t2 where t1.a=t2.b"
+    ]
+  },
+  {
     "name": "TestMPPBCJModelOneTiFlash",
     "cases": [
       "set @@session.tidb_allow_mpp=true",
