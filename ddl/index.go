@@ -1919,6 +1919,7 @@ func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 
 	for {
 		<-ticker.C
+		// TODO: handle cancel correctly.
 		if reorgInfo.Job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
@@ -1937,6 +1938,7 @@ func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			return nil
 		}
 
+		// TODO: get the original error message.
 		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
 			return errors.Errorf("ddl task stopped with state %s", found.State)
 		}
