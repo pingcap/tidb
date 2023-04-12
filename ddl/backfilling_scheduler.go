@@ -70,10 +70,9 @@ type txnBackfillScheduler struct {
 	workers []*backfillWorker
 	wg      sync.WaitGroup
 
-	taskCh    chan *reorgBackfillTask
-	resultCh  chan *backfillResult
-	taskMaxID int
-	closed    bool
+	taskCh   chan *reorgBackfillTask
+	resultCh chan *backfillResult
+	closed   bool
 }
 
 func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
@@ -111,8 +110,6 @@ func (b *txnBackfillScheduler) setupWorkers() error {
 }
 
 func (b *txnBackfillScheduler) sendTask(task *reorgBackfillTask) {
-	b.taskMaxID++
-	task.id = b.taskMaxID
 	b.taskCh <- task
 }
 
@@ -267,7 +264,6 @@ type ingestBackfillScheduler struct {
 	resultCh chan *backfillResult
 
 	copReqSenderPool *copReqSenderPool
-	taskMaxID        int
 
 	writerPool    *workerpool.WorkerPool[idxRecResult]
 	writerMaxID   int
@@ -358,8 +354,6 @@ func (b *ingestBackfillScheduler) close(force bool) {
 }
 
 func (b *ingestBackfillScheduler) sendTask(task *reorgBackfillTask) {
-	b.taskMaxID++
-	task.id = b.taskMaxID
 	b.taskCh <- task
 }
 
@@ -506,3 +500,16 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 }
 
 func (w *addIndexIngestWorker) Close() {}
+
+type taskIDAllocator struct {
+	id int
+}
+
+func newTaskIDAllocator() *taskIDAllocator {
+	return &taskIDAllocator{}
+}
+
+func (a *taskIDAllocator) alloc() int {
+	a.id++
+	return a.id
+}
