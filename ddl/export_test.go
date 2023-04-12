@@ -51,7 +51,7 @@ func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endK
 	}
 	taskCh := make(chan *reorgBackfillTask, 5)
 	resultCh := make(chan idxRecResult, 5)
-	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh)
+	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, nil)
 	pool.chunkSender = &resultChanForTest{ch: resultCh}
 	pool.adjustSize(1)
 	pool.tasksCh <- task
