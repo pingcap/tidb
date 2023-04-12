@@ -326,12 +326,13 @@ func (dc *ddlCtx) splitTableToBackfillJobs(se *sess.Session, reorgInfo *reorgInf
 	batchSize := sJobCtx.batchSize
 	startKey, endKey := kv.Key(pTblMeta.StartKey), kv.Key(pTblMeta.EndKey)
 	bJobs := make([]*BackfillJob, 0, batchSize)
+	taskIDAlloc := newTaskIDAllocator()
 	for {
 		kvRanges, err := splitTableRanges(pTblMeta.PhyTbl, reorgInfo.d.store, startKey, endKey, batchSize)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges)
+		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges, taskIDAlloc)
 		if len(batchTasks) == 0 {
 			break
 		}
