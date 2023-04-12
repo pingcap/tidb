@@ -611,8 +611,8 @@ type partialTableWorker struct {
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
-	finished <-chan struct{}, handleCols plannercore.HandleCols, parTblIdx int, partialPlanID int) (count int64, err error) {
-	chk := w.sc.GetSessionVars().GetNewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize, w.maxChunkSize, w.tableReader.base().AllocPool)
+	finished <-chan struct{}, handleCols plannercore.HandleCols, parTblIdx int, partialPlanIndex int) (count int64, err error) {
+	chk := w.sc.GetSessionVars().GetNewChunkWithCapacity(w.getRetTpsForTableScan(), w.maxChunkSize, w.maxChunkSize, w.tableReader.base().AllocPool)
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
@@ -624,7 +624,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 			return count, nil
 		}
 		count += int64(len(handles))
-		task := w.buildTableTask(handles, retChunk, parTblIdx, partialPlanID)
+		task := w.buildTableTask(handles, retChunk, parTblIdx, partialPlanIndex)
 		if w.stats != nil {
 			atomic.AddInt64(&w.stats.FetchIdxTime, int64(time.Since(start)))
 		}
@@ -640,10 +640,13 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 	}
 }
 
+func (w *partialTableWorker) getRetTpsForTableScan() []*types.FieldType {
+	return retTypes(w.tableReader)
+}
+
 func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
-	retChk = chk.CopyConstruct()
 	var memUsage int64
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
@@ -672,10 +675,13 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				return nil, nil, err
 			}
 			handles = append(handles, handle)
-			// reduce memory usage when len(w.byItems) == 0
-			if len(w.byItems) != 0 {
-				retChk.AppendRow(r)
+		}
+		// used for limit embeded.
+		if len(w.byItems) != 0 {
+			if retChk == nil {
+				retChk = chunk.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.batchSize)
 			}
+			retChk.Append(chk, 0, chk.NumRows())
 		}
 	}
 	w.batchSize *= 2
@@ -940,6 +946,7 @@ func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTab
 
 // pruneTableWorkerTaskIdxRows prune idxRows and only keep columns that will be used in byItems.
 func (w *indexMergeProcessWorker) pruneTableWorkerTaskIdxRows(task *indexMergeTableTask) {
+	// IndexScan no need to prune retChk, Columns required by byItems are always first.
 	if plan, ok := w.indexMerge.partialPlans[task.partialPlanID][0].(*plannercore.PhysicalTableScan); ok {
 		prune := make([]int, 0, len(w.indexMerge.byItems))
 		for _, item := range plan.ByItems {
@@ -1412,14 +1419,8 @@ func (w *partialIndexWorker) fetchHandles(
 	finished <-chan struct{},
 	handleCols plannercore.HandleCols,
 	parTblIdx int,
-	partialPlanID int) (count int64, err error) {
-	var tps []*types.FieldType
-	if len(w.byItems) != 0 {
-		for _, item := range w.byItems {
-			tps = append(tps, item.Expr.GetType())
-		}
-	}
-	chk := chunk.NewChunkWithCapacity(append(tps, handleCols.GetFieldsTypes()...), w.maxChunkSize)
+	partialPlanIndex int) (count int64, err error) {
+	chk := chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols), w.maxChunkSize)
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleCols)
@@ -1431,7 +1432,7 @@ func (w *partialIndexWorker) fetchHandles(
 			return count, nil
 		}
 		count += int64(len(handles))
-		task := w.buildTableTask(handles, retChunk, parTblIdx, partialPlanID)
+		task := w.buildTableTask(handles, retChunk, parTblIdx, partialPlanIndex)
 		if w.stats != nil {
 			atomic.AddInt64(&w.stats.FetchIdxTime, int64(time.Since(start)))
 		}
@@ -1447,10 +1448,19 @@ func (w *partialIndexWorker) fetchHandles(
 	}
 }
 
+func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannercore.HandleCols) []*types.FieldType {
+	var tps []*types.FieldType
+	if len(w.byItems) != 0 {
+		for _, item := range w.byItems {
+			tps = append(tps, item.Expr.GetType())
+		}
+	}
+	return append(tps, handleCols.GetFieldsTypes()...)
+}
+
 func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
-	retChk = chk.CopyConstruct()
 	var memUsage int64
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
@@ -1479,10 +1489,13 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				return nil, nil, err
 			}
 			handles = append(handles, handle)
-			// reduce memory usage when len(w.byItems) == 0
-			if len(w.byItems) != 0 {
-				retChk.AppendRow(r)
+		}
+		// used for limit embeded.
+		if len(w.byItems) != 0 {
+			if retChk == nil {
+				retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols), w.batchSize)
 			}
+			retChk.Append(chk, 0, chk.NumRows())
 		}
 	}
 	w.batchSize *= 2
