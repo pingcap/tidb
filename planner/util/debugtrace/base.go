@@ -25,7 +25,7 @@ import (
 //
 // To record debug information, AppendStepToCurrentContext and AppendStepWithNameToCurrentContext
 // are provided as a low-level API.
-// DebugTraceAnyValuesWithNames handles some common logic for better usability, so it should
+// RecordAnyValuesWithNames handles some common logic for better usability, so it should
 // be the most commonly used function for recording simple information.
 // If the tracing logic is more complicated or need extra MarshalJSON logic, you should implement
 // separate logic like in planner/core/debug_trace.go and statistics/debug_trace.go
@@ -35,6 +35,7 @@ type OptimizerDebugTraceRoot struct {
 	currentCtx *baseDebugTraceContext
 }
 
+// MarshalJSON overrides the default MarshalJSON behavior and marshals the unexported traceCtx.
 func (root *OptimizerDebugTraceRoot) MarshalJSON() ([]byte, error) {
 	return json.Marshal(root.traceCtx.steps)
 }
@@ -128,10 +129,10 @@ func LeaveContextCommon(sctx sessionctx.Context) {
 	root.currentCtx = root.currentCtx.parentCtx
 }
 
-// DebugTraceAnyValuesWithNames is a general debug trace logic for recording some values of any type with a name.
+// RecordAnyValuesWithNames is a general debug trace logic for recording some values of any type with a name.
 // The vals arguments should be a slice like ["name1", value1, "name2", value2].
 // The names must be string, the values can be any type.
-func DebugTraceAnyValuesWithNames(
+func RecordAnyValuesWithNames(
 	s sessionctx.Context,
 	vals ...interface{},
 ) {

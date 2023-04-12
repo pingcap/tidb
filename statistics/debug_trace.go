@@ -15,8 +15,9 @@ import (
  Below is debug trace for statistics.Table and types related to fields in statistics.Table.
 */
 
-type StatsTblInfo struct {
-	PhysicalId  int64
+// StatsTblTraceInfo is simplified from Table and used for debug trace.
+type StatsTblTraceInfo struct {
+	PhysicalID  int64
 	Version     uint64
 	Count       int64
 	ModifyCount int64
@@ -115,16 +116,16 @@ func traceIdxStats(idxStats *Index, id int64, out *statsTblColOrIdxInfo) {
 	out.CMSketchInfo = traceCMSketchInfo(idxStats.CMSketch)
 }
 
-// TraceStatsTbl converts a Table to StatsTblInfo, which is suitable for the debug trace.
-func TraceStatsTbl(statsTbl *Table) *StatsTblInfo {
+// TraceStatsTbl converts a Table to StatsTblTraceInfo, which is suitable for the debug trace.
+func TraceStatsTbl(statsTbl *Table) *StatsTblTraceInfo {
 	if statsTbl == nil {
 		return nil
 	}
 	// Collect table level information
 	colNum := len(statsTbl.Columns)
 	idxNum := len(statsTbl.Indices)
-	traceInfo := &StatsTblInfo{
-		PhysicalId:  statsTbl.PhysicalID,
+	traceInfo := &StatsTblTraceInfo{
+		PhysicalID:  statsTbl.PhysicalID,
 		Version:     statsTbl.Version,
 		Count:       statsTbl.RealtimeCount,
 		ModifyCount: statsTbl.ModifyCount,
@@ -211,21 +212,21 @@ func debugTraceStartEstimateRange(
 type debugTraceAddRowCountType int8
 
 const (
-	DebugTraceUnknownTypeAddRowCount debugTraceAddRowCountType = iota
-	DebugTraceImpossible
-	DebugTraceUniquePoint
-	DebugTracePoint
-	DebugTraceRange
-	DebugTraceVer1SmallRange
+	debugTraceUnknownTypeAddRowCount debugTraceAddRowCountType = iota
+	debugTraceImpossible
+	debugTraceUniquePoint
+	debugTracePoint
+	debugTraceRange
+	debugTraceVer1SmallRange
 )
 
 var addRowCountTypeToString = map[debugTraceAddRowCountType]string{
-	DebugTraceUnknownTypeAddRowCount: "Unknown",
-	DebugTraceImpossible:             "Impossible",
-	DebugTraceUniquePoint:            "Unique point",
-	DebugTracePoint:                  "Point",
-	DebugTraceRange:                  "Range",
-	DebugTraceVer1SmallRange:         "Small range in ver1 stats",
+	debugTraceUnknownTypeAddRowCount: "Unknown",
+	debugTraceImpossible:             "Impossible",
+	debugTraceUniquePoint:            "Unique point",
+	debugTracePoint:                  "Point",
+	debugTraceRange:                  "Range",
+	debugTraceVer1SmallRange:         "Small range in ver1 stats",
 }
 
 func (d debugTraceAddRowCountType) MarshalJSON() ([]byte, error) {
