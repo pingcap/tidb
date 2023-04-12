@@ -193,10 +193,12 @@ func (m *MetadataHelper) decodeCompressedData(data []byte, compressionType backu
 	case backuppb.CompressionType_ZSTD:
 		return m.decoder.DecodeAll(data, nil)
 	}
-	return nil, errors.Errorf("failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
+	return nil, errors.Errorf(
+		"failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
 }
 
-func (m *MetadataHelper) ReadFile(ctx context.Context, path string, offset uint64, length uint64, compressionType backuppb.CompressionType, storage storage.ExternalStorage) ([]byte, error) {
+func (m *MetadataHelper) ReadFile(ctx context.Context, path string,
+	offset, length uint64, compressionType backuppb.CompressionType, storage storage.ExternalStorage) ([]byte, error) {
 	var err error
 	cref, exist := m.cache[path]
 	if !exist {

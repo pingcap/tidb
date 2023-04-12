@@ -28,7 +28,8 @@ import (
 
 func main() {
 	pflag.Usage = func() {
-		fmt.Fprint(os.Stderr, "Dumpling is a CLI tool that helps you dump MySQL/TiDB data\n\nUsage:\n  dumpling [flags]\n\nFlags:\n")
+		fmt.Fprint(os.Stderr,
+			"Dumpling is a CLI tool that helps you dump MySQL/TiDB data\n\nUsage:\n  dumpling [flags]\n\nFlags:\n")
 		pflag.PrintDefaults()
 	}
 	printVersion := pflag.BoolP("version", "V", false, "Print Dumpling version")
