@@ -978,7 +978,7 @@ import (
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	ProcedureProcStmt          "The entrance of procedure statements which contains all kinds of statements in procedure"
-	ProcedureStatementStmt     "The normal statements in procedure, such as ddl, dml, select, set ..."
+	ProcedureStatementStmt     "The normal statements in procedure, such as dml, select, set ..."
 	SelectStmt                 "SELECT statement"
 	SelectStmtWithClause       "common table expression SELECT statement"
 	RenameTableStmt            "rename table statement"

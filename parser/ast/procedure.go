@@ -84,16 +84,21 @@ type ProcedureDeclInfo struct {
 	node
 }
 
-// ProcedureErrorList is the base node of  condition value.
-type ProcedureErrorList struct {
+// ProcedureErrorCondition is the base node of  condition value.
+type ProcedureErrorCondition struct {
 	stmtNode
 }
 
 // LableInfo is the  interface of loop and block lable.
 type LableInfo interface {
+	// GetErrorStatus gets label status, if error, return end label name and true.
+	// if normal，The returned string has no meaning and false.
 	GetErrorStatus() (string, bool)
+	// GetLableName gets label name.
 	GetLableName() string
+	// IsBlock gets type flag, true is block, false is loop.
 	IsBlock() bool
+	// GetBlock gets block stmtnode
 	GetBlock() StmtNode
 }
 
@@ -230,8 +235,8 @@ type ProcedureInfo struct {
 	IfNotExists       bool
 	ProcedureName     *TableName
 	ProcedureParam    []*StoreParameter //procedure param
-	ProcedureBody     StmtNode          //procedure statement
-	ProcedureParamStr string            // procedure body string
+	ProcedureBody     StmtNode          //procedure body statement
+	ProcedureParamStr string            //procedure parameter string
 }
 
 // Restore implements Node interface.
@@ -898,7 +903,7 @@ func (n *ProcedureFetchInto) Accept(v Visitor) (Node, bool) {
 
 // ProcedureErrorVal store procedure handler error code.
 type ProcedureErrorVal struct {
-	ProcedureErrorList
+	ProcedureErrorCondition
 
 	ErrorNum uint64
 }
@@ -921,7 +926,7 @@ func (n *ProcedureErrorVal) Accept(v Visitor) (Node, bool) {
 
 // ProcedureErrorState store procedure handler SQLSTATE string.
 type ProcedureErrorState struct {
-	ProcedureErrorList
+	ProcedureErrorCondition
 
 	CodeStatus string
 }
@@ -945,7 +950,7 @@ func (n *ProcedureErrorState) Accept(v Visitor) (Node, bool) {
 
 // ProcedureErrorCon store store procedure handler status info.
 type ProcedureErrorCon struct {
-	ProcedureErrorList
+	ProcedureErrorCondition
 
 	ErrorCon int
 }
@@ -991,7 +996,7 @@ func (n *ProcedureLabelBlock) Restore(ctx *format.RestoreCtx) error {
 		return err
 	}
 	if n.LableError {
-		return errors.New("Start and end lable don't match")
+		return errors.Errorf("The same label has different names,begin: %s,end: %s.", n.LableName, n.LableEnd)
 	}
 	ctx.WriteKeyWord(" ")
 	ctx.WriteName(n.LableName)
@@ -1053,7 +1058,7 @@ func (n *ProcedureLabelLoop) Restore(ctx *format.RestoreCtx) error {
 		return err
 	}
 	if n.LableError {
-		return errors.New("Inconsistent start and end Lable")
+		return errors.Errorf("The same label has different names,begin: %s,end: %s.", n.LableName, n.LableEnd)
 	}
 	ctx.WriteKeyWord(" ")
 	ctx.WriteName(n.LableName)
