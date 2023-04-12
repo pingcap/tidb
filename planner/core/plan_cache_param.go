@@ -62,11 +62,14 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// 3. Limit: to generate different plans for queries with different limit values.
 		return in, true
 	case *ast.FuncCallExpr:
-		if n.FnName.L == ast.DateFormat {
+		switch n.FnName.L {
+		case ast.DateFormat, ast.StrToDate:
 			// skip the second format argument: date_format('2020', '%Y') --> date_format(?, '%Y')
 			ret, _ := n.Args[0].Accept(pr)
 			n.Args[0] = ret.(ast.ExprNode)
 			return in, true
+		default:
+			return in, false
 		}
 	case *driver.ValueExpr:
 		pr.params = append(pr.params, n)
