@@ -248,7 +248,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	progressAfterFirstBatch := `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
 	progressAfterAll := `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
 	if importMode == importer.PhysicalImportMode {
-		withOptions = "WITH DETACHED, import_mode='PHYSICAL'"
+		withOptions = fmt.Sprintf("WITH DETACHED, import_mode='%s'", importMode)
 		resultMessage = ""
 		progressAfterFirstBatch = `{"SourceFileSize":2,"EncodeFileSize":1,"LoadedRowCnt":1}`
 		progressAfterAll = `{"SourceFileSize":2,"EncodeFileSize":2,"LoadedRowCnt":2}`

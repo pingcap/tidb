@@ -426,6 +426,7 @@ func (ti *tableImporter) importAndCleanup(ctx context.Context, closedEngine *bac
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
+		// each row is encoded into 1 data key
 		kvCount := ti.backend.GetImportedKVCount(closedEngine.GetUUID())
 		ti.Progress.LoadedRowCnt.Add(uint64(kvCount))
 	}

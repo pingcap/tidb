@@ -35,9 +35,9 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 }
 
 func (s *mockGCSSuite) testOperateRunningJob(importMode string) {
-	withOptions := "WITH batch_size=1"
-	if importMode == importer.PhysicalImportMode {
-		withOptions = "WITH import_mode='PHYSICAL'"
+	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	if importMode == importer.LogicalImportMode {
+		withOptions += ", batch_size=1"
 	}
 
 	s.tk.MustExec("DROP DATABASE IF EXISTS test_operate;")
