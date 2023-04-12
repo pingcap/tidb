@@ -2243,6 +2243,15 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableINLJoinInnerMultiPattern, Value: BoolToOnOff(false), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableINLJoinInnerMultiPattern = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(s.EnableINLJoinInnerMultiPattern), nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

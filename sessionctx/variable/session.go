@@ -1322,6 +1322,9 @@ type SessionVars struct {
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
+
+	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
+	EnableINLJoinInnerMultiPattern bool
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
