@@ -9224,10 +9224,7 @@ OptFromFirstLast:
 TableRefsClause:
 	TableRefs
 	{
-		tables := &ast.TableRefsClause{TableRefs: $1.(*ast.Join)}
-		startOffset := parser.startOffset(&yyS[yypt])
-		tables.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
-		$$ = tables
+		$$ = &ast.TableRefsClause{TableRefs: $1.(*ast.Join)}
 	}
 
 TableRefs:
