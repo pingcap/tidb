@@ -605,6 +605,7 @@ func TestReadError(t *testing.T) {
 
 	_, err := s.storage.ReadFile(ctx, "file-missing")
 	require.Error(t, err)
+	err = TryConvertToBRError(err)
 	require.Regexp(t, "failed to read s3 file, file info: input.bucket='bucket', input.key='prefix/file-missing': ", err.Error())
 }
 
