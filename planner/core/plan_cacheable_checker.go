@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/logutil"
@@ -429,6 +430,11 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			// for safety, not support values with under-score charsets, e.g. select _latin1'abc' from t.
 			checker.cacheable = false
 			checker.reason = "query has values with under-score charset"
+		}
+		if node.Kind() == types.KindBinaryLiteral {
+			// for safety, BIT / HEX literals are not supported.
+			checker.cacheable = false
+			checker.reason = "query has BIT / HEX literals are not supported"
 		}
 		if node.IsNull() {
 			// for a condition like `not-null-col = null`, the planner will optimize it to `False` and generate a
