@@ -352,32 +352,7 @@ func checkTiFlashVersion(ctx context.Context, db *sql.DB, checkCtx *backend.Chec
 		Logger: log.FromContext(ctx),
 	}
 
-	res := make([][]string, 0, 4)
-	err := exec.Transact(ctx, "fetch tiflash replica info", func(c context.Context, tx *sql.Tx) (txErr error) {
-		rows, err := tx.QueryContext(c, tiFlashReplicaQuery)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		colNames, err := rows.Columns()
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			row := make([]string, len(colNames))
-			refs := make([]interface{}, 0, len(row))
-			for i := range row {
-				refs = append(refs, &row[i])
-			}
-			if err := rows.Scan(refs...); err != nil {
-				return err
-			}
-			res = append(res, row)
-		}
-
-		return rows.Err()
-	})
+	res, err := exec.QueryStringRows(ctx, "fetch tiflash replica info", tiFlashReplicaQuery)
 	if err != nil {
 		return errors.Annotate(err, "fetch tiflash replica info failed")
 	}

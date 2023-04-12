@@ -280,32 +280,7 @@ func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool
 	query.WriteString("')")
 	kvs := make([][]string, 0, len(common.DefaultImportantVariables)+len(common.DefaultImportVariablesTiDB))
 	exec := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
-	err := exec.Transact(ctx, "obtain system variables", func(c context.Context, tx *sql.Tx) (txErr error) {
-		rows, err := tx.QueryContext(c, query.String())
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		colNames, err := rows.Columns()
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			row := make([]string, len(colNames))
-			refs := make([]interface{}, 0, len(row))
-			for i := range row {
-				refs = append(refs, &row[i])
-			}
-			if err := rows.Scan(refs...); err != nil {
-				return err
-			}
-			kvs = append(kvs, row)
-		}
-
-		return rows.Err()
-	})
-
+	kvs, err := exec.QueryStringRows(ctx, "obtain system variables", query.String())
 	if err != nil {
 		// error is not fatal
 		log.FromContext(ctx).Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
