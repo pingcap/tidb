@@ -1165,10 +1165,11 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if partialSel != nil && finalScan.statsInfo().RowCount > 0 {
 				selSelectivityOnPartialScan[i] = partialSel.statsInfo().RowCount / finalScan.statsInfo().RowCount
 			}
-			if plan, ok := finalScan.(*PhysicalTableScan); ok {
+			// TODO: Support partition table later.
+			if plan, ok := finalScan.(*PhysicalTableScan); ok && tblInfo.GetPartitionInfo() == nil {
 				plan.ByItems = p.ByItems
 			}
-			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
+			if plan, ok := finalScan.(*PhysicalIndexScan); ok && tblInfo.GetPartitionInfo() == nil {
 				plan.ByItems = p.ByItems
 			}
 			partialScans = append(partialScans, finalScan)
@@ -1209,26 +1210,29 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 			clonedTblScan.statsInfo().ScaleByExpectCnt(float64(p.Count+p.Offset) * float64(len(copTsk.idxMergePartPlans)))
 			// TODO: This is a hack way, planner should not prune handle columns when `keepOrder` = true.
-			if tblInfo.PKIsHandle {
-				pk := tblInfo.GetPkColInfo()
-				for _, c := range tblScan.tblCols {
-					if c.ID == pk.ID {
-						tblScan.HandleCols = NewIntHandleCols(c)
-						clonedTblScan.(*PhysicalTableScan).schema.Append(c)
-						clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, c.ToInfo())
-						break
+			// TODO: Support partition table later.
+			if tblInfo.GetPartitionInfo() == nil {
+				if tblInfo.PKIsHandle {
+					pk := tblInfo.GetPkColInfo()
+					for _, c := range tblScan.tblCols {
+						if c.ID == pk.ID {
+							tblScan.HandleCols = NewIntHandleCols(c)
+							clonedTblScan.(*PhysicalTableScan).schema.Append(c)
+							clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, c.ToInfo())
+							break
+						}
 					}
+				} else if tblInfo.IsCommonHandle {
+					idxInfo := tblInfo.GetPrimaryKey()
+					tblScan.HandleCols = NewCommonHandleCols(p.SCtx().GetSessionVars().StmtCtx, tblInfo, idxInfo, tblScan.tblCols)
+					for i := 0; i < tblScan.HandleCols.NumCols(); i++ {
+						clonedTblScan.(*PhysicalTableScan).schema.Append(tblScan.HandleCols.GetCol(i))
+						clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, tblScan.HandleCols.GetCol(i).ToInfo())
+					}
+				} else {
+					clonedTblScan.(*PhysicalTableScan).schema.Append(tblScan.HandleCols.GetCol(0))
+					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, model.NewExtraHandleColInfo())
 				}
-			} else if tblInfo.IsCommonHandle {
-				idxInfo := tblInfo.GetPrimaryKey()
-				tblScan.HandleCols = NewCommonHandleCols(p.SCtx().GetSessionVars().StmtCtx, tblInfo, idxInfo, tblScan.tblCols)
-				for i := 0; i < tblScan.HandleCols.NumCols(); i++ {
-					clonedTblScan.(*PhysicalTableScan).schema.Append(tblScan.HandleCols.GetCol(i))
-					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, tblScan.HandleCols.GetCol(i).ToInfo())
-				}
-			} else {
-				clonedTblScan.(*PhysicalTableScan).schema.Append(tblScan.HandleCols.GetCol(0))
-				clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, model.NewExtraHandleColInfo())
 			}
 			copTsk.tablePlan = clonedTblScan
 			copTsk.indexPlanFinished = true

@@ -972,6 +972,7 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec("create table thandle(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c))")
 	tk.MustExec("create table tpk(a int, b int, c int, d int auto_increment, primary key(d), index idx_ac(a, c), index idx_bc(b, c))")
 	tk.MustExec("create table tcommon(a int, b int, c int, d int auto_increment, primary key(a, c, d), index idx_ac(a, c), index idx_bc(b, c))")
+	tk.MustExec("create table thash(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c)) PARTITION BY HASH (`a`) PARTITIONS 4")
 
 	valueSlice := make([]*valueStruct, 0, 2000)
 	for i := 0; i < 2000; i++ {
@@ -981,12 +982,14 @@ func TestOrderByWithLimit(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into thandle values (%v, %v, %v)", a, b, c))
 		tk.MustExec(fmt.Sprintf("insert into tpk(a,b,c) values (%v, %v, %v)", a, b, c))
 		tk.MustExec(fmt.Sprintf("insert into tcommon(a,b,c) values (%v, %v, %v)", a, b, c))
+		tk.MustExec(fmt.Sprintf("insert into thash(a,b,c) values (%v, %v, %v)", a, b, c))
 		valueSlice = append(valueSlice, &valueStruct{a, b, c})
 	}
 
 	tk.MustExec("analyze table thandle")
 	tk.MustExec("analyze table tpk")
 	tk.MustExec("analyze table tcommon")
+	tk.MustExec("analyze table thash")
 
 	for i := 0; i < 100; i++ {
 		a := rand.Intn(32)
@@ -995,19 +998,29 @@ func TestOrderByWithLimit(t *testing.T) {
 		queryHandle := fmt.Sprintf("select /*+ use_index_merge(thandle, idx_ac, idx_bc) */ * from thandle where a = %v or b = %v order by c limit %v", a, b, limit)
 		resHandle := tk.MustQuery(queryHandle).Rows()
 		require.True(t, tk.HasPlan(queryHandle, "IndexMerge"))
+		require.False(t, tk.HasPlan(queryHandle, "TopN"))
 
 		queryPK := fmt.Sprintf("select /*+ use_index_merge(tpk, idx_ac, idx_bc) */ * from tpk where a = %v or b = %v order by c limit %v", a, b, limit)
 		resPK := tk.MustQuery(queryPK).Rows()
 		require.True(t, tk.HasPlan(queryPK, "IndexMerge"))
+		require.False(t, tk.HasPlan(queryPK, "TopN"))
 
 		queryCommon := fmt.Sprintf("select /*+ use_index_merge(tcommon, idx_ac, idx_bc) */ * from tcommon where a = %v or b = %v order by c limit %v", a, b, limit)
 		resCommon := tk.MustQuery(queryCommon).Rows()
 		require.True(t, tk.HasPlan(queryCommon, "IndexMerge"))
+		require.False(t, tk.HasPlan(queryCommon, "TopN"))
 
 		queryTableScan := fmt.Sprintf("select /*+ use_index_merge(tcommon, primary, idx_bc) */ * from tcommon where a = %v or b = %v order by c limit %v", a, b, limit)
 		resTableScan := tk.MustQuery(queryTableScan).Rows()
 		require.True(t, tk.HasPlan(queryTableScan, "IndexMerge"))
 		require.True(t, tk.HasPlan(queryTableScan, "TableRangeScan"))
+		require.False(t, tk.HasPlan(queryTableScan, "TopN"))
+
+		queryHash := fmt.Sprintf("select /*+ use_index_merge(thash, idx_ac, idx_bc) */ * from thash where a = %v or b = %v order by c limit %v", a, b, limit)
+		resHash := tk.MustQuery(queryHash).Rows()
+		require.True(t, tk.HasPlan(queryHash, "IndexMerge"))
+		// not support partition table now.
+		require.True(t, tk.HasPlan(queryHash, "TopN"))
 
 		sliceRes := getResult(valueSlice, a, b, limit, false)
 
@@ -1015,12 +1028,15 @@ func TestOrderByWithLimit(t *testing.T) {
 		require.Equal(t, len(sliceRes), len(resPK))
 		require.Equal(t, len(sliceRes), len(resCommon))
 		require.Equal(t, len(sliceRes), len(resTableScan))
+		require.Equal(t, len(sliceRes), len(resHash))
 		for i := range sliceRes {
+			expectValue := fmt.Sprintf("%v", sliceRes[i].c)
 			// Only check column `c`
-			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resHandle[i][2])
-			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resPK[i][2])
-			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resCommon[i][2])
-			require.Equal(t, fmt.Sprintf("%v", sliceRes[i].c), resTableScan[i][2])
+			require.Equal(t, expectValue, resHandle[i][2])
+			require.Equal(t, expectValue, resPK[i][2])
+			require.Equal(t, expectValue, resCommon[i][2])
+			require.Equal(t, expectValue, resTableScan[i][2])
+			require.Equal(t, expectValue, resHash[i][2])
 		}
 	}
 }
