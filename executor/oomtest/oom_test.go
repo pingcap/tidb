@@ -55,8 +55,9 @@ func TestMemTracker4UpdateExec(t *testing.T) {
 
 	oom.SetTracker("")
 	oom.ClearMessageFilter()
-	oom.AddMessageFilter("expensive_query during bootstrap phase")
-	oom.AddMessageFilter("schemaLeaseChecker is not set for this transaction")
+	oom.AddMessageFilter(
+		"expensive_query during bootstrap phase",
+		"schemaLeaseChecker is not set for this transaction")
 
 	tk.MustExec("insert into t_MemTracker4UpdateExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.GetTracker())
