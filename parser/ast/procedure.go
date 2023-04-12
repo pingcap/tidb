@@ -69,27 +69,27 @@ const (
 	PROCEDUR_END
 )
 
-// DeclNode express procedure block variable interface(include handler\cursor\sp variable)
+// DeclNode expresses procedure block variable interface(include handler\cursor\sp variable)
 type DeclNode interface {
 	Node
 }
 
-// ErrNode express all types of handler condition value.
+// ErrNode expresses all types of handler condition value.
 type ErrNode interface {
 	StmtNode
 }
 
-// ProcedureDeclInfo base procedure variable.
+// ProcedureDeclInfo is the base node of  procedure variable.
 type ProcedureDeclInfo struct {
 	node
 }
 
-// ProcedureErrorList base procedure condition value.
+// ProcedureErrorList is the base node of  condition value.
 type ProcedureErrorList struct {
 	stmtNode
 }
 
-// LableInfo loop and block lable interface.
+// LableInfo is the  interface of loop and block lable.
 type LableInfo interface {
 	GetErrorStatus() (string, bool)
 	GetLableName() string
@@ -97,7 +97,7 @@ type LableInfo interface {
 	GetBlock() StmtNode
 }
 
-// StoreParameter Stored procedure parameters.
+// StoreParameter is the parameter of stored procedure.
 type StoreParameter struct {
 	node
 	Paramstatus int
@@ -132,7 +132,7 @@ func (n *StoreParameter) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ProcedureDecl Stored procedure internal variables.
+// ProcedureDecl represents the internal variables of stored procedure .
 type ProcedureDecl struct {
 	ProcedureDeclInfo
 	DeclNames   []string
@@ -177,14 +177,14 @@ func (n *ProcedureDecl) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ProcedureBlock stored procedure block.
+// ProcedureBlock represents a procedure block.
 type ProcedureBlock struct {
 	stmtNode
 	ProcedureVars      []DeclNode // include handler && cursor && variable
 	ProcedureProcStmts []StmtNode // procedure statement
 }
 
-// Restore implements ProcedureBlock interface.
+// Restore implements Node interface.
 func (n *ProcedureBlock) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("BEGIN ")
 	for _, ProcedureVar := range n.ProcedureVars {
@@ -206,7 +206,7 @@ func (n *ProcedureBlock) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// Accept implements ProcedureBlock Accept interface.
+// Accept implements Node interface.
 func (n *ProcedureBlock) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
@@ -220,11 +220,11 @@ func (n *ProcedureBlock) Accept(v Visitor) (Node, bool) {
 		}
 		n.ProcedureVars[i] = node.(DeclNode)
 	}
-	// Store Procedure do not check sql justifiability, so don't traverse 	ProcedureProcStmts.
+	// Store Procedure doesn't check the justifiability for statements, so don't traverse ProcedureProcStmts.
 	return v.Leave(n)
 }
 
-// ProcedureInfo store all procedure information.
+// ProcedureInfo stores all procedure information.
 type ProcedureInfo struct {
 	stmtNode
 	IfNotExists       bool
@@ -234,7 +234,7 @@ type ProcedureInfo struct {
 	ProcedureParamStr string            // procedure body string
 }
 
-// Restore implements ProcedureInfo interface.
+// Restore implements Node interface.
 func (n *ProcedureInfo) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE PROCEDURE ")
 	if n.IfNotExists {
@@ -262,7 +262,7 @@ func (n *ProcedureInfo) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// Accept implements ProcedureInfo Accept interface.
+// Accept implements Node Accept interface.
 func (n *ProcedureInfo) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
@@ -284,7 +284,7 @@ func (n *ProcedureInfo) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// DropProcedureStmt drop procedure ast.
+// DropProcedureStmt represents the ast of `drop procedure`
 type DropProcedureStmt struct {
 	stmtNode
 
@@ -305,7 +305,7 @@ func (n *DropProcedureStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// Accept implements DropProcedureStmt Accept interface.
+// Accept implements Node interface.
 func (n *DropProcedureStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
@@ -315,13 +315,13 @@ func (n *DropProcedureStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ProcedureIfInfo  Stored procedure if statement.
+// ProcedureIfInfo stores the `if statement` of procedure.
 type ProcedureIfInfo struct {
 	stmtNode
 	IfBody *ProcedureIfBlock
 }
 
-// Restore implements ProcedureIfInfo interface.
+// Restore implements Node interface.
 func (n *ProcedureIfInfo) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("IF ")
 	err := n.IfBody.Restore(ctx)
@@ -347,13 +347,13 @@ func (n *ProcedureIfInfo) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ProcedureElseIfBlock  Stored procedure elseif statement info.
+// ProcedureElseIfBlock stores the `elseif` statement info of procedure.
 type ProcedureElseIfBlock struct {
 	stmtNode
 	ProcedureIfStmt *ProcedureIfBlock
 }
 
-// Restore implements ProcedureElseIfBlock interface.
+// Restore implements Node interface.
 func (n *ProcedureElseIfBlock) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ELSEIF ")
 	err := n.ProcedureIfStmt.Restore(ctx)
@@ -378,7 +378,7 @@ func (n *ProcedureElseIfBlock) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ProcedureElseBlock Stored procedure else statement info.
+// ProcedureElseBlock stores procedure `else` statement info.
 type ProcedureElseBlock struct {
 	stmtNode
 	ProcedureIfStmts []StmtNode
@@ -407,7 +407,7 @@ func (n *ProcedureElseBlock) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ProcedureIfBlock Stored procedure expr \ else if\ else statement.
+// ProcedureIfBlock stores `expr ... else if ... else ...` statement in procedure.
 type ProcedureIfBlock struct {
 	stmtNode
 	IfExpr            ExprNode
@@ -463,7 +463,7 @@ func (n *ProcedureIfBlock) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SimpleWhenThenStmt store `case expr then	...` statement.
+// SimpleWhenThenStmt stores `case expr then ...` statement.
 type SimpleWhenThenStmt struct {
 	stmtNode
 
@@ -991,7 +991,7 @@ func (n *ProcedureLabelBlock) Restore(ctx *format.RestoreCtx) error {
 		return err
 	}
 	if n.LableError {
-		return errors.New("Inconsistent start and end Lable")
+		return errors.New("Start and end lable don't match")
 	}
 	ctx.WriteKeyWord(" ")
 	ctx.WriteName(n.LableName)
@@ -1015,27 +1015,27 @@ func (n *ProcedureLabelBlock) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// GetErrorStatus get lable error info.
+// GetErrorStatus gets lable error info.
 func (n *ProcedureLabelBlock) GetErrorStatus() (string, bool) {
 	return n.LableEnd, n.LableError
 }
 
-// GetLableName get label name.
+// GetLableName gets label name.
 func (n *ProcedureLabelBlock) GetLableName() string {
 	return n.LableName
 }
 
-// IsBlock get block flag.
+// IsBlock gets block flag.
 func (n *ProcedureLabelBlock) IsBlock() bool {
 	return true
 }
 
-// GetBlock get label stmtnode
+// GetBlock gets the block stmtnode
 func (n *ProcedureLabelBlock) GetBlock() StmtNode {
 	return n.Block
 }
 
-// ProcedureLabelLoop stored procedure loop block label info.
+// ProcedureLabelLoop stores  the labeled loop block info in procedure.
 type ProcedureLabelLoop struct {
 	stmtNode
 	LableName  string
@@ -1097,7 +1097,7 @@ func (n *ProcedureLabelLoop) GetBlock() StmtNode {
 	return n.Block
 }
 
-// ProcedureJump stored procedure ProcedureJump block.(leave && iterate)
+// ProcedureJump stores the Jump statements(leave and iterate) in procedure.
 type ProcedureJump struct {
 	stmtNode
 	Name    string
