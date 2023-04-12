@@ -39,6 +39,7 @@ import (
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -522,7 +523,7 @@ func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	return dc.reorgCtx.reorgCtxMap[jobID]
 }
 
-func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
+func (dc *ddlCtx) newReorgCtx(jobID int64, rowCount int64) *reorgCtx {
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
 	existedRC, ok := dc.reorgCtx.reorgCtxMap[jobID]
@@ -534,7 +535,6 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	rc.doneCh = make(chan error, 1)
 	// initial reorgCtx
 	rc.setRowCount(rowCount)
-	rc.setCurrentElement(currElement)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
 	rc.references.Add(1)
@@ -681,6 +681,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
 	}
+
+	scheduler.RegisterSchedulerConstructor("backfill",
+		func(taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(taskMeta, d)
+		})
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL

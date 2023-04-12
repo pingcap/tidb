@@ -315,6 +315,15 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 			return
 		}
 	})
+	failpoint.Inject("issue42662_1", func(val failpoint.Value) {
+		if val.(bool) {
+			if w.hashJoinCtx.sessCtx.GetSessionVars().ConnectionID != 0 {
+				// consume 170MB memory, this sql should be tracked into MemoryTop1Tracker
+				w.hashJoinCtx.memTracker.Consume(170 * 1024 * 1024)
+			}
+			return
+		}
+	})
 	sessVars := w.hashJoinCtx.sessCtx.GetSessionVars()
 	for {
 		if w.hashJoinCtx.finished.Load() {
