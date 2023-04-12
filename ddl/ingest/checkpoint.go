@@ -106,12 +106,8 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 	}
 	cm.updaterWg.Add(1)
 	go func() {
-		defer cm.updaterWg.Done()
-		if cm.updateInterval == 0 {
-			logutil.BgLogger().Info("checkpoint update loop is disabled")
-			return
-		}
 		cm.updateCheckpointLoop()
+		cm.updaterWg.Done()
 	}()
 	return cm, nil
 }
@@ -336,7 +332,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 }
 
 func (s *CheckpointManager) updateCheckpointLoop() {
-	ticker := time.NewTicker(s.updateInterval)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -348,7 +344,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			wg.Done()
 		case <-ticker.C:
 			s.mu.Lock()
-			if s.updating || !s.dirty {
+			if !s.dirty || s.updating {
 				s.mu.Unlock()
 				continue
 			}

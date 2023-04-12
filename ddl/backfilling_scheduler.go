@@ -290,7 +290,7 @@ func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 	}
 }
 
-const checkpointUpdateInterval = 5 * time.Second
+const checkpointUpdateInterval = 10 * time.Minute
 
 func (b *ingestBackfillScheduler) setupWorkers() error {
 	job := b.reorgInfo.Job
