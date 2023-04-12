@@ -1202,7 +1202,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	} else {
 		label := strconv.Itoa(int(cmd))
 		if err != nil {
-			metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "wrappedError").Inc()
 		} else {
 			metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 		}

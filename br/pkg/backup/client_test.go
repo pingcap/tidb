@@ -260,7 +260,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
 	lastTS, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	require.NoErrorf(t, err, "wrappedError get last ts: %s", err)
 	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
 	tk.MustExec("DROP TABLE test_db.test_table1;")
 	tk.MustExec("DROP DATABASE test_db;")
@@ -276,7 +276,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	tk.MustExec("ALTER TABLE tb PARTITION p0 attributes \"merge_option=deny\"")
 
 	ts, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	require.NoErrorf(t, err, "Error get ts: %s", err)
+	require.NoErrorf(t, err, "wrappedError get ts: %s", err)
 
 	cipher := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
 	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
@@ -284,7 +284,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	s.mockGlue.SetSession(tk.Session())
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.cluster.Storage, lastTS, ts, false)
-	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+	require.NoErrorf(t, err, "wrappedError get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoError(t, err, "Flush failed", err)
 	err = metaWriter.FlushBackupMeta(ctx)

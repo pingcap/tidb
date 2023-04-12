@@ -151,7 +151,7 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 		}
 		cred, err := azblob.NewSharedKeyCredential(options.AccountName, options.SharedKey)
 		if err != nil {
-			return nil, errors.Annotate(err, "Failed to get azure sharedKey credential")
+			return nil, newWrappedError(err, "Failed to get azure sharedKey credential")
 		}
 		return &sharedKeyClientBuilder{
 			cred,
@@ -200,7 +200,7 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 
 	cred, err := azblob.NewSharedKeyCredential(accountName, sharedKey)
 	if err != nil {
-		return nil, errors.Annotate(err, "Failed to get azure sharedKey credential")
+		return nil, newWrappedError(err, "Failed to get azure sharedKey credential")
 	}
 	// if BR can only get credential info from environment variable `sharedKey`,
 	// BR will send it to TiKV so that there is no need to set environment variable for TiKV.
@@ -236,7 +236,7 @@ func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage
 func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb.AzureBlobStorage, clientBuilder ClientBuilder) (*AzureBlobStorage, error) {
 	serviceClient, err := clientBuilder.GetServiceClient()
 	if err != nil {
-		return nil, errors.Annotate(err, "Failed to create azure service client")
+		return nil, newWrappedError(err, "Failed to create azure service client")
 	}
 
 	containerClient := serviceClient.NewContainerClient(options.Bucket)
@@ -244,10 +244,10 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 	if err != nil {
 		var errResp *azblob.StorageError
 		if internalErr, ok := err.(*azblob.InternalError); !(ok && internalErr.As(&errResp)) {
-			return nil, errors.Annotate(err, "Failed to create the container: error can not be parsed")
+			return nil, newWrappedError(err, "Failed to create the container: error can not be parsed")
 		}
 		if errResp.ErrorCode != azblob.StorageErrorCodeContainerAlreadyExists {
-			return nil, errors.Annotate(err, fmt.Sprintf("Failed to create the container: %s", errResp.ErrorCode))
+			return nil, newWrappedError(err, fmt.Sprintf("Failed to create the container: %s", errResp.ErrorCode))
 		}
 	}
 
@@ -282,7 +282,7 @@ func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []by
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	resp, err := client.UploadBufferToBlockBlob(ctx, data, azblob.HighLevelUploadToBlockBlobOption{AccessTier: &s.accessTier})
 	if err != nil {
-		return errors.Annotatef(err, "Failed to write azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+		return newWrappedError(err, "Failed to write azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
 	defer resp.Body.Close()
 	return nil
@@ -293,14 +293,14 @@ func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, e
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	resp, err := client.Download(ctx, nil)
 	if err != nil {
-		return nil, errors.Annotatef(err, "Failed to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+		return nil, newWrappedError(err, "Failed to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
 	defer resp.RawResponse.Body.Close()
 	data, err := io.ReadAll(resp.Body(azblob.RetryReaderOptions{
 		MaxRetryRequests: int(azblobRetryTimes),
 	}))
 	if err != nil {
-		return nil, errors.Annotatef(err, "Failed to read azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+		return nil, newWrappedError(err, "Failed to read azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
 	return data, err
 }
@@ -326,7 +326,7 @@ func (s *AzureBlobStorage) DeleteFile(ctx context.Context, name string) error {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	_, err := client.Delete(ctx, nil)
 	if err != nil {
-		return errors.Annotatef(err, "Failed to delete azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+		return newWrappedError(err, "Failed to delete azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
 	return nil
 }
@@ -362,13 +362,13 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 
 		err := respIter.Err()
 		if err != nil {
-			return errors.Annotatef(err, "Failed to list azure blobs, bucket(container)='%s'", s.options.Bucket)
+			return newWrappedError(err, "Failed to list azure blobs, bucket(container)='%s'", s.options.Bucket)
 		}
 
 		if !respIter.NextPage(ctx) {
 			err := respIter.Err()
 			if err != nil {
-				return errors.Annotatef(err, "Failed to list azure blobs, bucket(container)='%s'", s.options.Bucket)
+				return newWrappedError(err, "Failed to list azure blobs, bucket(container)='%s'", s.options.Bucket)
 			}
 			break
 		}
@@ -440,11 +440,11 @@ func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
 	count := int64(len(p))
 	resp, err := r.blobClient.Download(r.ctx, &azblob.DownloadBlobOptions{Offset: &r.pos, Count: &count})
 	if err != nil {
-		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, count)
+		return 0, newWrappedError(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, count)
 	}
 	n, err = resp.Body(azblob.RetryReaderOptions{}).Read(p)
 	if err != nil && err != io.EOF {
-		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, count)
+		return 0, newWrappedError(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, count)
 	}
 	r.pos += int64(n)
 	return n, nil
@@ -460,33 +460,33 @@ func (r *azblobObjectReader) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
 	case io.SeekStart:
 		if offset < 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range.", offset)
+			return 0, newWrappedError(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range.", offset)
 		}
 		realOffset = offset
 	case io.SeekCurrent:
 		realOffset = r.pos + offset
 		if r.pos < 0 && realOffset >= 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'.", offset, r.pos)
+			return 0, newWrappedError(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'.", offset, r.pos)
 		}
 	case io.SeekEnd:
 		if offset >= 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
+			return 0, newWrappedError(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
 		realOffset = offset
 	default:
-		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+		return 0, newWrappedError(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
 
 	if realOffset < 0 {
 		resp, err := r.blobClient.GetProperties(r.ctx, nil)
 		if err != nil {
-			return 0, errors.Annotate(err, "Failed to get properties from the azure blob")
+			return 0, newWrappedError(err, "Failed to get properties from the azure blob")
 		}
 
 		contentLength := *resp.ContentLength
 		r.pos = contentLength + realOffset
 		if r.pos < 0 {
-			return 0, errors.Annotatef(err, "Seek: offset is %d, but length of content is only %d", realOffset, contentLength)
+			return 0, newWrappedError(err, "Seek: offset is %d, but length of content is only %d", realOffset, contentLength)
 		}
 	} else {
 		r.pos = realOffset
@@ -517,13 +517,13 @@ type azblobUploader struct {
 func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 	generatedUUID, err := uuid.NewUUID()
 	if err != nil {
-		return 0, errors.Annotate(err, "Fail to generate uuid")
+		return 0, newWrappedError(err, "Fail to generate uuid")
 	}
 	blockID := base64.StdEncoding.EncodeToString([]byte(generatedUUID.String()))
 
 	_, err = u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), nil)
 	if err != nil {
-		return 0, errors.Annotate(err, "Failed to upload block to azure blob")
+		return 0, newWrappedError(err, "Failed to upload block to azure blob")
 	}
 	u.blockIDList = append(u.blockIDList, blockID)
 

@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
@@ -164,29 +163,29 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 	switch backend := backend.Backend.(type) {
 	case *backuppb.StorageBackend_Local:
 		if backend.Local == nil {
-			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "local config not found")
+			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "local config not found")
 		}
 		return NewLocalStorage(backend.Local.Path)
 	case *backuppb.StorageBackend_Hdfs:
 		if backend.Hdfs == nil {
-			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "hdfs config not found")
+			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "hdfs config not found")
 		}
 		return NewHDFSStorage(backend.Hdfs.Remote), nil
 	case *backuppb.StorageBackend_S3:
 		if backend.S3 == nil {
-			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
+			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
 		return NewS3Storage(ctx, backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
 		return newNoopStorage(), nil
 	case *backuppb.StorageBackend_Gcs:
 		if backend.Gcs == nil {
-			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "GCS config not found")
+			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "GCS config not found")
 		}
 		return NewGCSStorage(ctx, backend.Gcs, opts)
 	case *backuppb.StorageBackend_AzureBlobStorage:
 		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)
 	default:
-		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
+		return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
 	}
 }

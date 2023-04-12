@@ -129,17 +129,19 @@ type StreamConfig struct {
 func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
 	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return nil, errors.Trace(err)
 	}
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
-	storage, err := storage.New(ctx, u, &opts)
+	s, err := storage.New(ctx, u, &opts)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return nil, errors.Trace(err)
 	}
-	return storage, nil
+	return s, nil
 }
 
 // DefineStreamStartFlags defines flags used for `stream start`
@@ -312,6 +314,7 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
+			err = storage.TryConvertToBRError(err)
 			return nil, errors.Trace(err)
 		}
 
@@ -1366,6 +1369,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 
 	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return nil, errors.Trace(err)
 	}
 
@@ -1446,6 +1450,7 @@ func getLogRange(
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return backupLogInfo{}, errors.Trace(err)
 	}
 	backupMeta := &backuppb.BackupMeta{}
@@ -1491,12 +1496,14 @@ func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStora
 
 		buff, err := s.ReadFile(ctx, path)
 		if err != nil {
+			err = storage.TryConvertToBRError(err)
 			return errors.Trace(err)
 		}
 		ts := binary.LittleEndian.Uint64(buff)
 		globalCheckPointTS = mathutil.Max(ts, globalCheckPointTS)
 		return nil
 	})
+	err = storage.TryConvertToBRError(err)
 	return globalCheckPointTS, errors.Trace(err)
 }
 
@@ -1512,6 +1519,7 @@ func getFullBackupTS(
 
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return 0, 0, errors.Trace(err)
 	}
 
@@ -1564,13 +1572,13 @@ func initFullBackupTables(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (map[int64]*metautil.Table, error) {
-	var storage string
+	var storageURI string
 	if len(cfg.FullBackupStorage) > 0 {
-		storage = cfg.FullBackupStorage
+		storageURI = cfg.FullBackupStorage
 	} else {
-		storage = cfg.Storage
+		storageURI = cfg.Storage
 	}
-	_, s, err := GetStorage(ctx, storage, &cfg.Config)
+	_, s, err := GetStorage(ctx, storageURI, &cfg.Config)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1586,6 +1594,7 @@ func initFullBackupTables(
 	log.Info("read schemas", zap.String("backupmeta", metaFileName))
 	metaData, err := s.ReadFile(ctx, metaFileName)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return nil, errors.Trace(err)
 	}
 	backupMeta := &backuppb.BackupMeta{}

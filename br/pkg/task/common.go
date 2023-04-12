@@ -619,10 +619,12 @@ func GetStorage(
 ) (*backuppb.StorageBackend, storage.ExternalStorage, error) {
 	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return nil, nil, errors.Trace(err)
 	}
 	s, err := storage.New(ctx, u, storageOpts(cfg))
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return nil, nil, errors.Annotate(err, "create storage failed")
 	}
 	return u, s, nil
@@ -647,6 +649,7 @@ func ReadBackupMeta(
 	}
 	metaData, err := s.ReadFile(ctx, fileName)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		if gcsObjectNotFound(err) {
 			// change gcs://bucket/abc/def to gcs://bucket/abc and read defbackupmeta
 			oldPrefix := u.GetGcs().GetPrefix()
@@ -655,11 +658,13 @@ func ReadBackupMeta(
 			u.GetGcs().Prefix = newPrefix
 			s, err = storage.New(ctx, u, storageOpts(cfg))
 			if err != nil {
+				err = storage.TryConvertToBRError(err)
 				return nil, nil, nil, errors.Trace(err)
 			}
 			log.Info("retry load metadata in gcs", zap.String("newPrefix", newPrefix), zap.String("newFileName", newFileName))
 			metaData, err = s.ReadFile(ctx, newFileName)
 			if err != nil {
+				err = storage.TryConvertToBRError(err)
 				return nil, nil, nil, errors.Trace(err)
 			}
 			// reset prefix for tikv download sst file correctly.

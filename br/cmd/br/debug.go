@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock/mockid"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
@@ -122,6 +123,7 @@ func newCheckSumCommand() *cobra.Command {
 					var data []byte
 					data, err = s.ReadFile(ctx, file.Name)
 					if err != nil {
+						err = storage.TryConvertToBRError(err)
 						return errors.Trace(err)
 					}
 					s := sha256.Sum256(data)
@@ -284,7 +286,7 @@ func decodeBackupMetaCommand() *cobra.Command {
 				}
 				err = s.WriteFile(ctx, metautil.MetaJSONFile, backupMetaJSON)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.Trace(storage.TryConvertToBRError(err))
 				}
 				cmd.Printf("backupmeta decoded at %s\n", path.Join(cfg.Storage, metautil.MetaJSONFile))
 				return nil
@@ -338,6 +340,7 @@ func encodeBackupMetaCommand() *cobra.Command {
 
 			metaData, err := s.ReadFile(ctx, metautil.MetaJSONFile)
 			if err != nil {
+				err = storage.TryConvertToBRError(err)
 				return errors.Trace(err)
 			}
 
@@ -363,7 +366,7 @@ func encodeBackupMetaCommand() *cobra.Command {
 
 			err = s.WriteFile(ctx, fileName, append(iv, encryptedContent...))
 			if err != nil {
-				return errors.Trace(err)
+				return errors.Trace(storage.TryConvertToBRError(err))
 			}
 			return nil
 		},

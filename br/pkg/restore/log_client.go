@@ -151,12 +151,14 @@ func (rc *logFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		return nil
 	})
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return nil, err
 	}
 	namesIter := iter.FromSlice(names)
 	readMeta := func(ctx context.Context, name string) (*backuppb.Metadata, error) {
 		f, err := s.ReadFile(ctx, name)
 		if err != nil {
+			err = storage.TryConvertToBRError(err)
 			return nil, errors.Annotatef(err, "failed during reading file %s", name)
 		}
 		meta, err := rc.helper.ParseToMetadata(f)

@@ -96,6 +96,7 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 			m := &backuppb.Metadata{}
 			b, err := s.storage.ReadFile(egCtx, path)
 			if err != nil {
+				err = storage.TryConvertToBRError(err)
 				return errors.Trace(err)
 			}
 			err = m.Unmarshal(b)
@@ -112,6 +113,7 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 	})
 
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return errors.Trace(err)
 	}
 
@@ -200,6 +202,7 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 func (s *StreamBackupSearch) searchFromDataFile(ctx context.Context, dataFile *backuppb.DataFileInfo, ch chan<- *StreamKVInfo) error {
 	buff, err := s.storage.ReadFile(ctx, dataFile.Path)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return errors.Annotatef(err, "read data file error, file: %s", dataFile.Path)
 	}
 
