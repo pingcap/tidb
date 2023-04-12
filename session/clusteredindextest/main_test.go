@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,23 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session
+package clusteredindextest
 
 import (
 	"flag"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
+
+var testDataMap = make(testdata.BookKeeper, 1)
 
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
@@ -36,8 +36,9 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
+	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
 
-	SetSchemaLease(20 * time.Millisecond)
+	session.SetSchemaLease(20 * time.Millisecond)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -62,34 +63,12 @@ func TestMain(m *testing.M) {
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
 		time.Sleep(time.Second)
+		testDataMap.GenerateOutputIfNeeded()
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func mustExec(t *testing.T, se Session, sql string, args ...interface{}) {
-	rs, err := exec(se, sql, args...)
-	require.NoError(t, err)
-	if rs != nil {
-		require.NoError(t, rs.Close())
-	}
-}
-
-func mustExecToRecodeSet(t *testing.T, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
-	rs, err := exec(se, sql, args...)
-	require.NoError(t, err)
-	return rs
-}
-
-func match(t *testing.T, row []types.Datum, expected ...interface{}) {
-	require.Len(t, row, len(expected))
-	for i := range row {
-		if _, ok := expected[i].(time.Time); ok {
-			// Since password_last_changed is set to default current_timestamp, we pass this check.
-			continue
-		}
-		got := fmt.Sprintf("%v", row[i].GetValue())
-		need := fmt.Sprintf("%v", expected[i])
-		require.Equal(t, need, got, i)
-	}
+func GetClusteredIndexSuiteData() testdata.TestData {
+	return testDataMap["clustered_index_suite"]
 }
