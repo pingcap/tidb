@@ -278,7 +278,6 @@ func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool
 		}
 	}
 	query.WriteString("')")
-	kvs := make([][]string, 0, len(common.DefaultImportantVariables)+len(common.DefaultImportVariablesTiDB))
 	exec := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
 	kvs, err := exec.QueryStringRows(ctx, "obtain system variables", query.String())
 	if err != nil {
