@@ -61,7 +61,8 @@ const (
 	// DefBucketMemoryUsageForMapStrToSlice = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(slice))+2*ptrSize
 	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
 	// The bucket size may be changed by golang implement in the future.
-	// Golang Map needs to acquire double the memory when expanding, and the old buckets will be released after the data is migrated.
+	// Golang Map needs to acquire double the memory when expanding,
+	// and the old buckets will be released after the data is migrated.
 	// Considering the worst case, the data in the old bucket cannot be migrated in time, and the old bucket cannot
 	// be GCed, we expand the bucket size to 1.5 times to estimate the memory usage of Golang Map.
 	DefBucketMemoryUsageForMapStrToSlice = (8*(1+16+24) + 16) / 2 * 3

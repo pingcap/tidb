@@ -109,7 +109,8 @@ type TableScanImpl struct {
 }
 
 // NewTableScanImpl creates a new table scan Implementation.
-func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Column, hists *statistics.HistColl) *TableScanImpl {
+func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Column,
+	hists *statistics.HistColl) *TableScanImpl {
 	base := baseImpl{plan: ts}
 	impl := &TableScanImpl{
 		baseImpl:    base,
@@ -153,7 +154,9 @@ func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implement
 func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
-	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
+	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) *
+		impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns,
+			true, false)
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
 	return impl.cost

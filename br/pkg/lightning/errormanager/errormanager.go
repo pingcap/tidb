@@ -255,7 +255,9 @@ func (em *ErrorManager) RecordDataConflictError(
 		threshold := em.configError.Conflict.Load()
 		// Still need to record this batch of conflict records, and then return this error at last.
 		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
-		gerr = errors.Errorf("The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'", threshold)
+		gerr = errors.Errorf(
+			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			threshold)
 	}
 
 	if em.db == nil {
@@ -311,7 +313,9 @@ func (em *ErrorManager) RecordIndexConflictError(
 		threshold := em.configError.Conflict.Load()
 		// Still need to record this batch of conflict records, and then return this error at last.
 		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
-		gerr = errors.Errorf("The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'", threshold)
+		gerr = errors.Errorf(
+			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			threshold)
 	}
 
 	if em.db == nil {

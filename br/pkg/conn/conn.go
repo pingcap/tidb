@@ -281,7 +281,8 @@ func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
 	return oracle.ComposeTS(p, l), nil
 }
 
-// GetMergeRegionSizeAndCount returns the tikv config `coprocessor.region-split-size` and `coprocessor.region-split-key`.
+// GetMergeRegionSizeAndCount returns the tikv config
+// `coprocessor.region-split-size` and `coprocessor.region-split-key`.
 // returns the default config when failed.
 func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64) {
 	regionSplitSize := DefaultMergeRegionSizeBytes

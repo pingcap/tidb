@@ -78,14 +78,20 @@ func (od *OwnerDaemon) Begin(ctx context.Context) (func(), error) {
 	// tick starts.
 	tick := time.NewTicker(od.tickInterval)
 	loop := func() {
-		log.Info("begin running daemon", zap.String("id", od.manager.ID()), zap.String("daemon-id", od.daemon.Name()))
+		log.Info("begin running daemon",
+			zap.String("id", od.manager.ID()),
+			zap.String("daemon-id", od.daemon.Name()))
 		for {
 			select {
 			case <-ctx.Done():
-				log.Info("daemon loop exits", zap.String("id", od.manager.ID()), zap.String("daemon-id", od.daemon.Name()))
+				log.Info("daemon loop exits",
+					zap.String("id", od.manager.ID()),
+					zap.String("daemon-id", od.daemon.Name()))
 				return
 			case <-tick.C:
-				log.Debug("daemon tick start", zap.Bool("is-owner", od.manager.IsOwner()), zap.String("daemon-id", od.daemon.Name()))
+				log.Debug("daemon tick start",
+					zap.Bool("is-owner", od.manager.IsOwner()),
+					zap.String("daemon-id", od.daemon.Name()))
 				if od.manager.IsOwner() {
 					od.ownerTick(ctx)
 				} else {

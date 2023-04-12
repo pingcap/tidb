@@ -30,7 +30,8 @@ const (
 	TableID    int64  = 80
 )
 
-func fakeJob(reorgTp model.ReorgType, jobTp model.ActionType, state model.JobState, rowCnt int64, indices []*model.IndexInfo, rawArgs json.RawMessage) *model.Job {
+func fakeJob(reorgTp model.ReorgType, jobTp model.ActionType, state model.JobState,
+	rowCnt int64, indices []*model.IndexInfo, rawArgs json.RawMessage) *model.Job {
 	return &model.Job{
 		SchemaName: SchemaName,
 		TableName:  TableName,

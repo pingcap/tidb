@@ -47,7 +47,7 @@ func (*TableKVDecoder) DecodeHandleFromRowKey(key []byte) (kv.Handle, error) {
 }
 
 // DecodeHandleFromIndex implements KVDecoder.DecodeHandleFromIndex.
-func (t *TableKVDecoder) DecodeHandleFromIndex(indexInfo *model.IndexInfo, key []byte, value []byte) (kv.Handle, error) {
+func (t *TableKVDecoder) DecodeHandleFromIndex(indexInfo *model.IndexInfo, key, value []byte) (kv.Handle, error) {
 	cols := tables.BuildRowcodecColInfoForIndexColumns(indexInfo, t.tbl.Meta())
 	return tablecodec.DecodeIndexHandle(key, value, len(cols))
 }

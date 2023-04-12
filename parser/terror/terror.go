@@ -199,7 +199,10 @@ func (ec ErrClass) New(code ErrCode, message string) *Error {
 // message and workaround to create standard error.
 func (ec ErrClass) NewStdErr(code ErrCode, message *mysql.ErrMessage) *Error {
 	rfcCode := ec.initError(code)
-	err := errors.Normalize(message.Raw, errors.RedactArgs(message.RedactArgPos), errors.MySQLErrorCode(int(code)), errors.RFCCodeText(rfcCode))
+	err := errors.Normalize(
+		message.Raw, errors.RedactArgs(message.RedactArgPos),
+		errors.MySQLErrorCode(int(code)), errors.RFCCodeText(rfcCode),
+	)
 	return err
 }
 
@@ -216,7 +219,10 @@ func (ec ErrClass) NewStd(code ErrCode) *Error {
 // so it's goroutine-safe
 // and often be used to create Error came from other systems like TiKV.
 func (ec ErrClass) Synthesize(code ErrCode, message string) *Error {
-	return errors.Normalize(message, errors.MySQLErrorCode(int(code)), errors.RFCCodeText(fmt.Sprintf("%s:%d", errClass2Desc[ec], code)))
+	return errors.Normalize(
+		message, errors.MySQLErrorCode(int(code)),
+		errors.RFCCodeText(fmt.Sprintf("%s:%d", errClass2Desc[ec], code)),
+	)
 }
 
 // ToSQLError convert Error to mysql.SQLError.
@@ -257,7 +263,10 @@ var (
 	// ErrCritical is the critical error class.
 	ErrCritical = ClassGlobal.NewStdErr(CodeExecResultIsEmpty, mysql.Message("critical error %v", nil))
 	// ErrResultUndetermined is the error when execution result is unknown.
-	ErrResultUndetermined = ClassGlobal.NewStdErr(CodeResultUndetermined, mysql.Message("execution result undetermined", nil))
+	ErrResultUndetermined = ClassGlobal.NewStdErr(
+		CodeResultUndetermined,
+		mysql.Message("execution result undetermined", nil),
+	)
 )
 
 func init() {
