@@ -83,28 +83,27 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 const importThreshold = 0.85
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *BackendContext) Flush(indexID int64) error {
+func (bc *BackendContext) Flush(indexID int64) (imported bool, err error) {
 	ei, exist := bc.EngMgr.Load(indexID)
 	if !exist {
 		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
-		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
+		return false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	err := bc.diskRoot.UpdateUsageAndQuota()
+	err = bc.diskRoot.UpdateUsageAndQuota()
 	if err != nil {
 		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Int64("index ID", indexID))
-		return err
+		return false, err
+	}
+
+	err = ei.Flush()
+	if err != nil {
+		return false, err
 	}
 
 	release := ei.AcquireFlushLock()
 	if release != nil && bc.diskRoot.CurrentUsage() >= uint64(importThreshold*float64(bc.diskRoot.MaxQuota())) {
 		defer release()
-		// TODO: it should be changed according checkpoint solution.
-		// Flush writer cached data into local disk for engine first.
-		err := ei.Flush()
-		if err != nil {
-			return err
-		}
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 			zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
 			zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
@@ -113,10 +112,11 @@ func (bc *BackendContext) Flush(indexID int64) error {
 			logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
 				zap.Error(err), zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
 				zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
-			return err
+			return false, err
 		}
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
 // Done returns true if the lightning backfill is done.
