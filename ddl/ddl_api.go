@@ -5879,7 +5879,11 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
 	}
 
-	genIDs, err := d.genGlobalIDs(1)
+	ids := 1
+	if tb.Meta().Partition != nil {
+		ids += len(tb.Meta().Partition.Definitions)
+	}
+	genIDs, err := d.genGlobalIDs(ids)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5891,7 +5895,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		TableName:  tb.Meta().Name.L,
 		Type:       model.ActionTruncateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newTableID, fkCheck},
+		Args:       []interface{}{newTableID, fkCheck, genIDs[1:]},
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
 		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
