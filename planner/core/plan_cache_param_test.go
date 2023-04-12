@@ -89,6 +89,11 @@ func TestParameterize(t *testing.T) {
 			`SELECT * FROM t WHERE a<date_format(?, '%Y-%m-%d')`,
 			[]interface{}{"2020-02-02"},
 		},
+		{
+			"select * from a, `txu#p#p1`",
+			"SELECT * FROM `txu#p#p1`",
+			[]interface{}{},
+		},
 
 		// keep the original format for limit clauses
 		{
