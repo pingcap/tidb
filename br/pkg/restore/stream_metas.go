@@ -149,7 +149,7 @@ func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *Fi
 // RemoveDataFilesAndUpdateMetadataInBatch concurrently remove datafilegroups and update metadata.
 // Only one metadata is processed in each thread, including deleting its datafilegroup and updating it.
 // Returns the not deleted datafilegroups.
-func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context.Context, from uint64, storage storage.ExternalStorage, updateFn func(num int64)) ([]string, error) {
+func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context.Context, from uint64, s storage.ExternalStorage, updateFn func(num int64)) ([]string, error) {
 	var notDeleted struct {
 		item []string
 		sync.Mutex
@@ -171,8 +171,9 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 				return cx.Err()
 			}
 
-			data, err := storage.ReadFile(ctx, path)
+			data, err := s.ReadFile(ctx, path)
 			if err != nil {
+				err = storage.TryConvertToBRError(err)
 				return err
 			}
 
@@ -181,7 +182,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 				return err
 			}
 
-			num, notDeletedItems, err := ms.removeDataFilesAndUpdateMetadata(ctx, storage, from, meta, path)
+			num, notDeletedItems, err := ms.removeDataFilesAndUpdateMetadata(ctx, s, from, meta, path)
 			if err != nil {
 				return err
 			}
@@ -203,7 +204,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 }
 
 // removeDataFilesAndUpdateMetadata removes some datafilegroups of the metadata, if their max-ts is less than `from`
-func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Context, storage storage.ExternalStorage, from uint64, meta *backuppb.Metadata, metaPath string) (num int64, notDeleted []string, err error) {
+func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Context, s storage.ExternalStorage, from uint64, meta *backuppb.Metadata, metaPath string) (num int64, notDeleted []string, err error) {
 	removed := make([]*backuppb.DataFileGroup, 0)
 	remainedDataFiles := make([]*backuppb.DataFileGroup, 0)
 	notDeleted = make([]string, 0)
@@ -228,7 +229,8 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Contex
 	// remove data file groups
 	for _, f := range removed {
 		log.Debug("Deleting file", zap.String("path", f.Path))
-		if err := storage.DeleteFile(ctx, f.Path); err != nil {
+		if err := s.DeleteFile(ctx, f.Path); err != nil {
+			err = storage.TryConvertToBRError(err)
 			log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
 			notDeleted = append(notDeleted, f.Path)
 			if len(notDeleted) > notDeletedBecameFatalThreshold {
@@ -251,7 +253,7 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Contex
 			return num, notDeleted, nil
 		}
 
-		if err := ms.doWriteBackForFile(ctx, storage, metaPath, meta); err != nil {
+		if err := ms.doWriteBackForFile(ctx, s, metaPath, meta); err != nil {
 			// NOTE: Maybe we'd better roll back all writebacks? (What will happen if roll back fails too?)
 			return num, notDeleted, errors.Annotatef(err, "failed to write back file %s", metaPath)
 		}
@@ -264,6 +266,7 @@ func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.E
 	// If the metadata file contains no data file, remove it due to it is meanless.
 	if len(meta.FileGroups) == 0 {
 		if err := s.DeleteFile(ctx, path); err != nil {
+			err = storage.TryConvertToBRError(err)
 			return errors.Annotatef(err, "failed to remove the empty meta %s", path)
 		}
 		return nil
@@ -279,6 +282,7 @@ func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.E
 func truncateAndWrite(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {
 	// Performance hack: the `Write` implemention would truncate the file if it exists.
 	if err := s.WriteFile(ctx, path, data); err != nil {
+		err = storage.TryConvertToBRError(err)
 		return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
 	}
 	return nil
@@ -306,6 +310,7 @@ func GetTSFromFile(
 	}
 	data, err := s.ReadFile(ctx, filename)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return 0, err
 	}
 	value, err := strconv.ParseUint(string(data), 10, 64)

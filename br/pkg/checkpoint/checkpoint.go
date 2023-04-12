@@ -214,6 +214,7 @@ func (cr *ChecksumRunner) FlushChecksum(
 		fname := fmt.Sprintf("%s/t%d_and__", CheckpointChecksumDir, tableID)
 		err = s.WriteFile(ctx, fname, data)
 		if err != nil {
+			err = storage.TryConvertToBRError(err)
 			cr.RecordError(err)
 			return
 		}
@@ -332,6 +333,7 @@ func (r *CheckpointRunner) WaitForFinish(ctx context.Context) {
 	// remove the checkpoint lock
 	err := r.storage.DeleteFile(ctx, CheckpointLockPath)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		log.Warn("failed to remove the checkpoint lock", zap.Error(err))
 	}
 }
@@ -518,7 +520,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 		checksumEncoded := base64.URLEncoding.EncodeToString(checksum[:])
 		path := fmt.Sprintf("%s/%s_%d.cpt", CheckpointDataDir, checksumEncoded, rand.Uint64())
 		if err := r.storage.WriteFile(ctx, path, data); err != nil {
-			return errors.Trace(err)
+			return errors.Trace(storage.TryConvertToBRError(err))
 		}
 	}
 	return nil
@@ -564,6 +566,7 @@ func (r *CheckpointRunner) flushLock(ctx context.Context, p int64) error {
 	}
 
 	err = r.storage.WriteFile(ctx, CheckpointLockPath, data)
+	err = storage.TryConvertToBRError(err)
 	return errors.Trace(err)
 }
 
@@ -571,6 +574,7 @@ func (r *CheckpointRunner) flushLock(ctx context.Context, p int64) error {
 func (r *CheckpointRunner) checkLockFile(ctx context.Context, now int64) error {
 	data, err := r.storage.ReadFile(ctx, CheckpointLockPath)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return errors.Trace(err)
 	}
 	lock := &CheckpointLock{}
@@ -642,6 +646,7 @@ func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *
 		if strings.HasSuffix(path, ".cpt") {
 			content, err := s.ReadFile(ctx, path)
 			if err != nil {
+				err = storage.TryConvertToBRError(err)
 				return errors.Trace(err)
 			}
 
@@ -680,7 +685,7 @@ func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *
 		}
 		return nil
 	})
-
+	err = storage.TryConvertToBRError(err)
 	return pastDureTime, errors.Trace(err)
 }
 
@@ -698,6 +703,7 @@ type CheckpointMetadata struct {
 func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadata, error) {
 	data, err := s.ReadFile(ctx, CheckpointMetaPath)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return nil, errors.Trace(err)
 	}
 	m := &CheckpointMetadata{}
@@ -716,6 +722,7 @@ func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map
 	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointChecksumDir}, func(path string, size int64) error {
 		data, err := s.ReadFile(ctx, path)
 		if err != nil {
+			err = storage.TryConvertToBRError(err)
 			return errors.Trace(err)
 		}
 		info := &ChecksumInfo{}
@@ -744,6 +751,7 @@ func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map
 		}
 		return nil
 	})
+	err = storage.TryConvertToBRError(err)
 	return checkpointChecksum, errors.Trace(err)
 }
 
@@ -755,5 +763,6 @@ func SaveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta
 	}
 
 	err = s.WriteFile(ctx, CheckpointMetaPath, data)
+	err = storage.TryConvertToBRError(err)
 	return errors.Trace(err)
 }

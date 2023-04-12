@@ -137,7 +137,7 @@ func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 	object := s.objectName(name)
 	rc, err := s.bucket.Object(object).NewReader(ctx)
 	if err != nil {
-		return nil, errors.Annotatef(err,
+		return nil, newWrappedError(err,
 			"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
 			s.gcs.Bucket, object)
 	}
@@ -176,11 +176,11 @@ func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 	attrs, err := handle.Attrs(ctx)
 	if err != nil {
 		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
-			return nil, errors.Annotatef(err,
+			return nil, newWrappedError(err,
 				"the object doesn't exist, file info: input.bucket='%s', input.key='%s'",
 				s.gcs.Bucket, path)
 		}
-		return nil, errors.Annotatef(err,
+		return nil, newWrappedError(err,
 			"failed to get gcs file attribute, file info: input.bucket='%s', input.key='%s'",
 			s.gcs.Bucket, path)
 	}
@@ -276,11 +276,11 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		if gcs.CredentialsBlob == "" {
 			creds, err := google.FindDefaultCredentials(ctx, storage.ScopeReadWrite)
 			if err != nil {
-				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
+				return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
 			}
 			if opts.SendCredentials {
 				if len(creds.JSON) <= 0 {
-					return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
+					return nil, newWrappedError(berrors.ErrStorageInvalidConfig,
 						"You should provide '--gcs.credentials_file' when '--send-credentials-to-tikv' is true")
 				}
 				gcs.CredentialsBlob = string(creds.JSON)
@@ -365,7 +365,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 	if r.reader == nil {
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
 		if err != nil {
-			return 0, errors.Annotatef(err,
+			return 0, newWrappedError(err,
 				"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
 				r.storage.gcs.Bucket, r.name)
 		}
@@ -396,15 +396,15 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 		realOffset = r.pos + offset
 	case io.SeekEnd:
 		if offset > 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
+			return 0, newWrappedError(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
 		realOffset = offset + r.totalSize
 	default:
-		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+		return 0, newWrappedError(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
 
 	if realOffset < 0 {
-		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'. total size is '%v'", offset, r.pos, r.totalSize)
+		return 0, newWrappedError(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'. total size is '%v'", offset, r.pos, r.totalSize)
 	}
 
 	if realOffset == r.pos {
@@ -422,7 +422,7 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
 	if err != nil {
-		return 0, errors.Annotatef(err,
+		return 0, newWrappedError(err,
 			"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
 			r.storage.gcs.Bucket, r.name)
 	}

@@ -45,13 +45,13 @@ func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) er
 		log.Info("failed to write file, try to mkdir the path", zap.String("path", path))
 		exists, existErr := pathExists(path)
 		if existErr != nil {
-			return errors.Annotatef(err, "after failed to write file, failed to check path exists : %v", existErr)
+			return newWrappedError(err, "after failed to write file, failed to check path exists : %v", existErr)
 		}
 		if exists {
 			return errors.Trace(err)
 		}
 		if mkdirErr := mkdirAll(path); mkdirErr != nil {
-			return errors.Annotatef(err, "after failed to write file, failed to mkdir : %v", mkdirErr)
+			return newWrappedError(err, "after failed to write file, failed to mkdir : %v", mkdirErr)
 		}
 		if err := os.WriteFile(tmpPath, data, localFilePerm); err != nil {
 			return errors.Trace(err)

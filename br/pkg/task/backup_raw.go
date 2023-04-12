@@ -134,6 +134,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 
 	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return errors.Trace(err)
 	}
 	// Backup raw does not need domain.

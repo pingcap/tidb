@@ -65,9 +65,8 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 4,
     deps = [
-        "//br/pkg/errors",
         "//br/pkg/lightning/config",
         "//expression",
         "//parser",
@@ -75,7 +74,6 @@ go_test(
         "//planner/core",
         "//util/dbterror/exeerrors",
         "//util/mock",
-        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
     ],

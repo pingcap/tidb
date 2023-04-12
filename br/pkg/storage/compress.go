@@ -109,7 +109,7 @@ func InterceptDecompressReader(fileReader io.ReadSeekCloser, compressType Compre
 func NewLimitedInterceptReader(fileReader ExternalFileReader, compressType CompressType, n int64) (ExternalFileReader, error) {
 	newFileReader := fileReader
 	if n < 0 {
-		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support negative limit, n: %d", n)
+		return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "compressReader doesn't support negative limit, n: %d", n)
 	} else if n > 0 {
 		newFileReader = &compressReader{
 			Reader: io.LimitReader(fileReader, n),
@@ -125,7 +125,7 @@ func (c *compressReader) Seek(offset int64, whence int) (int64, error) {
 	if offset == 0 && whence == io.SeekCurrent {
 		return c.Seeker.Seek(offset, whence)
 	}
-	return int64(0), errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support Seek now, offset %d, whence %d", offset, whence)
+	return int64(0), newWrappedError(berrors.ErrStorageInvalidConfig, "compressReader doesn't support Seek now, offset %d, whence %d", offset, whence)
 }
 
 func (c *compressReader) Close() error {

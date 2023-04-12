@@ -65,14 +65,14 @@ func TestRestoreAutoIncID(t *testing.T) {
 	tk.MustExec("insert into `\"t\"` values (10, '0000-00-00 00:00:00');")
 	// Query the current AutoIncID
 	autoIncID, err := strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
-	require.NoErrorf(t, err, "Error query auto inc id: %s", err)
+	require.NoErrorf(t, err, "wrappedError query auto inc id: %s", err)
 	// Get schemas of db and table
 	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
-	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
+	require.NoErrorf(t, err, "wrappedError get snapshot info schema: %s", err)
 	dbInfo, exists := info.SchemaByName(model.NewCIStr("test"))
-	require.Truef(t, exists, "Error get db info")
+	require.Truef(t, exists, "wrappedError get db info")
 	tableInfo, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr("\"t\""))
-	require.NoErrorf(t, err, "Error get table info: %s", err)
+	require.NoErrorf(t, err, "wrappedError get table info: %s", err)
 	table := metautil.Table{
 		Info: tableInfo.Meta(),
 		DB:   dbInfo,
@@ -80,31 +80,31 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// Get the next AutoIncID
 	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, table.Info.ID, false, autoid.RowIDAllocType)
 	globalAutoID, err := idAlloc.NextGlobalAutoID()
-	require.NoErrorf(t, err, "Error allocate next auto id")
+	require.NoErrorf(t, err, "wrappedError allocate next auto id")
 	require.Equal(t, uint64(globalAutoID), autoIncID)
 	// Alter AutoIncID to the next AutoIncID + 100
 	table.Info.AutoIncID = globalAutoID + 100
 	db, _, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
-	require.NoErrorf(t, err, "Error create DB")
+	require.NoErrorf(t, err, "wrappedError create DB")
 	tk.MustExec("drop database if exists test;")
 	// Test empty collate value
 	table.DB.Charset = "utf8mb4"
 	table.DB.Collate = ""
 	err = db.CreateDatabase(context.Background(), table.DB)
-	require.NoErrorf(t, err, "Error create empty collate db: %s %s", err, s.mock.DSN)
+	require.NoErrorf(t, err, "wrappedError create empty collate db: %s %s", err, s.mock.DSN)
 	tk.MustExec("drop database if exists test;")
 	// Test empty charset value
 	table.DB.Charset = ""
 	table.DB.Collate = "utf8mb4_bin"
 	err = db.CreateDatabase(context.Background(), table.DB)
-	require.NoErrorf(t, err, "Error create empty charset db: %s %s", err, s.mock.DSN)
+	require.NoErrorf(t, err, "wrappedError create empty charset db: %s %s", err, s.mock.DSN)
 	uniqueMap := make(map[restore.UniqueTableName]bool)
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
-	require.NoErrorf(t, err, "Error create table: %s %s", err, s.mock.DSN)
+	require.NoErrorf(t, err, "wrappedError create table: %s %s", err, s.mock.DSN)
 
 	tk.MustExec("use test")
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
-	require.NoErrorf(t, err, "Error query auto inc id: %s", err)
+	require.NoErrorf(t, err, "wrappedError query auto inc id: %s", err)
 	// Check if AutoIncID is altered successfully.
 	require.Equal(t, uint64(globalAutoID+100), autoIncID)
 
@@ -114,7 +114,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	require.NoError(t, err)
 	// Check if AutoIncID is not altered.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
-	require.NoErrorf(t, err, "Error query auto inc id: %s", err)
+	require.NoErrorf(t, err, "wrappedError query auto inc id: %s", err)
 	require.Equal(t, uint64(globalAutoID+100), autoIncID)
 
 	// try again, success because we use alter sql in unique map.
@@ -124,14 +124,14 @@ func TestRestoreAutoIncID(t *testing.T) {
 	require.NoError(t, err)
 	// Check if AutoIncID is altered to globalAutoID + 300.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
-	require.NoErrorf(t, err, "Error query auto inc id: %s", err)
+	require.NoErrorf(t, err, "wrappedError query auto inc id: %s", err)
 	require.Equal(t, uint64(globalAutoID+300), autoIncID)
 }
 
 func TestCreateTablesInDb(t *testing.T) {
 	s := createRestoreSchemaSuite(t)
 	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
-	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
+	require.NoErrorf(t, err, "wrappedError get snapshot info schema: %s", err)
 
 	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
 	require.True(t, isExist)
@@ -171,7 +171,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
 	lastTS, err := s.mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	require.NoErrorf(t, err, "wrappedError get last ts: %s", err)
 	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
 	tk.MustExec("DROP TABLE test_db.test_table1;")
 	tk.MustExec("DROP DATABASE test_db;")
@@ -182,7 +182,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	tk.MustExec("TRUNCATE TABLE test_table;")
 
 	ts, err := s.mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	require.NoErrorf(t, err, "Error get ts: %s", err)
+	require.NoErrorf(t, err, "wrappedError get ts: %s", err)
 
 	cipher := backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
@@ -193,17 +193,17 @@ func TestFilterDDLJobs(t *testing.T) {
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	s.mockGlue.SetSession(tk.Session())
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.mock.Storage, lastTS, ts, false)
-	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+	require.NoErrorf(t, err, "wrappedError get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoErrorf(t, err, "Flush failed", err)
 	err = metaWriter.FlushBackupMeta(ctx)
 	require.NoErrorf(t, err, "Finially flush backupmeta failed", err)
 	infoSchema, err := s.mock.Domain.GetSnapshotInfoSchema(ts)
-	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
+	require.NoErrorf(t, err, "wrappedError get snapshot info schema: %s", err)
 	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
 	require.Truef(t, ok, "DB info not exist")
 	tableInfo, err := infoSchema.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_table"))
-	require.NoErrorf(t, err, "Error get table info: %s", err)
+	require.NoErrorf(t, err, "wrappedError get table info: %s", err)
 	tables := []*metautil.Table{{
 		DB:   dbInfo,
 		Info: tableInfo.Meta(),
@@ -235,7 +235,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
 	lastTS, err := s.mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	require.NoErrorf(t, err, "wrappedError get last ts: %s", err)
 	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
 	tk.MustExec("DROP TABLE test_db.test_table1;")
 	tk.MustExec("DROP DATABASE test_db;")
@@ -246,7 +246,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	tk.MustExec("TRUNCATE TABLE test_table;")
 
 	ts, err := s.mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	require.NoErrorf(t, err, "Error get ts: %s", err)
+	require.NoErrorf(t, err, "wrappedError get ts: %s", err)
 
 	cipher := backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
@@ -257,18 +257,18 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	s.mockGlue.SetSession(tk.Session())
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.mock.Storage, lastTS, ts, false)
-	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+	require.NoErrorf(t, err, "wrappedError get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoErrorf(t, err, "Flush failed", err)
 	err = metaWriter.FlushBackupMeta(ctx)
 	require.NoErrorf(t, err, "Flush BackupMeta failed", err)
 
 	infoSchema, err := s.mock.Domain.GetSnapshotInfoSchema(ts)
-	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
+	require.NoErrorf(t, err, "wrappedError get snapshot info schema: %s", err)
 	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
 	require.Truef(t, ok, "DB info not exist")
 	tableInfo, err := infoSchema.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_table"))
-	require.NoErrorf(t, err, "Error get table info: %s", err)
+	require.NoErrorf(t, err, "wrappedError get table info: %s", err)
 	tables := []*metautil.Table{{
 		DB:   dbInfo,
 		Info: tableInfo.Meta(),

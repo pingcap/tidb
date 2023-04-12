@@ -104,6 +104,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 
 	backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return errors.Trace(err)
 	}
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, false, conn.NormalVersionChecker)
@@ -381,6 +382,7 @@ func saveMetaFile(c context.Context, backupInfo *config.EBSBasedBRMeta, external
 	}
 	err = externalStorage.WriteFile(c, metautil.MetaFile, data)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return errors.Trace(err)
 	}
 	return nil

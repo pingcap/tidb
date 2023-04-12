@@ -124,6 +124,7 @@ func NewMetaFromStorage(ctx context.Context, s storage.ExternalStorage) (*EBSBas
 	metaInfo := &EBSBasedBRMeta{}
 	metaBytes, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return metaInfo, errors.Trace(err)
 	}
 	err = json.Unmarshal(metaBytes, metaInfo)

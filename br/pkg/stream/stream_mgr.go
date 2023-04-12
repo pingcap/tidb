@@ -196,7 +196,7 @@ func (m *MetadataHelper) decodeCompressedData(data []byte, compressionType backu
 	return nil, errors.Errorf("failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
 }
 
-func (m *MetadataHelper) ReadFile(ctx context.Context, path string, offset uint64, length uint64, compressionType backuppb.CompressionType, storage storage.ExternalStorage) ([]byte, error) {
+func (m *MetadataHelper) ReadFile(ctx context.Context, path string, offset uint64, length uint64, compressionType backuppb.CompressionType, s storage.ExternalStorage) ([]byte, error) {
 	var err error
 	cref, exist := m.cache[path]
 	if !exist {
@@ -206,8 +206,9 @@ func (m *MetadataHelper) ReadFile(ctx context.Context, path string, offset uint6
 			// But the file is from metaV2.
 			return nil, errors.Errorf("the cache entry is uninitialized")
 		}
-		data, err := storage.ReadFile(ctx, path)
+		data, err := s.ReadFile(ctx, path)
 		if err != nil {
+			err = storage.TryConvertToBRError(err)
 			return nil, errors.Trace(err)
 		}
 		return m.decodeCompressedData(data, compressionType)
@@ -216,8 +217,9 @@ func (m *MetadataHelper) ReadFile(ctx context.Context, path string, offset uint6
 	cref.ref -= 1
 
 	if len(cref.data) == 0 {
-		cref.data, err = storage.ReadFile(ctx, path)
+		cref.data, err = s.ReadFile(ctx, path)
 		if err != nil {
+			err = storage.TryConvertToBRError(err)
 			return nil, errors.Trace(err)
 		}
 	}
@@ -314,6 +316,7 @@ func FastUnmarshalMetaData(
 		pool.ApplyOnErrorGroup(eg, func() error {
 			b, err := s.ReadFile(ectx, readPath)
 			if err != nil {
+				err = storage.TryConvertToBRError(err)
 				log.Error("failed to read file", zap.String("file", readPath))
 				return errors.Annotatef(err, "during reading meta file %s from storage", readPath)
 			}
@@ -323,6 +326,7 @@ func FastUnmarshalMetaData(
 		return nil
 	})
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		readErr := eg.Wait()
 		if readErr != nil {
 			return errors.Annotatef(readErr, "scanning metadata meets error %s", err)

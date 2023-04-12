@@ -634,7 +634,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	u.Path = ""
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2)
 	}
 	if b.GetLocal() != nil {
 		return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
@@ -651,7 +651,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 	s, err := storage.New(ctx, b, opt)
 	if err != nil {
-		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
+		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(err)
 	}
 
 	dataFiles := []*mydump.SourceFileMeta{}
@@ -660,14 +660,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	if idx == -1 {
 		fileReader, err2 := s.Open(ctx, path)
 		if err2 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(err2, "Please check the INFILE path is correct")
 		}
 		defer func() {
 			terror.Log(fileReader.Close())
 		}()
 		size, err3 := fileReader.Seek(0, io.SeekEnd)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek in LOAD DATA")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(err2, "failed to read file size by seek in LOAD DATA")
 		}
 		compressTp := mydump.ParseCompressionOnFileExtension(path)
 		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
@@ -714,7 +714,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore)
 				if err2 != nil {
-					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(err2, "Please check the INFILE path is correct")
 				}
 				return fileReader, nil
 			},
@@ -831,22 +831,4 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 		})
 	}
 	return res
-}
-
-// GetMsgFromBRError get msg from BR error.
-// TODO: add GetMsg() to errors package to replace this function.
-// see TestGetMsgFromBRError for more details.
-func GetMsgFromBRError(err error) string {
-	if err == nil {
-		return ""
-	}
-	if berr, ok := err.(*errors.Error); ok {
-		return berr.GetMsg()
-	}
-	raw := err.Error()
-	berrMsg := errors.Cause(err).Error()
-	if len(raw) <= len(berrMsg)+len(": ") {
-		return raw
-	}
-	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }

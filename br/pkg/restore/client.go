@@ -350,6 +350,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 	var err error
 	rc.storage, err = storage.New(ctx, backend, opts)
 	if err != nil {
+		err = storage.TryConvertToBRError(err)
 		return errors.Trace(err)
 	}
 	return nil

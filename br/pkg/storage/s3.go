@@ -170,10 +170,10 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 		options.ForcePathStyle = false
 	}
 	if options.AccessKey == "" && options.SecretAccessKey != "" {
-		return errors.Annotate(berrors.ErrStorageInvalidConfig, "access_key not found")
+		return newWrappedError(berrors.ErrStorageInvalidConfig, "access_key not found")
 	}
 	if options.AccessKey != "" && options.SecretAccessKey == "" {
-		return errors.Annotate(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
+		return newWrappedError(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
 	}
 
 	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
@@ -283,7 +283,7 @@ func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 func createOssRAMCred() (*credentials.Credentials, error) {
 	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
 	if err != nil {
-		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
+		return nil, newWrappedError(err, "Alibaba RAM Provider Retrieve")
 	}
 	ncred := cred.(*alicred.StsTokenCredential)
 	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
@@ -377,7 +377,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		}
 		region, err = s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
 		if err != nil {
-			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
+			return nil, newWrappedError(err, "failed to get region of bucket %s", qs.Bucket)
 		}
 	} else {
 		// for other s3 compatible provider like ovh storage didn't return the region correctlly
@@ -407,7 +407,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	for _, p := range opts.CheckPermissions {
 		err := permissionCheckFn[p](c, &qs)
 		if err != nil {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
+			return nil, newWrappedError(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
 		}
 	}
 
@@ -523,7 +523,7 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) 
 	}
 	result, err := rs.svc.GetObjectWithContext(ctx, input)
 	if err != nil {
-		return nil, errors.Annotatef(err,
+		return nil, newWrappedError(err,
 			"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
 			*input.Bucket, *input.Key)
 	}
@@ -715,7 +715,7 @@ func (rs *S3Storage) open(
 		// We must ensure the `ContentLengh` has data even if for empty objects,
 		// otherwise we have no places to get the object size
 		if result.ContentLength == nil {
-			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
+			return nil, RangeInfo{}, newWrappedError(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
 		}
 		objectSize := *(result.ContentLength)
 		r = RangeInfo{
@@ -731,7 +731,7 @@ func (rs *S3Storage) open(
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
-		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed, expected range: %s, got: %v",
+		return nil, r, newWrappedError(berrors.ErrStorageUnknown, "open file '%s' failed, expected range: %s, got: %v",
 			path, *rangeOffset, result.ContentRange)
 	}
 
@@ -743,28 +743,28 @@ var contentRangeRegex = regexp.MustCompile(`bytes (\d+)-(\d+)/(\d+)$`)
 // ParseRangeInfo parses the Content-Range header and returns the offsets.
 func ParseRangeInfo(info *string) (ri RangeInfo, err error) {
 	if info == nil || len(*info) == 0 {
-		err = errors.Annotate(berrors.ErrStorageUnknown, "ContentRange is empty")
+		err = newWrappedError(berrors.ErrStorageUnknown, "ContentRange is empty")
 		return
 	}
 	subMatches := contentRangeRegex.FindStringSubmatch(*info)
 	if len(subMatches) != 4 {
-		err = errors.Annotatef(berrors.ErrStorageUnknown, "invalid content range: '%s'", *info)
+		err = newWrappedError(berrors.ErrStorageUnknown, "invalid content range: '%s'", *info)
 		return
 	}
 
 	ri.Start, err = strconv.ParseInt(subMatches[1], 10, 64)
 	if err != nil {
-		err = errors.Annotatef(err, "invalid start offset value '%s' in ContentRange '%s'", subMatches[1], *info)
+		err = newWrappedError(err, "invalid start offset value '%s' in ContentRange '%s'", subMatches[1], *info)
 		return
 	}
 	ri.End, err = strconv.ParseInt(subMatches[2], 10, 64)
 	if err != nil {
-		err = errors.Annotatef(err, "invalid end offset value '%s' in ContentRange '%s'", subMatches[2], *info)
+		err = newWrappedError(err, "invalid end offset value '%s' in ContentRange '%s'", subMatches[2], *info)
 		return
 	}
 	ri.Size, err = strconv.ParseInt(subMatches[3], 10, 64)
 	if err != nil {
-		err = errors.Annotatef(err, "invalid size size value '%s' in ContentRange '%s'", subMatches[3], *info)
+		err = newWrappedError(err, "invalid size size value '%s' in ContentRange '%s'", subMatches[3], *info)
 		return
 	}
 	return
@@ -833,10 +833,10 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekEnd:
 		realOffset = r.rangeInfo.Size + offset
 	default:
-		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+		return 0, newWrappedError(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
 	if realOffset < 0 {
-		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek in '%s': invalid offset to seek '%d'.", r.name, realOffset)
+		return 0, newWrappedError(berrors.ErrStorageUnknown, "Seek in '%s': invalid offset to seek '%d'.", r.name, realOffset)
 	}
 
 	if realOffset == r.pos {

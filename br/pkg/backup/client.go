@@ -176,9 +176,9 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 
 // SetLockFile set write lock file.
 func (bc *Client) SetLockFile(ctx context.Context) error {
-	return bc.storage.WriteFile(ctx, metautil.LockFile,
+	return storage.TryConvertToBRError(bc.storage.WriteFile(ctx, metautil.LockFile,
 		[]byte("DO NOT DELETE\n"+
-			"This file exists to remind other backup jobs won't use this path"))
+			"This file exists to remind other backup jobs won't use this path")))
 }
 
 // GetSafePointID get the gc-safe-point's service-id from either checkpoint or immediate generation
@@ -383,6 +383,7 @@ func (bc *Client) SetStorage(
 
 	bc.backend = backend
 	bc.storage, err = storage.New(ctx, backend, opts)
+	err = storage.TryConvertToBRError(err)
 	return errors.Trace(err)
 }
 
@@ -435,7 +436,7 @@ func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) 
 			}
 			return nil
 		})
-		return err
+		return storage.TryConvertToBRError(err)
 	}
 	return nil
 }
