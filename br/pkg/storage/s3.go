@@ -375,17 +375,10 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
 		}
-<<<<<<< HEAD
-	}
-	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
-=======
 	} else {
 		// for other s3 compatible provider like ovh storage didn't return the region correctlly
 		// so we cannot automatically get the bucket region. just fallback to manually region setting.
 		region = qs.Region
->>>>>>> 0a08f64082e (br: skip automatically get bucket region with other s3 compatible provider. (#41889))
 	}
 
 	if qs.Region != region {
