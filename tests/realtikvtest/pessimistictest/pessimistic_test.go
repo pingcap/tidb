@@ -3385,3 +3385,81 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 	require.Equal(t, lockedWithConflictCounter, 0)
 	tk.MustExec("commit")
 }
+
+func TestIssue42937(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@tidb_enable_async_commit = 0")
+	tk2.MustExec("set @@tidb_enable_1pc = 0")
+	tk2.MustExec("use test")
+
+	tk.MustExec("create table t(id int primary key, v int unique, v2 int)")
+	tk.MustExec("insert into t values (1, 10, 10), (2, 20, 10), (3, 30, 30), (4, 40, 40)")
+	tk.MustExec("create table t2 (id int primary key, v int)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2)")
+
+	require.NoError(t, failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", "return(skip)"))
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"))
+		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
+	}()
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 2")
+	ch := mustExecAsync(tk, `
+		with
+			c as (select /*+ MERGE() */ v from t2 where id = 1 or id = 2)
+		update c join t on c.v = t.id set t.v = t.v + 1`)
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	tk3.MustExec("update t2 set v = v + 2")
+	tk2.MustExec("commit")
+	<-ch
+
+	tk.MustQuery("select id, v from t order by id").Check(testkit.Rows("1 10", "2 20", "3 31", "4 41"))
+	tk.MustExec("update t set v2 = v2 + 1")
+
+	blockAfterPrewrite := &atomic.Bool{}
+	blockAfterPrewrite.Store(true)
+	prewriteFinishCh := make(chan struct{})
+	continueCommitCh := make(chan struct{})
+
+	require.NoError(t, failpoint.EnableWith("tikvclient/beforeCommit", "return", func() error {
+		if blockAfterPrewrite.Load() {
+			prewriteFinishCh <- struct{}{}
+			<-continueCommitCh
+		}
+		return nil
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeCommit"))
+	}()
+
+	//require.NoError(t, failpoint.Enable("tikvclient/twoPCShortLockTTL", "return"))
+	ch = mustExecAsync(tk, "commit")
+	mustRecv(t, prewriteFinishCh)
+	// To allow further transaction able to execute
+	blockAfterPrewrite.Store(false)
+	//require.NoError(t, failpoint.Disable("tikvclient/twoPCShortLockTTL"))
+
+	tk2.MustExec("insert into t values (5, 11, 50)")
+	continueCommitCh <- struct{}{}
+
+	mustRecv(t, ch)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows(
+		"1 10 11",
+		"2 20 21",
+		"3 31 31",
+		"4 41 41",
+		"5 11 50",
+	))
+}
