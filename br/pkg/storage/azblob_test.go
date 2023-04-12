@@ -39,6 +39,7 @@ func TestAzblob(t *testing.T) {
 	}
 
 	azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, &sharedKeyAzuriteClientBuilder{})
+	err = TryConvertToBRError(err)
 	if err != nil {
 		if strings.Contains(err.Error(), "connect: connection refused") {
 			t.Log("azurite is not running, skip test")
