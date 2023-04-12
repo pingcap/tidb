@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session_test
+package clusteredindextest
 
 import (
 	"fmt"
@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -83,7 +82,7 @@ func TestClusteredPrefixColumn(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	testData := session.GetClusteredIndexSuiteData()
+	testData := GetClusteredIndexSuiteData()
 	testData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
