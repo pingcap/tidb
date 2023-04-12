@@ -338,3 +338,69 @@ func (s *testStatsSuite) TestDumpVer2Stats(c *C) {
 	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
 	assertTableEqual(c, statsCacheTbl, loadTbl)
 }
+
+func TestLoadStatsFromOldVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(b))")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	require.NoError(t, h.Update(is))
+
+	statsJSONFromOldVersion := `{
+ "database_name": "test",
+ "table_name": "t",
+ "columns": {
+  "a": {
+   "histogram": {
+    "ndv": 0
+   },
+   "cm_sketch": null,
+   "null_count": 0,
+   "tot_col_size": 256,
+   "last_update_version": 440735055846047747,
+   "correlation": 0
+  },
+  "b": {
+   "histogram": {
+    "ndv": 0
+   },
+   "cm_sketch": null,
+   "null_count": 0,
+   "tot_col_size": 256,
+   "last_update_version": 440735055846047747,
+   "correlation": 0
+  }
+ },
+ "indices": {
+  "idx": {
+   "histogram": {
+    "ndv": 0
+   },
+   "cm_sketch": null,
+   "null_count": 0,
+   "tot_col_size": 0,
+   "last_update_version": 440735055846047747,
+   "correlation": 0
+  }
+ },
+ "count": 256,
+ "modify_count": 256,
+ "partitions": null
+}`
+	jsonTbl := &handle.JSONTable{}
+	require.NoError(t, json.Unmarshal([]byte(statsJSONFromOldVersion), jsonTbl))
+	require.NoError(t, h.LoadStatsFromJSON(is, jsonTbl))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetTableStats(tbl.Meta())
+	for _, col := range statsTbl.Columns {
+		require.False(t, col.IsStatsInitialized())
+	}
+	for _, idx := range statsTbl.Indices {
+		require.False(t, idx.IsStatsInitialized())
+	}
+}
