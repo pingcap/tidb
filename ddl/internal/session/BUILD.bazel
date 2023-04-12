@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "session",
@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/ddl/internal/session",
     visibility = ["//ddl:__subpackages__"],
     deps = [
+        "//domain/infosync",
         "//kv",
         "//metrics",
         "//parser/mysql",
@@ -22,5 +23,18 @@ go_library(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)
+
+go_test(
+    name = "session_test",
+    timeout = "short",
+    srcs = ["session_pool_test.go"],
+    flaky = True,
+    deps = [
+        ":session",
+        "//testkit",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
     ],
 )

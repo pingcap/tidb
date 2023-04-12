@@ -1681,13 +1681,15 @@ type addIndexIngestWorker struct {
 	copReqSenderPool *copReqSenderPool
 	checkpointMgr    *ingest.CheckpointManager
 
-	resultCh chan *backfillResult
-	jobID    int64
+	resultCh   chan *backfillResult
+	jobID      int64
+	distribute bool
 }
 
 func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.EngineInfo,
 	resultCh chan *backfillResult, jobID int64, schemaName string, indexID int64, writerID int,
-	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context, checkpointMgr *ingest.CheckpointManager) (*addIndexIngestWorker, error) {
+	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context,
+	checkpointMgr *ingest.CheckpointManager, distribute bool) (*addIndexIngestWorker, error) {
 	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	lwCtx, err := ei.NewWriterCtx(writerID, indexInfo.Unique)
@@ -1707,6 +1709,7 @@ func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.Engine
 		resultCh:         resultCh,
 		jobID:            jobID,
 		checkpointMgr:    checkpointMgr,
+		distribute:       distribute,
 	}, nil
 }
 
