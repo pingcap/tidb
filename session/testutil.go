@@ -16,15 +16,17 @@ package session
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
+	atomicutil "go.uber.org/atomic"
 )
 
 var (
@@ -38,6 +40,7 @@ var (
 
 // CreateStoreAndBootstrap creates a mock store and bootstrap it.
 func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
+	runtime.GOMAXPROCS(mathutil.Min(8, runtime.GOMAXPROCS(0)))
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	dom, err := BootstrapSession(store)
@@ -45,7 +48,7 @@ func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	return store, dom
 }
 
-var sessionKitIDGenerator atomic.Uint64
+var sessionKitIDGenerator atomicutil.Uint64
 
 // CreateSessionAndSetID creates a session and set connection ID.
 func CreateSessionAndSetID(t *testing.T, store kv.Storage) Session {
