@@ -1453,18 +1453,6 @@ func TestDoImport(t *testing.T) {
 								err: errors.New("is not fully replicated"),
 							},
 						},
-						{
-							write: injectedWriteBehaviour{
-								result: &tikvWriteResult{
-									remainingStartKey: nil,
-								},
-							},
-						},
-						{
-							ingest: injectedIngestBehaviour{
-								nextStage: ingested,
-							},
-						},
 					},
 				},
 			},
@@ -1473,6 +1461,15 @@ func TestDoImport(t *testing.T) {
 			jobs: []*regionJob{
 				{
 					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					engine:   &Engine{},
+					injected: getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		{"c2", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'c', '2'}, end: []byte{'d'}},
 					engine:   &Engine{},
 					injected: getSuccessInjectedBehaviour(),
 				},
@@ -1561,7 +1558,8 @@ func TestDoImport(t *testing.T) {
 	require.ErrorContains(t, err, "meet error when generateJobForRange again")
 
 	// test write meet unretryable error
-
+	maxRetryBackoffSecond = 100
+	l.WorkerConcurrency = 1
 	fakeRegionJobs = map[[2]string]struct {
 		jobs []*regionJob
 		err  error
@@ -1593,18 +1591,6 @@ func TestDoImport(t *testing.T) {
 					engine:     &Engine{},
 					retryCount: maxWriteAndIngestRetryTimes - 2,
 					injected: []injectedBehaviour{
-						{
-							write: injectedWriteBehaviour{
-								// unretryable error
-								err: errors.New("fatal error"),
-							},
-						},
-						{
-							write: injectedWriteBehaviour{
-								// unretryable error
-								err: errors.New("fatal error"),
-							},
-						},
 						{
 							write: injectedWriteBehaviour{
 								// unretryable error

@@ -1328,10 +1328,10 @@ func (local *Backend) executeJob(
 			if !local.isRetryableImportTiKVError(err) {
 				return err
 			}
-			// at TiKV side, ImportSstService.Write will not check region problem
-			// in write, so for transient error, we can retry again
+			// if it's retryable error, we retry from scanning region
 			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
+			job.convertStageTo(needRescan)
 			job.lastRetryableErr = err
 			return nil
 		}
