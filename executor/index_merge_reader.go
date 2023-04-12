@@ -676,7 +676,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			}
 			handles = append(handles, handle)
 		}
-		// used for limit embeded.
+		// used for limit embedded.
 		if len(w.byItems) != 0 {
 			if retChk == nil {
 				retChk = chunk.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.batchSize)
@@ -1490,7 +1490,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			}
 			handles = append(handles, handle)
 		}
-		// used for limit embeded.
+		// used for limit embedded.
 		if len(w.byItems) != 0 {
 			if retChk == nil {
 				retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols), w.batchSize)
