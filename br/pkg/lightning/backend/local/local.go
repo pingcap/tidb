@@ -1255,10 +1255,10 @@ func (local *Backend) startWorker(
 					jobWg.Done()
 					return err2
 				}
-				// TODO: do we need to keep retry counter?
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
 				jobWg.Add(len(jobs) - 1)
 				for _, j := range jobs {
+					j.retryCount = job.retryCount
 					jobOutCh <- j
 				}
 			}
@@ -1287,7 +1287,6 @@ func (*Backend) isRetryableImportTiKVError(err error) bool {
 // If non-retryable error occurs, it will return the error.
 // If retryable error occurs, it will return nil and caller should check the stage
 // of the regionJob to determine what to do with it.
-// TODO: check when return the job is at which stage
 func (local *Backend) executeJob(
 	ctx context.Context,
 	job *regionJob,
@@ -1326,13 +1325,17 @@ func (local *Backend) executeJob(
 	for {
 		err := local.writeToTiKV(ctx, job)
 		if err != nil {
-			if !local.isRetryableImportTiKVError(err) {
-				return err
-			}
-			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
-				log.ShortError(err), zap.Stringer("job stage", job.stage))
 			job.lastRetryableErr = err
-			// TODO: why don't we distinguish if the job need rescan?
+
+			if local.isRetryableImportTiKVError(err) {
+				log.FromContext(ctx).Warn("meet retryable error when writing to TiKV, will retry from writing",
+					log.ShortError(err))
+				return nil
+			}
+			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV, will retry from scanning region",
+				log.ShortError(err))
+			// currently we treat all errors that can be retried by rescanning region.
+			job.convertStageTo(needRescan)
 			return nil
 		}
 

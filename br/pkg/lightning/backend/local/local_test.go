@@ -1562,8 +1562,6 @@ func TestDoImport(t *testing.T) {
 
 	// test write meet unretryable error
 
-	maxRetryBackoffSecond = 100
-	l.WorkerConcurrency = 1
 	fakeRegionJobs = map[[2]string]struct {
 		jobs []*regionJob
 		err  error
@@ -1574,7 +1572,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   Range{start: []byte{'a'}, end: []byte{'b'}},
 					engine:     &Engine{},
 					retryCount: maxWriteAndIngestRetryTimes - 1,
-					injected:   getNeedRescanWhenIngestBehaviour(),
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
@@ -1584,16 +1582,29 @@ func TestDoImport(t *testing.T) {
 					keyRange:   Range{start: []byte{'b'}, end: []byte{'c'}},
 					engine:     &Engine{},
 					retryCount: maxWriteAndIngestRetryTimes - 1,
-					injected:   getNeedRescanWhenIngestBehaviour(),
+					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
 		},
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange: Range{start: []byte{'c'}, end: []byte{'d'}},
-					engine:   &Engine{},
+					keyRange:   Range{start: []byte{'c'}, end: []byte{'d'}},
+					engine:     &Engine{},
+					retryCount: maxWriteAndIngestRetryTimes - 2,
 					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								// unretryable error
+								err: errors.New("fatal error"),
+							},
+						},
+						{
+							write: injectedWriteBehaviour{
+								// unretryable error
+								err: errors.New("fatal error"),
+							},
+						},
 						{
 							write: injectedWriteBehaviour{
 								// unretryable error
@@ -1607,4 +1618,9 @@ func TestDoImport(t *testing.T) {
 	}
 	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
+	for _, v := range fakeRegionJobs {
+		for _, job := range v.jobs {
+			require.Len(t, job.injected, 0)
+		}
+	}
 }
