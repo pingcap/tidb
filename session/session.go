@@ -2119,7 +2119,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	if sessVars.InPlanReplayer {
 		sessVars.StmtCtx.EnableOptimizerDebugTrace = true
-	} else if dom := domain.GetDomain(s); dom != nil {
+	} else if dom := domain.GetDomain(s); dom != nil && !sessVars.InRestrictedSQL {
 		// This is the earliest place we can get the SQL digest for this execution.
 		// If we find this digest is registered for PLAN REPLAYER CAPTURE, we need to enable optimizer debug trace no matter
 		// the plan digest will be matched or not.
