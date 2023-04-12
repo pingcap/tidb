@@ -123,7 +123,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx,
+			debugtrace.RecordAnyValuesWithNames(sctx,
 				"IsInvalid", res,
 				"InValidForCollPseudo", inValidForCollPseudo,
 				"TotalCount", totalCount,
@@ -162,9 +162,9 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
-		debugtrace.DebugTraceAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
+		debugtrace.RecordAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result, "Error", err)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Error", err)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -252,7 +252,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 				if pkIsHandle {
 					rowCount++
 					if debugTrace {
-						debugTraceEndEstimateRange(sctx, 1, DebugTraceUniquePoint)
+						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
 					}
 					continue
 				}
@@ -265,7 +265,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 				cnt *= c.GetIncreaseFactor(realtimeRowCount)
 				rowCount += cnt
 				if debugTrace {
-					debugTraceEndEstimateRange(sctx, cnt, DebugTracePoint)
+					debugTraceEndEstimateRange(sctx, cnt, debugTracePoint)
 				}
 			}
 			continue
@@ -285,7 +285,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 					// If the current table row count has changed, we should scale the row count accordingly.
 					cnt *= c.GetIncreaseFactor(realtimeRowCount)
 					if debugTrace {
-						debugTraceEndEstimateRange(sctx, cnt, DebugTraceVer1SmallRange)
+						debugTraceEndEstimateRange(sctx, cnt, debugTraceVer1SmallRange)
 					}
 					rowCount += cnt
 				}
@@ -331,7 +331,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		}
 
 		if debugTrace {
-			debugTraceEndEstimateRange(sctx, cnt, DebugTraceRange)
+			debugTraceEndEstimateRange(sctx, cnt, debugTraceRange)
 		}
 		rowCount += cnt
 	}

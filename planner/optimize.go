@@ -211,7 +211,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	bindRecord, scope, match := matchSQLBinding(sctx, stmtNode)
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.RecordAnyValuesWithNames(sctx,
 			"Used binding", useBinding,
 			"Enable binding", enableUseBinding,
 			"IsStmtNode", isStmtNode,

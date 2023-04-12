@@ -565,7 +565,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 		debugtrace.EnterContextCommon(sctx)
 		debugTraceGetRowCountInput(sctx, colID, intRanges)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -592,7 +592,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 		return result, nil
 	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.RecordAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", c.Histogram.notNullCount(),
 			"TopN total count", c.TopN.TotalCount(),
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
@@ -612,7 +612,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID i
 		debugtrace.EnterContextCommon(sctx)
 		debugTraceGetRowCountInput(sctx, colID, colRanges)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -632,7 +632,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID i
 		return result, err
 	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.RecordAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", c.Histogram.notNullCount(),
 			"TopN total count", c.TopN.TotalCount(),
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
@@ -652,7 +652,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 		debugtrace.EnterContextCommon(sctx)
 		debugTraceGetRowCountInput(sctx, idxID, indexRanges)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -682,7 +682,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 		return result, err
 	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.RecordAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", idx.Histogram.notNullCount(),
 			"TopN total count", idx.TopN.TotalCount(),
 			"Increase Factor", idx.GetIncreaseFactor(coll.RealtimeCount),
@@ -1021,7 +1021,7 @@ func outOfRangeEQSelectivity(sctx sessionctx.Context, ndv, realtimeRowCount, col
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -1057,7 +1057,7 @@ func (coll *HistColl) crossValidationSelectivity(
 			if idx != nil && idx.Info != nil {
 				idxName = idx.Info.Name.O
 			}
-			debugtrace.DebugTraceAnyValuesWithNames(
+			debugtrace.RecordAnyValuesWithNames(
 				sctx,
 				"Index Name", idxName,
 				"minRowCount", minRowCount,
@@ -1112,7 +1112,7 @@ func (coll *HistColl) getEqualCondSelectivity(sctx sessionctx.Context, idx *Inde
 			if idx != nil && idx.Info != nil {
 				idxName = idx.Info.Name.O
 			}
-			debugtrace.DebugTraceAnyValuesWithNames(
+			debugtrace.RecordAnyValuesWithNames(
 				sctx,
 				"Index Name", idxName,
 				"Encoded", bytes,
@@ -1193,7 +1193,7 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 				return 0, errors.Trace(err)
 			}
 			if debugTrace {
-				debugTraceEndEstimateRange(sctx, count, DebugTraceRange)
+				debugTraceEndEstimateRange(sctx, count, debugTraceRange)
 			}
 			totalCount += count
 			continue
@@ -1260,7 +1260,7 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 		}
 		count := selectivity * idx.TotalRowCount()
 		if debugTrace {
-			debugTraceEndEstimateRange(sctx, count, DebugTraceRange)
+			debugTraceEndEstimateRange(sctx, count, debugTraceRange)
 		}
 		totalCount += count
 	}

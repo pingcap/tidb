@@ -153,7 +153,7 @@ type getStatsTblInfo struct {
 	CountIsZero       bool
 	Uninitialized     bool
 	Outdated          bool
-	StatsTblInfo      *statistics.StatsTblInfo
+	StatsTblInfo      *statistics.StatsTblTraceInfo
 }
 
 func debugTraceGetStatsTbl(

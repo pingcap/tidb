@@ -368,7 +368,7 @@ func (hg *Histogram) equalRowCount(sctx sessionctx.Context, value types.Datum, h
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Count", count, "Matched", matched)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Count", count, "Matched", matched)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -449,7 +449,7 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result, "Bucket idx", bucketIdx)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Bucket idx", bucketIdx)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -827,13 +827,13 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
-		debugtrace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.RecordAnyValuesWithNames(sctx,
 			"lDatum", lDatum.String(),
 			"rDatum", rDatum.String(),
 			"modifyCount", modifyCount,
 		)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -869,7 +869,7 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	}
 
 	if debugTrace {
-		debugtrace.DebugTraceAnyValuesWithNames(sctx,
+		debugtrace.RecordAnyValuesWithNames(sctx,
 			"commonPrefix", commonPrefix,
 			"lScalar", l,
 			"rScalar", r,
@@ -893,7 +893,7 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 
 	var leftPercent, rightPercent, rowCount float64
 	if debugTrace {
-		defer debugtrace.DebugTraceAnyValuesWithNames(sctx,
+		defer debugtrace.RecordAnyValuesWithNames(sctx,
 			"histL", histL,
 			"histR", histR,
 			"boundL", boundL,

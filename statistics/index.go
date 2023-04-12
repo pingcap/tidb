@@ -128,7 +128,7 @@ func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool)
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx,
+			debugtrace.RecordAnyValuesWithNames(sctx,
 				"IsInvalid", res,
 				"CollPseudo", collPseudo,
 				"NotAccurate", notAccurate,
@@ -180,9 +180,9 @@ var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
-		debugtrace.DebugTraceAnyValuesWithNames(sctx, "Encoded Value", b)
+		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -230,7 +230,7 @@ func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) 
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -277,7 +277,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			// case 1: it's a point
 			if indexRange.LowExclude || indexRange.HighExclude {
 				if debugTrace {
-					debugTraceEndEstimateRange(sctx, 0, DebugTraceImpossible)
+					debugTraceEndEstimateRange(sctx, 0, debugTraceImpossible)
 				}
 				continue
 			}
@@ -286,7 +286,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				if idx.Info.Unique {
 					totalCount++
 					if debugTrace {
-						debugTraceEndEstimateRange(sctx, 1, DebugTraceUniquePoint)
+						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
 					}
 					continue
 				}
@@ -294,7 +294,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				if debugTrace {
-					debugTraceEndEstimateRange(sctx, count, DebugTracePoint)
+					debugTraceEndEstimateRange(sctx, count, debugTracePoint)
 				}
 				totalCount += count
 				continue
@@ -367,7 +367,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 		}
 
 		if debugTrace {
-			debugTraceEndEstimateRange(sctx, count, DebugTraceRange)
+			debugTraceEndEstimateRange(sctx, count, debugTraceRange)
 		}
 		totalCount += count
 	}
@@ -380,7 +380,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx,
+			debugtrace.RecordAnyValuesWithNames(sctx,
 				"Result", sel,
 				"Success", success,
 				"error", err,

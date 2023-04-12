@@ -278,7 +278,7 @@ func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (resul
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx,
+			debugtrace.RecordAnyValuesWithNames(sctx,
 				"Origin Values", originVals,
 				"Values", vals,
 				"Use default value", useDefaultValue,
@@ -602,7 +602,7 @@ func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, foun
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result, "Found", found)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Found", found)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -611,7 +611,7 @@ func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, foun
 	}
 	idx := c.findTopN(d)
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.DebugTraceAnyValuesWithNames(sctx, "FindTopN idx", idx)
+		debugtrace.RecordAnyValuesWithNames(sctx, "FindTopN idx", idx)
 	}
 	if idx < 0 {
 		return 0, false
@@ -659,7 +659,7 @@ func (c *TopN) BetweenCount(sctx sessionctx.Context, l, r []byte) (result uint64
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
-			debugtrace.DebugTraceAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
