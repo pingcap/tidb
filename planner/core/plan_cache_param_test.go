@@ -90,8 +90,13 @@ func TestParameterize(t *testing.T) {
 			[]interface{}{"2020-02-02"},
 		},
 		{
-			"select * from a, `txu#p#p1`",
+			"select * from `txu#p#p1`",
 			"SELECT * FROM `txu#p#p1`",
+			[]interface{}{},
+		},
+		{
+			"select * from a, `txu#p#p1`",
+			"SELECT * FROM a, `txu#p#p1`",
 			[]interface{}{},
 		},
 
