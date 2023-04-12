@@ -480,6 +480,13 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 		start = end
 	}
 
+	if len(errPat) > 0 {
+		backup := split.ScanRegionAttemptTimes
+		split.ScanRegionAttemptTimes = 3
+		defer func() {
+			split.ScanRegionAttemptTimes = backup
+		}()
+	}
 	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
 	if len(errPat) == 0 {
 		require.NoError(t, err)
