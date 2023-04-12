@@ -816,7 +816,11 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			zap.String("index", indexInfo.Name.O))
 		switch bfProcess {
 		case model.ReorgTypeLitMerge:
-			done, ver, err = runIngestReorgJob(w, d, t, job, tbl, indexInfo)
+			if job.ReorgMeta.IsDistReorg {
+				done, ver, err = runIngestReorgJobDist(w, d, t, job, tbl, indexInfo)
+			} else {
+				done, ver, err = runIngestReorgJob(w, d, t, job, tbl, indexInfo)
+			}
 		case model.ReorgTypeTxnMerge:
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 		}
@@ -846,6 +850,20 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", indexInfo.BackfillState)
 	}
+}
+
+func runIngestReorgJobDist(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
+	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+
+	if !done {
+		return false, ver, nil
+	}
+
+	return true, ver, nil
 }
 
 func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,

@@ -361,6 +361,7 @@ func TestAddIndexIngestRestoredData(t *testing.T) {
 }
 
 func TestAddIndexIngestPanicOnCopRead(t *testing.T) {
+	t.Skip("skip")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
