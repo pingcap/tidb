@@ -283,7 +283,6 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
-
 	}
 
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain

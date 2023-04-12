@@ -17,6 +17,7 @@ package statistics
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"reflect"
 	"sort"
@@ -248,7 +249,10 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 }
 
 func queryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
-	sc := sctx.GetSessionVars().StmtCtx
+	var sc *stmtctx.StatementContext
+	if sctx != nil {
+		sc = sctx.GetSessionVars().StmtCtx
+	}
 	bytes, err := tablecodec.EncodeValue(sc, nil, val)
 	if err != nil {
 		return 0, errors.Trace(err)
