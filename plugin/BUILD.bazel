@@ -38,6 +38,7 @@ go_test(
     ],
     embed = [":plugin"],
     flaky = True,
+    shard_count = 10,
     deps = [
         "//kv",
         "//parser/mysql",

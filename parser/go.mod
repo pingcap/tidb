@@ -11,7 +11,7 @@ require (
 	go.uber.org/goleak v1.1.11
 	go.uber.org/zap v1.24.0
 	golang.org/x/exp v0.0.0-20220428152302-39d4317da171
-	golang.org/x/text v0.8.0
+	golang.org/x/text v0.9.0
 	modernc.org/parser v1.0.2
 	modernc.org/y v1.0.1
 )
