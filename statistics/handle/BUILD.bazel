@@ -74,7 +74,11 @@ go_test(
     embed = [":handle"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 50,
+=======
+    shard_count = 34,
+>>>>>>> db68a1222e9 (staistics: fix load stats from old version json (#42967))
     deps = [
         "//config",
         "//domain",
