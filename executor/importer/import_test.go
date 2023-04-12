@@ -108,8 +108,8 @@ func TestInitOptions(t *testing.T) {
 
 		{OptionStr: maxWriteSpeedOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: maxWriteSpeedOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: maxWriteSpeedOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: maxWriteSpeedOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: maxWriteSpeedOption + "=-1", Err: exeerrors.ErrInvalidOptionVal},
 
 		{OptionStr: splitFileOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: splitFileOption + "=111", Err: exeerrors.ErrInvalidOptionVal},
@@ -187,7 +187,7 @@ func TestAdjustOptions(t *testing.T) {
 	e.adjustOptions()
 	require.Equal(t, minDiskQuota, e.diskQuota)
 	require.Equal(t, int64(runtime.NumCPU()), e.ThreadCnt)
-	require.Equal(t, minWriteSpeed, e.maxWriteSpeed)
+	require.Equal(t, 10, e.maxWriteSpeed) // not adjusted
 }
 
 func TestGetMsgFromBRError(t *testing.T) {

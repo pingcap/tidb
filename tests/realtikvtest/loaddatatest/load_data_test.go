@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/executor/importer"
@@ -383,6 +385,7 @@ func (s *mockGCSSuite) testMixedCompression(importMode string) {
 		"5 test5", "6 test6", "7 test7", "8 test8", "9 test9",
 	))
 
+	// with ignore N rows
 	s.tk.MustExec("truncate table multi_load.t")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/compress.*?endpoint=%s'
 		INTO TABLE multi_load.t fields terminated by ',' ignore 3 lines %s;`, gcsEndpoint, withOptions)
@@ -632,5 +635,49 @@ func (s *mockGCSSuite) testOtherCharset(importMode string) {
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT HEX(j) FROM load_charset.binary;").Check(testkit.Rows(
 		"0001020304050607",
+	))
+}
+
+func (s *mockGCSSuite) TestMaxWriteSpeed() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_write_speed;")
+	s.tk.MustExec("CREATE DATABASE load_test_write_speed;")
+	s.tk.MustExec(`CREATE TABLE load_test_write_speed.t(a int, b int)`)
+
+	lineCount := 1000
+	data := make([]byte, 0, 1<<13)
+	for i := 0; i < lineCount; i++ {
+		data = append(data, []byte(fmt.Sprintf("%d,%d\n", i, i))...)
+	}
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load",
+			Name:       "speed-test.csv",
+		},
+		Content: data,
+	})
+
+	// without speed limit
+	start := time.Now()
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/speed-test.csv?endpoint=%s'
+		INTO TABLE load_test_write_speed.t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	duration := time.Since(start).Seconds()
+	s.LessOrEqual(duration, 2.0) // 1.3 seconds on my laptop.
+	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
+		strconv.Itoa(lineCount),
+	))
+
+	// with speed limit
+	s.tk.MustExec("TRUNCATE TABLE load_test_write_speed.t;")
+	start = time.Now()
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/speed-test.csv?endpoint=%s'
+		INTO TABLE load_test_write_speed.t fields terminated by ',' with import_mode='physical', max_write_speed=6000`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	// generated kv is 34744 bytes, so it should take at least 5 seconds.
+	duration = time.Since(start).Seconds()
+	s.GreaterOrEqual(duration, 5.0)
+	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
+		strconv.Itoa(lineCount),
 	))
 }

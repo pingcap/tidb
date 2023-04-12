@@ -63,10 +63,10 @@ const (
 	// LogicalImportMode represents the import mode is SQL-like.
 	LogicalImportMode = "logical"
 	// PhysicalImportMode represents the import mode is KV-like.
-	PhysicalImportMode  = "physical"
-	unlimitedWriteSpeed = config.ByteSize(math.MaxInt64)
+	PhysicalImportMode = "physical"
+	// 0 means no limit
+	unlimitedWriteSpeed = config.ByteSize(0)
 	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
-	minWriteSpeed       = config.ByteSize(1 << 10)  // 1KiB/s
 
 	importModeOption    = "import_mode"
 	diskQuotaOption     = "disk_quota"
@@ -459,7 +459,7 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.maxWriteSpeed.UnmarshalText([]byte(v)); err != nil || e.maxWriteSpeed <= 0 {
+		if err = e.maxWriteSpeed.UnmarshalText([]byte(v)); err != nil || e.maxWriteSpeed < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -497,9 +497,6 @@ func (e *LoadDataController) adjustOptions() {
 	numCPU := int64(runtime.NumCPU())
 	if e.ThreadCnt > numCPU {
 		e.ThreadCnt = numCPU
-	}
-	if e.maxWriteSpeed < minWriteSpeed {
-		e.maxWriteSpeed = minWriteSpeed
 	}
 }
 
