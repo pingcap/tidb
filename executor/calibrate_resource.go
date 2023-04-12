@@ -32,7 +32,7 @@ import (
 // but is enough here because the maximum RU capacity is depended on both the cluster and
 // the workload.
 var workloadBaseRUCostMap = map[ast.CalibrateResourceType]*baseResourceCost{
-	ast.CalibrateResourceTPCC: {
+	ast.TPCC: {
 		tidbCPU:       0.6,
 		kvCPU:         0.15,
 		readBytes:     units.MiB / 2,

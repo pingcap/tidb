@@ -203,8 +203,8 @@ type TxnCtxNoNeedToRestore struct {
 	shardRemain  int
 	currentShard int64
 
-	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
-	unchangedRowKeys map[string]struct{}
+	// unchangedKeys is used to store the unchanged keys that needs to lock for pessimistic transaction.
+	unchangedKeys map[string]struct{}
 
 	PessimisticCacheHit int
 
@@ -278,20 +278,20 @@ func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
-// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
-func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
-	if tc.unchangedRowKeys == nil {
-		tc.unchangedRowKeys = map[string]struct{}{}
+// AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte) {
+	if tc.unchangedKeys == nil {
+		tc.unchangedKeys = map[string]struct{}{}
 	}
-	tc.unchangedRowKeys[string(key)] = struct{}{}
+	tc.unchangedKeys[string(key)] = struct{}{}
 }
 
-// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
-func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
-	for key := range tc.unchangedRowKeys {
+// CollectUnchangedKeysForLock collects unchanged keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedKeys {
 		buf = append(buf, kv.Key(key))
 	}
-	tc.unchangedRowKeys = nil
+	tc.unchangedKeys = nil
 	return buf
 }
 
@@ -661,8 +661,8 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
-	// PreparedParams params for prepared statements
-	PreparedParams    PreparedParams
+	// Parameter values for plan cache.
+	PlanCacheParams   *PlanCacheParamList
 	LastUpdateTime4PC types.Time
 
 	// ActiveRoles stores active roles for current user
@@ -784,6 +784,9 @@ type SessionVars struct {
 
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
+
+	// InMultiStmts indicates whether the statement is a multi-statement like `update t set a=1; update t set b=2;`.
+	InMultiStmts bool
 
 	// AllowWriteRowID variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
@@ -1656,14 +1659,53 @@ func (p PartitionPruneMode) Update() PartitionPruneMode {
 	}
 }
 
-// PreparedParams contains the parameters of the current prepared statement when executing it.
-type PreparedParams []types.Datum
+// PlanCacheParamList stores the parameters for plan cache.
+// Use attached methods to access or modify parameter values instead of accessing them directly.
+type PlanCacheParamList struct {
+	paramValues     []types.Datum
+	forNonPrepCache bool
+}
 
-func (pps PreparedParams) String() string {
-	if len(pps) == 0 {
+// NewPlanCacheParamList creates a new PlanCacheParams.
+func NewPlanCacheParamList() *PlanCacheParamList {
+	p := &PlanCacheParamList{paramValues: make([]types.Datum, 0, 8)}
+	p.Reset()
+	return p
+}
+
+// Reset resets the PlanCacheParams.
+func (p *PlanCacheParamList) Reset() {
+	p.paramValues = p.paramValues[:0]
+	p.forNonPrepCache = false
+}
+
+// String implements the fmt.Stringer interface.
+func (p *PlanCacheParamList) String() string {
+	if p == nil || len(p.paramValues) == 0 ||
+		p.forNonPrepCache { // hide non-prep parameter values by default
 		return ""
 	}
-	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
+	return " [arguments: " + types.DatumsToStrNoErr(p.paramValues) + "]"
+}
+
+// Append appends a parameter value to the PlanCacheParams.
+func (p *PlanCacheParamList) Append(vs ...types.Datum) {
+	p.paramValues = append(p.paramValues, vs...)
+}
+
+// SetForNonPrepCache sets the flag forNonPrepCache.
+func (p *PlanCacheParamList) SetForNonPrepCache(flag bool) {
+	p.forNonPrepCache = flag
+}
+
+// GetParamValue returns the value of the parameter at the specified index.
+func (p *PlanCacheParamList) GetParamValue(idx int) types.Datum {
+	return p.paramValues[idx]
+}
+
+// AllParamValues returns all parameter values.
+func (p *PlanCacheParamList) AllParamValues() []types.Datum {
+	return p.paramValues
 }
 
 // ConnectionInfo presents the connection information, which is mainly used by audit logs.
@@ -1720,7 +1762,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		stmtVars:                      make(map[string]string),
 		PreparedStmts:                 make(map[uint32]interface{}),
 		PreparedStmtNameToID:          make(map[string]uint32),
-		PreparedParams:                make([]types.Datum, 0, 10),
+		PlanCacheParams:               NewPlanCacheParamList(),
 		TxnCtx:                        &TransactionContext{},
 		RetryInfo:                     &RetryInfo{},
 		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
@@ -1814,6 +1856,10 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
+	}
+	// Always disable late materialization for disaggregated TiFlash until it is supported.
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		vars.EnableLateMaterialization = false
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

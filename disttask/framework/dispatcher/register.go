@@ -54,9 +54,6 @@ func GetTaskFlowHandle(taskType string) TaskFlowHandle {
 	return taskFlowHandleMap.handleMap[taskType]
 }
 
-// MockTiDBIDs is used to mock TiDB IDs.
-var MockTiDBIDs []string
-
 func init() {
 	taskFlowHandleMap.handleMap = make(map[string]TaskFlowHandle)
 }

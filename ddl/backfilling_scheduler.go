@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -60,7 +61,7 @@ const maxBackfillWorkerSize = 16
 type txnBackfillScheduler struct {
 	ctx          context.Context
 	reorgInfo    *reorgInfo
-	sessPool     *sessionPool
+	sessPool     *sess.Pool
 	tp           backfillerType
 	tbl          table.PhysicalTable
 	decodeColMap map[int64]decoder.Column
@@ -74,16 +75,16 @@ type txnBackfillScheduler struct {
 	closed   bool
 }
 
-func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
+func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-		return newIngestBackfillScheduler(ctx, info, tbl), nil
+		return newIngestBackfillScheduler(ctx, info, tbl, false), nil
 	}
 	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
 }
 
-func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
+func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
 	decColMap, err := makeupDecodeColMap(sessCtx, info.dbInfo.Name, tbl)
@@ -266,16 +267,18 @@ type ingestBackfillScheduler struct {
 	writerMaxID int
 	poolErr     chan error
 	backendCtx  *ingest.BackendContext
+	distribute  bool
 }
 
-func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo, tbl table.PhysicalTable) *ingestBackfillScheduler {
+func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo, tbl table.PhysicalTable, distribute bool) *ingestBackfillScheduler {
 	return &ingestBackfillScheduler{
-		ctx:       ctx,
-		reorgInfo: info,
-		tbl:       tbl,
-		taskCh:    make(chan *reorgBackfillTask, backfillTaskChanSize),
-		resultCh:  make(chan *backfillResult, backfillTaskChanSize),
-		poolErr:   make(chan error),
+		ctx:        ctx,
+		reorgInfo:  info,
+		tbl:        tbl,
+		taskCh:     make(chan *reorgBackfillTask, backfillTaskChanSize),
+		resultCh:   make(chan *backfillResult, backfillTaskChanSize),
+		poolErr:    make(chan error),
+		distribute: distribute,
 	}
 }
 
@@ -373,8 +376,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 			zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
 		return nil
 	}
-	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
-		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, b.writerMaxID, b.copReqSenderPool, sessCtx)
+	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, ei, b.resultCh, job.ID, reorgInfo.SchemaName, b.reorgInfo.currElement.ID, b.writerMaxID, b.copReqSenderPool, sessCtx, b.distribute)
 	if err != nil {
 		// Return an error only if it is the first worker.
 		if b.writerMaxID == 0 {
@@ -432,11 +434,13 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		w.resultCh <- result
 		return
 	}
-	err := w.d.isReorgRunnable(w.jobID, false)
-	if err != nil {
-		result.err = err
-		w.resultCh <- result
-		return
+	if !w.distribute {
+		err := w.d.isReorgRunnable(w.jobID, false)
+		if err != nil {
+			result.err = err
+			w.resultCh <- result
+			return
+		}
 	}
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {

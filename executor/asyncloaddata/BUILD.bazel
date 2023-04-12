@@ -35,9 +35,10 @@ go_test(
     embed = [":asyncloaddata"],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//br/pkg/lightning/config",
+        "//executor",
         "//executor/importer",
         "//kv",
         "//parser/auth",

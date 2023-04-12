@@ -115,7 +115,6 @@ go_test(
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
-        "//br/pkg/lightning/backend/noop",
         "//br/pkg/lightning/backend/tidb",
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/common",

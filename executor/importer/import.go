@@ -31,6 +31,7 @@ import (
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -41,9 +42,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
+	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
 )
 
@@ -105,6 +108,10 @@ var (
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 )
 
+// GetKVStore returns a kv.Storage.
+// kv encoder of physical mode needs it.
+var GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
+
 // FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {
 	Column  *table.Column
@@ -142,6 +149,7 @@ type LoadDataController struct {
 	// todo: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
+	// - ref columns in set clause is allowed in mysql, but not in tidb
 	InsertColumns []*table.Column
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
@@ -161,7 +169,7 @@ type LoadDataController struct {
 	checksum          config.PostOpLevel
 	addIndex          bool
 	analyze           config.PostOpLevel
-	threadCnt         int64
+	ThreadCnt         int64
 	BatchSize         int64
 	maxWriteSpeed     config.ByteSize // per second
 	splitFile         bool
@@ -316,8 +324,13 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	return nil
 }
 
+var ignoreInTest = false
+
 func (e *LoadDataController) initDefaultOptions() {
 	threadCnt := runtime.NumCPU()
+	if intest.InTest && !ignoreInTest {
+		threadCnt = 1
+	}
 	if e.Format == LoadDataFormatParquet {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
@@ -327,7 +340,7 @@ func (e *LoadDataController) initDefaultOptions() {
 	e.checksum = config.OpLevelRequired
 	e.addIndex = true
 	e.analyze = config.OpLevelOptional
-	e.threadCnt = int64(threadCnt)
+	e.ThreadCnt = int64(threadCnt)
 	e.BatchSize = 1000
 	e.maxWriteSpeed = unlimitedWriteSpeed
 	e.splitFile = false
@@ -418,8 +431,8 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 	}
 	if opt, ok := specifiedOptions[threadOption]; ok {
 		// boolean true will be taken as 1
-		e.threadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || e.threadCnt <= 0 {
+		e.ThreadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || e.ThreadCnt <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -470,8 +483,8 @@ func (e *LoadDataController) adjustOptions() {
 	}
 	// max value is cpu-count
 	numCPU := int64(runtime.NumCPU())
-	if e.threadCnt > numCPU {
-		e.threadCnt = numCPU
+	if e.ThreadCnt > numCPU {
+		e.ThreadCnt = numCPU
 	}
 	if e.maxWriteSpeed < minWriteSpeed {
 		e.maxWriteSpeed = minWriteSpeed
@@ -656,9 +669,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek in LOAD DATA")
 		}
+		compressTp := mydump.ParseCompressionOnFileExtension(path)
 		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
-			Path:     path,
-			FileSize: size,
+			Path:        path,
+			FileSize:    size,
+			Compression: compressTp,
 		})
 	} else {
 		commonPrefix := path[:idx]
@@ -672,9 +687,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
+				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
 				dataFiles = append(dataFiles, &mydump.SourceFileMeta{
-					Path:     remotePath,
-					FileSize: size,
+					Path:        remotePath,
+					FileSize:    size,
+					Compression: compressTp,
 				})
 				return nil
 			})
@@ -695,7 +712,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 		f := e.dataFiles[i]
 		result = append(result, LoadDataReaderInfo{
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-				fileReader, err2 := e.dataStore.Open(ctx, f.Path)
+				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore)
 				if err2 != nil {
 					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
 				}
@@ -708,8 +725,10 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 }
 
 // GetParser returns a parser for the data file.
-func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo LoadDataReaderInfo) (
-	parser mydump.Parser, err error) {
+func (e *LoadDataController) GetParser(
+	ctx context.Context,
+	dataFileInfo LoadDataReaderInfo,
+) (parser mydump.Parser, err error) {
 	reader, err2 := dataFileInfo.Opener(ctx)
 	if err2 != nil {
 		return nil, err2
@@ -788,8 +807,30 @@ func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo LoadDat
 
 // PhysicalImport do physical import.
 func (e *LoadDataController) PhysicalImport(ctx context.Context) (int64, error) {
-	// todo: implement it
-	return 0, nil
+	// todo: implement job
+	importer, err := newTableImporter(ctx, e)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = importer.Close()
+	}()
+	return 0, importer.importTable(ctx)
+}
+
+func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
+	tbl := filter.Table{
+		Schema: e.DBName,
+		Name:   e.Table.Meta().Name.O,
+	}
+	res := []mydump.FileInfo{}
+	for _, f := range e.dataFiles {
+		res = append(res, mydump.FileInfo{
+			TableName: tbl,
+			FileMeta:  *f,
+		})
+	}
+	return res
 }
 
 // GetMsgFromBRError get msg from BR error.

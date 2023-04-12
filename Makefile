@@ -55,6 +55,7 @@ errdoc:tools/bin/errdoc-gen
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./br/pkg/lightning/...
 
 license:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
@@ -333,8 +334,9 @@ mock_s3iface:
 	@mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API > br/pkg/mock/s3iface.go
 
 mock_lightning:
-	@mockgen -package mock -mock_names AbstractBackend=MockBackend github.com/pingcap/tidb/br/pkg/lightning/backend AbstractBackend,EngineWriter,TargetInfoGetter > br/pkg/mock/backend.go
+	@mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
 	@mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
+	@mockgen -package mocklocal github.com/pingcap/tidb/br/pkg/lightning/backend/local DiskUsage > br/pkg/mock/mocklocal/local.go
 
 # There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
 # but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
@@ -478,6 +480,10 @@ bazel_txntest: failpoint-enable bazel_ci_prepare
 bazel_addindextest: failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest/...
+
+bazel_loaddatatest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+		-- //tests/realtikvtest/loaddatatest/...
 
 bazel_lint: bazel_prepare
 	bazel build //... --//build:with_nogo_flag=true
