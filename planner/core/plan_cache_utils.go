@@ -547,6 +547,8 @@ func extractMatchOptsFromAST(sctx sessionctx.Context, is infoschema.InfoSchema, 
 		LimitOffsetAndCount: checker.offsetAndCount,
 		HasSubQuery:         checker.hasSubQuery,
 		StatsVersionHash:    checker.statsVersionHash,
+
+		ForeignKeyChecks: sctx.GetSessionVars().ForeignKeyChecks,
 	}, nil
 }
 
