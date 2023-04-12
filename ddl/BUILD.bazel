@@ -70,6 +70,7 @@ go_library(
         "//disttask/framework/dispatcher",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
+        "//disttask/framework/storage",
         "//domain/infosync",
         "//expression",
         "//infoschema",

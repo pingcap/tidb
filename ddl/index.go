@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1871,6 +1874,9 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgIn
 func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+		if t.Meta().Partition != nil && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+			return executeDistGlobalTask(reorgInfo)
+		}
 		return w.controlWriteTableRecord(w.sessPool, t, typeAddIndexWorker, reorgInfo)
 	}
 
@@ -1897,6 +1903,81 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 		err = w.addPhysicalTableIndex(phyTbl, reorgInfo)
 	}
 	return errors.Trace(err)
+}
+
+func executeDistGlobalTask(reorgInfo *reorgInfo) error {
+	if reorgInfo.mergingTmpIdx {
+		return errors.New("do not support merge index")
+	}
+
+	taskType := BackfillTaskType
+	taskMeta := &BackfillGlobalMeta{
+		Job:        *reorgInfo.Job.Clone(),
+		EleID:      reorgInfo.currElement.ID,
+		EleTypeKey: reorgInfo.currElement.TypeKey,
+	}
+
+	metaData, err := json.Marshal(taskMeta)
+	if err != nil {
+		return err
+	}
+
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+
+	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
+	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	if err != nil {
+		return err
+	}
+
+	if globalTask == nil {
+		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, distPhysicalTableConcurrency, metaData)
+		if err != nil {
+			return nil
+		}
+
+		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
+		if err != nil {
+			return err
+		}
+
+		if globalTask == nil {
+			return errors.Errorf("cannot find global task with ID %d", taskID)
+		}
+	}
+
+	ticker := time.NewTicker(CheckBackfillJobFinishInterval)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		// TODO: handle cancel correctly.
+		if reorgInfo.Job.IsCancelling() {
+			return dbterror.ErrCancelledDDLJob
+		}
+
+		found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
+		if err != nil {
+			logutil.BgLogger().Info("[ddl] get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
+			continue
+		}
+
+		if found == nil {
+			return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
+		}
+
+		if found.State == proto.TaskStateSucceed {
+			return nil
+		}
+
+		// TODO: get the original error message.
+		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
+			return errors.Errorf("ddl task stopped with state %s", found.State)
+		}
+	}
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {
