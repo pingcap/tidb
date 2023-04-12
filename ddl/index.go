@@ -1840,7 +1840,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if t.Meta().Partition != nil && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			return w.executeDistGlobalTask(reorgInfo)
+			return executeDistGlobalTask(reorgInfo)
 		}
 		return w.controlWriteTableRecord(w.sessPool, t, typeAddIndexWorker, reorgInfo)
 	}
@@ -1870,7 +1870,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	return errors.Trace(err)
 }
 
-func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
+func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
@@ -1918,29 +1918,27 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	defer ticker.Stop()
 
 	for {
-		select {
-		case <-ticker.C:
-			if reorgInfo.Job.IsCancelling() {
-				return dbterror.ErrCancelledDDLJob
-			}
+		<-ticker.C
+		if reorgInfo.Job.IsCancelling() {
+			return dbterror.ErrCancelledDDLJob
+		}
 
-			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
-			if err != nil {
-				logutil.BgLogger().Info("[ddl] get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
-				continue
-			}
+		found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
+		if err != nil {
+			logutil.BgLogger().Info("[ddl] get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
+			continue
+		}
 
-			if found == nil {
-				return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
-			}
+		if found == nil {
+			return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
+		}
 
-			if found.State == proto.TaskStateSucceed {
-				return nil
-			}
+		if found.State == proto.TaskStateSucceed {
+			return nil
+		}
 
-			if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
-				return errors.Errorf("ddl task stopped with state %s", found.State)
-			}
+		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
+			return errors.Errorf("ddl task stopped with state %s", found.State)
 		}
 	}
 }
