@@ -213,3 +213,6 @@ type BackFillSubtaskExecutor struct {
 func (b *BackFillSubtaskExecutor) Run(ctx context.Context) error {
 	return nil
 }
+
+// BackfillTaskType is the type of backfill task.
+const BackfillTaskType = "backfill"

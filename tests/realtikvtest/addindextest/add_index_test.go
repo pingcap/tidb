@@ -126,3 +126,26 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	tk.MustExec("update employee set pid=id-1 where id>1 and pid is null")
 	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
 }
+
+func TestAddIndexDistBasic(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+
+	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 8;")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
+	tk.MustExec("alter table t add index idx(a);")
+	tk.MustExec("admin check index t idx;")
+	tk.MustExec(`set global tidb_enable_dist_task=0;`)
+}
