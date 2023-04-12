@@ -69,14 +69,17 @@ func runLll(pass *analysis.Pass, settings *settings) error {
 
 	spaces := strings.Repeat(" ", settings.TabWidth)
 
-	for idx, f := range fileNames {
+	for _, f := range fileNames {
 		lintIssues, err := getLLLIssuesForFile(f, settings.LineLength, spaces)
 		if err != nil {
 			return err
 		}
 
 		for _, i := range lintIssues {
-			pass.Reportf(pass.Files[idx].Pos(), "%s:%d too long", i.Filename, i.Line)
+			pass.Report(analysis.Diagnostic{
+				Pos:     1,
+				Message: fmt.Sprintf("%s:%d:0 too long", i.Filename, i.Line),
+			})
 		}
 	}
 
