@@ -296,3 +296,37 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 	}...))
 	importer.MinDeliverRowCnt = bakCnt
 }
+
+func (s *mockGCSSuite) TestMultiValueIndex() {
+	s.testMultiValueIndex(importer.LogicalImportMode)
+	s.testMultiValueIndex(importer.PhysicalImportMode)
+}
+
+func (s *mockGCSSuite) testMultiValueIndex(importMode string) {
+	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec(`CREATE TABLE load_csv.t (
+		i INT, j JSON,
+		KEY idx ((cast(j as signed array)))
+		);`)
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load-csv",
+			Name:       "1.csv",
+		},
+		Content: []byte(`i,s
+1,"[1,2,3]"
+2,"[2,3,4]"`),
+	})
+
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-csv/1.csv?endpoint=%s' INTO TABLE load_csv.t
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
+		LINES TERMINATED BY '\n' IGNORE 1 LINES %s;`, gcsEndpoint, withOptions)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
+		"1 [1, 2, 3]",
+		"2 [2, 3, 4]",
+	))
+}
