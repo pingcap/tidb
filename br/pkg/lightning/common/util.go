@@ -214,30 +214,38 @@ func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string
 // QueryStringRows executes a query that is expected to return multiple rows
 // whose every column is string.
 func (t SQLWithRetry) QueryStringRows(ctx context.Context, purpose string, query string) ([][]string, error) {
-	rows, err := t.DB.QueryContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var res [][]string
-	colNames, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		row := make([]string, len(colNames))
-		refs := make([]interface{}, 0, len(row))
-		for i := range row {
-			refs = append(refs, &row[i])
-		}
-		if err := rows.Scan(refs...); err != nil {
-			return nil, err
-		}
-		res = append(res, row)
+	logger := t.Logger
+	if !t.HideQueryLog {
+		logger = logger.With(zap.String("query", query))
 	}
 
-	return res, rows.Err()
+	err := t.perform(ctx, logger, purpose, func() error {
+		rows, err := t.DB.QueryContext(ctx, query)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		colNames, err := rows.Columns()
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			row := make([]string, len(colNames))
+			refs := make([]interface{}, 0, len(row))
+			for i := range row {
+				refs = append(refs, &row[i])
+			}
+			if err := rows.Scan(refs...); err != nil {
+				return err
+			}
+			res = append(res, row)
+		}
+		return rows.Err()
+	})
+
+	return res, err
 }
 
 // Transact executes an action in a transaction, and retry if the
