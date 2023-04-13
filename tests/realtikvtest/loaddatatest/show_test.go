@@ -258,7 +258,6 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer close(importer.TestSyncCh)
 
 		tk2 := testkit.NewTestKit(s.T(), s.store)
 		tk2.Session().GetSessionVars().User = user
