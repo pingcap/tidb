@@ -721,7 +721,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
 	}
-	if b.GetLocal() != nil && !intest.InTest {
+	if b.GetLocal() != nil {
 		return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
 	}
 	// try to find pattern error in advance
