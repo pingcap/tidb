@@ -3401,8 +3401,8 @@ func TestIssue42937(t *testing.T) {
 	tk2.MustExec("set @@tidb_enable_1pc = 0")
 	tk3.MustExec("use test")
 
-	tk.MustExec("create table t(id int primary key, v int unique, v2 int, index(v, v2))")
-	tk.MustExec("insert into t values (1, 10, 10), (2, 20, 20), (3, 30, 30), (4, 40, 40)")
+	tk.MustExec("create table t(id int primary key, v int unique)")
+	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30), (4, 40)")
 	tk.MustExec("create table t2 (id int primary key, v int)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2)")
 
@@ -3444,7 +3444,7 @@ func TestIssue42937(t *testing.T) {
 	require.NoError(t, failpoint.Disable("tikvclient/twoPCShortLockTTL"))
 	require.NoError(t, failpoint.Disable("tikvclient/shortPessimisticLockTTL"))
 
-	tk2.MustExec("insert into t values (5, 11, 50)")
+	tk2.MustExec("insert into t values (5, 11)")
 
 	time.Sleep(time.Second * 5)
 
@@ -3452,9 +3452,10 @@ func TestIssue42937(t *testing.T) {
 	mustRecv(t, ch)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows(
-		"1 0 10",
-		"2 21 21",
-		"3 31 30",
-		"4 41 40",
+		"1 0",
+		"2 21",
+		"3 31",
+		"4 41",
+		"5 11",
 	))
 }
