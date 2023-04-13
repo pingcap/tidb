@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -184,13 +185,12 @@ func TestIsIngestRetryable(t *testing.T) {
 }
 
 func TestRegionJobRetryer(t *testing.T) {
-	putBackCh := make(chan *regionJob, 10)
-	done := make(chan struct{})
-	retryer := newRegionJobRetryer(putBackCh)
-	go func() {
-		retryer.run(context.Background())
-		close(done)
-	}()
+	var (
+		putBackCh   = make(chan *regionJob, 10)
+		jobWg       sync.WaitGroup
+		ctx, cancel = context.WithCancel(context.Background())
+	)
+	retryer := startRegionJobRetryer(ctx, putBackCh, &jobWg)
 	require.Len(t, putBackCh, 0)
 
 	for i := 0; i < 8; i++ {
@@ -198,7 +198,9 @@ func TestRegionJobRetryer(t *testing.T) {
 			job := &regionJob{
 				waitUntil: time.Now().Add(time.Hour),
 			}
-			retryer.push(job)
+			jobWg.Add(1)
+			ok := retryer.push(job)
+			require.True(t, ok)
 		}()
 	}
 	select {
@@ -213,31 +215,28 @@ func TestRegionJobRetryer(t *testing.T) {
 		},
 		waitUntil: time.Now().Add(-time.Second),
 	}
+	jobWg.Add(1)
 	ok := retryer.push(job)
 	require.True(t, ok)
 	select {
 	case j := <-putBackCh:
+		jobWg.Done()
 		require.Equal(t, job, j)
 	case <-time.After(5 * time.Second):
 		require.Fail(t, "should put back very quickly")
 	}
 
-	remainCnt := retryer.close()
-	require.Equal(t, 8, remainCnt)
-	<-done
+	cancel()
+	jobWg.Wait()
 	ok = retryer.push(job)
 	require.False(t, ok)
 
 	// test when putBackCh is blocked, retryer.push is not blocked and
 	// the return value of retryer.close is correct
 
-	done = make(chan struct{})
+	ctx, cancel = context.WithCancel(context.Background())
 	putBackCh = make(chan *regionJob)
-	retryer = newRegionJobRetryer(putBackCh)
-	go func() {
-		retryer.run(context.Background())
-		close(done)
-	}()
+	retryer = startRegionJobRetryer(ctx, putBackCh, &jobWg)
 
 	job = &regionJob{
 		keyRange: Range{
@@ -245,6 +244,7 @@ func TestRegionJobRetryer(t *testing.T) {
 		},
 		waitUntil: time.Now().Add(-time.Second),
 	}
+	jobWg.Add(1)
 	ok = retryer.push(job)
 	require.True(t, ok)
 	time.Sleep(3 * time.Second)
@@ -255,9 +255,9 @@ func TestRegionJobRetryer(t *testing.T) {
 		},
 		waitUntil: time.Now().Add(-time.Second),
 	}
+	jobWg.Add(1)
 	ok = retryer.push(job)
 	require.True(t, ok)
-	remainCnt = retryer.close()
-	require.Equal(t, 2, remainCnt)
-	<-done
+	cancel()
+	jobWg.Wait()
 }

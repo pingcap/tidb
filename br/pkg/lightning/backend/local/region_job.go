@@ -725,20 +725,32 @@ type regionJobRetryer struct {
 	}
 	putBackCh chan<- *regionJob
 	reload    chan struct{}
-	done      chan struct{}
+	jobWg     *sync.WaitGroup
 }
 
-func newRegionJobRetryer(putBackCh chan<- *regionJob) *regionJobRetryer {
+// startRegionJobRetryer starts a new regionJobRetryer and it will run in
+// background to put the job back to `putBackCh` when job's waitUntil is reached.
+// Cancel the `ctx` will stop retryer and `jobWg.Done` will be trigger for jobs
+// that are not put back yet.
+func startRegionJobRetryer(
+	ctx context.Context,
+	putBackCh chan<- *regionJob,
+	jobWg *sync.WaitGroup,
+) *regionJobRetryer {
 	ret := &regionJobRetryer{
 		putBackCh: putBackCh,
 		reload:    make(chan struct{}, 1),
-		done:      make(chan struct{}),
+		jobWg:     jobWg,
 	}
 	ret.protectedQueue.q = make(regionJobRetryHeap, 0, 16)
+	go ret.run(ctx)
 	return ret
 }
 
+// run is only internally used, caller should not use it.
 func (q *regionJobRetryer) run(ctx context.Context) {
+	defer q.close()
+
 	for {
 		var front *regionJob
 		q.protectedQueue.mu.Lock()
@@ -751,8 +763,6 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 		case front != nil:
 			select {
 			case <-ctx.Done():
-				return
-			case <-q.done:
 				return
 			case <-q.reload:
 			case <-time.After(time.Until(front.waitUntil)):
@@ -768,9 +778,6 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 				case <-ctx.Done():
 					q.protectedToPutBack.mu.Unlock()
 					return
-				case <-q.done:
-					q.protectedToPutBack.mu.Unlock()
-					return
 				case q.putBackCh <- q.protectedToPutBack.toPutBack:
 					q.protectedToPutBack.toPutBack = nil
 					q.protectedToPutBack.mu.Unlock()
@@ -781,11 +788,25 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-q.done:
-				return
 			case <-q.reload:
 			}
 		}
+	}
+}
+
+// close is only internally used, caller should not use it.
+func (q *regionJobRetryer) close() {
+	q.protectedClosed.mu.Lock()
+	defer q.protectedClosed.mu.Unlock()
+	q.protectedClosed.closed = true
+
+	count := len(q.protectedQueue.q)
+	if q.protectedToPutBack.toPutBack != nil {
+		count++
+	}
+	for count > 0 {
+		q.jobWg.Done()
+		count--
 	}
 }
 
@@ -806,29 +827,4 @@ func (q *regionJobRetryer) push(job *regionJob) bool {
 	default:
 	}
 	return true
-}
-
-// close will return the number of jobs that are not put back when first called.
-// close MUST be called when caller is sure that regionJobRetryer holds no job
-// or regionJobRetryer.run has exited.
-func (q *regionJobRetryer) close() int {
-	q.protectedClosed.mu.Lock()
-	defer q.protectedClosed.mu.Unlock()
-	if q.protectedClosed.closed {
-		return 0
-	}
-	q.protectedClosed.closed = true
-
-	close(q.done)
-
-	// don't need to lock them in fact because of the requirement of calling close
-	q.protectedQueue.mu.Lock()
-	defer q.protectedQueue.mu.Unlock()
-	q.protectedToPutBack.mu.Lock()
-	defer q.protectedToPutBack.mu.Unlock()
-	ret := len(q.protectedQueue.q)
-	if q.protectedToPutBack.toPutBack != nil {
-		ret++
-	}
-	return ret
 }

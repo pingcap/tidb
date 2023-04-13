@@ -1218,9 +1218,8 @@ func (local *Backend) generateJobForRange(
 }
 
 // startWorker creates a worker that reads from the job channel and processes.
-// startWorker will return nil if it's expected to stop, which means the context
-// is canceled or channel is closed. It will return not nil error when it actively
-// stops.
+// startWorker will return nil if it's expected to stop, where the only case is
+// the context canceled. It will return not nil error when it actively stops.
 // startWorker must Done the jobWg if it does not put the job into jobOutCh.
 func (local *Backend) startWorker(
 	ctx context.Context,
@@ -1233,6 +1232,8 @@ func (local *Backend) startWorker(
 			return nil
 		case job, ok := <-jobInCh:
 			if !ok {
+				// In fact we don't use close input channel to notify worker to
+				// exit, because there's a cycle in workflow.
 				return nil
 			}
 
@@ -1451,17 +1452,9 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 		jobWg                sync.WaitGroup
 		dispatchJobGoroutine = make(chan struct{})
 	)
+	defer workerCancel()
 
-	retryer := newRegionJobRetryer(jobToWorkerCh)
-	go func() {
-		retryer.run(workerCtx)
-		// race with retryer.push(job)
-		n := retryer.close()
-		for n > 0 {
-			n--
-			jobWg.Done()
-		}
-	}()
+	retryer := startRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
 
 	// dispatchJobGoroutine handles processed job from worker, it will only exit
 	// when jobFromWorkerCh is closed to avoid worker is blocked on sending to
@@ -1534,8 +1527,7 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 	}
 
 	jobWg.Wait()
-	close(jobToWorkerCh)
-	retryer.close()
+	workerCancel()
 	firstErr.Set(workGroup.Wait())
 	return firstErr.Get()
 }
