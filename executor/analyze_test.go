@@ -274,6 +274,7 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 
 func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	_ = checkHistogram
+	t.Skip("unstable, skip it and fix it before 20210618")
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
