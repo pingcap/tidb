@@ -285,7 +285,7 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr []string) bool {
 	var err error
 	if len(errStr) > 0 {
 		// Found an error when task is running.
-		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.String("err msg", errStr))
+		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.Strings("err msg", errStr))
 		err = d.processErrFlow(gTask, errStr)
 	} else {
 		if gTask.State == proto.TaskStateReverting {
