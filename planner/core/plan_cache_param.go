@@ -15,9 +15,9 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
@@ -41,8 +41,7 @@ var (
 		return pr
 	}}
 	paramCtxPool = sync.Pool{New: func() interface{} {
-		buf := new(strings.Builder)
-		buf.Reset()
+		buf := new(bytes.Buffer)
 		restoreCtx := format.NewRestoreCtx(format.RestoreForNonPrepPlanCache|format.RestoreStringWithoutCharset|format.RestoreStringSingleQuotes|format.RestoreNameBackQuotes, buf)
 		return restoreCtx
 	}}
@@ -106,14 +105,14 @@ func ParameterizeAST(ctx context.Context, sctx sessionctx.Context, stmt ast.Stmt
 	defer func() {
 		pr.Reset()
 		paramReplacerPool.Put(pr)
-		pCtx.In.(*strings.Builder).Reset()
+		pCtx.In.(*bytes.Buffer).Reset()
 		paramCtxPool.Put(pCtx)
 	}()
 	stmt.Accept(pr)
 	if err := stmt.Restore(pCtx); err != nil {
 		return "", nil, err
 	}
-	paramSQL, params = pCtx.In.(*strings.Builder).String(), pr.params
+	paramSQL, params = pCtx.In.(*bytes.Buffer).String(), pr.params
 	return
 }
 
