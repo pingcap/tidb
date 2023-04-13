@@ -16,17 +16,12 @@ package ingest
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"math"
 	"strconv"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -89,7 +84,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 			logutil.BgLogger().Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
 		}
-		bd, err := createLocalBackend(ctx, cfg, glueLit{})
+		bd, err := createLocalBackend(ctx, cfg)
 		if err != nil {
 			logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
@@ -108,7 +103,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 	return bc, nil
 }
 
-func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (*local.Backend, error) {
+func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error) {
 	tls, err := cfg.Lightning.ToTLS()
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Error(err))
@@ -116,12 +111,8 @@ func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (*loca
 	}
 
 	logutil.BgLogger().Info("[ddl-ingest] create local backend for adding index", zap.String("keyspaceName", cfg.KeyspaceName))
-	db, err := glue.GetDB()
-	if err != nil {
-		return nil, err
-	}
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
-		DB: db,
+		DB: nil,
 	}
 	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName)
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
@@ -185,48 +176,6 @@ func (m *litBackendCtxMgr) UpdateMemoryUsage() {
 			m.memRoot.ConsumeWithTag(EncodeBackendTag(bc.jobID), curSize)
 		}
 	}
-}
-
-// glueLit is used as a placeholder for the local backend initialization.
-type glueLit struct{}
-
-// OwnsSQLExecutor Implement interface OwnsSQLExecutor.
-func (glueLit) OwnsSQLExecutor() bool {
-	return false
-}
-
-// GetSQLExecutor Implement interface GetSQLExecutor.
-func (glueLit) GetSQLExecutor() glue.SQLExecutor {
-	return nil
-}
-
-// GetDB Implement interface GetDB.
-func (glueLit) GetDB() (*sql.DB, error) {
-	return nil, nil
-}
-
-// GetParser Implement interface GetParser.
-func (glueLit) GetParser() *parser.Parser {
-	return nil
-}
-
-// GetTables Implement interface GetTables.
-func (glueLit) GetTables(context.Context, string) ([]*model.TableInfo, error) {
-	return nil, nil
-}
-
-// GetSession Implement interface GetSession.
-func (glueLit) GetSession(context.Context) (checkpoints.Session, error) {
-	return nil, nil
-}
-
-// OpenCheckpointsDB Implement interface OpenCheckpointsDB.
-func (glueLit) OpenCheckpointsDB(context.Context, *config.Config) (checkpoints.DB, error) {
-	return nil, nil
-}
-
-// Record is used to report some information (key, value) to host TiDB, including progress, stage currently.
-func (glueLit) Record(string, uint64) {
 }
 
 // EncodeBackendTag encodes the job ID to backend tag.
