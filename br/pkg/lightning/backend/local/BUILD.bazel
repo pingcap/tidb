@@ -106,7 +106,11 @@ go_test(
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
+<<<<<<< HEAD
         "//br/pkg/lightning/glue",
+=======
+        "//br/pkg/lightning/config",
+>>>>>>> 44aa4cf3cd1 (lightning: generate and send region job more smoothly (#42780))
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/mydump",
         "//br/pkg/membuf",
