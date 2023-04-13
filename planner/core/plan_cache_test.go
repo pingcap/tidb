@@ -239,23 +239,23 @@ func TestNonPreparedPlanCacheTooManyConsts(t *testing.T) {
 	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
 
 	var x []string
-	for i := 0; i < 51; i++ {
+	for i := 0; i < 201; i++ {
 		x = append(x, fmt.Sprintf("%v", i))
 	}
-	list49 := strings.Join(x[:49], ", ")
-	list50 := strings.Join(x[:50], ", ")
-	list51 := strings.Join(x[:51], ", ")
+	list1 := strings.Join(x[:199], ", ")
+	list2 := strings.Join(x[:200], ", ")
+	list3 := strings.Join(x[:201], ", ")
 
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list49))
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list49))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list1))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list1))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list50))
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list50))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list2))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list2))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// query has more than 50 consts cannot hit
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list51))
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list51))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list3))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list3))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
