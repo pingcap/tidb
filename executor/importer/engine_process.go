@@ -101,7 +101,7 @@ func ProcessChunk(
 	}()
 	var (
 		parser                  mydump.Parser
-		encoder                 KvEncoder
+		encoder                 kvEncoder
 		dataWriter, indexWriter backend.EngineWriter
 	)
 	closer.reset()
