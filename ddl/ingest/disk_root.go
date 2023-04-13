@@ -62,7 +62,6 @@ func (d *diskRootImpl) CurrentUsage() uint64 {
 func (d *diskRootImpl) MaxQuota() uint64 {
 	d.mu.RLock()
 	quota := d.maxQuota
-
 	d.mu.RUnlock()
 	return quota
 }
@@ -75,7 +74,7 @@ func (d *diskRootImpl) UpdateUsageAndQuota() error {
 		logutil.BgLogger().Error(LitErrGetStorageQuota, zap.Error(err))
 		return err
 	}
-	maxQuota := mathutil.Min(variable.DDLDiskQuota.Load(), uint64(capacityThreshold*float64(sz.Available)))
+	maxQuota := mathutil.Min(variable.DDLDiskQuota.Load(), uint64(capacityThreshold*float64(sz.Capacity)))
 	d.mu.Lock()
 	d.currentUsage = totalDiskUsage
 	d.maxQuota = maxQuota
