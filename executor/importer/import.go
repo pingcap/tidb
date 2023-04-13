@@ -31,6 +31,7 @@ import (
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -182,6 +184,8 @@ type LoadDataController struct {
 	importantSysVars map[string]string
 	dataStore        storage.ExternalStorage
 	dataFiles        []*mydump.SourceFileMeta
+	// total data file size in bytes, only initialized when load from remote.
+	TotalFileSize int64
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -245,10 +249,10 @@ func NewLoadDataController(userSctx sessionctx.Context, plan *plannercore.LoadDa
 		charset:          charset,
 		importantSysVars: getImportantSysVars(userSctx),
 	}
-	if err := c.initFieldParams(plan); err != nil {
+	if err := c.initOptions(userSctx, plan.Options); err != nil {
 		return nil, err
 	}
-	if err := c.initOptions(userSctx, plan.Options); err != nil {
+	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
 	}
 
@@ -267,9 +271,17 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 		return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 	}
 
-	if e.FileLocRef == ast.FileLocClient && e.Format == LoadDataFormatParquet {
-		// parquet parser need seek around, it's not supported for client local file
-		return exeerrors.ErrLoadParquetFromLocal
+	if e.FileLocRef == ast.FileLocClient {
+		if e.Detached {
+			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("DETACHED")
+		}
+		if e.Format == LoadDataFormatParquet {
+			// parquet parser need seek around, it's not supported for client local file
+			return exeerrors.ErrLoadParquetFromLocal
+		}
+		if e.ImportMode == PhysicalImportMode {
+			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("import_mode='physical'")
+		}
 	}
 
 	if e.Format != LoadDataFormatDelimitedData {
@@ -654,6 +666,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
 	}
 
+	var totalSize int64
 	dataFiles := []*mydump.SourceFileMeta{}
 	idx := strings.IndexByte(path, '*')
 	// simple path when the INFILE represent one file
@@ -675,6 +688,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			FileSize:    size,
 			Compression: compressTp,
 		})
+		totalSize = size
 	} else {
 		commonPrefix := path[:idx]
 		// we only support '*', in order to reuse glob library manually escape the path
@@ -693,6 +707,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					FileSize:    size,
 					Compression: compressTp,
 				})
+				totalSize += size
 				return nil
 			})
 		if err != nil {
@@ -702,6 +717,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	e.dataStore = s
 	e.dataFiles = dataFiles
+	e.TotalFileSize = totalSize
 	return nil
 }
 
@@ -805,19 +821,6 @@ func (e *LoadDataController) GetParser(
 	return parser, nil
 }
 
-// PhysicalImport do physical import.
-func (e *LoadDataController) PhysicalImport(ctx context.Context) (int64, error) {
-	// todo: implement job
-	importer, err := newTableImporter(ctx, e)
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		_ = importer.Close()
-	}()
-	return 0, importer.importTable(ctx)
-}
-
 func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 	tbl := filter.Table{
 		Schema: e.DBName,
@@ -831,6 +834,29 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 		})
 	}
 	return res
+}
+
+// JobImportParam is the param of the job import.
+type JobImportParam struct {
+	Job      *asyncloaddata.Job
+	Group    *errgroup.Group
+	GroupCtx context.Context
+	// should be closed in the end of the job.
+	Done chan struct{}
+}
+
+// JobImporter is the interface for importing a job.
+type JobImporter interface {
+	// Param returns the param of the job import.
+	Param() *JobImportParam
+	// Import imports the job.
+	// import should run in routines using param.Group, when import finished, it should close param.Done.
+	// during import, we should use param.GroupCtx, so this method has no context param.
+	Import()
+	// Result returns the result of the job import.
+	// todo: return a struct
+	Result() string
+	io.Closer
 }
 
 // GetMsgFromBRError get msg from BR error.

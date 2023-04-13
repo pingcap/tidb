@@ -73,7 +73,8 @@ func prepareSortDir(e *LoadDataController) (string, error) {
 	return sortPath, nil
 }
 
-func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImporter, err error) {
+// NewTableImporter creates a new table importer.
+func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti JobImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -147,12 +148,13 @@ func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImpo
 
 	// todo: use a real region size getter
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
-	localBackend, err := local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
+	localBackend, err := local.NewBackend(param.GroupCtx, tls, backendConfig, regionSizeGetter)
 	if err != nil {
 		return nil, err
 	}
 
 	return &tableImporter{
+		JobImportParam:     param,
 		LoadDataController: e,
 		backend:            localBackend,
 		tableCp: &checkpoints.TableCheckpoint{
@@ -176,6 +178,7 @@ func newTableImporter(ctx context.Context, e *LoadDataController) (ti *tableImpo
 }
 
 type tableImporter struct {
+	*JobImportParam
 	*LoadDataController
 	backend   *local.Backend
 	tableCp   *checkpoints.TableCheckpoint
@@ -193,7 +196,25 @@ type tableImporter struct {
 	regionSplitKeys int64
 }
 
-var _ io.Closer = &tableImporter{}
+var _ JobImporter = &tableImporter{}
+
+// Param implements JobImporter.Param.
+func (ti *tableImporter) Param() *JobImportParam {
+	return ti.JobImportParam
+}
+
+// Import implements JobImporter.Import.
+func (ti *tableImporter) Import() {
+	ti.Group.Go(func() error {
+		defer close(ti.Done)
+		return ti.importTable(ti.GroupCtx)
+	})
+}
+
+// Result implements JobImporter.Result.
+func (ti *tableImporter) Result() string {
+	return ""
+}
 
 func (ti *tableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
@@ -401,6 +422,7 @@ func (ti *tableImporter) importAndCleanup(ctx context.Context, closedEngine *bac
 	return multierr.Combine(importErr, cleanupErr)
 }
 
+// Close implements the io.Closer interface.
 func (ti *tableImporter) Close() error {
 	ti.backend.Close()
 	return nil
