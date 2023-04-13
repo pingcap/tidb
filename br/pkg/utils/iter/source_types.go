@@ -20,21 +20,6 @@ func (s *fromSlice[T]) TryNext(ctx context.Context) IterResult[T] {
 	return Emit(item)
 }
 
-type fromArray[T any] struct {
-	data    []T
-	current int
-}
-
-func (s *fromArray[T]) TryNextEnum(ctx context.Context) (int, IterResult[T]) {
-	if s.current >= len(s.data) {
-		return s.current, Done[T]()
-	}
-
-	off, d := s.current, s.data[s.current]
-	s.current += 1
-	return off, Emit(d)
-}
-
 type ofRange[T constraints.Integer] struct {
 	end          T
 	endExclusive bool

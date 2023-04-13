@@ -179,27 +179,28 @@ func (rc *logFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 
 func (rc *logFileManager) FilterDataFiles(ms MetaIter) LogIter {
 	return iter.FlatMap(ms, func(m *backuppb.Metadata) LogIter {
-		return iter.FlatToNextor(iter.FromArray(m.FileGroups), func(goff int, g *backuppb.DataFileGroup) LogIter {
-			return iter.ToNextor(
-				iter.FilterOutEnum(iter.FromArray(g.DataFilesInfo), func(d *backuppb.DataFileInfo) bool {
+		return iter.FlatMap(iter.Enumerate(iter.FromSlice(m.FileGroups)), func(gi iter.Indexed[*backuppb.DataFileGroup]) LogIter {
+			return iter.Map(
+				iter.FilterOut(iter.Enumerate(iter.FromSlice(gi.Item.DataFilesInfo)), func(di iter.Indexed[*backuppb.DataFileInfo]) bool {
 					// Modify the data internally, a little hacky.
 					if m.MetaVersion > backuppb.MetaVersion_V1 {
-						d.Path = g.Path
+						di.Item.Path = gi.Item.Path
 					}
-					return d.IsMeta || rc.ShouldFilterOut(d)
+					return di.Item.IsMeta || rc.ShouldFilterOut(di.Item)
 				}),
-				func(foff int, g *backuppb.DataFileInfo) *LogDataFileInfo {
+				func(di iter.Indexed[*backuppb.DataFileInfo]) *LogDataFileInfo {
 					return &LogDataFileInfo{
-						DataFileInfo: g,
+						DataFileInfo: di.Item,
 
 						// Since there is a `datafileinfo`, the length of `m.FileGroups`
 						// must be larger than 0. So we use the first group's name as
 						// metadata's unique key.
 						MetaDataGroupName:   m.FileGroups[0].Path,
-						OffsetInMetaGroup:   goff,
-						OffsetInMergedGroup: foff,
+						OffsetInMetaGroup:   gi.Index,
+						OffsetInMergedGroup: di.Index,
 					}
-				})
+				},
+			)
 		})
 	})
 }

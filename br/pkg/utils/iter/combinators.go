@@ -56,13 +56,6 @@ func FilterOut[T any](it TryNextor[T], f func(T) bool) TryNextor[T] {
 	}
 }
 
-func FilterOutEnum[T any](it TryNextEnumor[T], f func(T) bool) TryNextEnumor[T] {
-	return enumFilter[T]{
-		inner:       it,
-		filterOutIf: f,
-	}
-}
-
 // TakeFirst takes the first n elements of the iterator.
 func TakeFirst[T any](inner TryNextor[T], n uint) TryNextor[T] {
 	return &take[T]{
@@ -83,26 +76,9 @@ func FlatMap[T, R any](it TryNextor[T], mapper func(T) TryNextor[R]) TryNextor[R
 	}
 }
 
-func FlatToNextor[T, R any](it TryNextEnumor[T], mapper func(int, T) TryNextor[R]) TryNextor[R] {
-	return &join[R]{
-		inner: toNextor[T, TryNextor[R]]{
-			inner:  it,
-			mapper: mapper,
-		},
-		current: empty[R]{},
-	}
-}
-
 // Map applies the mapper over every elements the origin iterator yields.
 func Map[T, R any](it TryNextor[T], mapper func(T) R) TryNextor[R] {
 	return pureMap[T, R]{
-		inner:  it,
-		mapper: mapper,
-	}
-}
-
-func ToNextor[T, R any](it TryNextEnumor[T], mapper func(int, T) R) TryNextor[R] {
-	return toNextor[T, R]{
 		inner:  it,
 		mapper: mapper,
 	}
@@ -115,4 +91,8 @@ func ConcatAll[T any](items ...TryNextor[T]) TryNextor[T] {
 		inner:   FromSlice(items),
 		current: empty[T]{},
 	}
+}
+
+func Enumerate[T any](it TryNextor[T]) TryNextor[Indexed[T]] {
+	return &withIndex[T]{inner: it, index: 0}
 }

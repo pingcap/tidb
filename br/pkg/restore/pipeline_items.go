@@ -411,7 +411,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 				if e != nil {
 					log.Error("restore batch meet error, caused by checkpoint", logutil.ShortError(e))
 					r.done()
-					return e
+					return errors.Annotate(e, "restore batch meet error, caused by checkpoint")
 				}
 				r.done()
 				b.waitTablesDone(r.result.BlankTablesAfterSend)
