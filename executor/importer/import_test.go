@@ -187,7 +187,7 @@ func TestAdjustOptions(t *testing.T) {
 	e.adjustOptions()
 	require.Equal(t, minDiskQuota, e.diskQuota)
 	require.Equal(t, int64(runtime.NumCPU()), e.ThreadCnt)
-	require.Equal(t, 10, e.maxWriteSpeed) // not adjusted
+	require.Equal(t, config.ByteSize(10), e.maxWriteSpeed) // not adjusted
 }
 
 func TestGetMsgFromBRError(t *testing.T) {
