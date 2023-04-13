@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	restoremock "github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -846,10 +845,8 @@ func (s *tableRestoreSuite) TestAnalyzeTable() {
 	mock.ExpectClose()
 
 	ctx := context.Background()
-	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	require.NoError(s.T(), err)
-	g := glue.NewExternalTiDBGlue(db, defaultSQLMode)
-	err = s.tr.analyzeTable(ctx, g)
+	err = s.tr.analyzeTable(ctx, db)
 	require.NoError(s.T(), err)
 }
 
@@ -952,7 +949,6 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	require.NoError(s.T(), err)
 
 	cpDB := checkpoints.NewNullCheckpointsDB()
-	g := mock.NewMockGlue(controller)
 	dbMetas := []*mydump.MDDatabaseMeta{
 		{
 			Name:   s.tableInfo.DB,
@@ -961,8 +957,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	}
 	ioWorkers := worker.NewPool(ctx, 5, "io")
 	targetInfoGetter := &TargetInfoGetterImpl{
-		cfg:          cfg,
-		targetDBGlue: g,
+		cfg: cfg,
 	}
 	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              cfg,
@@ -988,6 +983,9 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	backendObj.EXPECT().CleanupEngine(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	backendObj.EXPECT().ShouldPostProcess().Return(false).AnyTimes()
 	backendObj.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockEngineWriter, nil).AnyTimes()
+	db, sqlMock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+
 	rc := &Controller{
 		cfg:               cfg,
 		dbMetas:           dbMetas,
@@ -1001,7 +999,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		pauser:            DeliverPauser,
 		engineMgr:         backend.MakeEngineManager(backendObj),
 		backend:           backendObj,
-		tidbGlue:          g,
+		db:                db,
 		errorSummaries:    makeErrorSummaries(log.L()),
 		tls:               tls,
 		checkpointsDB:     cpDB,
@@ -1020,9 +1018,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 			}
 		}
 	}()
-	db, sqlMock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	g.EXPECT().GetDB().Return(db, nil).AnyTimes()
+
 	sqlMock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).
 		AddRow("Release Version: v5.2.1\nEdition: Community\n"))
 

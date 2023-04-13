@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/stretchr/testify/require"
@@ -63,12 +62,13 @@ func TestRun(t *testing.T) {
 
 	path, _ := filepath.Abs(".")
 	ctx := context.Background()
-	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
 	o := &options{
-		glue:         invalidGlue,
 		promRegistry: lightning.promRegistry,
 		promFactory:  lightning.promFactory,
 		logger:       log.L(),
+		db:           db,
 	}
 	cfgCheckpoint := config.Config{
 		Mydumper: config.MydumperRuntime{
@@ -83,10 +83,6 @@ func TestRun(t *testing.T) {
 	}
 	err = lightning.run(ctx, &cfgCheckpoint, o)
 	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
-
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	o.glue = glue.NewExternalTiDBGlue(db, 0)
 	mock.ExpectQuery("show config").WillReturnError(errors.New("lack privilege"))
 	cfgKeyspaceName := config.NewConfig()
 	cfgKeyspaceName.TikvImporter.Backend = config.BackendLocal
@@ -101,7 +97,6 @@ func TestRun(t *testing.T) {
 	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	o.glue = invalidGlue
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir: ".",
