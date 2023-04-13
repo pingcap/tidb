@@ -426,14 +426,14 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) error {
 			log.FromContext(ctx).Warn("meet error and handle the job later",
 				zap.Stringer("job stage", j.stage),
 				logutil.ShortError(j.lastRetryableErr),
-				logutil.Region(j.region.Region),
+				j.region.ToZapFields(),
 				logutil.Key("start", j.keyRange.start),
 				logutil.Key("end", j.keyRange.end))
 			return nil
 		}
-		log.FromContext(ctx).Warn("meet error and will doIngest region, again",
+		log.FromContext(ctx).Warn("meet error and will doIngest region again",
 			logutil.ShortError(j.lastRetryableErr),
-			logutil.Region(j.region.Region),
+			j.region.ToZapFields(),
 			logutil.Key("start", j.keyRange.start),
 			logutil.Key("end", j.keyRange.end))
 	}
