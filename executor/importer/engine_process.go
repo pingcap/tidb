@@ -35,7 +35,7 @@ type engineProcessor struct {
 	backend       *local.Backend
 	tableInfo     *checkpoints.TidbTableInfo
 	logger        *zap.Logger
-	tableImporter *tableImporter
+	tableImporter *TableImporter
 	kvSorted      bool
 	rowOrdered    bool
 	indexEngine   *backend.OpenedEngine
@@ -73,71 +73,86 @@ func (ep *engineProcessor) process(ctx context.Context) (*backend.ClosedEngine, 
 	return closedDataEngine, err
 }
 
-// sort data in all chunks, then close the opened data engine
-func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.OpenedEngine) (err error) {
+func ProcessChunk(
+	ctx context.Context,
+	chunk *checkpoints.ChunkCheckpoint,
+	tableImporter *TableImporter,
+	dataEngine,
+	indexEngine *backend.OpenedEngine,
+	kvSorted bool,
+	logger *zap.Logger,
+) (err error) {
 	dataWriterCfg := &backend.LocalWriterConfig{
-		IsKVSorted: ep.kvSorted,
+		IsKVSorted: kvSorted,
 	}
 	closer := multiCloser{
-		logger: ep.logger,
+		logger: logger,
 	}
 	defer func() {
 		if err != nil {
 			closer.Close()
 		}
 	}()
-	for _, chunk := range ep.chunks {
-		var (
-			parser                  mydump.Parser
-			encoder                 kvEncoder
-			dataWriter, indexWriter backend.EngineWriter
-		)
-		closer.reset()
-		parser, err = ep.tableImporter.getParser(ctx, chunk)
-		if err != nil {
-			return err
-		}
-		closer.add(parser)
-		encoder, err = ep.tableImporter.getKVEncoder(chunk)
-		if err != nil {
-			return err
-		}
-		closer.add(encoder)
-		// todo: on panic which will be recovered since we run in tidb, we need to make sure all opened fd is closed.
-		dataWriter, err = dataEngine.LocalWriter(ctx, dataWriterCfg)
-		if err != nil {
-			return err
-		}
-		closer.addFn(func() error {
-			_, err2 := dataWriter.Close(ctx)
-			return err2
-		})
-		indexWriter, err = ep.indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
-		if err != nil {
-			return err
-		}
-		closer.addFn(func() error {
-			_, err2 := indexWriter.Close(ctx)
-			return err2
-		})
+	var (
+		parser                  mydump.Parser
+		encoder                 KvEncoder
+		dataWriter, indexWriter backend.EngineWriter
+	)
+	closer.reset()
+	parser, err = tableImporter.getParser(ctx, chunk)
+	if err != nil {
+		return err
+	}
+	closer.add(parser)
+	encoder, err = tableImporter.getKVEncoder(chunk)
+	if err != nil {
+		return err
+	}
+	closer.add(encoder)
+	// todo: on panic which will be recovered since we run in tidb, we need to make sure all opened fd is closed.
+	dataWriter, err = dataEngine.LocalWriter(ctx, dataWriterCfg)
+	if err != nil {
+		return err
+	}
+	closer.addFn(func() error {
+		_, err2 := dataWriter.Close(ctx)
+		return err2
+	})
+	indexWriter, err = indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+	if err != nil {
+		return err
+	}
+	closer.addFn(func() error {
+		_, err2 := indexWriter.Close(ctx)
+		return err2
+	})
 
-		cp := &chunkProcessor{
-			parser:      parser,
-			chunkInfo:   chunk,
-			logger:      ep.logger.With(zap.String("key", chunk.GetKey())),
-			kvsCh:       make(chan []deliveredRow, maxKVQueueSize),
-			dataWriter:  dataWriter,
-			indexWriter: indexWriter,
-			encoder:     encoder,
-			kvCodec:     ep.kvStore.GetCodec(),
-		}
-		// todo: process in parallel
-		err = cp.process(ctx)
-		if err != nil {
+	cp := &chunkProcessor{
+		parser:      parser,
+		chunkInfo:   chunk,
+		logger:      logger.With(zap.String("key", chunk.GetKey())),
+		kvsCh:       make(chan []deliveredRow, maxKVQueueSize),
+		dataWriter:  dataWriter,
+		indexWriter: indexWriter,
+		encoder:     encoder,
+		kvCodec:     tableImporter.kvStore.GetCodec(),
+	}
+	// todo: process in parallel
+	err = cp.process(ctx)
+	if err != nil {
+		return err
+	}
+	// chunk process is responsible to close data/index writer
+	cp.close(ctx)
+	return nil
+}
+
+// sort data in all chunks, then close the opened data engine
+func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.OpenedEngine) (err error) {
+	for _, chunk := range ep.chunks {
+		if err := ProcessChunk(ctx, chunk, ep.tableImporter, dataEngine, ep.indexEngine, ep.kvSorted, ep.logger); err != nil {
 			return err
 		}
-		// chunk process is responsible to close data/index writer
-		cp.close(ctx)
 	}
 	return nil
 }

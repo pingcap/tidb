@@ -113,6 +113,7 @@ type LoadDataWorker struct {
 	encodeWorkers []*encodeWorker
 	commitWorkers []*commitWorker
 
+	importPlan *importer.Plan
 	controller *importer.LoadDataController
 
 	table    table.Table
@@ -133,7 +134,11 @@ func NewLoadDataWorker(
 	plan *plannercore.LoadData,
 	tbl table.Table,
 ) (w *LoadDataWorker, err error) {
-	controller, err := importer.NewLoadDataController(userSctx, plan, tbl)
+	importPlan, err := importer.NewPlan(userSctx, plan, tbl)
+	if err != nil {
+		return nil, err
+	}
+	controller, err := importer.NewLoadDataController(importPlan, tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +192,7 @@ func NewLoadDataWorker(
 		encodeWorkers: encodeWorkers,
 		commitWorkers: commitWorkers,
 		table:         tbl,
+		importPlan:    importPlan,
 		controller:    controller,
 		progress:      progress,
 	}

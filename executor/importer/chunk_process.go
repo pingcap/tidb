@@ -118,7 +118,7 @@ type chunkProcessor struct {
 	indexWriter backend.EngineWriter
 
 	checksum verify.KVChecksum
-	encoder  kvEncoder
+	encoder  KvEncoder
 	kvCodec  tikv.Codec
 }
 
