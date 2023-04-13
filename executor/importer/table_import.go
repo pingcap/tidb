@@ -384,17 +384,6 @@ func (ti *TableImporter) importEngines(ctx context.Context) error {
 }
 
 func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *backend.OpenedEngine, engineID int32, chunks []*checkpoints.ChunkCheckpoint) (*backend.ClosedEngine, error) {
-	// if the key are ordered, LocalWrite can optimize the writing.
-	// table has auto-incremented _tidb_rowid must satisfy following restrictions:
-	// - clustered index disable and primary key is not number
-	// - no auto random bits (auto random or shard row id)
-	// - no partition table
-	// - no explicit _tidb_rowid field (At this time we can't determine if the source file contains _tidb_rowid field,
-	//   so we will do this check in LocalWriter when the first row is received.)
-	hasAutoIncrementAutoID := common.TableHasAutoRowID(ti.tableInfo.Core) &&
-		ti.tableInfo.Core.AutoRandomBits == 0 && ti.tableInfo.Core.ShardRowIDBits == 0 &&
-		ti.tableInfo.Core.Partition == nil
-
 	processor := engineProcessor{
 		engineID:      engineID,
 		fullTableName: ti.tableMeta.FullTableName(),
@@ -402,11 +391,9 @@ func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *back
 		tableInfo:     ti.tableInfo,
 		logger:        ti.logger.With(zap.Int32("engine-id", engineID)),
 		tableImporter: ti,
-		kvSorted:      hasAutoIncrementAutoID,
 		rowOrdered:    ti.tableMeta.IsRowOrdered,
 		indexEngine:   indexEngine,
 		chunks:        chunks,
-		kvStore:       ti.kvStore,
 	}
 	return processor.process(ctx)
 }

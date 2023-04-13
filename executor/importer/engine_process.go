@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/kv"
 	"go.uber.org/zap"
 )
 
@@ -36,11 +35,9 @@ type engineProcessor struct {
 	tableInfo     *checkpoints.TidbTableInfo
 	logger        *zap.Logger
 	tableImporter *TableImporter
-	kvSorted      bool
 	rowOrdered    bool
 	indexEngine   *backend.OpenedEngine
 	chunks        []*checkpoints.ChunkCheckpoint
-	kvStore       kv.Storage
 }
 
 func (ep *engineProcessor) process(ctx context.Context) (*backend.ClosedEngine, error) {
@@ -79,11 +76,20 @@ func ProcessChunk(
 	tableImporter *TableImporter,
 	dataEngine,
 	indexEngine *backend.OpenedEngine,
-	kvSorted bool,
 	logger *zap.Logger,
 ) (err error) {
+	// if the key are ordered, LocalWrite can optimize the writing.
+	// table has auto-incremented _tidb_rowid must satisfy following restrictions:
+	// - clustered index disable and primary key is not number
+	// - no auto random bits (auto random or shard row id)
+	// - no partition table
+	// - no explicit _tidb_rowid field (At this time we can't determine if the source file contains _tidb_rowid field,
+	//   so we will do this check in LocalWriter when the first row is received.)
+	hasAutoIncrementAutoID := common.TableHasAutoRowID(tableImporter.tableInfo.Core) &&
+		tableImporter.tableInfo.Core.AutoRandomBits == 0 && tableImporter.tableInfo.Core.ShardRowIDBits == 0 &&
+		tableImporter.tableInfo.Core.Partition == nil
 	dataWriterCfg := &backend.LocalWriterConfig{
-		IsKVSorted: kvSorted,
+		IsKVSorted: hasAutoIncrementAutoID,
 	}
 	closer := multiCloser{
 		logger: logger,
@@ -150,7 +156,7 @@ func ProcessChunk(
 // sort data in all chunks, then close the opened data engine
 func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.OpenedEngine) (err error) {
 	for _, chunk := range ep.chunks {
-		if err := ProcessChunk(ctx, chunk, ep.tableImporter, dataEngine, ep.indexEngine, ep.kvSorted, ep.logger); err != nil {
+		if err := ProcessChunk(ctx, chunk, ep.tableImporter, dataEngine, ep.indexEngine, ep.logger); err != nil {
 			return err
 		}
 	}

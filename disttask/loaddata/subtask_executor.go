@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/executor/importer"
@@ -34,14 +33,8 @@ type ImportSubtaskExecutor struct {
 // Run implements the SubtaskExecutor.Run interface.
 func (e *ImportSubtaskExecutor) Run(ctx context.Context) error {
 	logutil.BgLogger().Info("subtask executor run", zap.Any("task", e.task))
-
-	tableInfo := e.task.Plan.TableInfo
-	hasAutoIncrementAutoID := common.TableHasAutoRowID(tableInfo) &&
-		tableInfo.AutoRandomBits == 0 && tableInfo.ShardRowIDBits == 0 &&
-		tableInfo.Partition == nil
-
 	chunkCheckpoint := toChunkCheckpoint(e.task.Chunk)
-	return importer.ProcessChunk(ctx, &chunkCheckpoint, e.task.TableImporter, e.task.DataEngine, e.task.IndexEngine, hasAutoIncrementAutoID, logutil.BgLogger())
+	return importer.ProcessChunk(ctx, &chunkCheckpoint, e.task.TableImporter, e.task.DataEngine, e.task.IndexEngine, logutil.BgLogger())
 }
 
 func init() {
