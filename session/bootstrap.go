@@ -562,6 +562,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
+		error varchar(256),
 		key(state),
       	UNIQUE KEY task_key(task_key)
 	);`
@@ -854,11 +855,13 @@ const (
 	version139 = 139
 	// version 140 add column task_key to mysql.tidb_global_task
 	version140 = 140
+	// version 141 add column `error` to `mysql.tidb_global_task` and `mysql.tidb_background_subtask`
+	version141 = 141
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version140
+var currentBootstrapVersion int64 = version141
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -987,6 +990,7 @@ var (
 		upgradeToVer138,
 		upgradeToVer139,
 		upgradeToVer140,
+		upgradeToVer141,
 	}
 )
 
@@ -2437,6 +2441,14 @@ func upgradeToVer140(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `task_key` VARCHAR(256) NOT NULL AFTER `id`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD UNIQUE KEY task_key(task_key)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer141(s Session, ver int64) {
+	if ver >= version141 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `error` VARCHAR(256)", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `error` VARCHAR(256)", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {

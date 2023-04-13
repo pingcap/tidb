@@ -89,7 +89,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 	return subTaskMetas, nil
 }
 
-func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
+func (*litBackfillFlowHandle) ProcessErrFlow(ctx context.Context, h dispatcher.TaskHandle, gTask *proto.Task, receiveErr []string) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back
 	return nil, nil
 }
