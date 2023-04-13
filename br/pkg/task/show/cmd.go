@@ -4,6 +4,7 @@ package show
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -12,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 type Config struct {
@@ -34,6 +36,11 @@ func (s *Config) lameTaskConfig() *task.Config {
 // TimeStamp is a simple wrapper for the timestamp type.
 // Perhaps we can enhance its display.
 type TimeStamp uint64
+
+// String implements fmt.String.
+func (ts TimeStamp) String() string {
+	return fmt.Sprintf("%d(%s)", ts, oracle.GetTimeFromTS(uint64(ts)).Format("060102,15:03:04"))
+}
 
 type RawRange struct {
 	ColumnFamily string           `json:"column-family"`
@@ -77,6 +84,11 @@ func CreateExec(ctx context.Context, cfg Config) (*CmdExecutor, error) {
 
 func (exec *CmdExecutor) Read(ctx context.Context) (ShowResult, error) {
 	res := convertBasic(exec.meta.GetBasic())
+	if res.EndVersion < res.StartVersion {
+		return ShowResult{}, errors.Wrapf(berrors.ErrInvalidMetaFile,
+			"the start version(%s) is greater than the end version(%s), perhaps reading a backup meta from log backup.",
+			res.StartVersion, res.EndVersion)
+	}
 	if !res.IsRawKV {
 		out := make(chan *metautil.Table, 16)
 		errc := make(chan error, 1)
