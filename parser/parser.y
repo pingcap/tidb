@@ -15133,6 +15133,7 @@ ProcedureCloseCur:
 	}
 
 ProcedureOptFetchNo:
+
 /* Empty */
 |	"NEXT" "FROM"
 |	"FROM"
@@ -15334,12 +15335,12 @@ ProcedureLabeledBlock:
 	identifier ':' ProcedureBlockContent ProcedurceLabelOpt
 	{
 		labelBlock := &ast.ProcedureLabelBlock{
-			LableName: $1,
+			LabelName: $1,
 			Block:     $3.(*ast.ProcedureBlock),
 		}
 		if $4 != "" && ($1 != $4) {
-			labelBlock.LableError = true
-			labelBlock.LableEnd = $4
+			labelBlock.LabelError = true
+			labelBlock.LabelEnd = $4
 		}
 		$$ = labelBlock
 	}
@@ -15358,12 +15359,12 @@ ProcedurelabeledLoopStmt:
 	identifier ':' ProcedureUnlabelLoopStmt ProcedurceLabelOpt
 	{
 		labelLoop := &ast.ProcedureLabelLoop{
-			LableName: $1,
+			LabelName: $1,
 			Block:     $3.(ast.StmtNode),
 		}
 		if $4 != "" && ($1 != $4) {
-			labelLoop.LableError = true
-			labelLoop.LableEnd = $4
+			labelLoop.LabelError = true
+			labelLoop.LabelEnd = $4
 		}
 		$$ = labelLoop
 	}

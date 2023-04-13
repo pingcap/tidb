@@ -41,8 +41,8 @@ var (
 	_ DeclNode = &ProcedureCursor{}
 	_ DeclNode = &ProcedureDecl{}
 
-	_ LableInfo = &ProcedureLabelBlock{}
-	_ LableInfo = &ProcedureLabelLoop{}
+	_ LabelInfo = &ProcedureLabelBlock{}
+	_ LabelInfo = &ProcedureLabelLoop{}
 
 	_ ErrNode = &ProcedureErrorCon{}
 	_ ErrNode = &ProcedureErrorVal{}
@@ -90,12 +90,12 @@ type ProcedureErrorCondition struct {
 }
 
 // LabelInfo is the interface of loop and block label.
-type LableInfo interface {
+type LabelInfo interface {
 	// GetErrorStatus gets label status, if error, return end label name and true.
 	// if normal，The returned string has no meaning and false.
 	GetErrorStatus() (string, bool)
-	// GetLableName gets label name.
-	GetLableName() string
+	// GetLabelName gets label name.
+	GetLabelName() string
 	// IsBlock gets type flag, true is block, false is loop.
 	IsBlock() bool
 	// GetBlock gets block stmtnode
@@ -981,25 +981,25 @@ func (n *ProcedureErrorCon) Accept(v Visitor) (Node, bool) {
 // ProcedureLabelBlock stored procedure block label statement.
 type ProcedureLabelBlock struct {
 	stmtNode
-	LableName  string
+	LabelName  string
 	Block      *ProcedureBlock
-	LableError bool
-	LableEnd   string
+	LabelError bool
+	LabelEnd   string
 }
 
 // Restore implements ProcedureLabelBlock interface.
 func (n *ProcedureLabelBlock) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteName(n.LableName)
+	ctx.WriteName(n.LabelName)
 	ctx.WriteKeyWord(": ")
 	err := n.Block.Restore(ctx)
 	if err != nil {
 		return err
 	}
-	if n.LableError {
-		return errors.Errorf("the same label has different names,begin: %s,end: %s", n.LableName, n.LableEnd)
+	if n.LabelError {
+		return errors.Errorf("the same label has different names,begin: %s,end: %s", n.LabelName, n.LabelEnd)
 	}
 	ctx.WriteKeyWord(" ")
-	ctx.WriteName(n.LableName)
+	ctx.WriteName(n.LabelName)
 	return nil
 }
 
@@ -1020,14 +1020,14 @@ func (n *ProcedureLabelBlock) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// GetErrorStatus gets lable error info.
+// GetErrorStatus gets label error info.
 func (n *ProcedureLabelBlock) GetErrorStatus() (string, bool) {
-	return n.LableEnd, n.LableError
+	return n.LabelEnd, n.LabelError
 }
 
-// GetLableName gets label name.
-func (n *ProcedureLabelBlock) GetLableName() string {
-	return n.LableName
+// GetLabelName gets label name.
+func (n *ProcedureLabelBlock) GetLabelName() string {
+	return n.LabelName
 }
 
 // IsBlock gets block flag.
@@ -1043,25 +1043,25 @@ func (n *ProcedureLabelBlock) GetBlock() StmtNode {
 // ProcedureLabelLoop stores  the labeled loop block info in procedure.
 type ProcedureLabelLoop struct {
 	stmtNode
-	LableName  string
+	LabelName  string
 	Block      StmtNode
-	LableError bool
-	LableEnd   string
+	LabelError bool
+	LabelEnd   string
 }
 
 // Restore implements ProcedureLabelLoop interface.
 func (n *ProcedureLabelLoop) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteName(n.LableName)
+	ctx.WriteName(n.LabelName)
 	ctx.WriteKeyWord(": ")
 	err := n.Block.Restore(ctx)
 	if err != nil {
 		return err
 	}
-	if n.LableError {
-		return errors.Errorf("the same label has different names,begin: %s,end: %s", n.LableName, n.LableEnd)
+	if n.LabelError {
+		return errors.Errorf("the same label has different names,begin: %s,end: %s", n.LabelName, n.LabelEnd)
 	}
 	ctx.WriteKeyWord(" ")
-	ctx.WriteName(n.LableName)
+	ctx.WriteName(n.LabelName)
 	return nil
 }
 
@@ -1082,14 +1082,14 @@ func (n *ProcedureLabelLoop) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// GetErrorStatus get lable error info.
+// GetErrorStatus get label error info.
 func (n *ProcedureLabelLoop) GetErrorStatus() (string, bool) {
-	return n.LableEnd, n.LableError
+	return n.LabelEnd, n.LabelError
 }
 
-// GetLableName get label name.
-func (n *ProcedureLabelLoop) GetLableName() string {
-	return n.LableName
+// GetLabelName get label name.
+func (n *ProcedureLabelLoop) GetLabelName() string {
+	return n.LabelName
 }
 
 // IsBlock get block flag.
