@@ -39,6 +39,9 @@ import (
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -680,6 +683,18 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
 	}
+
+	scheduler.RegisterSchedulerConstructor("backfill",
+		func(taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(taskMeta, d)
+		})
+
+	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
+	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
+		return &BackFillSubtaskExecutor{
+			Task: minimalTask,
+		}, nil
+	})
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL

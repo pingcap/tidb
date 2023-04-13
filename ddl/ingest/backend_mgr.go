@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -111,7 +112,7 @@ func (m *backendCtxManager) Unregister(jobID int64) {
 	bc.backend.Close()
 	m.memRoot.Release(StructSizeBackendCtx)
 	m.Delete(jobID)
-	m.memRoot.ReleaseWithTag(encodeBackendTag(jobID))
+	m.memRoot.ReleaseWithTag(EncodeBackendTag(jobID))
 	logutil.BgLogger().Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()))
@@ -136,12 +137,17 @@ func (m *backendCtxManager) UpdateMemoryUsage() {
 		bc, exists := m.Load(key)
 		if exists {
 			curSize := bc.backend.TotalMemoryConsume()
-			m.memRoot.ReleaseWithTag(encodeBackendTag(bc.jobID))
-			m.memRoot.ConsumeWithTag(encodeBackendTag(bc.jobID), curSize)
+			m.memRoot.ReleaseWithTag(EncodeBackendTag(bc.jobID))
+			m.memRoot.ConsumeWithTag(EncodeBackendTag(bc.jobID), curSize)
 		}
 	}
 }
 
-func encodeBackendTag(jobID int64) string {
+func EncodeBackendTag(jobID int64) string {
 	return fmt.Sprintf("%d", jobID)
+}
+
+// DecodeBackendTag decodes the backend tag to job ID.
+func DecodeBackendTag(name string) (int64, error) {
+	return strconv.ParseInt(name, 10, 64)
 }

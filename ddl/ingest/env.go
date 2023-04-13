@@ -83,24 +83,13 @@ func InitGlobalLightningEnv() {
 // Generate lightning local store dir in TiDB data dir.
 // it will append -port to be tmp_ddl suffix.
 func genLightningDataDir() (string, error) {
-	tidbCfg := config.GetGlobalConfig()
-	sortPathSuffix := "/tmp_ddl-" + strconv.Itoa(int(tidbCfg.Port))
-	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
-
-	if info, err := os.Stat(sortPath); err != nil {
+	sortPath := ConfigSortPath()
+	if _, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
 			logutil.BgLogger().Error(LitErrStatDirFail, zap.String("sort path", sortPath), zap.Error(err))
 			return "", err
 		}
-	} else if info.IsDir() {
-		// Currently remove all dir to clean garbage data.
-		// TODO: when do checkpoint should change follow logic.
-		err := os.RemoveAll(sortPath)
-		if err != nil {
-			logutil.BgLogger().Error(LitErrDeleteDirFail, zap.String("sort path", sortPath), zap.Error(err))
-		}
 	}
-
 	err := os.MkdirAll(sortPath, 0o700)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCreateDirFail, zap.String("sort path", sortPath), zap.Error(err))
@@ -108,6 +97,14 @@ func genLightningDataDir() (string, error) {
 	}
 	logutil.BgLogger().Info(LitInfoSortDir, zap.String("data path:", sortPath))
 	return sortPath, nil
+}
+
+// ConfigSortPath returns the sort path for lightning.
+func ConfigSortPath() string {
+	tidbCfg := config.GetGlobalConfig()
+	sortPathSuffix := "/tmp_ddl-" + strconv.Itoa(int(tidbCfg.Port))
+	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+	return sortPath
 }
 
 // GenLightningDataDirForTest is only used for test.
