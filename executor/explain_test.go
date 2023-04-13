@@ -450,12 +450,12 @@ func TestFix29401(t *testing.T) {
 	tk.MustExec(" explain select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;")
 }
 
-func TestIssue35296(t *testing.T) {
+func TestIssue35296AndIssue43024(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int , c int, d int, e int,index ia(a), index ib(b), index ic(c), index idd(d), index ie(e));")
+	tk.MustExec("create table t(a int, b int , c int, d int, e int, primary key(a), index ib(b), index ic(c), index idd(d), index ie(e));")
 
 	rows := tk.MustQuery("explain analyze select * from t where a = 10 or b = 30 or c = 10 or d = 1 or e = 90;").Rows()
 
