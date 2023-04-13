@@ -2412,11 +2412,16 @@ func TestPartitionByExtensivePart(t *testing.T) {
 		`alter table t partition by key(a) partitions 3`,
 	}
 
+	seed := rand.Int63()
+	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	reorgRand := rand.New(rand.NewSource(seed))
 	for _, createSQL := range tStart {
 		for _, alterSQL := range tAlter {
 			tk.MustExec(createSQL)
 			tk.MustExec(t2Str)
-			checkDMLInAllStates(t, tk, tk2, schemaName, alterSQL, rows, pkInserts, pkUpdates, pkDeletes)
+			getNewPK := getNewStringPK()
+			getValues := getValuesFunc()
+			checkDMLInAllStates(t, tk, tk2, schemaName, alterSQL, rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
 			tk.MustExec(`drop table t`)
 			tk.MustExec(`drop table t2`)
 		}
@@ -2424,7 +2429,9 @@ func TestPartitionByExtensivePart(t *testing.T) {
 	for _, createSQL := range tStart[1:] {
 		tk.MustExec(createSQL)
 		tk.MustExec(t2Str)
-		checkDMLInAllStates(t, tk, tk2, schemaName, "alter table t remove partitioning", rows, pkInserts, pkUpdates, pkDeletes)
+		getNewPK := getNewStringPK()
+		getValues := getValuesFunc()
+		checkDMLInAllStates(t, tk, tk2, schemaName, "alter table t remove partitioning", rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
 		tk.MustExec(`drop table t`)
 		tk.MustExec(`drop table t2`)
 	}
@@ -2495,23 +2502,16 @@ func TestReorgPartExtensivePart(t *testing.T) {
 	pkUpdates := 200
 	pkDeletes := 100 // Enough to delete half of what is inserted?
 	alterStr := `alter table t reorganize partition pNull, pM, pLast into (partition pI values less than ("I"), partition pQ values less than ("q"), partition pLast values less than (MAXVALUE))`
-	checkDMLInAllStates(t, tk, tk2, schemaName, alterStr, rows, pkInserts, pkUpdates, pkDeletes)
-}
-
-// TODO: also have the getNewPK and getValues as paramenters
-func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alterStr string, rows, pkInserts, pkUpdates, pkDeletes int) {
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := newTestCallBack(t, dom)
-	dom.DDL().SetHook(hook)
-
-	pkMap := make(map[string]struct{}, rows)
-	pkArray := make([]string, 0, len(pkMap))
 	seed := rand.Int63()
 	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
 	reorgRand := rand.New(rand.NewSource(seed))
-	getNewPK := func(m map[string]struct{}, suf string) string {
+	getNewPK := getNewStringPK()
+	getValues := getValuesFunc()
+	checkDMLInAllStates(t, tk, tk2, schemaName, alterStr, rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+}
+
+func getNewStringPK() func(map[string]struct{}, string, *rand.Rand) string {
+	return func(m map[string]struct{}, suf string, reorgRand *rand.Rand) string {
 		newPK := randStr(2+reorgRand.Intn(5), reorgRand) + suf
 		lowerPK := strings.ToLower(newPK)
 		for _, ok := m[lowerPK]; ok; {
@@ -2522,8 +2522,11 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 		m[lowerPK] = struct{}{}
 		return newPK
 	}
+}
+
+func getValuesFunc() func(string, bool, *rand.Rand) string {
 	cnt := 0
-	getValues := func(pk string, asAssignment bool) string {
+	return func(pk string, asAssignment bool, reorgRand *rand.Rand) string {
 		s := `('%s', '%s', %d, '%s', '%s', %f, '%s')`
 		if asAssignment {
 			s = `a = '%s', b = '%s', c = %d,  d = '%s', e = '%s', f = %f, g = '%s'`
@@ -2538,11 +2541,26 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			reorgRand.Float64(),
 			randStr(512+reorgRand.Intn(1024), reorgRand))
 	}
+}
+
+func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alterStr string,
+	rows, pkInserts, pkUpdates, pkDeletes int,
+	reorgRand *rand.Rand,
+	getNewPK func(map[string]struct{}, string, *rand.Rand) string,
+	getValues func(string, bool, *rand.Rand) string) {
+	dom := domain.GetDomain(tk.Session())
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := newTestCallBack(t, dom)
+	dom.DDL().SetHook(hook)
+
+	pkMap := make(map[string]struct{}, rows)
+	pkArray := make([]string, 0, len(pkMap))
 	// Generate a start set:
 	for i := 0; i < rows; i++ {
-		pk := getNewPK(pkMap, "-o")
+		pk := getNewPK(pkMap, "-o", reorgRand)
 		pkArray = append(pkArray, pk)
-		values := getValues(pk, false)
+		values := getValues(pk, false, reorgRand)
 		tk.MustExec(`insert into t values ` + values)
 		tk.MustExec(`insert into t2 values ` + values)
 	}
@@ -2601,11 +2619,11 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			insPK := make([]string, 0, pkInserts)
 			values := make([]string, 0, pkInserts)
 			for i := 0; i < pkInserts; i += 2 {
-				pk := getNewPK(pkMap, "-i0")
+				pk := getNewPK(pkMap, "-i0", reorgRand)
 				logutil.BgLogger().Debug("insert1", zap.String("pk", pk))
 				pkArray = append(pkArray, pk)
 				insPK = append(insPK, pk)
-				values = append(values, getValues(pk, false))
+				values = append(values, getValues(pk, false, reorgRand))
 			}
 			if len(pkMap) != len(pkArray) {
 				panic("Different length!!!")
@@ -2630,11 +2648,11 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 
 			values = values[:0]
 			for i := 1; i < pkInserts; i += 2 {
-				pk := getNewPK(pkMap, "-i1")
+				pk := getNewPK(pkMap, "-i1", reorgRand)
 				logutil.BgLogger().Debug("insert2", zap.String("pk", pk))
 				pkArray = append(pkArray, pk)
 				insPK = append(insPK, pk)
-				values = append(values, getValues(pk, false))
+				values = append(values, getValues(pk, false, reorgRand))
 			}
 			hookErr = tk2.ExecToErr(`insert into t values ` + strings.Join(values, ","))
 			if hookErr != nil {
@@ -2677,11 +2695,11 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				oldPK := insPK[insIdx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				newPK := getNewPK(pkMap, "-u0")
+				newPK := getNewPK(pkMap, "-u0", reorgRand)
 				insPK[insIdx] = newPK
 				idx := len(pkArray) - len(insPK) + insIdx
 				pkArray[idx] = newPK
-				value := getValues(newPK, true)
+				value := getValues(newPK, true, reorgRand)
 
 				logutil.BgLogger().Debug("update1", zap.String("old", oldPK), zap.String("value", value))
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
@@ -2696,7 +2714,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				// Also do some non-pk column updates!
 				insIdx = reorgRand.Intn(len(insPK))
 				oldPK = insPK[insIdx]
-				value = getValues(oldPK, true)
+				value = getValues(oldPK, true, reorgRand)
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -2725,11 +2743,11 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				oldPK := insPK[insIdx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				newPK := getNewPK(pkMap, "-u1")
+				newPK := getNewPK(pkMap, "-u1", reorgRand)
 				insPK[insIdx] = newPK
 				idx := len(pkArray) - len(insPK) + insIdx
 				pkArray[idx] = newPK
-				value := getValues(newPK, true)
+				value := getValues(newPK, true, reorgRand)
 				logutil.BgLogger().Debug("update2", zap.String("old", oldPK), zap.String("value", value))
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
@@ -2745,7 +2763,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				// Note: if PK changes it does RemoveRecord + AddRecord
 				insIdx = reorgRand.Intn(len(insPK))
 				oldPK = insPK[insIdx]
-				value = getValues(oldPK, true)
+				value = getValues(oldPK, true, reorgRand)
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -2775,9 +2793,9 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				oldPK := pkArray[idx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				newPK := getNewPK(pkMap, "-u2")
+				newPK := getNewPK(pkMap, "-u2", reorgRand)
 				pkArray[idx] = newPK
-				value := getValues(newPK, true)
+				value := getValues(newPK, true, reorgRand)
 				logutil.BgLogger().Debug("update3", zap.String("old", oldPK), zap.String("value", value))
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
@@ -2792,7 +2810,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				// Also do some non-pk column updates!
 				idx = reorgRand.Intn(len(pkArray) - len(insPK))
 				oldPK = pkArray[idx]
-				value = getValues(oldPK, true)
+				value = getValues(oldPK, true, reorgRand)
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -2821,9 +2839,9 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				oldPK := pkArray[idx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				newPK := getNewPK(pkMap, "-u3")
+				newPK := getNewPK(pkMap, "-u3", reorgRand)
 				pkArray[idx] = newPK
-				value := getValues(newPK, true)
+				value := getValues(newPK, true, reorgRand)
 				logutil.BgLogger().Debug("update4", zap.String("old", oldPK), zap.String("value", value))
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
@@ -2838,7 +2856,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				// Also do some non-pk column updates!
 				idx = reorgRand.Intn(len(pkArray) - len(insPK))
 				oldPK = pkArray[idx]
-				value = getValues(oldPK, true)
+				value = getValues(oldPK, true, reorgRand)
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
