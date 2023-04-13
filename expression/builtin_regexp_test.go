@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -923,6 +923,19 @@ func TestRegexpInStrVec(t *testing.T) {
 func TestRegexpReplace(t *testing.T) {
 	ctx := createContext(t)
 
+	url1 := "https://go.mail/folder-1/online/ru-en/#lingvo/#1О 50000&price_ashka/rav4/page=/check.xml"
+	url2 := "http://saint-peters-total=меньше 1000-rublyayusche/catalogue/kolasuryat-v-2-kadyirovka-personal/serial_id=0&input_state/apartments/mokrotochki.net/upravda.ru/yandex.ru/GameMain.aspx?mult]/on/orders/50195&text=мыс и орелка в Балаш смотреть онлайн бесплатно в хорошем камбалакс&lr=20030393833539353862643188&op_promo=C-Teaser_id=06d162.html"
+
+	url1Repl := "a$12$13"
+	url1Res := "ago.mail2go.mail3"
+	url1BinRes := "0x" // TODO
+
+	url2Repl := "aaa$1233"
+	url2Res := "aaasaint-peters-total=меньше 1000-rublyayusche233"
+	url2BinRes := "0x" // TODO
+
+	urlPat := "^https?://(?:www\\.)?([^/]+)/.*$"
+
 	// test regexp_replace(expr, pat, repl)
 	testParam3 := []struct {
 		input    interface{} // string
@@ -935,6 +948,8 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc abd abe", "ab.", "cz", "cz cz cz", "0x637A20637A20637A", nil},
 		{"你好 好的", "好", "逸", "你逸 逸的", "0xE4BDA0E980B820E980B8E79A84", nil},
 		{"", "^$", "123", "123", "0x313233", nil},
+		{url1, urlPat, url1Repl, url1Res, url1BinRes, nil},
+		{url2, urlPat, url2Repl, url2Res, url2BinRes, nil},
 		{"abc", nil, nil, nil, nil, nil},
 		{nil, "bc", nil, nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil},
@@ -978,14 +993,19 @@ func TestRegexpReplace(t *testing.T) {
 		{"你好", "好", "的", int64(2), "你的", "0xE4BDA0E79A84", nil},
 		{"你好啊", "好", "的", int64(3), "你好啊", "0xE4BDA0E79A84E5958A", nil},
 		{"", "^$", "cc", int64(1), "cc", "0x6363", nil},
+		{"seafood fool", "foo(.?)", "123", int64(3), "sea123 123", "0x", nil},    // index 5    // TODO
+		{"seafood fool", "foo(.?)", "123", int64(5), "seafood 123", "0x", nil},   // TODO
+		{"seafood fool", "foo(.?)", "123", int64(10), "seafood fool", "0x", nil}, // TODO
+		{"seafood fool", "foo(.?)", "z$12", int64(3), "seazd2 zl2", "0x", nil},   // TODO
+		{"seafood fool", "foo(.?)", "z$12", int64(5), "seafood zl2", "0x", nil},  // TODO
 		// Invalid position index tests
-		{"", "^$", "a", int64(2), "", "", ErrRegexp},
+		{"", "^$", "a", int64(2), "", "", ErrRegexp}, // index 10
 		{"", "^&", "a", int64(0), "", "", ErrRegexp},
 		{"abc", "bc", "a", int64(-1), "", "", ErrRegexp},
 		{"abc", "bc", "a", int64(4), "", "", ErrRegexp},
 		// Some nullable input tests
 		{"", "^$", "a", nil, nil, nil, nil},
-		{nil, "^$", "a", nil, nil, nil, nil},
+		{nil, "^$", "a", nil, nil, nil, nil}, // index 15
 		{"", nil, nil, nil, nil, nil, nil},
 		{nil, nil, nil, int64(1), nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil, nil},
@@ -1031,11 +1051,16 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc abd abe", "ab.", "cc", int64(3), int64(10), "abc abd abe", "0x6162632061626420616265", nil},
 		{"你好 好啊", "好", "的", int64(1), int64(1), "你的 好啊", "0xE4BDA0E79A8420E5A5BDE5958A", nil}, // index 5
 		{"你好 好啊", "好", "的", int64(3), int64(1), "你好 的啊", "0xE4BDA0E79A8420E5A5BDE5958A", nil},
+		{"seafood fool", "foo(.?)", "123", int64(1), int(1), "sea123 fool", "0x", nil},   // TODO
+		{"seafood fool", "foo(.?)", "123", int64(1), int(2), "seafood 123", "0x", nil},   // TODO
+		{"seafood fool", "foo(.?)", "123", int64(1), int(10), "seafood fool", "0x", nil}, // TODO
+		{"seafood fool", "foo(.?)", "z$12", int64(1), int(1), "seazd2 fool", "0x", nil},  // index 10 // TODO
+		{"seafood fool", "foo(.?)", "z$12", int64(1), int(2), "seafood zl2", "0x", nil},  // TODO
 		{"", "^$", "cc", int64(1), int64(1), "cc", "0x6363", nil},
 		{"", "^$", "cc", int64(1), int64(2), "", "0x", nil},
 		{"", "^$", "cc", int64(1), int64(-1), "cc", "0x6363", nil},
 		// Some nullable input tests
-		{"", "^$", "a", nil, int64(1), nil, nil, nil}, // index 10
+		{"", "^$", "a", nil, int64(1), nil, nil, nil}, // index 15
 		{nil, "^$", "a", nil, nil, nil, nil, nil},
 		{"", nil, nil, nil, int64(1), nil, nil, nil},
 		{nil, nil, nil, int64(1), int64(1), nil, nil, nil},
@@ -1114,9 +1139,9 @@ func TestRegexpReplace(t *testing.T) {
 }
 
 func TestRegexpReplaceVec(t *testing.T) {
-	var expr []string = []string{"abc abd abe", "你好啊啊啊啊啊", "好的 好滴 好~", "Good\nday", "\n\n\n\n\n\n"}
-	var pattern []string = []string{"^$", "ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", "."}
-	var repl []string = []string{"cc", "的"}
+	var expr []string = []string{"abc abd abe", "你好啊啊啊啊啊", "好的 好滴 好~", "Good\nday", "\n\n\n\n\n\n", "seafood fool"}
+	var pattern []string = []string{"^$", "ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", ".", "foo(.?)", "foo(d|l)"}
+	var repl []string = []string{"cc", "的", "a$12"}
 	var position []int = []int{1, 5}
 	var occurrence []int = []int{-1, 5}
 	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}

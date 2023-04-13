@@ -441,6 +441,11 @@ func LowerOneString(str []byte) {
 	}
 }
 
+// IsNumericASCII judges if a byte is numeric
+func IsNumericASCII(c byte) bool {
+	return (c >= '0' && c <= '9')
+}
+
 // LowerOneStringExcludeEscapeChar lowers strings and exclude an escape char
 //
 // When escape_char is a capital char, we shouldn't lower the escape char.
