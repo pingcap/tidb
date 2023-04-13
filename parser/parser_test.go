@@ -6565,7 +6565,7 @@ func TestBRIE(t *testing.T) {
 		{"backup logs to 'noop://'", true, "BACKUP LOGS TO 'noop://'"},
 		{"backup logs to 'noop://' start_ts='20220304'", true, "BACKUP LOGS TO 'noop://' START_TS = '20220304'"},
 		{"pause backup logs", true, "PAUSE BACKUP LOGS"},
-		{"pause backup logs gc_ttl='20220304'", true, "PAUSE BACKUP LOGS GC_TTL = '20220304'"},
+		{"pause backup logs gc_ttl=20220304", true, "PAUSE BACKUP LOGS GC_TTL = 20220304"},
 		{"resume backup logs", true, "RESUME BACKUP LOGS"},
 		{"show backup logs status", true, "SHOW BACKUP LOGS STATUS"},
 		{"show backup logs metadata from 'noop://'", true, "SHOW BACKUP LOGS METADATA FROM 'noop://'"},
@@ -6578,6 +6578,7 @@ func TestBRIE(t *testing.T) {
 		{"restore point from 'noop://log_backup' full_backup_storage='noop://full_log'", true, "RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log'"},
 		{"restore point from 'noop://log_backup' full_backup_storage='noop://full_log' restored_ts='20230123'", true, "RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log' RESTORED_TS = '20230123'"},
 		{"restore point from 'noop://log_backup' full_backup_storage='noop://full_log' start_ts='20230101' restored_ts='20230123'", true, "RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log' START_TS = '20230101' RESTORED_TS = '20230123'"},
+		{"restore point from 'noop://log_backup' full_backup_storage='noop://full_log' start_ts='20230101' end_ts='20230102' restored_ts='20230123'", true, "RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log' START_TS = '20230101' END_TS = '20230102' RESTORED_TS = '20230123'"},
 	}
 
 	RunTest(t, table, false)

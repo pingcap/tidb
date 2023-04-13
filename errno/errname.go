@@ -1095,6 +1095,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIERestoreFailed: mysql.Message("Restore failed: %s", nil),
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
+	ErrBRIEStreamFailed:  mysql.Message("Stream failed: %s", nil),
 
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 

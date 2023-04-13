@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -330,12 +331,63 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			}
 		}
 
-	case ast.BRIEKindRestore:
+	case ast.BRIEKindRestore, ast.BRIEKindRestorePIT:
 		e.restoreCfg = &task.RestoreConfig{Config: cfg}
 		for _, opt := range s.Options {
 			switch opt.Tp {
 			case ast.BRIEOptionOnline:
 				e.restoreCfg.Online = opt.UintValue != 0
+			case ast.BRIEOptionStartTS:
+				tso, err := b.parseTSString(opt.StrValue)
+				if err != nil {
+					b.err = err
+					return nil
+				}
+				e.restoreCfg.StartTS = tso
+			case ast.BRIEOptionRestoredTS:
+				tso, err := b.parseTSString(opt.StrValue)
+				if err != nil {
+					b.err = err
+					return nil
+				}
+				e.restoreCfg.RestoreTS = tso
+			case ast.BRIEOptionFullBackupStorage:
+				e.restoreCfg.FullBackupStorage = opt.StrValue
+			}
+		}
+
+	case ast.BRIEKindStreamStart, ast.BRIEKindStreamStatus, ast.BRIEKindStreamStop, ast.BRIEKindStreamPause, ast.BRIEKindStreamPurge, ast.BRIEKindStreamResume, ast.BRIEKindStreamMetaData:
+		e.streamCfg = &task.StreamConfig{Config: cfg}
+
+		for _, opt := range s.Options {
+			switch opt.Tp {
+			case ast.BRIEOptionStartTS:
+				tso, err := b.parseTSString(opt.StrValue)
+				if err != nil {
+					b.err = err
+					return nil
+				}
+				e.streamCfg.StartTS = tso
+			case ast.BRIEOptionEndTS:
+				tso, err := b.parseTSString(opt.StrValue)
+				if err != nil {
+					b.err = err
+					return nil
+				}
+				e.streamCfg.EndTS = tso
+			case ast.BRIEOptionUntilTS:
+				tso, err := b.parseTSString(opt.StrValue)
+				if err != nil {
+					b.err = err
+					return nil
+				}
+				e.streamCfg.Until = tso
+			case ast.BRIEOptionGCTTL:
+				if opt.IntValue <= 0 {
+					e.streamCfg.SafePointTTL = utils.DefaultStreamPauseSafePointTTL
+				} else {
+					e.streamCfg.SafePointTTL = opt.IntValue
+				}
 			}
 		}
 
@@ -353,6 +405,7 @@ type BRIEExec struct {
 
 	backupCfg  *task.BackupConfig
 	restoreCfg *task.RestoreConfig
+	streamCfg  *task.StreamConfig
 	info       *brieTaskInfo
 }
 
@@ -402,6 +455,20 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		err = handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
 	case ast.BRIEKindRestore:
 		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), exeerrors.ErrBRIERestoreFailed)
+	case ast.BRIEKindStreamStart:
+		err = handleBRIEError(task.RunStreamStart(taskCtx, glue, "Start Backup log", e.streamCfg), exeerrors.ErrBRIEStreamFailed)
+	case ast.BRIEKindStreamPurge:
+		err = handleBRIEError(task.RunStreamTruncate(taskCtx, glue, "Purge Backup Log", e.streamCfg), exeerrors.ErrBRIEStreamFailed)
+	case ast.BRIEKindStreamPause:
+		err = handleBRIEError(task.RunStreamPause(taskCtx, glue, "Pause Backup Log", e.streamCfg), exeerrors.ErrBRIEStreamFailed)
+	case ast.BRIEKindStreamStop:
+		err = handleBRIEError(task.RunStreamStop(taskCtx, glue, "Stop Backup Log", e.streamCfg), exeerrors.ErrBRIEStreamFailed)
+	case ast.BRIEKindStreamResume:
+		err = handleBRIEError(task.RunStreamResume(taskCtx, glue, "Resume Backup Log", e.streamCfg), exeerrors.ErrBRIEStreamFailed)
+	case ast.BRIEKindStreamStatus:
+		err = handleBRIEError(task.RunStreamStatus(taskCtx, glue, "Resume Backup Log", e.streamCfg), exeerrors.ErrBRIEStreamFailed)
+	case ast.BRIEKindRestorePIT:
+		err = handleBRIEError(task.RunStreamRestore(taskCtx, glue, "RESTORE PiTR", e.restoreCfg), exeerrors.ErrBRIEStreamFailed)
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}

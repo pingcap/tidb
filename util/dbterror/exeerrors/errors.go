@@ -62,6 +62,7 @@ var (
 	ErrBRIERestoreFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
 	ErrBRIEImportFailed               = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEImportFailed)
 	ErrBRIEExportFailed               = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
+	ErrBRIEStreamFailed               = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEStreamFailed)
 	ErrCTEMaxRecursionDepth           = dbterror.ClassExecutor.NewStd(mysql.ErrCTEMaxRecursionDepth)
 	ErrNotSupportedWithSem            = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
 	ErrPluginIsNotLoaded              = dbterror.ClassExecutor.NewStd(mysql.ErrPluginIsNotLoaded)
