@@ -238,6 +238,7 @@ const (
 	RestoreWithTTLEnableOff
 	RestoreWithoutSchemaName
 	RestoreWithoutTableName
+	RestoreForNonPrepPlanCache
 )
 
 const (
@@ -304,17 +305,20 @@ func (rf RestoreFlags) HasNameBackQuotesFlag() bool {
 	return rf.has(RestoreNameBackQuotes)
 }
 
-// HasSpacesAroundBinaryOperationFlag returns a boolean indicating whether `rf` has `RestoreSpacesAroundBinaryOperation` flag.
+// HasSpacesAroundBinaryOperationFlag returns a boolean indicating
+// whether `rf` has `RestoreSpacesAroundBinaryOperation` flag.
 func (rf RestoreFlags) HasSpacesAroundBinaryOperationFlag() bool {
 	return rf.has(RestoreSpacesAroundBinaryOperation)
 }
 
-// HasRestoreBracketAroundBinaryOperation returns a boolean indicating whether `rf` has `RestoreBracketAroundBinaryOperation` flag.
+// HasRestoreBracketAroundBinaryOperation returns a boolean indicating
+// whether `rf` has `RestoreBracketAroundBinaryOperation` flag.
 func (rf RestoreFlags) HasRestoreBracketAroundBinaryOperation() bool {
 	return rf.has(RestoreBracketAroundBinaryOperation)
 }
 
-// HasStringWithoutDefaultCharset returns a boolean indicating whether `rf` has `RestoreStringWithoutDefaultCharset` flag.
+// HasStringWithoutDefaultCharset returns a boolean indicating
+// whether `rf` has `RestoreStringWithoutDefaultCharset` flag.
 func (rf RestoreFlags) HasStringWithoutDefaultCharset() bool {
 	return rf.has(RestoreStringWithoutDefaultCharset)
 }
@@ -334,9 +338,15 @@ func (rf RestoreFlags) HasSkipPlacementRuleForRestoreFlag() bool {
 	return rf.has(SkipPlacementRuleForRestore)
 }
 
-// HasRestoreWithTTLEnableOff returns a boolean indicating whether to force set TTL_ENABLE='OFF' when restoring a TTL table
+// HasRestoreWithTTLEnableOff returns a boolean indicating
+// whether to force set TTL_ENABLE='OFF' when restoring a TTL table
 func (rf RestoreFlags) HasRestoreWithTTLEnableOff() bool {
 	return rf.has(RestoreWithTTLEnableOff)
+}
+
+// HasRestoreForNonPrepPlanCache returns a boolean indicating whether `rf` has `RestoreForNonPrepPlanCache` flag.
+func (rf RestoreFlags) HasRestoreForNonPrepPlanCache() bool {
+	return rf.has(RestoreForNonPrepPlanCache)
 }
 
 // RestoreCtx is `Restore` context to hold flags and writer.

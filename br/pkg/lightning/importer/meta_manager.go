@@ -835,7 +835,7 @@ func (m *dbTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
 // CheckAndFinishRestore check task meta and return whether to switch cluster to normal state and clean up the metadata
 // Return values: first boolean indicates whether switch back tidb cluster to normal state (restore schedulers, switch tikv to normal)
 // the second boolean indicates whether to clean up the metadata in tidb
-func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool) (bool, bool, error) {
+func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool) (switchBack bool, allFinished bool, err error) {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
 		return false, false, errors.Trace(err)
@@ -851,8 +851,8 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 		return false, false, errors.Annotate(err, "enable pessimistic transaction failed")
 	}
 
-	switchBack := true
-	allFinished := finished
+	switchBack = true
+	allFinished = finished
 	err = exec.Transact(ctx, "check and finish schedulers", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf("SELECT task_id, status, state from %s FOR UPDATE", m.tableName))
 		if err != nil {
@@ -996,84 +996,86 @@ func MaybeCleanupAllMetas(
 
 type noopMetaMgrBuilder struct{}
 
-func (b noopMetaMgrBuilder) Init(ctx context.Context) error {
+func (noopMetaMgrBuilder) Init(_ context.Context) error {
 	return nil
 }
 
-func (b noopMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
+func (noopMetaMgrBuilder) TaskMetaMgr(_ *pdutil.PdController) taskMetaMgr {
 	return noopTaskMetaMgr{}
 }
 
-func (b noopMetaMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
+func (noopMetaMgrBuilder) TableMetaMgr(_ *TableImporter) tableMetaMgr {
 	return noopTableMetaMgr{}
 }
 
 type noopTaskMetaMgr struct{}
 
-func (m noopTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSourceSize int64) error {
+func (noopTaskMetaMgr) InitTask(_ context.Context, _, _ int64) error {
 	return nil
 }
 
-func (m noopTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
+func (noopTaskMetaMgr) CheckTasksExclusively(_ context.Context, _ func(tasks []taskMeta) ([]taskMeta, error)) error {
 	return nil
 }
 
-func (m noopTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error) {
+func (noopTaskMetaMgr) CheckAndPausePdSchedulers(_ context.Context) (pdutil.UndoFunc, error) {
 	return func(ctx context.Context) error {
 		return nil
 	}, nil
 }
 
-func (m noopTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
+func (noopTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
 	return false
 }
 
-func (m noopTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
+func (noopTaskMetaMgr) CheckTaskExist(_ context.Context) (bool, error) {
 	return true, nil
 }
 
-func (m noopTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (bool, bool, error) {
+func (noopTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (
+	needSwitchBack bool, needCleanup bool, err error) {
 	return false, true, nil
 }
 
-func (m noopTaskMetaMgr) Cleanup(ctx context.Context) error {
+func (noopTaskMetaMgr) Cleanup(_ context.Context) error {
 	return nil
 }
 
-func (m noopTaskMetaMgr) CleanupTask(ctx context.Context) error {
+func (noopTaskMetaMgr) CleanupTask(_ context.Context) error {
 	return nil
 }
 
-func (m noopTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
+func (noopTaskMetaMgr) CleanupAllMetas(_ context.Context) error {
 	return nil
 }
 
-func (m noopTaskMetaMgr) Close() {
+func (noopTaskMetaMgr) Close() {
 }
 
 type noopTableMetaMgr struct{}
 
-func (m noopTableMetaMgr) InitTableMeta(ctx context.Context) error {
+func (noopTableMetaMgr) InitTableMeta(_ context.Context) error {
 	return nil
 }
 
-func (m noopTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
+func (noopTableMetaMgr) AllocTableRowIDs(_ context.Context, _ int64) (*verify.KVChecksum, int64, error) {
 	return nil, 0, nil
 }
 
-func (m noopTableMetaMgr) UpdateTableStatus(ctx context.Context, status metaStatus) error {
+func (noopTableMetaMgr) UpdateTableStatus(_ context.Context, _ metaStatus) error {
 	return nil
 }
 
-func (m noopTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error {
+func (noopTableMetaMgr) UpdateTableBaseChecksum(_ context.Context, _ *verify.KVChecksum) error {
 	return nil
 }
 
-func (m noopTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (bool, bool, *verify.KVChecksum, error) {
+func (noopTableMetaMgr) CheckAndUpdateLocalChecksum(_ context.Context, _ *verify.KVChecksum, _ bool) (
+	otherHasDupe bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error) {
 	return false, true, &verify.KVChecksum{}, nil
 }
 
-func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {
+func (noopTableMetaMgr) FinishTable(_ context.Context) error {
 	return nil
 }
 
@@ -1081,7 +1083,7 @@ type singleMgrBuilder struct {
 	taskID int64
 }
 
-func (b singleMgrBuilder) Init(context.Context) error {
+func (singleMgrBuilder) Init(context.Context) error {
 	return nil
 }
 
@@ -1092,7 +1094,7 @@ func (b singleMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 	}
 }
 
-func (b singleMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
+func (singleMgrBuilder) TableMetaMgr(_ *TableImporter) tableMetaMgr {
 	return noopTableMetaMgr{}
 }
 
@@ -1106,14 +1108,14 @@ type singleTaskMetaMgr struct {
 	tiflashAvail       uint64
 }
 
-func (m *singleTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSourceSize int64) error {
+func (m *singleTaskMetaMgr) InitTask(_ context.Context, tikvSourceSize, tiflashSourceSize int64) error {
 	m.tikvSourceBytes = uint64(tikvSourceSize)
 	m.tiflashSourceBytes = uint64(tiflashSourceSize)
 	m.initialized = true
 	return nil
 }
 
-func (m *singleTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
+func (m *singleTaskMetaMgr) CheckTasksExclusively(_ context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
 	newTasks, err := action([]taskMeta{
 		{
 			taskID:             m.taskID,
@@ -1143,25 +1145,25 @@ func (m *singleTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
 	return m.pd.CanPauseSchedulerByKeyRange()
 }
 
-func (m *singleTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
+func (m *singleTaskMetaMgr) CheckTaskExist(_ context.Context) (bool, error) {
 	return m.initialized, nil
 }
 
-func (m *singleTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (shouldSwitchBack bool, shouldCleanupMeta bool, err error) {
+func (*singleTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (shouldSwitchBack bool, shouldCleanupMeta bool, err error) {
 	return true, true, nil
 }
 
-func (m *singleTaskMetaMgr) Cleanup(ctx context.Context) error {
+func (*singleTaskMetaMgr) Cleanup(_ context.Context) error {
 	return nil
 }
 
-func (m *singleTaskMetaMgr) CleanupTask(ctx context.Context) error {
+func (*singleTaskMetaMgr) CleanupTask(_ context.Context) error {
 	return nil
 }
 
-func (m *singleTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
+func (*singleTaskMetaMgr) CleanupAllMetas(_ context.Context) error {
 	return nil
 }
 
-func (m *singleTaskMetaMgr) Close() {
+func (*singleTaskMetaMgr) Close() {
 }

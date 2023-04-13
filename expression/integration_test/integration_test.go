@@ -3820,6 +3820,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization = OFF")
 
 	// < not pushed, cast only pushed to TiKV, date_format only pushed to TiFlash,
 	// > pushed to both TiKV and TiFlash

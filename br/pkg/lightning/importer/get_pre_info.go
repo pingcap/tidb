@@ -457,7 +457,7 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := mydump.OpenReader(ctx, dataFileMeta, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -568,7 +568,7 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 				if tableInfo.Core.TiFlashReplica != nil && tableInfo.Core.TiFlashReplica.Available {
 					tiflashSize += tableSize * int64(tableInfo.Core.TiFlashReplica.Count)
 				}
-				tableCount += 1
+				tableCount++
 			}
 		}
 	}
@@ -606,7 +606,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := mydump.OpenReader(ctx, sampleFile, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
@@ -665,8 +665,8 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	initializedColumns := false
 	var (
 		columnPermutation []int
-		kvSize            uint64 = 0
-		rowSize           uint64 = 0
+		kvSize            uint64
+		rowSize           uint64
 		extendVals        []types.Datum
 	)
 	rowCount := 0

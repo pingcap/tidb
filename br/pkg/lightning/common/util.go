@@ -118,7 +118,8 @@ func ConnectMySQL(cfg *mysql.Config) (*sql.DB, error) {
 	// If access is denied and password is encoded by base64, try the decoded string as well.
 	if mysqlErr, ok := errors.Cause(firstErr).(*mysql.MySQLError); ok && mysqlErr.Number == tmysql.ErrAccessDenied {
 		// If password is encoded by base64, try the decoded string as well.
-		if password, decodeErr := base64.StdEncoding.DecodeString(cfg.Passwd); decodeErr == nil && string(password) != cfg.Passwd {
+		password, decodeErr := base64.StdEncoding.DecodeString(cfg.Passwd)
+		if decodeErr == nil && string(password) != cfg.Passwd {
 			cfg.Passwd = string(password)
 			db2, err := tryConnectMySQL(cfg)
 			if err == nil {
@@ -165,7 +166,7 @@ type SQLWithRetry struct {
 	HideQueryLog bool
 }
 
-func (t SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
+func (SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
 	return Retry(purpose, parentLogger, action)
 }
 

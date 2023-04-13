@@ -44,6 +44,7 @@ import (
 type mysqlSuite struct {
 	dbHandle   *sql.DB
 	mockDB     sqlmock.Sqlmock
+	mgr        backend.EngineManager
 	backend    backend.Backend
 	encBuilder encode.EncodingBuilder
 	tbl        table.Table
@@ -65,11 +66,12 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
-	backend := tidb.NewTiDBBackend(context.Background(), db, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
+	backendObj := tidb.NewTiDBBackend(context.Background(), db, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
 	return &mysqlSuite{
 		dbHandle:   db,
 		mockDB:     mock,
-		backend:    backend,
+		mgr:        backend.MakeEngineManager(backendObj),
+		backend:    backendObj,
 		encBuilder: tidb.NewEncodingBuilder(),
 		tbl:        tbl,
 	}
@@ -90,7 +92,7 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 	ctx := context.Background()
 	logger := log.L()
 
-	engine, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	engine, err := s.mgr.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
 	dataRows := s.encBuilder.MakeEmptyRows()
@@ -133,9 +135,9 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 	require.NoError(t, err)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, nil)
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
 	require.NoError(t, err)
-	err = writer.WriteRows(ctx, []string{"b", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
+	err = writer.AppendRows(ctx, []string{"b", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
 	require.NoError(t, err)
 	st, err := writer.Close(ctx)
 	require.NoError(t, err)
@@ -154,7 +156,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 
 	encBuilder := tidb.NewEncodingBuilder()
 	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, config.IgnoreOnDup, errormanager.New(nil, config.NewConfig(), logger))
-	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
 	dataRows := encBuilder.MakeEmptyRows()
@@ -170,9 +172,9 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	require.NoError(t, err)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, nil)
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
 	require.NoError(t, err)
-	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
 	_, err = writer.Close(ctx)
 	require.NoError(t, err)
@@ -201,7 +203,7 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 
 	encBuilder := tidb.NewEncodingBuilder()
 	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), logger))
-	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
 	dataRows := encBuilder.MakeEmptyRows()
@@ -218,9 +220,9 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, nil)
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
 	require.NoError(t, err)
-	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
 	st, err := writer.Close(ctx)
 	require.NoError(t, err)
@@ -442,13 +444,13 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 		errormanager.New(s.dbHandle, &config.Config{}, log.L()),
 	)
 	encBuilder := tidb.NewEncodingBuilder()
-	dataRows := encodeRowsTiDB(t, encBuilder, ignoreBackend, s.tbl)
+	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
 	ctx := context.Background()
-	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, nil)
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
 	require.NoError(t, err)
-	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)
 	require.False(t, common.IsRetryableError(err), "err: %v", err)
 }
@@ -510,13 +512,13 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 		}, log.L()),
 	)
 	encBuilder := tidb.NewEncodingBuilder()
-	dataRows := encodeRowsTiDB(t, encBuilder, ignoreBackend, s.tbl)
+	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
 	ctx := context.Background()
-	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, nil)
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
 	require.NoError(t, err)
-	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
 }
 
@@ -566,20 +568,20 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 		}, log.L()),
 	)
 	encBuilder := tidb.NewEncodingBuilder()
-	dataRows := encodeRowsTiDB(t, encBuilder, ignoreBackend, s.tbl)
+	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
 	ctx := context.Background()
-	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, nil)
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
 	require.NoError(t, err)
-	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)
 	st, err := writer.Close(ctx)
 	require.NoError(t, err)
 	require.Nil(t, st)
 }
 
-func encodeRowsTiDB(t *testing.T, encBuilder encode.EncodingBuilder, b backend.Backend, tbl table.Table) encode.Rows {
+func encodeRowsTiDB(t *testing.T, encBuilder encode.EncodingBuilder, tbl table.Table) encode.Rows {
 	dataRows := encBuilder.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
 	indexRows := encBuilder.MakeEmptyRows()
