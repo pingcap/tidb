@@ -52,18 +52,22 @@ func SelectFromTTLTaskWithJobID(jobID string) (string, []interface{}) {
 	return selectFromTTLTask + " WHERE job_id = %?", []interface{}{jobID}
 }
 
-// SelectFromTTLTaskWithID returns an SQL statement to get all tasks of the specified job and scanID in mysql.tidb_ttl_task
+// SelectFromTTLTaskWithID returns an SQL statement to get all tasks of the specified job
+// and scanID in mysql.tidb_ttl_task
 func SelectFromTTLTaskWithID(jobID string, scanID int64) (string, []interface{}) {
 	return selectFromTTLTask + " WHERE job_id = %? AND scan_id = %?", []interface{}{jobID, scanID}
 }
 
 // PeekWaitingTTLTask returns an SQL statement to get `limit` waiting ttl task
 func PeekWaitingTTLTask(hbExpire time.Time) (string, []interface{}) {
-	return selectFromTTLTask + " WHERE status = 'waiting' OR (owner_hb_time < %? AND status = 'running') ORDER BY created_time ASC", []interface{}{hbExpire.Format("2006-01-02 15:04:05")}
+	return selectFromTTLTask +
+			" WHERE status = 'waiting' OR (owner_hb_time < %? AND status = 'running') ORDER BY created_time ASC",
+		[]interface{}{hbExpire.Format("2006-01-02 15:04:05")}
 }
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
-func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum, scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []interface{}, error) {
+func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
+	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []interface{}, error) {
 	rangeStart, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, []byte{}, scanRangeStart...)
 	if err != nil {
 		return "", nil, err
@@ -72,7 +76,8 @@ func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, tableID int64, sca
 	if err != nil {
 		return "", nil, err
 	}
-	return insertIntoTTLTask, []interface{}{jobID, tableID, int64(scanID), rangeStart, rangeEnd, expireTime, createdTime}, nil
+	return insertIntoTTLTask, []interface{}{jobID, tableID, int64(scanID),
+		rangeStart, rangeEnd, expireTime, createdTime}, nil
 }
 
 // TaskStatus represents the current status of a task

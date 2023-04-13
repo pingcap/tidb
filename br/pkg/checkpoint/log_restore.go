@@ -40,15 +40,27 @@ func (l LogRestoreValueType) IdentKey() []byte {
 type LogRestoreRunner = CheckpointRunner[LogRestoreKeyType, LogRestoreValueType]
 
 // only for test
-func StartCheckpointLogRestoreRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration, taskName string) (*LogRestoreRunner, error) {
-	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+func StartCheckpointLogRestoreRunnerForTest(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	tick time.Duration,
+	taskName string,
+) (*LogRestoreRunner, error) {
+	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
+		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	runner.startCheckpointMainLoop(ctx, tick, 0)
 	return runner, nil
 }
 
-func StartCheckpointRunnerForLogRestore(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, taskName string) (*LogRestoreRunner, error) {
-	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+func StartCheckpointRunnerForLogRestore(ctx context.Context,
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	taskName string,
+) (*LogRestoreRunner, error) {
+	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
+		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, 0)

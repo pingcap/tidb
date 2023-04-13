@@ -20,12 +20,14 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,8 +62,10 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").Check(testkit.Rows("124"))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued2'").Check(testkit.Rows("125"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").
+		Check(testkit.Rows("124"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued2'").
+		Check(testkit.Rows("125"))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 
 	// allocate new table id verification
@@ -88,7 +92,9 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	idGen, ok := tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_new'").Rows()[0][0].(string)
+	idGen, ok := tk.MustQuery(
+		"select tidb_table_id from information_schema.tables where table_name = 'table_id_new'").
+		Rows()[0][0].(string)
 	require.True(t, ok)
 	idGenNum, err := strconv.ParseInt(idGen, 10, 64)
 	require.NoError(t, err)
@@ -164,9 +170,12 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	require.Equal(t, "public", job3[4])
 
 	// check reused table id
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_1'").Check(testkit.Rows("1234"))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_2'").Check(testkit.Rows("1235"))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_3'").Check(testkit.Rows("1236"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_1'").
+		Check(testkit.Rows("1234"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_2'").
+		Check(testkit.Rows("1235"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_3'").
+		Check(testkit.Rows("1236"))
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }
@@ -205,4 +214,64 @@ func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
 	require.True(t, kv.ErrEntryTooLarge.Equal(err))
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
+}
+
+func TestTheSessionIsoation(t *testing.T) {
+	req := require.New(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	ctx := context.Background()
+
+	g := Glue{}
+	session, err := g.CreateSession(store)
+	req.NoError(err)
+
+	req.NoError(session.ExecuteInternal(ctx, "use test;"))
+	infos := []*model.TableInfo{}
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_1"),
+		Columns: []*model.ColumnInfo{
+			{Name: model.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
+		},
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_2"),
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			Name: model.NewCIStr("threereplication"),
+		},
+		Columns: []*model.ColumnInfo{
+			{Name: model.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
+		},
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_3"),
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			Name: model.NewCIStr("fivereplication"),
+		},
+		Columns: []*model.ColumnInfo{
+			{Name: model.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
+		},
+	})
+	polices := []*model.PolicyInfo{
+		{
+			PlacementSettings: &model.PlacementSettings{
+				Followers: 4,
+			},
+			Name: model.NewCIStr("fivereplication"),
+		},
+		{
+			PlacementSettings: &model.PlacementSettings{
+				Followers: 2,
+			},
+			Name: model.NewCIStr("threereplication"),
+		},
+	}
+	for _, pinfo := range polices {
+		before := session.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
+		req.NoError(session.CreatePlacementPolicy(ctx, pinfo))
+		after := session.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
+		req.Greater(after, before)
+	}
+	req.NoError(session.(glue.BatchCreateTableSession).CreateTables(ctx, map[string][]*model.TableInfo{
+		"test": infos,
+	}))
 }

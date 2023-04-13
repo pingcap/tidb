@@ -56,15 +56,28 @@ func flushPositionForRestore(taskName string) flushPosition {
 }
 
 // only for test
-func StartCheckpointRestoreRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration, taskName string) (*RestoreRunner, error) {
-	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+func StartCheckpointRestoreRunnerForTest(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	tick time.Duration,
+	taskName string,
+) (*RestoreRunner, error) {
+	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
+		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	runner.startCheckpointMainLoop(ctx, tick, 0)
 	return runner, nil
 }
 
-func StartCheckpointRunnerForRestore(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, taskName string) (*RestoreRunner, error) {
-	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+func StartCheckpointRunnerForRestore(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	taskName string,
+) (*RestoreRunner, error) {
+	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
+		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, 0)
@@ -95,11 +108,21 @@ func AppendRangesForRestore(
 
 // walk the whole checkpoint range files and retrieve the metadata of restored ranges
 // and return the total time cost in the past executions
-func WalkCheckpointFileForRestore[K KeyType, V ValueType](ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, taskName string, fn func(K, V)) (time.Duration, error) {
+func WalkCheckpointFileForRestore[K KeyType, V ValueType](
+	ctx context.Context,
+	s storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	taskName string,
+	fn func(K, V),
+) (time.Duration, error) {
 	return walkCheckpointFile(ctx, s, cipher, getCheckpointDataDirByName(taskName), fn)
 }
 
-func LoadCheckpointChecksumForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) (map[int64]*ChecksumItem, time.Duration, error) {
+func LoadCheckpointChecksumForRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+) (map[int64]*ChecksumItem, time.Duration, error) {
 	return loadCheckpointChecksum(ctx, s, getCheckpointChecksumDirByName(taskName))
 }
 
@@ -108,16 +131,29 @@ type CheckpointMetadataForRestore struct {
 	GcRatio          string                `json:"gc-ratio,omitempty"`
 }
 
-func LoadCheckpointMetadataForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) (*CheckpointMetadataForRestore, error) {
+func LoadCheckpointMetadataForRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+) (*CheckpointMetadataForRestore, error) {
 	m := &CheckpointMetadataForRestore{}
 	err := loadCheckpointMeta(ctx, s, getCheckpointMetaPathByName(taskName), m)
 	return m, err
 }
 
-func SaveCheckpointMetadataForRestore(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadataForRestore, taskName string) error {
+func SaveCheckpointMetadataForRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	meta *CheckpointMetadataForRestore,
+	taskName string,
+) error {
 	return saveCheckpointMetadata(ctx, s, meta, getCheckpointMetaPathByName(taskName))
 }
 
-func ExistsRestoreCheckpoint(ctx context.Context, s storage.ExternalStorage, taskName string) (bool, error) {
+func ExistsRestoreCheckpoint(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+) (bool, error) {
 	return s.FileExists(ctx, getCheckpointMetaPathByName(taskName))
 }

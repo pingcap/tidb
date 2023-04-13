@@ -27,6 +27,5 @@ go_test(
     deps = [
         ":iter",
         "@com_github_stretchr_testify//require",
-        "@org_golang_x_exp//constraints",
     ],
 )

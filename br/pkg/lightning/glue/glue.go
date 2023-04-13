@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+// Glue is the glue that binds Lightning with the outside world.
 type Glue interface {
 	OwnsSQLExecutor() bool
 	GetSQLExecutor() SQLExecutor
@@ -43,6 +44,7 @@ type Glue interface {
 	Record(string, uint64)
 }
 
+// SQLExecutor is the interface for executing SQL statements.
 type SQLExecutor interface {
 	// ExecuteWithLog and ObtainStringWithLog should support concurrently call and can't assure different calls goes to
 	// same underlying connection
@@ -58,38 +60,47 @@ type sqlConnSession struct {
 	conn *sql.Conn
 }
 
+// Close implements checkpoints.Session.Close
 func (session *sqlConnSession) Close() {
 	_ = session.conn.Close()
 }
 
+// Execute implements checkpoints.Session.Execute
 func (session *sqlConnSession) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
 	_, err := session.conn.ExecContext(ctx, sql)
 	return nil, err
 }
 
-func (session *sqlConnSession) CommitTxn(context.Context) error {
+// CommitTxn implements checkpoints.Session.CommitTxn
+func (*sqlConnSession) CommitTxn(context.Context) error {
 	return errors.New("sqlConnSession doesn't have a valid CommitTxn implementation")
 }
 
-func (session *sqlConnSession) RollbackTxn(context.Context) {}
+// RollbackTxn implements checkpoints.Session.RollbackTxn
+func (*sqlConnSession) RollbackTxn(context.Context) {}
 
-func (session *sqlConnSession) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
+// PrepareStmt implements checkpoints.Session.PrepareStmt
+func (*sqlConnSession) PrepareStmt(_ string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
 	return 0, 0, nil, errors.New("sqlConnSession doesn't have a valid PrepareStmt implementation")
 }
 
-func (session *sqlConnSession) ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error) {
+// ExecutePreparedStmt implements checkpoints.Session.ExecutePreparedStmt
+func (*sqlConnSession) ExecutePreparedStmt(_ context.Context, _ uint32, _ []types.Datum) (sqlexec.RecordSet, error) {
 	return nil, errors.New("sqlConnSession doesn't have a valid ExecutePreparedStmt implementation")
 }
 
-func (session *sqlConnSession) DropPreparedStmt(stmtID uint32) error {
+// DropPreparedStmt implements checkpoints.Session.DropPreparedStmt
+func (*sqlConnSession) DropPreparedStmt(_ uint32) error {
 	return errors.New("sqlConnSession doesn't have a valid DropPreparedStmt implementation")
 }
 
+// ExternalTiDBGlue is a Glue implementation which uses an external TiDB as storage.
 type ExternalTiDBGlue struct {
 	db     *sql.DB
 	parser *parser.Parser
 }
 
+// NewExternalTiDBGlue creates a new ExternalTiDBGlue instance.
 func NewExternalTiDBGlue(db *sql.DB, sqlMode mysql.SQLMode) *ExternalTiDBGlue {
 	p := parser.New()
 	p.SetSQLMode(sqlMode)
@@ -97,10 +108,12 @@ func NewExternalTiDBGlue(db *sql.DB, sqlMode mysql.SQLMode) *ExternalTiDBGlue {
 	return &ExternalTiDBGlue{db: db, parser: p}
 }
 
+// GetSQLExecutor implements Glue.GetSQLExecutor.
 func (e *ExternalTiDBGlue) GetSQLExecutor() SQLExecutor {
 	return e
 }
 
+// ExecuteWithLog implements SQLExecutor.ExecuteWithLog.
 func (e *ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, purpose string, logger log.Logger) error {
 	sql := common.SQLWithRetry{
 		DB:     e.db,
@@ -109,7 +122,9 @@ func (e *ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, pur
 	return sql.Exec(ctx, purpose, query)
 }
 
-func (e *ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (string, error) {
+// ObtainStringWithLog implements SQLExecutor.ObtainStringWithLog.
+func (e *ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string,
+	purpose string, logger log.Logger) (string, error) {
 	var s string
 	err := common.SQLWithRetry{
 		DB:     e.db,
@@ -118,7 +133,9 @@ func (e *ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string
 	return s, err
 }
 
-func (e *ExternalTiDBGlue) QueryStringsWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (result [][]string, finalErr error) {
+// QueryStringsWithLog implements SQLExecutor.QueryStringsWithLog.
+func (e *ExternalTiDBGlue) QueryStringsWithLog(ctx context.Context, query string,
+	purpose string, logger log.Logger) (result [][]string, finalErr error) {
 	finalErr = common.SQLWithRetry{
 		DB:     e.db,
 		Logger: logger,
@@ -150,18 +167,22 @@ func (e *ExternalTiDBGlue) QueryStringsWithLog(ctx context.Context, query string
 	return
 }
 
+// GetDB implements Glue.GetDB.
 func (e *ExternalTiDBGlue) GetDB() (*sql.DB, error) {
 	return e.db, nil
 }
 
+// GetParser implements Glue.GetParser.
 func (e *ExternalTiDBGlue) GetParser() *parser.Parser {
 	return e.parser
 }
 
-func (e ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
+// GetTables implements Glue.GetTables.
+func (ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
 	return nil, errors.New("ExternalTiDBGlue doesn't have a valid GetTables function")
 }
 
+// GetSession implements Glue.GetSession.
 func (e *ExternalTiDBGlue) GetSession(ctx context.Context) (checkpoints.Session, error) {
 	conn, err := e.db.Conn(ctx)
 	if err != nil {
@@ -170,21 +191,26 @@ func (e *ExternalTiDBGlue) GetSession(ctx context.Context) (checkpoints.Session,
 	return &sqlConnSession{conn: conn}, nil
 }
 
-func (e *ExternalTiDBGlue) OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (checkpoints.DB, error) {
+// OpenCheckpointsDB implements Glue.OpenCheckpointsDB.
+func (*ExternalTiDBGlue) OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (checkpoints.DB, error) {
 	return checkpoints.OpenCheckpointsDB(ctx, cfg)
 }
 
-func (e *ExternalTiDBGlue) OwnsSQLExecutor() bool {
+// OwnsSQLExecutor implements Glue.OwnsSQLExecutor.
+func (*ExternalTiDBGlue) OwnsSQLExecutor() bool {
 	return true
 }
 
+// Close implements Glue.Close.
 func (e *ExternalTiDBGlue) Close() {
 	e.db.Close()
 }
 
-func (e *ExternalTiDBGlue) Record(string, uint64) {
+// Record implements Glue.Record.
+func (*ExternalTiDBGlue) Record(string, uint64) {
 }
 
+// record key names
 const (
 	RecordEstimatedChunk = "EstimatedChunk"
 	RecordFinishedChunk  = "FinishedChunk"

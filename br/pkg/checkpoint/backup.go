@@ -44,7 +44,13 @@ func flushPositionForBackup() flushPosition {
 }
 
 // only for test
-func StartCheckpointBackupRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration, timer GlobalTimer) (*BackupRunner, error) {
+func StartCheckpointBackupRunnerForTest(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	tick time.Duration,
+	timer GlobalTimer,
+) (*BackupRunner, error) {
 	runner := newCheckpointRunner[BackupKeyType, BackupValueType](ctx, storage, cipher, timer, flushPositionForBackup())
 
 	err := runner.initialLock(ctx)
@@ -55,7 +61,12 @@ func StartCheckpointBackupRunnerForTest(ctx context.Context, storage storage.Ext
 	return runner, nil
 }
 
-func StartCheckpointRunnerForBackup(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, timer GlobalTimer) (*BackupRunner, error) {
+func StartCheckpointRunnerForBackup(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	timer GlobalTimer,
+) (*BackupRunner, error) {
 	runner := newCheckpointRunner[BackupKeyType, BackupValueType](ctx, storage, cipher, timer, flushPositionForBackup())
 
 	err := runner.initialLock(ctx)
@@ -90,7 +101,12 @@ func AppendForBackup(
 
 // walk the whole checkpoint range files and retrieve the metadata of backed up ranges
 // and return the total time cost in the past executions
-func WalkCheckpointFileForBackup(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, fn func(BackupKeyType, BackupValueType)) (time.Duration, error) {
+func WalkCheckpointFileForBackup(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	fn func(BackupKeyType, BackupValueType),
+) (time.Duration, error) {
 	return walkCheckpointFile(ctx, s, cipher, CheckpointDataDirForBackup, fn)
 }
 

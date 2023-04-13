@@ -29,6 +29,7 @@ go_test(
     ],
     embed = [":structure"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//kv",
         "//parser/mysql",

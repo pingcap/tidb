@@ -97,7 +97,8 @@ func TestCheckpointBackupRunner(t *testing.T) {
 		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
 		CipherKey:  []byte("01234567890123456789012345678901"),
 	}
-	checkpointRunner, err := checkpoint.StartCheckpointBackupRunnerForTest(ctx, s, cipher, 5*time.Second, NewMockTimer(10, 10))
+	checkpointRunner, err := checkpoint.StartCheckpointBackupRunnerForTest(
+		ctx, s, cipher, 5*time.Second, NewMockTimer(10, 10))
 	require.NoError(t, err)
 
 	data := map[string]struct {
@@ -200,13 +201,14 @@ func TestCheckpointBackupRunner(t *testing.T) {
 
 	// only 2 checksum files exists, they are t2_and__ and t4_and__
 	count := 0
-	err = s.WalkDir(ctx, &storage.WalkOption{SubDir: checkpoint.CheckpointChecksumDirForBackup}, func(s string, i int64) error {
-		count += 1
-		if !strings.Contains(s, "t2") {
-			require.True(t, strings.Contains(s, "t4"))
-		}
-		return nil
-	})
+	err = s.WalkDir(ctx, &storage.WalkOption{SubDir: checkpoint.CheckpointChecksumDirForBackup},
+		func(s string, i int64) error {
+			count += 1
+			if !strings.Contains(s, "t2") {
+				require.True(t, strings.Contains(s, "t4"))
+			}
+			return nil
+		})
 	require.NoError(t, err)
 	require.Equal(t, count, 2)
 }

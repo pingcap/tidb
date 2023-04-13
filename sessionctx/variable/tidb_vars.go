@@ -1045,7 +1045,7 @@ const (
 	DefTiDBProjectionConcurrency                   = ConcurrencyUnset
 	DefBroadcastJoinThresholdSize                  = 100 * 1024 * 1024
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
-	DefPreferBCJByExchangeDataSize                 = true
+	DefPreferBCJByExchangeDataSize                 = false
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
 	DefTiDBEnableOuterJoinReorder                  = true
@@ -1246,7 +1246,7 @@ const (
 	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                = true
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
-	DefTiDBOptEnableLateMaterialization              = false
+	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 )
 

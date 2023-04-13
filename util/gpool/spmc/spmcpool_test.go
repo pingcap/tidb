@@ -453,12 +453,8 @@ func TestBenchPool(t *testing.T) {
 				select {
 				case <-sema:
 					return struct{}{}, nil
-				default:
-					select {
-					case <-exitCh:
-						return struct{}{}, gpool.ErrProducerClosed
-					default:
-					}
+				case <-exitCh:
+					return struct{}{}, gpool.ErrProducerClosed
 				}
 			}
 		}
