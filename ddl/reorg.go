@@ -386,7 +386,10 @@ type reorgInfo struct {
 }
 
 func (r *reorgInfo) String() string {
-	_, isEnabled := ingest.LitBackCtxMgr.Load(r.Job.ID)
+	var isEnabled bool
+	if ingest.LitInitialized {
+		_, isEnabled = ingest.LitBackCtxMgr.Load(r.Job.ID)
+	}
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
 		"StartKey:" + hex.EncodeToString(r.StartKey) + "," +

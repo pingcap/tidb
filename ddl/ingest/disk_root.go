@@ -38,12 +38,12 @@ type diskRootImpl struct {
 	path         string
 	currentUsage uint64
 	maxQuota     uint64
-	bcCtx        *backendCtxManager
+	bcCtx        *litBackendCtxMgr
 	mu           sync.RWMutex
 }
 
 // NewDiskRootImpl creates a new DiskRoot.
-func NewDiskRootImpl(path string, bcCtx *backendCtxManager) DiskRoot {
+func NewDiskRootImpl(path string, bcCtx *litBackendCtxMgr) DiskRoot {
 	return &diskRootImpl{
 		path:  path,
 		bcCtx: bcCtx,
