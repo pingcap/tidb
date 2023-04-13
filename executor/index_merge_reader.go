@@ -409,14 +409,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
-					var tps []*types.FieldType
-					if len(e.byItems) != 0 {
-						for _, item := range e.byItems {
-							tps = append(tps, item.Expr.GetType())
-						}
-					}
-					tps = append(tps, e.handleCols.GetFieldsTypes()...)
-					result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
+					result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, worker.getRetTpsForIndexScan(e.handleCols),
+						e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
 					if err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
@@ -669,8 +663,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
 		for i := 0; i < chk.NumRows(); i++ {
-			r := chk.GetRow(i)
-			handle, err := handleCols.BuildHandle(r)
+			handle, err := handleCols.BuildHandle(chk.GetRow(i))
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1483,8 +1476,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
 		for i := 0; i < chk.NumRows(); i++ {
-			r := chk.GetRow(i)
-			handle, err := handleCols.BuildHandleFromIndexRow(r)
+			handle, err := handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
 			if err != nil {
 				return nil, nil, err
 			}
