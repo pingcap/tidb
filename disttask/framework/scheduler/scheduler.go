@@ -280,8 +280,8 @@ func (s *InternalSchedulerImpl) resetError() {
 	s.mu.err = nil
 }
 
-func (s *InternalSchedulerImpl) updateSubtaskStateAndError(id int64, state string, error string) {
-	err := s.taskTable.UpdateSubtaskStateAndError(id, state, "")
+func (s *InternalSchedulerImpl) updateSubtaskStateAndError(id int64, state string, subTaskErr string) {
+	err := s.taskTable.UpdateSubtaskStateAndError(id, state, subTaskErr)
 	if err != nil {
 		s.onError(err)
 	}

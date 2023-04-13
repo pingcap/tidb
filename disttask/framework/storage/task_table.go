@@ -327,8 +327,8 @@ func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, states 
 }
 
 // UpdateSubtaskStateAndError updates the subtask state.
-func (stm *TaskManager) UpdateSubtaskStateAndError(id int64, state string, error string) error {
-	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_background_subtask set state = %?, error = %? where id = %?", state, error, id)
+func (stm *TaskManager) UpdateSubtaskStateAndError(id int64, state string, subTaskErr string) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_background_subtask set state = %?, error = %? where id = %?", state, subTaskErr, id)
 	return err
 }
 
