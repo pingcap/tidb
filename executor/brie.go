@@ -368,6 +368,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 					return nil
 				}
 				e.streamCfg.StartTS = tso
+
 			case ast.BRIEOptionEndTS:
 				tso, err := b.parseTSString(opt.StrValue)
 				if err != nil {
@@ -375,6 +376,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 					return nil
 				}
 				e.streamCfg.EndTS = tso
+
 			case ast.BRIEOptionUntilTS:
 				tso, err := b.parseTSString(opt.StrValue)
 				if err != nil {
@@ -450,6 +452,13 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
 	glue := &tidbGlueSession{se: e.ctx, progress: progress, info: e.info}
 
+	// use 'pitr' as the default task-name for backup log related tasks
+	switch e.info.kind {
+	case ast.BRIEKindStreamStop, ast.BRIEKindStreamStatus, ast.BRIEKindStreamStart, ast.BRIEKindStreamResume, ast.BRIEKindStreamPause:
+		e.streamCfg.TaskName = "pitr"
+	default:
+	}
+
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
 		err = handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
@@ -491,6 +500,10 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendUint64(3, e.info.restoreTS)
 		req.AppendTime(4, e.info.queueTime)
 		req.AppendTime(5, e.info.execTime)
+	default:
+		req.AppendUint64(2, e.info.backupTS)
+		req.AppendTime(3, e.info.queueTime)
+		req.AppendTime(4, e.info.execTime)
 	}
 	e.info = nil
 	return nil

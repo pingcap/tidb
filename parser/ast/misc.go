@@ -3116,7 +3116,6 @@ type BRIEOptionType uint16
 
 const (
 	BRIEKindBackup BRIEKind = iota
-	BRIEKindCancelJob
 	BRIEKindStreamStart
 	BRIEKindStreamMetaData
 	BRIEKindStreamStatus
@@ -3126,8 +3125,6 @@ const (
 	BRIEKindStreamPurge
 	BRIEKindRestore
 	BRIEKindRestorePIT
-	BRIEKindShowJob
-	BRIEKindShowQuery
 	BRIEKindShowBackupMeta
 	// common BRIE options
 	BRIEOptionRateLimit BRIEOptionType = iota + 1
@@ -3184,29 +3181,23 @@ func (kind BRIEKind) String() string {
 	case BRIEKindRestore:
 		return "RESTORE"
 	case BRIEKindStreamStart:
-		return "BACKUP LOGS"
+		return "BACKUP INCREMENTAL START"
 	case BRIEKindStreamStop:
-		return "STOP BACKUP LOGS"
+		return "BACKUP INCREMENTAL STOP"
 	case BRIEKindStreamPause:
-		return "PAUSE BACKUP LOGS"
+		return "BACKUP INCREMENTAL PAUSE"
 	case BRIEKindStreamResume:
-		return "RESUME BACKUP LOGS"
+		return "BACKUP INCREMENTAL RESUME"
 	case BRIEKindStreamStatus:
-		return "SHOW BACKUP LOGS STATUS"
-	case BRIEKindStreamMetaData:
-		return "SHOW BACKUP LOGS METADATA"
+		return "BACKUP INCREMENTAL STATUS"
 	case BRIEKindStreamPurge:
-		return "PURGE BACKUP LOGS"
-	case BRIEKindRestorePIT:
-		return "RESTORE POINT"
-	case BRIEKindShowJob:
-		return "SHOW BR JOB"
-	case BRIEKindShowQuery:
-		return "SHOW BR JOB QUERY"
-	case BRIEKindCancelJob:
-		return "CANCEL BR JOB"
+		return "BACKUP INCREMENTAL TRUNCATE"
+	case BRIEKindStreamMetaData:
+		return "BACKUP INCREMENTAL METADATA"
 	case BRIEKindShowBackupMeta:
 		return "SHOW BACKUP METADATA"
+	case BRIEKindRestorePIT:
+		return "RESTORE POINT"
 	default:
 		return ""
 	}
@@ -3390,8 +3381,6 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord(" FROM ")
 			ctx.WriteString(n.Storage)
 		}
-	case BRIEKindCancelJob, BRIEKindShowJob, BRIEKindShowQuery:
-		ctx.WritePlainf(" %d", n.JobID)
 	case BRIEKindStreamStart:
 		ctx.WriteKeyWord(" TO ")
 		ctx.WriteString(n.Storage)

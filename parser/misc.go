@@ -591,7 +591,6 @@ var tokenMap = map[string]int{
 	"PROFILES":                 profiles,
 	"PROXY":                    proxy,
 	"PUMP":                     pump,
-	"PURGE":                    purge,
 	"QUARTER":                  quarter,
 	"QUERIES":                  queries,
 	"QUERY":                    query,

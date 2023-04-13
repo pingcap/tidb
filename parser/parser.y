@@ -523,7 +523,6 @@ import (
 	profile               "PROFILE"
 	profiles              "PROFILES"
 	proxy                 "PROXY"
-	purge                 "PURGE"
 	quarter               "QUARTER"
 	queries               "QUERIES"
 	query                 "QUERY"
@@ -5115,34 +5114,34 @@ BRIEStmt:
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
-|	"BACKUP" "LOGS" "TO" stringLit BRIEOptions
+|	"BACKUP" "INCREMENTAL" "START" "TO" stringLit BRIEOptions
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindStreamStart
-		stmt.Storage = $4
-		stmt.Options = $5.([]*ast.BRIEOption)
+		stmt.Storage = $5
+		stmt.Options = $6.([]*ast.BRIEOption)
 		$$ = stmt
 	}
-|	"STOP" "BACKUP" "LOGS"
+|	"BACKUP" "INCREMENTAL" "STOP"
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindStreamStop
 		$$ = stmt
 	}
-|	"PAUSE" "BACKUP" "LOGS" BRIEOptions
+|	"BACKUP" "INCREMENTAL" "PAUSE" BRIEOptions
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindStreamPause
 		stmt.Options = $4.([]*ast.BRIEOption)
 		$$ = stmt
 	}
-|	"RESUME" "BACKUP" "LOGS"
+|	"BACKUP" "INCREMENTAL" "RESUME"
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindStreamResume
 		$$ = stmt
 	}
-|	"PURGE" "BACKUP" "LOGS" "FROM" stringLit BRIEOptions
+|	"BACKUP" "INCREMENTAL" "TRUNCATE" "FROM" stringLit BRIEOptions
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindStreamPurge
@@ -5150,38 +5149,17 @@ BRIEStmt:
 		stmt.Options = $6.([]*ast.BRIEOption)
 		$$ = stmt
 	}
-|	"SHOW" "BACKUP" "LOGS" "STATUS"
+|	"BACKUP" "INCREMENTAL" "STATUS"
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindStreamStatus
 		$$ = stmt
 	}
-|	"SHOW" "BACKUP" "LOGS" "METADATA" "FROM" stringLit
+|	"BACKUP" "INCREMENTAL" "METADATA" "FROM" stringLit
 	{
 		stmt := &ast.BRIEStmt{}
 		stmt.Kind = ast.BRIEKindStreamMetaData
-		stmt.Storage = $6
-		$$ = stmt
-	}
-|	"SHOW" "BR" "JOB" Int64Num
-	{
-		stmt := &ast.BRIEStmt{}
-		stmt.Kind = ast.BRIEKindShowJob
-		stmt.JobID = $4.(int64)
-		$$ = stmt
-	}
-|	"SHOW" "BR" "JOB" "QUERY" Int64Num
-	{
-		stmt := &ast.BRIEStmt{}
-		stmt.Kind = ast.BRIEKindShowQuery
-		stmt.JobID = $5.(int64)
-		$$ = stmt
-	}
-|	"CANCEL" "BR" "JOB" Int64Num
-	{
-		stmt := &ast.BRIEStmt{}
-		stmt.Kind = ast.BRIEKindCancelJob
-		stmt.JobID = $4.(int64)
+		stmt.Storage = $5
 		$$ = stmt
 	}
 |	"SHOW" "BACKUP" "METADATA" "FROM" stringLit
@@ -6550,7 +6528,6 @@ UnReservedKeyword:
 |	"OFF"
 |	"OPTIONAL"
 |	"REQUIRED"
-|	"PURGE"
 |	"SKIP"
 |	"LOCKED"
 |	"CLUSTER"
