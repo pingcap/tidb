@@ -40,6 +40,10 @@ type HandleCols interface {
 	// BuildHandleFromIndexRow builds a Handle from index row data.
 	// The last column(s) of `row` must be the handle column(s).
 	BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error)
+	// BuildHandleFromIndexRow builds a Handle from index row data.
+	// The last column of `row` must be the pids,
+	// and the second to last column(s) of `row` must be the handle column(s).
+	BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
 	// IsInt returns if the HandleCols is a single tnt column.
@@ -91,6 +95,22 @@ func (cb *CommonHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, e
 		datumBuf = append(datumBuf, row.GetDatum(row.Len()-cb.NumCols()+i, cb.columns[i].RetType))
 	}
 	return cb.buildHandleByDatumsBuffer(datumBuf)
+}
+
+// BuildParititionHandleFromIndexRow implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error) {
+	datumBuf := make([]types.Datum, 0, 4)
+	for i := 0; i < cb.NumCols(); i++ {
+		datumBuf = append(datumBuf, row.GetDatum(row.Len()-1-cb.NumCols()+i, cb.columns[i].RetType))
+	}
+	handle, err := cb.buildHandleByDatumsBuffer(datumBuf)
+	if err != nil {
+		return kv.PartitionHandle{}, err
+	}
+	return kv.NewPartitionHandle(
+		row.GetInt64(row.Len()-1),
+		handle,
+	), nil
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
@@ -217,6 +237,14 @@ func (ib *IntHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
 // BuildHandleFromIndexRow implements the kv.HandleCols interface.
 func (*IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
 	return kv.IntHandle(row.GetInt64(row.Len() - 1)), nil
+}
+
+// BuildHandleFromIndexRow implements the kv.HandleCols interface.
+func (*IntHandleCols) BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error) {
+	return kv.NewPartitionHandle(
+		row.GetInt64(row.Len()-1),
+		kv.IntHandle(row.GetInt64(row.Len()-2)),
+	), nil
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.

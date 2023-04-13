@@ -695,13 +695,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				break
 			}
 			results = append(results, result)
-			worker.batchSize = initBatchSize
-			if worker.batchSize > worker.maxBatchSize {
-				worker.batchSize = worker.maxBatchSize
-			}
 			if e.partitionTableMode {
 				pids = append(pids, e.prunedPartitions[partTblIdx].GetPhysicalID())
 			}
+		}
+		worker.batchSize = initBatchSize
+		if worker.batchSize > worker.maxBatchSize {
+			worker.batchSize = worker.maxBatchSize
 		}
 		if len(results) > 1 && len(e.byItems) != 0 {
 			ssr := distsql.NewSortedSelectResults(results, pids, e.byItems, e.memTracker)
