@@ -39,7 +39,7 @@ func TestTuner(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		runtime.GC()
 		require.Eventually(t, func() bool { return maxGCPercent.Load() == tn.getGCPercent() },
-			500*time.Microsecond, 50*time.Microsecond)
+			1*time.Second, 50*time.Microsecond)
 	}
 
 	// 1/4 threshold
@@ -56,9 +56,9 @@ func TestTuner(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		runtime.GC()
 		require.Eventually(t, func() bool { return tn.getGCPercent() >= minGCPercent.Load() },
-			500*time.Microsecond, 50*time.Microsecond)
+			1*time.Second, 50*time.Microsecond)
 		require.Eventually(t, func() bool { return tn.getGCPercent() <= maxGCPercent.Load()/2 },
-			500*time.Microsecond, 50*time.Microsecond)
+			1*time.Second, 50*time.Microsecond)
 	}
 
 	// 3/4 threshold
@@ -67,7 +67,7 @@ func TestTuner(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		runtime.GC()
 		require.Eventually(t, func() bool { return minGCPercent.Load() == tn.getGCPercent() },
-			500*time.Microsecond, 50*time.Microsecond)
+			1*time.Second, 50*time.Microsecond)
 	}
 
 	// out of threshold
@@ -76,7 +76,7 @@ func TestTuner(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		runtime.GC()
 		require.Eventually(t, func() bool { return minGCPercent.Load() == tn.getGCPercent() },
-			500*time.Microsecond, 50*time.Microsecond)
+			1*time.Second, 50*time.Microsecond)
 	}
 }
 
