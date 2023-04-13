@@ -39,7 +39,7 @@ type TimeStamp uint64
 
 // String implements fmt.String.
 func (ts TimeStamp) String() string {
-	return fmt.Sprintf("%d(%s)", ts, oracle.GetTimeFromTS(uint64(ts)).Format("060102,15:03:04"))
+	return fmt.Sprintf("%d(%s)", ts, oracle.GetTimeFromTS(uint64(ts)).Format("Y06M01D02,15:03:04"))
 }
 
 type RawRange struct {
