@@ -163,9 +163,32 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 // histogram of `DataSource` which is retrieved from storage(not the derived one).
 func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	hist, ok := ds.statisticTable.Columns[colID]
-	if ok && hist.Count > 0 {
-		factor := float64(ds.statisticTable.RealtimeCount) / float64(hist.Count)
-		ndv = float64(hist.Histogram.NDV) * factor
+	if ok && hist.IsStatsInitialized() {
+		ndv = float64(hist.Histogram.NDV)
+		// TODO: a better way to get the row count derived from the last analyze.
+		analyzeCount := int64(0)
+		if hist.IsFullLoad() {
+			analyzeCount = int64(hist.TotalRowCount())
+		} else {
+			for _, idx := range ds.statisticTable.Indices {
+				if idx.IsFullLoad() && idx.LastUpdateVersion == hist.LastUpdateVersion {
+					analyzeCount = int64(idx.TotalRowCount())
+					break
+				}
+			}
+			if analyzeCount == 0 {
+				for _, col := range ds.statisticTable.Columns {
+					if col.IsFullLoad() && col.LastUpdateVersion == hist.LastUpdateVersion {
+						analyzeCount = int64(col.TotalRowCount())
+						break
+					}
+				}
+			}
+		}
+		if analyzeCount > 0 {
+			factor := float64(ds.statisticTable.RealtimeCount) / hist.TotalRowCount()
+			ndv *= factor
+		}
 	} else {
 		ndv = float64(ds.statisticTable.RealtimeCount) * distinctFactor
 	}
