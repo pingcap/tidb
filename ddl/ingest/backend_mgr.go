@@ -143,6 +143,8 @@ func (m *backendCtxManager) UpdateMemoryUsage() {
 	}
 }
 
+// EncodeBackendTag encodes the job ID to backend tag.
+// The backend tag is also used as the file name of the local index data files.
 func EncodeBackendTag(jobID int64) string {
 	return fmt.Sprintf("%d", jobID)
 }
