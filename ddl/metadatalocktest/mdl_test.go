@@ -604,7 +604,7 @@ func TestMDLCacheTable(t *testing.T) {
 	require.Less(t, ts1, ts2)
 }
 
-func TestMDLStealRead(t *testing.T) {
+func TestMDLStaleRead(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
@@ -621,29 +621,15 @@ func TestMDLStealRead(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	var ts2 time.Time
-	var ts1 time.Time
-
 	time.Sleep(2 * time.Second)
 
 	tk.MustExec("start transaction read only as of timestamp NOW() - INTERVAL 1 SECOND")
 	tk.MustQuery("select * from t")
 
-	go func() {
-		tkDDL.MustExec("alter table test.t add column b int;")
-		ts2 = time.Now()
-		wg.Done()
-	}()
+	tkDDL.MustExec("alter table test.t add column b int;")
 
-	time.Sleep(2 * time.Second)
-	ts1 = time.Now()
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	tk.MustExec("commit")
-
-	wg.Wait()
-	require.Greater(t, ts1, ts2)
 }
 
 func TestMDLTiDBSnapshot(t *testing.T) {
