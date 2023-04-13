@@ -170,26 +170,22 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	return err
 }
 
-func (e *LoadDataWorker) load(ctx context.Context, r io.ReadCloser) (int64, error) {
-	var (
-		job *asyncloaddata.Job
-		err error
-	)
-
-	s, err := CreateSession(e.UserSctx)
-	if err != nil {
-		return 0, err
+func (e *LoadDataWorker) load(ctx context.Context, r io.ReadCloser) (jboID int64, err error) {
+	s, err2 := CreateSession(e.UserSctx)
+	if err2 != nil {
+		return 0, err2
 	}
 	defer func() {
-		// if the job is detached, we should not close the session. let go-routine to do it.
-		if !e.controller.Detached {
+		// if the job is detached and there's no error during init, we will close the session in the detached routine.
+		// else we close the session here.
+		if !e.controller.Detached || err != nil {
 			CloseSession(s)
 		}
 	}()
 
 	sqlExec := s.(sqlexec.SQLExecutor)
 
-	job, err = asyncloaddata.CreateLoadDataJob(
+	job, err2 := asyncloaddata.CreateLoadDataJob(
 		ctx,
 		sqlExec,
 		e.GetInfilePath(),
@@ -198,8 +194,8 @@ func (e *LoadDataWorker) load(ctx context.Context, r io.ReadCloser) (int64, erro
 		e.controller.ImportMode,
 		e.UserSctx.GetSessionVars().User.String(),
 	)
-	if err != nil {
-		return 0, err
+	if err2 != nil {
+		return 0, err2
 	}
 
 	importCtx := ctx
@@ -208,9 +204,9 @@ func (e *LoadDataWorker) load(ctx context.Context, r io.ReadCloser) (int64, erro
 		importCtx = kv.WithInternalSourceType(importCtx, kv.InternalLoadData)
 	}
 
-	jobImporter, err := e.getJobImporter(importCtx, job, r)
-	if err != nil {
-		return 0, err
+	jobImporter, err2 := e.getJobImporter(importCtx, job, r)
+	if err2 != nil {
+		return 0, err2
 	}
 
 	if e.controller.Detached {
