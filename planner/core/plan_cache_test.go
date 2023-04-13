@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pingcap/tidb/util/size"
 	"math/rand"
 	"strings"
 	"sync"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/stretchr/testify/require"
 )
 
