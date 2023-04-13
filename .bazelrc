@@ -1,4 +1,4 @@
-startup --host_jvm_args=-Xmx8g
+startup --host_jvm_args=-Xmx4g
 startup --unlimit_coredumps
 
 run:ci --color=yes
@@ -24,6 +24,7 @@ test:ci --color=yes
 test:ci --verbose_failures --test_verbose_timeout_warnings
 test:ci --test_env=GO_TEST_WRAP_TESTV=1
 test:ci --experimental_ui_max_stdouterr_bytes=104857600
+test:ci --test_timeout=150,300,900,3600
 test:race --test_timeout=1200,6000,18000,72000
 
 try-import /data/bazel

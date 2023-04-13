@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,16 +45,18 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		endKey := startKey.PrefixNext()
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		idxRec, done, err := ddl.FetchRowsFromCop4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
+		copChunk := ddl.FetchChunk4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
 		require.NoError(t, err)
-		require.False(t, done)
 		require.NoError(t, txn.Rollback())
 
-		handles := make([]kv.Handle, 0, len(idxRec))
-		values := make([][]types.Datum, 0, len(idxRec))
-		for _, rec := range idxRec {
-			handles = append(handles, rec.GetHandle())
-			values = append(values, rec.GetIndexValues())
+		iter := chunk.NewIterator4Chunk(copChunk)
+		handles := make([]kv.Handle, 0, copChunk.NumRows())
+		values := make([][]types.Datum, 0, copChunk.NumRows())
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			handle, idxDatum, err := ddl.ConvertRowToHandleAndIndexDatum(row, copCtx)
+			require.NoError(t, err)
+			handles = append(handles, handle)
+			values = append(values, idxDatum)
 		}
 		return handles, values
 	}

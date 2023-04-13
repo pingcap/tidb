@@ -80,6 +80,9 @@ type Scanner struct {
 
 	// true if a dot follows an identifier
 	identifierDot bool
+
+	// keepHint, if true, Scanner will keep hint when normalizing .
+	keepHint bool
 }
 
 // Errors returns the errors and warns during a scan.
@@ -275,6 +278,19 @@ func (s *Scanner) Lex(v *yySymType) int {
 			return toTimestamp
 		}
 	}
+	// fix shift/reduce conflict with DEFINED NULL BY xxx OPTIONALLY ENCLOSED
+	if tok == optionally {
+		tok1, tok2 := s.getNextTwoTokens()
+		if tok1 == enclosed && tok2 == by {
+			_, _, lit = s.scan()
+			_, pos2, lit2 := s.scan()
+			v.ident = fmt.Sprintf("%s %s %s", v.ident, lit, lit2)
+			s.lastKeyword = optionallyEnclosedBy
+			s.lastScanOffset = pos2.Offset
+			v.offset = pos2.Offset
+			return optionallyEnclosedBy
+		}
+	}
 
 	switch tok {
 	case intLit:
@@ -326,6 +342,11 @@ func (s *Scanner) GetSQLMode() mysql.SQLMode {
 // EnableWindowFunc controls whether the scanner recognize the keywords of window function.
 func (s *Scanner) EnableWindowFunc(val bool) {
 	s.supportWindowFunc = val
+}
+
+// setKeepHint set the keepHint flag when normalizing.
+func (s *Scanner) setKeepHint(val bool) {
+	s.keepHint = val
 }
 
 // InheritScanner returns a new scanner object which inherits configurations from the parent scanner.
@@ -520,7 +541,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 
 	case '+': // '/*+' optimizer hints
 		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
-		if _, ok := hintedTokens[s.lastKeyword]; ok {
+		if _, ok := hintedTokens[s.lastKeyword]; ok || s.keepHint {
 			// only recognize optimizers hints directly followed by certain
 			// keywords like SELECT, INSERT, etc., only a special case "FOR UPDATE" needs to be handled
 			// we will report a warning in order to match MySQL's behavior, but the hint content will be ignored
@@ -534,6 +555,8 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 			} else {
 				isOptimizerHint = true
 			}
+		} else {
+			s.AppendWarn(ErrWarnOptimizerHintWrongPos)
 		}
 
 	case '*': // '/**' if the next char is '/' it would close the comment.
@@ -605,7 +628,11 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		tok, lit = scanIdentifierOrString(s)
 		switch tok {
 		case stringLit, quotedIdentifier:
-			tok, lit = doubleAtIdentifier, "@@"+prefix+lit
+			var sb strings.Builder
+			sb.WriteString("@@")
+			sb.WriteString(prefix)
+			sb.WriteString(lit)
+			tok, lit = doubleAtIdentifier, sb.String()
 		case identifier:
 			tok, lit = doubleAtIdentifier, s.r.data(&pos)
 		}

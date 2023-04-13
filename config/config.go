@@ -295,8 +295,7 @@ type Config struct {
 	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
 	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
-	// todo: remove this after AutoScaler is stable.
-	UseAutoScaler bool `toml:"use-autoscaler" json:"use-autoscaler"`
+	UseAutoScaler                bool   `toml:"use-autoscaler" json:"use-autoscaler"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
@@ -488,6 +487,9 @@ type Log struct {
 	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+
+	// Make tidb panic if write log operation hang in `Timeout` seconds
+	Timeout int `toml:"timeout" json:"timeout"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -1039,7 +1041,7 @@ var defaultConf = Config{
 	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
 	AutoScalerClusterID:                  "",
-	UseAutoScaler:                        true,
+	UseAutoScaler:                        false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 	TiDBEnableExitCheck:                  false,
@@ -1069,26 +1071,6 @@ func StoreGlobalConfig(config *Config) {
 	defer TikvConfigLock.Unlock()
 	cfg := *config.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
-}
-
-// GetAutoScalerClusterID returns KeyspaceName or AutoScalerClusterID.
-func GetAutoScalerClusterID() (string, error) {
-	c := GetGlobalConfig()
-	keyspaceName := c.KeyspaceName
-	clusterID := c.AutoScalerClusterID
-
-	if keyspaceName != "" && clusterID != "" {
-		return "", errors.Errorf("config.KeyspaceName(%s) and config.AutoScalerClusterID(%s) are not empty both", keyspaceName, clusterID)
-	}
-	if keyspaceName == "" && clusterID == "" {
-		return "", errors.Errorf("config.KeyspaceName and config.AutoScalerClusterID are both empty")
-	}
-
-	res := keyspaceName
-	if res == "" {
-		res = clusterID
-	}
-	return res, nil
 }
 
 // removedConfig contains items that are no longer supported.
@@ -1423,7 +1405,10 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(), func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() })
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(),
+		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
+		func(config *zaplog.Config) { config.Timeout = l.Timeout },
+	)
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.

@@ -702,11 +702,6 @@ func TestRRWaitTSTimeInSlowLog(t *testing.T) {
 }
 
 func TestIssue41194(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/enableAggressiveLockingOnBootstrap", "return"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/enableAggressiveLockingOnBootstrap"))
-	}()
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 

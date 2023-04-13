@@ -670,6 +670,9 @@ type PhysicalIndexScan struct {
 	isPartition bool
 	Desc        bool
 	KeepOrder   bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
+
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
@@ -794,6 +797,10 @@ type PhysicalTableScan struct {
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
+	// lateMaterializationFilterCondition is used to record the filter conditions
+	// that are pushed down to table scan from selection by late materialization.
+	// TODO: remove this field after we support pushing down selection to coprocessor.
+	lateMaterializationFilterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
@@ -825,6 +832,8 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
 
 	isChildOfIndexLookUp bool
 

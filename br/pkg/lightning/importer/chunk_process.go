@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -60,7 +60,7 @@ func newChunkProcessor(
 ) (*chunkProcessor, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := openReader(ctx, chunk.FileMeta, store)
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -142,16 +142,26 @@ func (cr *chunkProcessor) process(
 	ctx context.Context,
 	t *TableImporter,
 	engineID int32,
-	dataEngine, indexEngine *backend.LocalEngineWriter,
+	dataEngine, indexEngine backend.EngineWriter,
 	rc *Controller,
 ) error {
+	logger := t.logger.With(
+		zap.Int32("engineNumber", engineID),
+		zap.Int("fileIndex", cr.index),
+		zap.Stringer("path", &cr.chunk.Key),
+	)
 	// Create the encoder.
-	kvEncoder, err := rc.backend.NewEncoder(ctx, t.encTable, &kv.SessionOptions{
-		SQLMode:   rc.cfg.TiDB.SQLMode,
-		Timestamp: cr.chunk.Timestamp,
-		SysVars:   rc.sysVars,
-		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
-		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
+	kvEncoder, err := rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   rc.cfg.TiDB.SQLMode,
+			Timestamp: cr.chunk.Timestamp,
+			SysVars:   rc.sysVars,
+			// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
+			AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
+		},
+		Path:   cr.chunk.Key.Path,
+		Table:  t.encTable,
+		Logger: logger,
 	})
 	if err != nil {
 		return err
@@ -170,13 +180,9 @@ func (cr *chunkProcessor) process(
 		}
 	}()
 
-	logTask := t.logger.With(
-		zap.Int32("engineNumber", engineID),
-		zap.Int("fileIndex", cr.index),
-		zap.Stringer("path", &cr.chunk.Key),
-	).Begin(zap.InfoLevel, "restore file")
+	logTask := logger.Begin(zap.InfoLevel, "restore file")
 
-	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc)
+	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logger, kvEncoder, deliverCompleteCh, rc)
 	var deliverErr error
 	select {
 	case deliverResult, ok := <-deliverCompleteCh:
@@ -204,7 +210,7 @@ func (cr *chunkProcessor) encodeLoop(
 	kvsCh chan<- []deliveredKVs,
 	t *TableImporter,
 	logger log.Logger,
-	kvEncoder kv.Encoder,
+	kvEncoder encode.Encoder,
 	deliverCompleteCh <-chan deliverResult,
 	rc *Controller,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
@@ -256,20 +262,24 @@ func (cr *chunkProcessor) encodeLoop(
 		canDeliver := false
 		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
 		curOffset := offset
-		var newOffset, rowID, realOffset int64
+		var newOffset, rowID, newScannedOffset int64
+		var scannedOffset int64 = -1
 		var kvSize uint64
-		var realOffsetErr error
+		var scannedOffsetErr error
 	outLoop:
 		for !canDeliver {
 			readDurStart := time.Now()
 			err = cr.parser.ReadRow()
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
-			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
-				realOffset, realOffsetErr = cr.parser.RealPos()
-				if realOffsetErr != nil {
-					logger.Warn("fail to get data engine RealPos, progress may not be accurate",
-						log.ShortError(realOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone || cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				newScannedOffset, scannedOffsetErr = cr.parser.ScannedPos()
+				if scannedOffsetErr != nil {
+					logger.Warn("fail to get data engine ScannedPos, progress may not be accurate",
+						log.ShortError(scannedOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
+				}
+				if scannedOffset == -1 {
+					scannedOffset = newScannedOffset
 				}
 			}
 
@@ -311,7 +321,7 @@ func (cr *chunkProcessor) encodeLoop(
 			lastRow := cr.parser.LastRow()
 			lastRow.Row = append(lastRow.Row, extendVals...)
 			// sql -> kv
-			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
+			kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 
 			hasIgnoredEncodeErr := false
@@ -334,7 +344,7 @@ func (cr *chunkProcessor) encodeLoop(
 			}
 
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset,
-				rowID: rowID, realOffset: realOffset})
+				rowID: rowID, realOffset: newScannedOffset})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))
@@ -352,7 +362,11 @@ func (cr *chunkProcessor) encodeLoop(
 		if m, ok := metric.FromContext(ctx); ok {
 			m.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 			m.RowReadSecondsHistogram.Observe(readDur.Seconds())
-			m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+			if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				m.RowReadBytesHistogram.Observe(float64(newScannedOffset - scannedOffset))
+			} else {
+				m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+			}
 		}
 
 		if len(kvPacket) != 0 {
@@ -376,7 +390,7 @@ func (cr *chunkProcessor) deliverLoop(
 	kvsCh <-chan []deliveredKVs,
 	t *TableImporter,
 	engineID int32,
-	dataEngine, indexEngine *backend.LocalEngineWriter,
+	dataEngine, indexEngine backend.EngineWriter,
 	rc *Controller,
 ) (deliverTotalDur time.Duration, err error) {
 	deliverLogger := t.logger.With(
@@ -386,8 +400,8 @@ func (cr *chunkProcessor) deliverLoop(
 		zap.String("task", "deliver"),
 	)
 	// Fetch enough KV pairs from the source.
-	dataKVs := rc.backend.MakeEmptyRows()
-	indexKVs := rc.backend.MakeEmptyRows()
+	dataKVs := rc.encBuilder.MakeEmptyRows()
+	indexKVs := rc.encBuilder.MakeEmptyRows()
 
 	dataSynced := true
 	hasMoreKVs := true
@@ -457,14 +471,14 @@ func (cr *chunkProcessor) deliverLoop(
 			// Write KVs into the engine
 			start := time.Now()
 
-			if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
+			if err = dataEngine.AppendRows(ctx, columns, dataKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					deliverLogger.Error("write to data engine failed", log.ShortError(err))
 				}
 
 				return errors.Trace(err)
 			}
-			if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
+			if err = indexEngine.AppendRows(ctx, columns, indexKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					deliverLogger.Error("write to index engine failed", log.ShortError(err))
 				}
@@ -514,7 +528,15 @@ func (cr *chunkProcessor) deliverLoop(
 			}
 			delta := highOffset - lowOffset
 			if delta >= 0 {
-				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+				if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
+					if currRealOffset > startRealOffset {
+						m.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(currRealOffset - startRealOffset))
+					}
+					m.RowsCounter.WithLabelValues(metric.StateRestored, t.tableName).Add(float64(delta))
+				} else {
+					m.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(delta))
+					m.RowsCounter.WithLabelValues(metric.StateRestored, t.tableName).Add(float64(dataChecksum.SumKVS()))
+				}
 				if rc.status != nil && rc.status.backend == config.BackendTiDB {
 					rc.status.FinishedFileSize.Add(delta)
 				}
@@ -552,12 +574,12 @@ func (cr *chunkProcessor) deliverLoop(
 	return
 }
 
-func (cr *chunkProcessor) maybeSaveCheckpoint(
+func (*chunkProcessor) maybeSaveCheckpoint(
 	rc *Controller,
 	t *TableImporter,
 	engineID int32,
 	chunk *checkpoints.ChunkCheckpoint,
-	data, index *backend.LocalEngineWriter,
+	data, index backend.EngineWriter,
 ) bool {
 	if data.IsSynced() && index.IsSynced() {
 		saveCheckpoint(rc, t, engineID, chunk)

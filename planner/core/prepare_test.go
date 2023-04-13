@@ -1237,6 +1237,7 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // insert-tmt can hit the cache and affect hit counter in this UT
 	pb := &dto.Metric{}
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
@@ -1531,6 +1532,19 @@ func TestIssue33067(t *testing.T) {
 	tk.MustExec(`set @a=-5360, @b=-11715, @c=9399, @d="9213-09-13", @e="4705-12-24", @f="9901-06-17"`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows(" >d 9901-06-17"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue42439(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE UK_MU16407 (COL3 timestamp NULL DEFAULT NULL, UNIQUE KEY U3(COL3))`)
+	tk.MustExec(`insert into UK_MU16407 values("1985-08-31 18:03:27")`)
+	tk.MustExec(`PREPARE st FROM 'SELECT COL3 FROM UK_MU16407 WHERE COL3>?'`)
+	tk.MustExec(`set @a='2039-1-19 3:14:40'`)
+	tk.MustExec(`execute st using @a`) // no error
+	tk.MustExec(`set @a='1950-1-19 3:14:40'`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows(`1985-08-31 18:03:27`))
 }
 
 func TestIssue29486(t *testing.T) {
@@ -1954,11 +1968,10 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustExec("insert into t2 values(1,'7777')")
 	tk.MustExec("prepare s2 from 'select * from t2 where c1>=? and c1<=?'")
 	tk.MustExec("set @a2=0, @b2=9")
-	// TableReader plan would be built, we should cache it.
 	tk.MustQuery("execute s2 using @a2, @a2").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute s2 using @a2, @b2").Check(testkit.Rows("1 7777"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // PointPlan
 
 	tk.MustExec("create table t3(c1 int, c2 int, c3 int, unique key(c1), key(c2))")
 	tk.MustExec("insert into t3 values(2,1,1)")
@@ -2007,7 +2020,7 @@ func TestIssue26873(t *testing.T) {
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestIssue29511(t *testing.T) {

@@ -83,6 +83,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1059,6 +1060,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 	// by CAS operation, it would then take some actions accordingly.
 	for {
 		// Close connection between txn when we are going to shutdown server.
+		// Note the current implementation when shutting down, for an idle connection, the connection may block at readPacket()
+		// consider provider a way to close the connection directly after sometime if we can not read any data.
 		if cc.server.inShutdownMode.Load() {
 			if !cc.ctx.GetSessionVars().InTxn() {
 				return
@@ -1576,8 +1579,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	if loadDataWorker == nil {
 		return errors.New("load data info is empty")
 	}
-
-	err := cc.writeReq(ctx, loadDataWorker.Path)
+	infile := loadDataWorker.GetInfilePath()
+	err := cc.writeReq(ctx, infile)
 	if err != nil {
 		return err
 	}
@@ -1621,7 +1624,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 		}
 	}()
 
-	err = loadDataWorker.Load(ctx, executor.NewSimpleSeekerOnReadCloser(r))
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
+	err = loadDataWorker.LoadLocal(ctx, r)
 	_ = r.Close()
 	wg.Wait()
 
@@ -1633,9 +1637,9 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
 		for !drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
-			if atomic.CompareAndSwapUint32(&loadDataWorker.Ctx.GetSessionVars().Killed, 1, 0) {
+			if atomic.CompareAndSwapUint32(&loadDataWorker.UserSctx.GetSessionVars().Killed, 1, 0) {
 				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
-				return executor.ErrQueryInterrupted
+				return exeerrors.ErrQueryInterrupted
 			}
 			curData, err1 := cc.readPacket()
 			if err1 != nil {
@@ -1769,8 +1773,7 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
-// There is a special query `load data` that does not return result, which is handled differently.
-// Query `load stats` does not return result either.
+// Some special queries like `load data` that does not return result, which is handled in handleFileTransInConn.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sessVars := cc.ctx.GetSessionVars()
@@ -1791,6 +1794,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	parserWarns := warns[len(prevWarns):]
 
 	var pointPlans []plannercore.Plan
+	cc.ctx.GetSessionVars().InMultiStmts = false
 	if len(stmts) > 1 {
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
@@ -1812,6 +1816,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				parserWarns = append(parserWarns, warn)
 			}
 		}
+		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
@@ -1914,6 +1919,55 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key //nolint: prealloc
 	var rowKeys []kv.Key //nolint: prealloc
+
+	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
+		var tableID int64
+		switch v := p.(type) {
+		case *plannercore.PointGetPlan:
+			if v.PartitionInfo != nil {
+				tableID = v.PartitionInfo.ID
+			} else {
+				tableID = v.TblInfo.ID
+			}
+			if v.IndexInfo != nil {
+				resetStmtCtxFn()
+				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
+				if err1 != nil {
+					return err1
+				}
+				idxKeys = append(idxKeys, idxKey)
+			} else {
+				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
+			}
+		case *plannercore.BatchPointGetPlan:
+			if v.PartitionInfos != nil && len(v.PartitionIDs) == 0 {
+				// skip when PartitionIDs is not initialized.
+				return nil
+			}
+			getPhysID := func(i int) int64 {
+				if v.PartitionInfos == nil {
+					return v.TblInfo.ID
+				}
+				return v.PartitionIDs[i]
+			}
+			if v.IndexInfo != nil {
+				resetStmtCtxFn()
+				for i, idxVals := range v.IndexValues {
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
+					if err1 != nil {
+						return err1
+					}
+					idxKeys = append(idxKeys, idxKey)
+				}
+			} else {
+				for i, handle := range v.Handles {
+					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(getPhysID(i), handle))
+				}
+			}
+		}
+		return nil
+	}
+
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		if _, ok := stmt.(*ast.UseStmt); ok {
@@ -1932,25 +1986,35 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		if p == nil {
 			continue
 		}
-		// Only support Update for now.
+		// Only support Update and Delete for now.
 		// TODO: support other point plans.
-		if x, ok := p.(*plannercore.Update); ok {
+		switch x := p.(type) {
+		case *plannercore.Update:
 			//nolint:forcetypeassert
-			updateStmt := stmt.(*ast.UpdateStmt)
-			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
-				if pp.PartitionInfo != nil {
-					continue
-				}
-				if pp.IndexInfo != nil {
-					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
-					if err1 != nil {
-						return nil, err1
-					}
-					idxKeys = append(idxKeys, idxKey)
-				} else {
-					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
-				}
+			updateStmt, ok := stmt.(*ast.UpdateStmt)
+			if !ok {
+				logutil.BgLogger().Warn("unexpected statement type for Update plan",
+					zap.String("type", fmt.Sprintf("%T", stmt)))
+				continue
+			}
+			err = handlePlan(x.SelectPlan, func() {
+				executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
+			})
+			if err != nil {
+				return nil, err
+			}
+		case *plannercore.Delete:
+			deleteStmt, ok := stmt.(*ast.DeleteStmt)
+			if !ok {
+				logutil.BgLogger().Warn("unexpected statement type for Delete plan",
+					zap.String("type", fmt.Sprintf("%T", stmt)))
+				continue
+			}
+			err = handlePlan(x.SelectPlan, func() {
+				executor.ResetDeleteStmtCtx(sc, deleteStmt, vars)
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -1996,12 +2060,20 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	cc.audit(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
-	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
-	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
+	// - If rs is not nil, the statement tracker detachment from session tracker
+	//   is done in the `rs.Close` in most cases.
+	// - If the rs is nil and err is not nil, the detachment will be done in
+	//   the `handleNoDelay`.
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
+		// If error is returned during the planner phase or the executor.Open
+		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
+		// will not be detached. We need to detach them manually.
+		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
+			sv.StmtCtx.DetachMemDiskTracker()
+		}
 		return true, err
 	}
 
@@ -2014,9 +2086,9 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 
 	if rs != nil {
 		if connStatus := atomic.LoadInt32(&cc.status); connStatus == connStatusShutdown {
-			return false, executor.ErrQueryInterrupted
+			return false, exeerrors.ErrQueryInterrupted
 		}
-		if retryable, err := cc.writeResultset(ctx, rs, false, status, 0); err != nil {
+		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}
 		return false, nil
@@ -2114,14 +2186,14 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	return cc.flush(ctx)
 }
 
-// writeResultset writes data into a resultset and uses rs.Next to get row data back.
+// writeResultSet writes data into a result set and uses rs.Next to get row data back.
 // If binary is true, the data would be encoded in BINARY format.
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
-// retryable indicates whether the call of writeResultset has no side effect and can be retried to correct error. The call
+// retryable indicates whether the call of writeResultSet has no side effect and can be retried to correct error. The call
 // has side effect in cursor mode or once data has been sent to client. Currently retryable is used to fallback to TiKV when
 // TiFlash is down.
-func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (retryable bool, runErr error) {
+func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (retryable bool, runErr error) {
 	defer func() {
 		// close ResultSet when cursor doesn't exist
 		r := recover()
@@ -2274,34 +2346,12 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
-	// if fetchedRows is not enough, getting data from recordSet.
-	// NOTE: chunk should not be allocated from the allocator
-	// the allocator will reset every statement
-	// but it maybe stored in the result set among statements
-	// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
-	// Here server.tidbResultSet implements Next method.
-	req := rs.NewChunk(nil)
-	for len(fetchedRows) < fetchSize {
-		if err := rs.Next(ctx, req); err != nil {
-			return err
-		}
-		rowCount := req.NumRows()
-		if rowCount == 0 {
-			break
-		}
-		// filling fetchedRows with chunk
-		for i := 0; i < rowCount; i++ {
-			fetchedRows = append(fetchedRows, req.GetRow(i))
-		}
-		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
-	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
 	if len(fetchedRows) == 0 {
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
-		terror.Call(rs.Close)
 		return cc.writeEOF(ctx, serverStatus)
 	}
 

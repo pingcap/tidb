@@ -126,10 +126,9 @@ type mergeIndexWorker struct {
 	tmpIdxRecords []*temporaryIndexRecord
 	originIdxKeys []kv.Key
 	tmpIdxKeys    []kv.Key
-	jobContext    *JobContext
 }
 
-func newMergeTempIndexWorker(bfCtx *backfillCtx, id int, t table.PhysicalTable, eleID int64, jc *JobContext) *mergeIndexWorker {
+func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, eleID int64) *mergeIndexWorker {
 	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, eleID)
 
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
@@ -137,12 +136,11 @@ func newMergeTempIndexWorker(bfCtx *backfillCtx, id int, t table.PhysicalTable, 
 	return &mergeIndexWorker{
 		backfillCtx: bfCtx,
 		index:       index,
-		jobContext:  jc,
 	}
 }
 
-// BackfillDataInTxn merge temp index data in txn.
-func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+// BackfillData merge temp index data in txn.
+func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
@@ -216,18 +214,6 @@ func (*mergeIndexWorker) String() string {
 	return typeAddIndexMergeTmpWorker.String()
 }
 
-func (*mergeIndexWorker) GetTasks() ([]*BackfillJob, error) {
-	panic("[ddl] merge index worker GetTask function doesn't implement")
-}
-
-func (*mergeIndexWorker) UpdateTask(*BackfillJob) error {
-	panic("[ddl] merge index worker UpdateTask function doesn't implement")
-}
-
-func (*mergeIndexWorker) FinishTask(*BackfillJob) error {
-	panic("[ddl] merge index worker FinishTask function doesn't implement")
-}
-
 func (w *mergeIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
@@ -242,7 +228,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	oprStartTime := startTime
 	idxPrefix := w.table.IndexPrefix()
 	var lastKey kv.Key
-	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, idxPrefix, txn.StartTS(),
+	err := iterateSnapshotKeys(w.jobContext, w.sessCtx.GetStore(), taskRange.priority, idxPrefix, txn.StartTS(),
 		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterate temporary index in merge process", 0)

@@ -169,8 +169,8 @@ func FMSketchFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64
 	return DecodeFMSketch(rows[0].GetBytes(0))
 }
 
-// ColumnCountFromStorage reads column count from storage
-func ColumnCountFromStorage(reader *StatsReader, tableID, colID, statsVer int64) (int64, error) {
+// columnCountFromStorage reads column count from storage
+func columnCountFromStorage(reader *StatsReader, tableID, colID, statsVer int64) (int64, error) {
 	count := int64(0)
 	rows, _, err := reader.Read("select sum(count) from mysql.stats_buckets where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
 	if err != nil {
@@ -253,7 +253,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int6
 	return table, nil
 }
 
-func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo) error {
+func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -279,9 +279,14 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 			if err != nil {
 				return errors.Trace(err)
 			}
-			fmSketch, err := FMSketchFromStorage(reader, table.PhysicalID, 1, histID)
-			if err != nil {
-				return errors.Trace(err)
+			var fmSketch *FMSketch
+			if loadAll {
+				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+				// we load all the statistics, i.e., loadAll is true.
+				fmSketch, err = FMSketchFromStorage(reader, table.PhysicalID, 1, histID)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			idx = &Index{
 				Histogram:  *hg,
@@ -352,7 +357,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		// Here is
 		//For one column, if there is no stats for it in the storage(analyze is never)
 		if notNeedLoad {
-			count, err := ColumnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
+			count, err := columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -366,9 +371,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
-			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-			// So we need add col.Count > 0 here.
-			if statsVer != Version0 || col.Count > 0 {
+			if col.StatsAvailable() {
 				col.StatsLoadedStatus = NewStatsAllEvictedStatus()
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
@@ -407,9 +410,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
-			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-			// So we need add colHist.Count > 0 here.
-			if statsVer != Version0 || col.Count > 0 {
+			if col.StatsAvailable() {
 				col.StatsLoadedStatus = NewStatsFullLoadStatus()
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
@@ -458,7 +459,7 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 		return nil, err
 	}
 	table.ModifyCount = rows[0].GetInt64(0)
-	table.Count = rows[0].GetInt64(1)
+	table.RealtimeCount = rows[0].GetInt64(1)
 
 	rows, _, err = reader.Read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
 	// Check deleted table.
@@ -467,7 +468,7 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			err = indexStatsFromStorage(reader, row, table, tableInfo)
+			err = indexStatsFromStorage(reader, row, table, tableInfo, loadAll)
 		} else {
 			err = columnStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
 		}

@@ -62,6 +62,7 @@ type RemoteChecksum struct {
 	TotalBytes uint64
 }
 
+// ChecksumManager is a manager that manages checksums.
 type ChecksumManager interface {
 	Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error)
 }
@@ -89,11 +90,7 @@ func newChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 
 		manager = newTiKVChecksumManager(store.GetClient(), pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency))
 	} else {
-		db, err := rc.tidbGlue.GetDB()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		manager = newTiDBChecksumExecutor(db)
+		manager = newTiDBChecksumExecutor(rc.db)
 	}
 
 	return manager, nil

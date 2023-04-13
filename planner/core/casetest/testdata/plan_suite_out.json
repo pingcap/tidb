@@ -42,11 +42,11 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -57,11 +57,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -105,11 +105,11 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -120,11 +120,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -137,11 +137,11 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -152,11 +152,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -169,11 +169,11 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -184,11 +184,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -199,11 +199,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -216,11 +216,11 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -231,11 +231,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -246,11 +246,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -261,11 +261,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now"
@@ -278,11 +278,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now"
@@ -295,11 +295,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now"
@@ -312,11 +312,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now"
@@ -379,8 +379,7 @@
           "        └─Projection 3333.33 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#8, test.t.a, test.t.a, test.t.c",
           "          └─ExchangeReceiver 3333.33 mpp[tiflash]  ",
           "            └─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "              └─Selection 3333.33 mpp[tiflash]  gt(test.t.a, 1)",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "              └─TableFullScan 3333.33 mpp[tiflash] table:t pushed down filter:gt(test.t.a, 1), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -411,8 +410,7 @@
           "          └─ExchangeSender 4439.11 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "            └─HashAgg 4439.11 mpp[tiflash]  group by:Column#19, Column#20, funcs:sum(Column#18)->Column#16",
           "              └─Projection 5548.89 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#18, test.t.a, test.t.c",
-          "                └─Selection 5548.89 mpp[tiflash]  or(lt(test.t.b, 2), gt(test.t.a, 2))",
-          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "                └─TableFullScan 5548.89 mpp[tiflash] table:t pushed down filter:or(lt(test.t.b, 2), gt(test.t.a, 2)), keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[parser:8061]Optimizer hint index_merge is not supported by TiDB and is ignored"
@@ -427,18 +425,18 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 12475.01 mpp[tiflash]  ",
           "      └─ExchangeSender 12475.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "        └─HashJoin 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "          ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "          │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "          │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "          └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "            └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "              └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -452,16 +450,16 @@
           "      ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]",
           "      │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─ExchangeReceiver(Probe) 99800100.00 mpp[tiflash]  ",
           "        └─ExchangeSender 99800100.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]",
           "          └─HashJoin 99800100.00 mpp[tiflash]  CARTESIAN inner join",
           "            ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "            │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "            │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "            │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 pushed down filter:empty, keep order:false, stats:pseudo",
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -472,16 +470,16 @@
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "      ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -493,16 +491,16 @@
           "  └─Projection 15593.77 mpp[tiflash]  test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
           "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t3 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -547,11 +545,11 @@
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "        └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "          └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "            └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -563,11 +561,11 @@
           "  └─Projection 12487.50 mpp[tiflash]  test.t.a",
           "    └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -584,11 +582,11 @@
           "      │     └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "      │       └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.b, ",
           "      │         └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "      │           └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      │           └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "        └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "          └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -600,16 +598,16 @@
           "  └─Projection 9990.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c",
           "    └─HashJoin 9990.00 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
           "      ├─ExchangeReceiver(Build) 7992.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 7992.00 mpp[tiflash]  test.t.b",
           "      │     └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b",
           "      │       └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
           "      │         └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "      │           └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.b, ",
           "      │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "      │               └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      │               └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -621,16 +619,16 @@
           "  └─Projection 9990.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c",
           "    └─HashJoin 9990.00 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)], other cond:lt(cast(test.t.a, decimal(10,0) BINARY), Column#9)",
           "      ├─ExchangeReceiver(Build) 7992.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 7992.00 mpp[tiflash]  Column#9, test.t.b",
           "      │     └─HashAgg 7992.00 mpp[tiflash]  group by:Column#26, funcs:sum(Column#24)->Column#9, funcs:firstrow(Column#25)->test.t.b",
           "      │       └─Projection 9990.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#24, test.t.b, test.t.b",
           "      │         └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
           "      │           └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "      │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "      │               └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      │               └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -642,7 +640,7 @@
           "  └─Projection 9990.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c",
           "    └─HashJoin 9990.00 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)], other cond:lt(cast(test.t.a, decimal(10,0) BINARY), Column#9)",
           "      ├─ExchangeReceiver(Build) 7992.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 7992.00 mpp[tiflash]  Column#9, test.t.b",
           "      │     └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.b, funcs:sum(Column#13)->Column#9, funcs:firstrow(test.t.b)->test.t.b",
           "      │       └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
@@ -650,9 +648,9 @@
           "      │           └─HashAgg 7992.00 mpp[tiflash]  group by:Column#29, funcs:sum(Column#28)->Column#13",
           "      │             └─Projection 9990.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#28, test.t.b",
           "      │               └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "      │                 └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      │                 └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -673,8 +671,7 @@
           "        └─HashAgg 2658.67 mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#5, funcs:firstrow(test.t.b)->test.t.b",
           "          └─ExchangeReceiver 3323.33 mpp[tiflash]  ",
           "            └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "              └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 60)",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "              └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.a, 60), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -696,8 +693,7 @@
           "          └─ExchangeReceiver 2658.67 mpp[tiflash]  ",
           "            └─ExchangeSender 2658.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "              └─HashAgg 2658.67 mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#22",
-          "                └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 60)",
-          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "                └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.a, 60), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -718,11 +714,11 @@
           "        ├─ExchangeReceiver(Build) 5543.34 mpp[tiflash]  ",
           "        │ └─ExchangeSender 5543.34 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        │   └─Selection 5543.34 mpp[tiflash]  not(isnull(test.t.a)), or(lt(test.t.a, 18), gt(test.t.b, 1))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
           "        └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "          └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "            └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -741,11 +737,11 @@
           "    └─Projection 6929.18 mpp[tiflash]  test.t.a, test.t.b",
           "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)], other cond:or(lt(test.t.a, 18), gt(test.t.b, 1))",
           "        ├─ExchangeReceiver(Build) 5543.34 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 5543.34 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │ └─ExchangeSender 5543.34 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 5543.34 mpp[tiflash]  not(isnull(test.t.a)), or(lt(test.t.a, 18), gt(test.t.b, 1))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -765,15 +761,14 @@
           "            │     └─HashAgg 2658.67 mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#12, funcs:firstrow(test.t.b)->test.t.b",
           "            │       └─ExchangeReceiver 3323.33 mpp[tiflash]  ",
           "            │         └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "            │           └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 60)",
-          "            │             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "            │           └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.a, 60), keep order:false, stats:pseudo",
           "            └─Projection 886.22 mpp[tiflash]  cast(Column#20, bigint(21) BINARY)->Column#20, Column#21",
           "              └─Projection 886.22 mpp[tiflash]  Column#19, test.t.b",
           "                └─HashAgg 886.22 mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#19, funcs:firstrow(test.t.b)->test.t.b",
           "                  └─ExchangeReceiver 1107.78 mpp[tiflash]  ",
           "                    └─ExchangeSender 1107.78 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "                      └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
-          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "                      └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1)",
+          "                        └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.a, 60), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -794,16 +789,15 @@
           "            │       └─ExchangeReceiver 2658.67 mpp[tiflash]  ",
           "            │         └─ExchangeSender 2658.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "            │           └─HashAgg 2658.67 mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#32",
-          "            │             └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 60)",
-          "            │               └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "            │             └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.a, 60), keep order:false, stats:pseudo",
           "            └─Projection 886.22 mpp[tiflash]  cast(Column#20, bigint(21) BINARY)->Column#20, Column#21",
           "              └─Projection 886.22 mpp[tiflash]  Column#19, test.t.b",
           "                └─HashAgg 886.22 mpp[tiflash]  group by:test.t.b, funcs:sum(Column#46)->Column#19, funcs:firstrow(test.t.b)->test.t.b",
           "                  └─ExchangeReceiver 886.22 mpp[tiflash]  ",
           "                    └─ExchangeSender 886.22 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "                      └─HashAgg 886.22 mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#46",
-          "                        └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
-          "                          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "                        └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1)",
+          "                          └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.a, 60), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -822,22 +816,21 @@
           "              │ └─HashJoin 4154.17 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "              │   ├─ExchangeReceiver(Build) 3323.33 mpp[tiflash]  ",
           "              │   │ └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "              │   │   └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), not(isnull(test.t.a))",
-          "              │   │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "              │   │   └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.a, 18), not(isnull(test.t.a)), keep order:false, stats:pseudo",
           "              │   └─ExchangeReceiver(Probe) 3323.33 mpp[tiflash]  ",
           "              │     └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "              │       └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), not(isnull(test.t.a))",
-          "              │         └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "              │         └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "              └─Projection 4162.50 mpp[tiflash]  test.t.a, test.t.b",
           "                └─HashJoin 4162.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "                  ├─ExchangeReceiver(Build) 3330.00 mpp[tiflash]  ",
           "                  │ └─ExchangeSender 3330.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "                  │   └─Selection 3330.00 mpp[tiflash]  gt(test.t.b, 1), not(isnull(test.t.a))",
-          "                  │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "                  │   └─Selection 3330.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "                  │     └─TableFullScan 3333.33 mpp[tiflash] table:t pushed down filter:gt(test.t.b, 1), keep order:false, stats:pseudo",
           "                  └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "                    └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "                      └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]There are no matching table names for (t1, t) in optimizer hint /*+ SHUFFLE_JOIN(t1, t, t1, t) */ or /*+ SHUFFLE_JOIN(t1, t, t1, t) */. Maybe you can use the table alias name",
@@ -858,19 +851,18 @@
           "              ├─Projection 4154.17 mpp[tiflash]  test.t.a, test.t.b",
           "              │ └─HashJoin 4154.17 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "              │   ├─ExchangeReceiver(Build) 3323.33 mpp[tiflash]  ",
-          "              │   │ └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: Broadcast",
-          "              │   │   └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), not(isnull(test.t.a))",
-          "              │   │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "              │   │ └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "              │   │   └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.a, 18), not(isnull(test.t.a)), keep order:false, stats:pseudo",
           "              │   └─Selection(Probe) 3323.33 mpp[tiflash]  lt(test.t.a, 18), not(isnull(test.t.a))",
-          "              │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "              │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "              └─Projection 4162.50 mpp[tiflash]  test.t.a, test.t.b",
           "                └─HashJoin 4162.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "                  ├─ExchangeReceiver(Build) 3330.00 mpp[tiflash]  ",
-          "                  │ └─ExchangeSender 3330.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "                  │   └─Selection 3330.00 mpp[tiflash]  gt(test.t.b, 1), not(isnull(test.t.a))",
-          "                  │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "                  │ └─ExchangeSender 3330.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "                  │   └─Selection 3330.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "                  │     └─TableFullScan 3333.33 mpp[tiflash] table:t pushed down filter:gt(test.t.b, 1), keep order:false, stats:pseudo",
           "                  └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]There are no matching table names for (t1, t) in optimizer hint /*+ BROADCAST_JOIN(t1, t, t1, t) */ or /*+ TIDB_BCJ(t1, t, t1, t) */. Maybe you can use the table alias name",
@@ -884,9 +876,9 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -898,9 +890,9 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -914,9 +906,9 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -928,9 +920,9 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -945,9 +937,9 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -969,7 +961,7 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
           "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
@@ -985,7 +977,7 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
           "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
@@ -1004,7 +996,7 @@
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1020,7 +1012,7 @@
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1038,7 +1030,7 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
           "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
@@ -1054,7 +1046,7 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
           "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
@@ -1073,7 +1065,7 @@
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1089,7 +1081,7 @@
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1102,7 +1094,7 @@
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
           "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.a, test.t.a)",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
@@ -1117,9 +1109,9 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
-          "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.a, test.t.a)",
+          "      └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
@@ -1138,7 +1130,7 @@
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
           "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.a, test.t.a)",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
@@ -1155,9 +1147,9 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
-          "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.a, test.t.a)",
+          "      └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
@@ -1215,11 +1207,11 @@
           "    ├─ExchangeReceiver_13(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_12 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection_11 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver_17(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender_16 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        └─Selection_15 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "          └─TableFullScan_14 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "          └─TableFullScan_14 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1230,11 +1222,11 @@
           "└─ExchangeSender_19 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_18 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_13(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_12 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_12 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection_11 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection_15(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan_14 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan_14 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1250,11 +1242,11 @@
           "└─ExchangeSender_66 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_59 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_63(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_62 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_62 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection_61 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan_60 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan_60 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection_65(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan_64 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan_64 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1288,11 +1280,11 @@
           "└─ExchangeSender_66 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_59 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_63(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_62 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_62 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection_61 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan_60 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan_60 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection_65(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan_64 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan_64 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1318,11 +1310,11 @@
           "└─ExchangeSender_26 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_19 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_23(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_22 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_22 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection_21 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan_20 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan_20 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection_25(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan_24 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan_24 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1333,11 +1325,11 @@
           "├─Sort_19(Build) 9990.00 root  test.t.a",
           "│ └─TableReader_18 9990.00 root  data:Selection_17",
           "│   └─Selection_17 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "│     └─TableFullScan_16 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "│     └─TableFullScan_16 10000.00 cop[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "└─Sort_15(Probe) 9990.00 root  test.t.a",
           "  └─TableReader_14 9990.00 root  data:Selection_13",
           "    └─Selection_13 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan_12 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+          "      └─TableFullScan_12 10000.00 cop[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1380,10 +1372,10 @@
           "HashJoin_37 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader_61(Build) 9990.00 root  data:Selection_60",
           "│ └─Selection_60 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "│   └─TableFullScan_59 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "│   └─TableFullScan_59 10000.00 cop[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "└─TableReader_52(Probe) 9990.00 root  data:Selection_51",
           "  └─Selection_51 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "    └─TableFullScan_50 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+          "    └─TableFullScan_50 10000.00 cop[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
@@ -1395,14 +1387,180 @@
           "HashJoin_37 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader_61(Build) 9990.00 root  data:Selection_60",
           "│ └─Selection_60 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "│   └─TableFullScan_59 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "│   └─TableFullScan_59 10000.00 cop[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "└─TableReader_52(Probe) 9990.00 root  data:Selection_51",
           "  └─Selection_51 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "    └─TableFullScan_50 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+          "    └─TableFullScan_50 10000.00 cop[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid"
         ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMPPBCJModel",
+    "Cases": [
+      {
+        "SQL": "set @@session.tidb_allow_mpp=true",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t t1, t t2 where t1.a=t2.a",
+        "Plan": [
+          "TableReader_77 12487.50 root  MppVersion: 1, data:ExchangeSender_76",
+          "└─ExchangeSender_76 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_75 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    ├─ExchangeReceiver_44(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_43 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_42 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "    │     └─TableFullScan_41 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    └─Selection_46(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "      └─TableFullScan_45 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t t1, t t2 where t1.a=t2.a",
+        "Plan": [
+          "TableReader_79 12487.50 root  MppVersion: 1, data:ExchangeSender_78",
+          "└─ExchangeSender_78 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_77 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    ├─ExchangeReceiver_44(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_43 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "    │   └─Selection_42 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "    │     └─TableFullScan_41 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver_48(Probe) 9990.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_47 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "        └─Selection_46 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "          └─TableFullScan_45 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestMPPPreferBCJ",
+    "Cases": [
+      {
+        "SQL": "explain select * from t1, t2 where t1.a=t2.b",
+        "Plan": [
+          "TableReader_34 1.00 root  MppVersion: 1, data:ExchangeSender_33",
+          "└─ExchangeSender_33 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_32 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
+          "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_14 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_13 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "    │     └─TableFullScan_12 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    └─Selection_17(Probe) 8.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "      └─TableFullScan_16 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1, t2 where t1.a=t2.b",
+        "Plan": [
+          "TableReader_36 1.00 root  MppVersion: 1, data:ExchangeSender_35",
+          "└─ExchangeSender_35 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_34 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
+          "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_14 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.a, collate: binary]",
+          "    │   └─Selection_13 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "    │     └─TableFullScan_12 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    └─ExchangeReceiver_19(Probe) 8.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_18 8.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.b, collate: binary]",
+          "        └─Selection_17 8.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "          └─TableFullScan_16 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "insert into t2 values (9); analyze table t2;",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1, t2 where t1.a=t2.b",
+        "Plan": [
+          "TableReader_34 1.00 root  MppVersion: 1, data:ExchangeSender_33",
+          "└─ExchangeSender_33 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_32 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
+          "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_14 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_13 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "    │     └─TableFullScan_12 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    └─Selection_17(Probe) 9.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "      └─TableFullScan_16 9.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestMPPBCJModelOneTiFlash",
+    "Cases": [
+      {
+        "SQL": "set @@session.tidb_allow_mpp=true",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t t1, t t2 where t1.a=t2.a",
+        "Plan": [
+          "TableReader_79 12487.50 root  MppVersion: 1, data:ExchangeSender_78",
+          "└─ExchangeSender_78 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_77 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    ├─ExchangeReceiver_44(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_43 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "    │   └─Selection_42 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "    │     └─TableFullScan_41 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver_48(Probe) 9990.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_47 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "        └─Selection_46 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "          └─TableFullScan_45 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t t1, t t2 where t1.a=t2.a",
+        "Plan": [
+          "TableReader_77 12487.50 root  MppVersion: 1, data:ExchangeSender_76",
+          "└─ExchangeSender_76 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_75 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    ├─ExchangeReceiver_44(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_43 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_42 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "    │     └─TableFullScan_41 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    └─Selection_46(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "      └─TableFullScan_45 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
+        ],
+        "Warn": null
       }
     ]
   },
@@ -4807,8 +4965,7 @@
         "Plan": [
           "TableReader 3333.33 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Selection 3333.33 mpp[tiflash]  gt(test.employee.deptid, 1)",
-          "    └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "  └─TableFullScan 3333.33 mpp[tiflash] table:employee pushed down filter:gt(test.employee.deptid, 1), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4817,8 +4974,7 @@
           "TableReader 3333.33 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 3333.33 mpp[tiflash]  plus(test.employee.deptid, 5)->Column#5, mul(test.employee.empid, 10)->Column#6",
-          "    └─Selection 3333.33 mpp[tiflash]  gt(test.employee.deptid, 1)",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "    └─TableFullScan 3333.33 mpp[tiflash] table:employee pushed down filter:gt(test.employee.deptid, 1), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4843,7 +4999,7 @@
           "  └─Projection 1.00 mpp[tiflash]  Column#5",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#7)->Column#5",
           "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#7",
           "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
@@ -4859,11 +5015,11 @@
           "  └─Projection 12487.50 mpp[tiflash]  test.employee.deptid, test.employee.empid, test.employee.salary, test.employee.empid, test.employee.salary",
           "    └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:employee pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:e1 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4876,7 +5032,7 @@
           "      └─Projection 1.00 mpp[tiflash]  Column#5",
           "        └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#8)->Column#5",
           "          └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "              └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#8",
           "                └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "                  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
@@ -4898,7 +5054,7 @@
           "              └─Projection 1.00 mpp[tiflash]  Column#5, Column#6",
           "                └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5, funcs:count(distinct test.employee.empid)->Column#6",
           "                  └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "                    └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "                    └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "                      └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
           "                        └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ]
@@ -4913,7 +5069,7 @@
           "      └─Projection 1.00 mpp[tiflash]  Column#5, Column#6",
           "        └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5, funcs:count(distinct test.employee.empid)->Column#6",
           "          └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "              └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ]
@@ -4925,11 +5081,11 @@
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN inner join",
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Projection 1.00 mpp[tiflash]  Column#9, Column#10",
           "    │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#9, funcs:count(distinct test.employee.empid)->Column#10",
           "    │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "    │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "    │           └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
           "    │             └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
           "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -4942,18 +5098,18 @@
           "└─ExchangeSender 1.25 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 1.25 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#9)]",
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Projection 1.00 mpp[tiflash]  Column#9",
           "    │     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#9",
           "    │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "    │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "    │           └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#10",
           "    │             └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "    │               └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "    │                 └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
           "    │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:e1 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4964,18 +5120,18 @@
           "  └─Projection 1.25 mpp[tiflash]  Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
           "    └─HashJoin 1.25 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#5)]",
           "      ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 1.00 mpp[tiflash]  Column#5",
           "      │     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#5",
           "      │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "      │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "      │           └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#10",
           "      │             └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "      │               └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "      │                 └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
           "      │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:e2 keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:e2 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4985,11 +5141,11 @@
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(Column#5, Column#10)]",
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Projection 1.00 mpp[tiflash]  Column#5",
           "    │     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#11)->Column#5",
           "    │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "    │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "    │           └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#11",
           "    │             └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "    │               └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
@@ -4998,7 +5154,7 @@
           "    └─Projection(Probe) 1.00 mpp[tiflash]  Column#10",
           "      └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#12)->Column#10",
           "        └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "            └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#12",
           "              └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "                └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
@@ -5013,11 +5169,11 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:e1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:e2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:e2 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5028,7 +5184,7 @@
           "  └─Projection 8000.00 mpp[tiflash]  Column#6, Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
           "    └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#6)]",
           "      ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
           "      │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
           "      │       └─Projection 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
@@ -5039,7 +5195,7 @@
           "      │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#27",
           "      │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:e2 keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:e2 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5049,7 +5205,7 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#10)]",
           "    ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#10, Column#9",
           "    │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
           "    │       └─Projection 8000.00 mpp[tiflash]  Column#9, test.employee.deptid",
@@ -5060,7 +5216,7 @@
           "    │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#27",
           "    │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:e1 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5070,7 +5226,7 @@
           "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 6400.00 mpp[tiflash]  inner join, equal:[eq(Column#6, Column#12)]",
           "    ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
           "    │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
           "    │       └─Projection 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
@@ -5109,7 +5265,7 @@
           "  │   └─Projection 1.00 mpp[tiflash]  Column#5",
           "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#12)->Column#5",
           "  │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "  │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "  │           └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#12",
           "  │             └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "  │               └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
@@ -5117,7 +5273,7 @@
           "  │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tiflash]  not(isnull(test.employee.deptid))",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:e2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 cop[tiflash] table:e2 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5129,7 +5285,7 @@
           "│   └─Projection 1.00 mpp[tiflash]  Column#10",
           "│     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#16)->Column#10",
           "│       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "│         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "│           └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#16",
           "│             └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "│               └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
@@ -5140,7 +5296,7 @@
           "    └─Projection 1.00 mpp[tiflash]  Column#5",
           "      └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#15)->Column#5",
           "        └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "            └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#15",
           "              └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "                └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
@@ -5157,11 +5313,11 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:e1 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:e2 keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:e2 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5186,7 +5342,7 @@
           "        └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#26, collate: binary]",
           "          └─Projection 9990.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#26",
           "            └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:e2 keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:e2 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5211,7 +5367,7 @@
           "        └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#26, collate: binary]",
           "          └─Projection 9990.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#26",
           "            └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:e1 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -7137,7 +7293,7 @@
           "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
           "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
@@ -7151,7 +7307,7 @@
           "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
           "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
           "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
@@ -7165,7 +7321,7 @@
           "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
           "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
           "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
@@ -7179,7 +7335,7 @@
           "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
           "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
@@ -7427,7 +7583,7 @@
       {
         "SQL": "select t1.a, t1.b not in (select t3.b from t3) from t1",
         "Plan": [
-          "HashJoin 10000.00 root  CARTESIAN anti left outer semi join, other cond:eq(test.t1.b, test.t3.b)",
+          "HashJoin 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t1.b, test.t3.b)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
@@ -7442,7 +7598,7 @@
       {
         "SQL": "select t1.a, t1.b not in (select /*+ no_decorrelate() */ t3.b from t3) from t1",
         "Plan": [
-          "HashJoin 10000.00 root  CARTESIAN anti left outer semi join, other cond:eq(test.t1.b, test.t3.b)",
+          "HashJoin 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t1.b, test.t3.b)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
@@ -7989,7 +8145,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
           "      └─Selection 10.00 mpp[tiflash]  eq(test.t.a, 1)",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -8030,7 +8186,7 @@
           "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─HashAgg 10000.00 mpp[tiflash]  funcs:count(1)->Column#21",
           "          └─Selection 80000000.00 mpp[tiflash]  eq(cast(test.t.a, double BINARY), cast(test.t.b, double BINARY))",
-          "            └─TableFullScan 100000000.00 mpp[tiflash] table:inn keep order:false, stats:pseudo"
+          "            └─TableFullScan 100000000.00 mpp[tiflash] table:inn pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -8043,7 +8199,7 @@
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#20",
           "      └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.e)]",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
@@ -8057,7 +8213,7 @@
           "  └─Projection 1.00 mpp[tiflash]  Column#10",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#12)->Column#10",
           "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─HashAgg 1.00 mpp[tiflash]  group by:1, ",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -8198,55 +8354,6 @@
           "                └─TableFullScan 10000.00 mpp[tiflash] table:tbl_16, partition:p1 keep order:false, stats:pseudo"
         ],
         "Warning": null
-      }
-    ]
-  },
-  {
-    "Name": "TestRemoveRedundantPredicates",
-    "Cases": [
-      {
-        "SQL": "select f from t use index() where f = 1 and f = 1 -- simple redundancy of exact condition",
-        "Best": "TableReader(Table(t)->Sel([eq(test.t.f, 1)]))"
-      },
-      {
-        "SQL": "select f from t use index() where f = 1 and f = 2 -- unsatisfiable condition",
-        "Best": "Dual"
-      },
-      {
-        "SQL": "select f from t use index() where f = 1 and f in (1,2,3)  -- intersection of in and =",
-        "Best": "TableReader(Table(t)->Sel([eq(test.t.f, 1)]))"
-      },
-      {
-        "SQL": "select f from t use index() where f = 1 and f <> 1  -- intersection of = and <>",
-        "Best": "Dual"
-      },
-      {
-        "SQL": "select f from t use index() where f not in (1,2,3) and f = 3 -- intersection of not in list and =",
-        "Best": "Dual"
-      },
-      {
-        "SQL": "select f from t use index() where f <> 3 and f <> 3 -- intersection of two not in values.",
-        "Best": "TableReader(Table(t)->Sel([ne(test.t.f, 3)]))"
-      },
-      {
-        "SQL": "select t1.f /* merge_join(t1, t2) */ from t t1, t t2 where t1.a=t2.a and t1.a=t2.a -- exact redundancy in joins",
-        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
-      },
-      {
-        "SQL": "select f from t use index() where f in (1,2,3) and f <> 2 -- intersection of in and <>. Not done yet see issue 39676",
-        "Best": "TableReader(Table(t)->Sel([in(test.t.f, 1, 2, 3) ne(test.t.f, 2)]))"
-      },
-      {
-        "SQL": "select f from t use index() where f in (1,2,3) and f in (3,4,5) -- intersection of two in. Not done yet",
-        "Best": "TableReader(Table(t)->Sel([in(test.t.f, 1, 2, 3) in(test.t.f, 3, 4, 5)]))"
-      },
-      {
-        "SQL": "select f from t use index() where f not in (1,2,3) and f not in (3,4,5) -- intersection of two not in. Not done yet",
-        "Best": "TableReader(Table(t)->Sel([not(in(test.t.f, 1, 2, 3)) not(in(test.t.f, 3, 4, 5))]))"
-      },
-      {
-        "SQL": "select f from t use index() where f not in (1,2,3) and f in (1,2,3) -- intersection of in and not in. Not done yet",
-        "Best": "TableReader(Table(t)->Sel([not(in(test.t.f, 1, 2, 3)) in(test.t.f, 1, 2, 3)]))"
       }
     ]
   },

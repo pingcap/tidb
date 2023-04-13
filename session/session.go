@@ -169,6 +169,17 @@ type Session interface {
 	SetExtensions(extensions *extension.SessionExtensions)
 }
 
+func init() {
+	executor.CreateSession = func(ctx sessionctx.Context) (sessionctx.Context, error) {
+		return CreateSession(ctx.GetStore())
+	}
+	executor.CloseSession = func(ctx sessionctx.Context) {
+		if se, ok := ctx.(Session); ok {
+			se.Close()
+		}
+	}
+}
+
 var _ Session = (*session)(nil)
 
 type stmtRecord struct {
@@ -341,7 +352,7 @@ func (s *session) cleanRetryInfo() {
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
 				bindSQL, _ := plannercore.GetBindSQL4PlanCache(s, preparedObj)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion,
-					0, bindSQL)
+					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -946,7 +957,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				zap.String("txn", s.txn.GoString()))
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
-			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
+			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit.Load())
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
 		} else if !errIsNoisy(err) {
@@ -1201,7 +1212,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
-			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
+			s.sessionVars.PlanCacheParams.Reset()
 			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
 				return err
@@ -1210,9 +1221,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				sql := sqlForLog(st.GetTextToLog())
+				sql := sqlForLog(st.GetTextToLog(false))
 				if !sessVars.EnableRedactLog {
-					sql += sessVars.PreparedParams.String()
+					sql += sessVars.PlanCacheParams.String()
 				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -1556,7 +1567,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
-		ProtectedTSList:       &s.sessionVars.ProtectedTSList,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
 	}
 	oldPi := s.ShowProcess()
@@ -1719,7 +1729,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	} else {
 		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
-	if len(stmts) != 1 {
+	if len(stmts) != 1 && err == nil {
 		err = errors.New("run multiple statements internally is not supported")
 	}
 	if err != nil {
@@ -2113,6 +2123,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
+	s.currentPlan = nil // reset current plan
 	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
 	s.txn.onStmtStart(digest.String())
 	defer sessiontxn.GetTxnManager(s).OnStmtEnd()
@@ -2193,7 +2204,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Observe the resource group query total counter if the resource control is enabled and the
 	// current session is attached with a resource group.
 	resourceGroupName := s.GetSessionVars().ResourceGroupName
-	if len(resourceGroupName) > 0 && resourceGroupName != variable.DefaultResourceGroupName {
+	if len(resourceGroupName) > 0 {
 		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
 	}
 
@@ -3457,6 +3468,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		dom.Close()
 		return nil, err
 	}
+
+	err = dom.InitDistTaskLoop(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return dom, err
 }
 
@@ -3711,7 +3727,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	}
 
 	failpoint.Inject("assertTSONotRequest", func() {
-		if _, ok := future.(sessiontxn.ConstantFuture); !ok {
+		if _, ok := future.(sessiontxn.ConstantFuture); !ok && !s.isInternal() {
 			panic("tso shouldn't be requested")
 		}
 	})
@@ -3829,12 +3845,12 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		if isPrepared {
 			query = execStmt.OriginText()
 		} else {
-			query = execStmt.GetTextToLog()
+			query = execStmt.GetTextToLog(false)
 		}
 
 		query = executor.QueryReplacer.Replace(query)
 		if !vars.EnableRedactLog {
-			query += vars.PreparedParams.String()
+			query += vars.PlanCacheParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
@@ -3977,10 +3993,14 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
 		is = snap
-	} else if vars.TxnCtx != nil && vars.InTxn() {
-		if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
-			is = tmp
+	} else {
+		vars.TxnCtxMu.Lock()
+		if vars.TxnCtx != nil {
+			if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
+				is = tmp
+			}
 		}
+		vars.TxnCtxMu.Unlock()
 	}
 
 	if is == nil {
@@ -4217,8 +4237,11 @@ func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 
 	// Decode session variables.
 	for name, val := range sessionStates.SystemVars {
-		if err := s.sessionVars.SetSystemVarWithoutValidation(name, val); err != nil {
-			return err
+		// Experimental system variables may change scope, data types, or even be removed.
+		// We just ignore the errors and continue.
+		if err := s.sessionVars.SetSystemVar(name, val); err != nil {
+			logutil.Logger(ctx).Warn("set session variable during decoding session states error",
+				zap.String("name", name), zap.String("value", val), zap.Error(err))
 		}
 	}
 
@@ -4257,7 +4280,7 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
-func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string) {
+func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string, printLog bool) {
 	sv := s.GetSessionVars()
 	if sv.InRestrictedSQL {
 		return
@@ -4272,7 +4295,12 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 			ids := util.Str2Int64Map(job2ids[jobID])
 			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
 				delete(job2ver, jobID)
-				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", sv.ConnectionID))
+				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
+				if elapsedTime > time.Minute && printLog {
+					logutil.BgLogger().Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+				} else {
+					logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+				}
 			}
 		}
 		return true

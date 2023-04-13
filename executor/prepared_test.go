@@ -170,11 +170,10 @@ func TestIssue29850(t *testing.T) {
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a range condition
-		`TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`└─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	tk.MustExec(`prepare stmt from 'select * from t where a=? or a=?'`)
 	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
@@ -182,8 +181,7 @@ func TestIssue29850(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a or condition
-		`TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`└─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 }
 
@@ -284,16 +282,14 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	tk.MustExec("ADMIN reload expr_pushdown_blacklist;")
 
 	tk.MustExec("execute stmt;")
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	// The expressions can still be pushed down to tikv.
-	require.Equal(t, 3, len(res.Rows()))
-	require.Contains(t, res.Rows()[1][0], "Selection")
-	require.Equal(t, "gt(test.t.a, 2), lt(test.t.a, 2)", res.Rows()[1][4])
+	// The expressions can not be pushed down to tikv.
+	require.Equal(t, 4, len(res.Rows()))
 
 	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
 	require.Equal(t, 4, len(res.Rows()))
@@ -1115,7 +1111,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	// The subquery plan with PhysicalApply can't be cached.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: PhysicalApply plan is un-cacheable"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: PhysicalApply plan is un-cacheable"))
 
 	// test for apply cache
 	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")

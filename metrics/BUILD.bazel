@@ -47,6 +47,7 @@ go_test(
     ],
     embed = [":metrics"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//parser/terror",
         "//testkit/testsetup",
