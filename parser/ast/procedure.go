@@ -79,17 +79,17 @@ type ErrNode interface {
 	StmtNode
 }
 
-// ProcedureDeclInfo is the base node of  procedure variable.
+// ProcedureDeclInfo is the base node of a procedure variable.
 type ProcedureDeclInfo struct {
 	node
 }
 
-// ProcedureErrorCondition is the base node of  condition value.
+// ProcedureErrorCondition is the base node of a condition value.
 type ProcedureErrorCondition struct {
 	stmtNode
 }
 
-// LableInfo is the  interface of loop and block lable.
+// LabelInfo is the interface of loop and block label.
 type LableInfo interface {
 	// GetErrorStatus gets label status, if error, return end label name and true.
 	// if normal，The returned string has no meaning and false.
@@ -948,7 +948,7 @@ func (n *ProcedureErrorState) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ProcedureErrorCon store store procedure handler status info.
+// ProcedureErrorCon stores procedure handler status info.
 type ProcedureErrorCon struct {
 	ProcedureErrorCondition
 

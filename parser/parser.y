@@ -15009,11 +15009,7 @@ ProcedureOptDefault:
 	}
 
 ProcedureDecl:
-	"DECLARE"/*$1*/
-	 ProcedureDeclIdents/*$2*/
-	 Type/*$3*/
-	 ProcedureOptDefault
-	/*$5*/
+	"DECLARE" ProcedureDeclIdents Type ProcedureOptDefault
 	{
 		x := &ast.ProcedureDecl{
 			DeclNames: $2.([]string),
@@ -15024,12 +15020,7 @@ ProcedureDecl:
 		}
 		$$ = x
 	}
-|	"DECLARE"/*$1*/
-	 identifier/*$2*/
-	 "CURSOR"/*$3*/
-	 "FOR"/*$4*/
-	 ProcedureCursorSelectStmt
-	/*$5*/
+|	"DECLARE" identifier "CURSOR" "FOR" ProcedureCursorSelectStmt
 	{
 		name := strings.ToLower($2)
 		$$ = &ast.ProcedureCursor{
@@ -15142,7 +15133,6 @@ ProcedureCloseCur:
 	}
 
 ProcedureOptFetchNo:
-
 /* Empty */
 |	"NEXT" "FROM"
 |	"FROM"
