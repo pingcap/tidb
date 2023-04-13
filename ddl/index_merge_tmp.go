@@ -214,18 +214,6 @@ func (*mergeIndexWorker) String() string {
 	return typeAddIndexMergeTmpWorker.String()
 }
 
-func (*mergeIndexWorker) GetTasks() ([]*BackfillJob, error) {
-	panic("[ddl] merge index worker GetTask function doesn't implement")
-}
-
-func (*mergeIndexWorker) UpdateTask(*BackfillJob) error {
-	panic("[ddl] merge index worker UpdateTask function doesn't implement")
-}
-
-func (*mergeIndexWorker) FinishTask(*BackfillJob) error {
-	panic("[ddl] merge index worker FinishTask function doesn't implement")
-}
-
 func (w *mergeIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }

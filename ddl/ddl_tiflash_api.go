@@ -223,7 +223,7 @@ var (
 	// PollTiFlashBackoffMinTick is the min tick before we try to update TiFlash replica availability for one table.
 	PollTiFlashBackoffMinTick TiFlashTick = 1
 	// PollTiFlashBackoffCapacity is the cache size of backoff struct.
-	PollTiFlashBackoffCapacity int = 1000
+	PollTiFlashBackoffCapacity = 1000
 	// PollTiFlashBackoffRate is growth rate of exponential backoff threshold.
 	PollTiFlashBackoffRate TiFlashTick = 1.5
 	// RefreshProgressMaxTableCount is the max count of table to refresh progress after available each poll.
