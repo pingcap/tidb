@@ -62,8 +62,10 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").Check(testkit.Rows("124"))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued2'").Check(testkit.Rows("125"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").
+		Check(testkit.Rows("124"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued2'").
+		Check(testkit.Rows("125"))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 
 	// allocate new table id verification
@@ -90,7 +92,9 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	idGen, ok := tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_new'").Rows()[0][0].(string)
+	idGen, ok := tk.MustQuery(
+		"select tidb_table_id from information_schema.tables where table_name = 'table_id_new'").
+		Rows()[0][0].(string)
 	require.True(t, ok)
 	idGenNum, err := strconv.ParseInt(idGen, 10, 64)
 	require.NoError(t, err)
@@ -166,9 +170,12 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	require.Equal(t, "public", job3[4])
 
 	// check reused table id
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_1'").Check(testkit.Rows("1234"))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_2'").Check(testkit.Rows("1235"))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_3'").Check(testkit.Rows("1236"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_1'").
+		Check(testkit.Rows("1234"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_2'").
+		Check(testkit.Rows("1235"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_3'").
+		Check(testkit.Rows("1236"))
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }

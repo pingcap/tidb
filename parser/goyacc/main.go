@@ -511,7 +511,8 @@ type %[1]sXError struct {
 		mustFormat(f, "},\n")
 	}
 	mustFormat(f, "%u}\n")
-	fmt.Fprintf(os.Stderr, "Parse table entries: %d of %d, x %d bits == %d bytes\n", nCells, len(p.Table)*len(msu), tbits, nCells*tbits/8)
+	fmt.Fprintf(os.Stderr, "Parse table entries: %d of %d, x %d bits == %d bytes\n",
+		nCells, len(p.Table)*len(msu), tbits, nCells*tbits/8)
 	if n := p.ConflictsSR; n != 0 {
 		fmt.Fprintf(os.Stderr, "conflicts: %d shift/reduce\n", n)
 	}
