@@ -416,7 +416,9 @@ func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 // locateBucket(val4): true, 3, false, false
 func (hg *Histogram) locateBucket(sctx sessionctx.Context, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		defer debugTraceLocateBucket(sctx, &value, exceed, bucketIdx, inBucket, matchLastValue)
+		defer func() {
+			debugTraceLocateBucket(sctx, &value, exceed, bucketIdx, inBucket, matchLastValue)
+		}()
 	}
 	// Empty histogram
 	if hg == nil || hg.Bounds.NumRows() == 0 {
@@ -893,15 +895,17 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 
 	var leftPercent, rightPercent, rowCount float64
 	if debugTrace {
-		defer debugtrace.RecordAnyValuesWithNames(sctx,
-			"histL", histL,
-			"histR", histR,
-			"boundL", boundL,
-			"boundR", boundR,
-			"lPercent", leftPercent,
-			"rPercent", rightPercent,
-			"rowCount", rowCount,
-		)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx,
+				"histL", histL,
+				"histR", histR,
+				"boundL", boundL,
+				"boundR", boundR,
+				"lPercent", leftPercent,
+				"rPercent", rightPercent,
+				"rowCount", rowCount,
+			)
+		}()
 	}
 
 	// keep l and r unchanged, use actualL and actualR to calculate.

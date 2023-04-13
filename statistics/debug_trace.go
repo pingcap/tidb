@@ -325,24 +325,34 @@ func debugTraceBuckets(s sessionctx.Context, hg *Histogram, bucketIdxs []int) {
 }
 
 /*
- Below is debug trace for used TopN entries during estimation.
+ Below is debug trace for used TopN range during estimation.
 */
 
-type topNInfo struct {
-	Idx     int
-	Encoded []byte
-	Count   uint64
+type topNRangeInfo struct {
+	FirstIdx     int
+	FirstEncoded []byte
+	LastIdx      int
+	LastEncoded  []byte
+	Count        []uint64
 }
 
 func debugTraceTopNRange(s sessionctx.Context, t *TopN, startIdx, endIdx int) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
-	topNRange := make([]topNInfo, endIdx-startIdx+1)
+	traceInfo := new(topNRangeInfo)
+	traceInfo.FirstIdx = startIdx
+	traceInfo.LastIdx = endIdx - 1
+	if startIdx < len(t.TopN) {
+		traceInfo.FirstEncoded = t.TopN[startIdx].Encoded
+	}
+	if endIdx-1 < len(t.TopN) {
+		traceInfo.LastEncoded = t.TopN[endIdx-1].Encoded
+	}
+	cnts := make([]uint64, endIdx-startIdx)
 	for topNIdx, i := startIdx, 0; topNIdx < endIdx; {
-		topNRange[i].Idx = topNIdx
-		topNRange[i].Encoded = t.TopN[topNIdx].Encoded
-		topNRange[i].Count = t.TopN[topNIdx].Count
+		cnts[i] = t.TopN[topNIdx].Count
 		topNIdx++
 		i++
 	}
-	root.AppendStepWithNameToCurrentContext(topNRange, "Related TopN Range")
+	traceInfo.Count = cnts
+	root.AppendStepWithNameToCurrentContext(traceInfo, "Related TopN Range")
 }

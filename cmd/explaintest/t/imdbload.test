@@ -285,6 +285,7 @@ load stats 's/imdbload_stats/cast_info.json';
 explain select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
 explain select * from char_name use index (itest2) where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
 trace plan target = 'estimation' select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
+trace plan target = 'debug' select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
 
 -- Actual row count: 0
 explain select * from char_name where ((imdb_index = 'V') and (surname_pcode < 'L3416'));
@@ -300,6 +301,7 @@ trace plan target = 'estimation' select * from movie_companies where company_typ
 -- Actual row count: 0
 explain select * from char_name where imdb_index > 'I' and imdb_index < 'II';
 trace plan target = 'estimation' select * from char_name where imdb_index > 'I' and imdb_index < 'II';
+trace plan target = 'debug' select * from char_name where imdb_index > 'I' and imdb_index < 'II';
 
 -- Actual row count: 13
 explain select * from char_name where imdb_index > 'I';
@@ -322,3 +324,4 @@ trace plan target = 'estimation' select * from keyword where ((phonetic_code = '
 -- Actual row count: 37928
 explain select * from cast_info where (nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida');
 trace plan target = 'estimation' select * from cast_info where (nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida');
+trace plan target = 'debug' select * from cast_info where (nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida');

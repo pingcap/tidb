@@ -38,7 +38,7 @@ import (
 //	}
 //
 // To record debug information, AppendStepToCurrentContext and AppendStepWithNameToCurrentContext
-// are provided as a low-level API.
+// are provided as low-level methods.
 // RecordAnyValuesWithNames handles some common logic for better usability, so it should
 // be the most commonly used function for recording simple information.
 // If the tracing logic is more complicated or need extra MarshalJSON logic, you should implement
@@ -51,7 +51,7 @@ type OptimizerDebugTraceRoot struct {
 
 // MarshalJSON overrides the default MarshalJSON behavior and marshals the unexported traceCtx.
 func (root *OptimizerDebugTraceRoot) MarshalJSON() ([]byte, error) {
-	return json.Marshal(root.traceCtx.steps)
+	return EncodeJSONCommon(root.traceCtx.steps)
 }
 
 // baseDebugTraceContext is the core of the debug trace.

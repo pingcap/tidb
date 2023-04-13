@@ -15,7 +15,6 @@
 package core
 
 import (
-	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -67,7 +66,7 @@ func (info *binaryParamInfo) MarshalSON() ([]byte, error) {
 			strconv.Quote(info.Value),
 			quote),
 		quote)
-	return json.Marshal(infoForMarshal)
+	return debugtrace.EncodeJSONCommon(infoForMarshal)
 }
 
 // DebugTraceReceivedCommand records the received command from the client to the debug trace.
@@ -123,7 +122,7 @@ func (b *bindingHint) MarshalJSON() ([]byte, error) {
 	tmp := make(map[string]string, 1)
 	hintStr, err := b.Hint.Restore()
 	if err != nil {
-		return json.Marshal(err)
+		return debugtrace.EncodeJSONCommon(err)
 	}
 	if b.trying {
 		tmp["Trying Hint"] = hintStr
