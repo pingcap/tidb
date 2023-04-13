@@ -50,10 +50,10 @@ type RawRange struct {
 
 type Table struct {
 	DBName         string `json:"db-name"`
-	TableName      string
-	KVCount        uint
-	KVSize         uint
-	TiFlashReplica uint
+	TableName      string `json:"table-name"`
+	KVCount        uint   `json:"kv-count"`
+	KVSize         uint   `json:"kv-size"`
+	TiFlashReplica uint   `json:"tiflash-replica"`
 }
 
 type ShowResult struct {
