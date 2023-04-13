@@ -70,6 +70,7 @@ func (ep *engineProcessor) process(ctx context.Context) (*backend.ClosedEngine, 
 	return closedDataEngine, err
 }
 
+// ProcessChunk processes a chunk, and write kv pairs to dataEngine and indexEngine.
 func ProcessChunk(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,

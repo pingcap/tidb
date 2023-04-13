@@ -130,6 +130,7 @@ type LoadDataReaderInfo struct {
 	Remote *mydump.SourceFileMeta
 }
 
+// Plan describes the plan of LOAD DATA.
 type Plan struct {
 	TableName *ast.TableName
 	TableInfo *model.TableInfo
@@ -240,6 +241,7 @@ func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 	return res
 }
 
+// NewPlan creates a new load data plan.
 func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*Plan, error) {
 	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))

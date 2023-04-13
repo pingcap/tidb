@@ -276,6 +276,7 @@ func (ti *TableImporter) importTable(ctx context.Context) error {
 	return nil
 }
 
+// PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
 func (ti *TableImporter) PopulateChunks(ctx context.Context) (map[int32]*checkpoints.EngineCheckpoint, error) {
@@ -342,6 +343,7 @@ func (ti *TableImporter) rebaseChunkRowID(rowIDBase int64) {
 	}
 }
 
+// OpenIndexEngine opens an index engine.
 func (ti *TableImporter) OpenIndexEngine(ctx context.Context) (*backend.OpenedEngine, error) {
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
@@ -364,6 +366,7 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context) (*backend.OpenedEn
 	return mgr.OpenEngine(ctx, idxEngineCfg, fullTableName, common.IndexEngineID)
 }
 
+// OpenDataEngine opens a data engine.
 func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*backend.OpenedEngine, error) {
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
@@ -419,6 +422,7 @@ func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *back
 	return processor.process(ctx)
 }
 
+// ImportAndCleanup imports the engine and cleanup the engine data.
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
 	// todo: if we need support checkpoint, engine should not be cleanup if import failed.
