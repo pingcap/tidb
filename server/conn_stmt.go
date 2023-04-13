@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -811,7 +812,7 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 		return ""
 	}
 	if sv.EnableRedactLog {
-		return cc.preparedStmt2StringNoArgs(stmtID)
+		return parser.Normalize(cc.preparedStmt2StringNoArgs(stmtID))
 	}
 	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PlanCacheParams.String()
 }
