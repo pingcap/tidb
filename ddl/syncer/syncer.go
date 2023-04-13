@@ -55,6 +55,23 @@ var (
 	CheckVersFirstWaitTime = 50 * time.Millisecond
 )
 
+// TODO: implements after #43093.
+type watcher struct {
+	sync.RWMutex
+	ch clientv3.WatchChan
+}
+
+// WatchChan implements SyncerWatch.WatchChan interface.
+func (wc *watcher) WatchChan() clientv3.WatchChan {
+	return nil
+}
+
+// Watch implements SyncerWatch.Watch interface.
+func (wc *watcher) Watch(ctx context.Context, etcdCli *clientv3.Client, path string) {}
+
+// Rewatch implements SyncerWatch.Rewatch interface.
+func (wc *watcher) Rewatch(ctx context.Context, etcdCli *clientv3.Client, path string) {}
+
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
 type SchemaSyncer interface {
 	// Init sets the global schema version path to etcd if it isn't exist,
