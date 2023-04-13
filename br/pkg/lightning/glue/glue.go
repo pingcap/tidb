@@ -123,7 +123,8 @@ func (e *ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, pur
 }
 
 // ObtainStringWithLog implements SQLExecutor.ObtainStringWithLog.
-func (e *ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (string, error) {
+func (e *ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string,
+	purpose string, logger log.Logger) (string, error) {
 	var s string
 	err := common.SQLWithRetry{
 		DB:     e.db,
@@ -133,7 +134,8 @@ func (e *ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string
 }
 
 // QueryStringsWithLog implements SQLExecutor.QueryStringsWithLog.
-func (e *ExternalTiDBGlue) QueryStringsWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (result [][]string, finalErr error) {
+func (e *ExternalTiDBGlue) QueryStringsWithLog(ctx context.Context, query string,
+	purpose string, logger log.Logger) (result [][]string, finalErr error) {
 	finalErr = common.SQLWithRetry{
 		DB:     e.db,
 		Logger: logger,
