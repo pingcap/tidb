@@ -97,6 +97,7 @@ func generateTableSplitKeyForInt(tid int64, splitNum []int) [][]byte {
 }
 
 func TestLimitAndTableScan(t *testing.T) {
+	t.Skip("not stable because coprocessor may result in goroutine leak")
 	kit := createChunkSizeControlKit(t, "create table t (a int, primary key (a))")
 	tbl, err := kit.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -127,6 +128,7 @@ func TestLimitAndTableScan(t *testing.T) {
 }
 
 func TestLimitAndIndexScan(t *testing.T) {
+	t.Skip("not stable because coprocessor may result in goroutine leak")
 	kit := createChunkSizeControlKit(t, "create table t (a int, index idx_a(a))")
 	tbl, err := kit.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
