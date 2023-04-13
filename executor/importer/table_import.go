@@ -177,6 +177,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 	}, nil
 }
 
+// TableImporter is a table importer.
 type TableImporter struct {
 	*JobImportParam
 	*LoadDataController
