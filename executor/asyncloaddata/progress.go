@@ -20,6 +20,7 @@ import (
 	"go.uber.org/atomic"
 )
 
+// LogicalImportProgress is the progress info of the logical import mode.
 type LogicalImportProgress struct {
 	// LoadedFileSize is the size of the data that's loaded in bytes. It's
 	// larger than the actual loaded data size, but due to the fact that reading
@@ -28,6 +29,7 @@ type LogicalImportProgress struct {
 	LoadedFileSize *atomic.Int64
 }
 
+// PhysicalImportProgress is the progress info of the physical import mode.
 type PhysicalImportProgress struct {
 	// EncodeFileSize is the size of the file that has finished KV encoding in bytes.
 	// it should equal to SourceFileSize eventually.

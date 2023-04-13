@@ -1476,6 +1476,7 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 	return workGroup.Wait()
 }
 
+// GetImportedKVCount returns the number of imported KV pairs of some engine.
 func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
 	v, ok := local.engines.Load(engineUUID)
 	if !ok {
