@@ -30,7 +30,6 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
 )
 
@@ -610,8 +609,8 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 	if hasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
 		return false, "the switch 'tidb_enable_plan_cache_for_subquery' is off"
 	}
-	if uint64(pp.MemoryUsage()) > 2*size.MB { // to save memory
-		return false, "plan is too large(>2MB)"
+	if sctx.GetSessionVars().PlanCacheMaxPlanSize > 0 && uint64(pp.MemoryUsage()) > sctx.GetSessionVars().PlanCacheMaxPlanSize { // to save memory
+		return false, "plan is too large(decided by the variable @@tidb_plan_cache_max_plan_size)"
 	}
 	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
 }

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/util/size"
 	"math/rand"
 	"strings"
 	"sync"
@@ -420,6 +421,11 @@ func TestPreparedPlanCacheLargePlan(t *testing.T) {
 	tk.MustExec("execute st")
 	tk.MustExec("execute st")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // large than 2MB threshold
+
+	tk.MustExec(fmt.Sprintf("set tidb_plan_cache_max_plan_size=%v", 1*size.GB))
+	tk.MustExec("execute st")
+	tk.MustExec("execute st")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // less than 1GB threshold
 }
 
 func TestPreparedPlanCacheLongInList(t *testing.T) {

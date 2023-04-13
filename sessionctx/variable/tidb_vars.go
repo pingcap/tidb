@@ -781,6 +781,8 @@ const (
 	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
 	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
+	// TiDBPlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
+	TiDBPlanCacheMaxPlanSize = "tidb_plan_cache_max_plan_size"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
@@ -1195,6 +1197,7 @@ const (
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableNonPreparedPlanCache              = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
+	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
 	DefTiDBEnableTiFlashReadForWriteStmt           = false
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
