@@ -444,9 +444,9 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.reason = "query has null constants"
 		}
 		checker.constCnt++
-		if checker.constCnt > 50 { // just for safety and reduce memory cost
+		if checker.constCnt > 200 { // just for safety and reduce memory cost
 			checker.cacheable = false
-			checker.reason = "query has more than 50 constants"
+			checker.reason = "query has more than 200 constants"
 		}
 		return in, !checker.cacheable
 	case *ast.GroupByClause:
