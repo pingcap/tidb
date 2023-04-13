@@ -26,17 +26,32 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-// BackendContext store a backend info for add index reorg task.
-type BackendContext struct {
+// BackendCtx is the backend context for add index reorg task.
+type BackendCtx interface {
+	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
+	Unregister(jobID, indexID int64)
+
+	FinishImport(indexID int64, unique bool, tbl table.Table) error
+	ResetWorkers(jobID, indexID int64)
+	Flush(indexID int64) (imported bool, err error)
+	Done() bool
+	SetDone()
+}
+
+// litBackendCtx store a backend info for add index reorg task.
+type litBackendCtx struct {
+	generic.SyncMap[int64, *engineInfo]
+	MemRoot  MemRoot
+	DiskRoot DiskRoot
 	jobID    int64
 	backend  *local.Backend
 	ctx      context.Context
 	cfg      *lightning.Config
-	EngMgr   engineManager
 	sysVars  map[string]string
 	diskRoot DiskRoot
 	done     bool
@@ -44,8 +59,8 @@ type BackendContext struct {
 
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
 // removes the engine from the backend context.
-func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Table) error {
-	ei, exist := bc.EngMgr.Load(indexID)
+func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Table) error {
+	ei, exist := bc.Load(indexID)
 	if !exist {
 		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
@@ -83,8 +98,8 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 const importThreshold = 0.85
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *BackendContext) Flush(indexID int64) (imported bool, err error) {
-	ei, exist := bc.EngMgr.Load(indexID)
+func (bc *litBackendCtx) Flush(indexID int64) (imported bool, err error) {
+	ei, exist := bc.Load(indexID)
 	if !exist {
 		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
 		return false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
@@ -101,7 +116,7 @@ func (bc *BackendContext) Flush(indexID int64) (imported bool, err error) {
 		return false, err
 	}
 
-	release := ei.AcquireFlushLock()
+	release := ei.acquireFlushLock()
 	if release != nil && bc.diskRoot.CurrentUsage() >= uint64(importThreshold*float64(bc.diskRoot.MaxQuota())) {
 		defer release()
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
@@ -120,11 +135,11 @@ func (bc *BackendContext) Flush(indexID int64) (imported bool, err error) {
 }
 
 // Done returns true if the lightning backfill is done.
-func (bc *BackendContext) Done() bool {
+func (bc *litBackendCtx) Done() bool {
 	return bc.done
 }
 
 // SetDone sets the done flag.
-func (bc *BackendContext) SetDone() {
+func (bc *litBackendCtx) SetDone() {
 	bc.done = true
 }

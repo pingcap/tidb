@@ -15,7 +15,6 @@ go_library(
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
-        "//br/pkg/lightning/glue",
         "//br/pkg/lightning/importer",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/metric",
@@ -59,7 +58,6 @@ go_test(
     deps = [
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/config",
-        "//br/pkg/lightning/glue",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/mydump",
         "//br/pkg/lightning/web",

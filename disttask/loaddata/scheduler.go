@@ -53,7 +53,7 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 		return err
 	}
 
-	tableImporter, err := importer.NewTableImporter(ctx, controller)
+	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{}, controller)
 	if err != nil {
 		return err
 	}

@@ -88,7 +88,7 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) ([]*SubtaskMe
 		return nil, err
 	}
 
-	tableImporter, err := importer.NewTableImporter(ctx, controller)
+	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{}, controller)
 	if err != nil {
 		return nil, err
 	}

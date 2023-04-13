@@ -15,7 +15,8 @@
 package lightning
 
 import (
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"database/sql"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/promutil"
@@ -24,7 +25,6 @@ import (
 )
 
 type options struct {
-	glue              glue.Glue
 	dumpFileStorage   storage.ExternalStorage
 	checkpointStorage storage.ExternalStorage
 	checkpointName    string
@@ -32,18 +32,12 @@ type options struct {
 	promRegistry      promutil.Registry
 	logger            log.Logger
 	dupIndicator      *atomic.Bool
+	// only used in tests
+	db *sql.DB
 }
 
 // Option is a function that configures a lightning task.
 type Option func(*options)
-
-// WithGlue sets the glue to a lightning task.
-// Typically, the glue is set when lightning is integrated with a TiDB.
-func WithGlue(g glue.Glue) Option {
-	return func(o *options) {
-		o.glue = g
-	}
-}
 
 // WithDumpFileStorage sets the external storage to a lightning task.
 // Typically, the external storage is set when lightning is integrated with dataflow engine by DM.

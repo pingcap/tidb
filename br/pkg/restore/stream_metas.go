@@ -310,7 +310,7 @@ func GetTSFromFile(
 	}
 	value, err := strconv.ParseUint(string(data), 10, 64)
 	if err != nil {
-		return 0, errors.Annotatef(berrors.ErrInvalidMetaFile, "failed to parse the truncate safepoint")
+		return 0, berrors.ErrInvalidMetaFile.GenWithStackByArgs("failed to parse the truncate safepoint")
 	}
 	return value, nil
 }
