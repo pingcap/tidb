@@ -17,15 +17,13 @@ package executor
 import (
 	"context"
 	"fmt"
-	"sort"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	driver "github.com/pingcap/tidb/store/driver/txn"
@@ -37,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/consistency"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"golang.org/x/exp/slices"
 )
@@ -52,6 +49,7 @@ type BatchPointGetExec struct {
 	physIDs     []int64
 	partExpr    *tables.PartitionExpr
 	partPos     int
+	planPhysIDs []int64
 	singlePart  bool
 	partTblID   int64
 	idxVals     [][]types.Datum
@@ -220,15 +218,20 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
 		toFetchIndexKeys := make([]kv.Key, 0, len(e.idxVals))
-		for _, idxVals := range e.idxVals {
+		for i, idxVals := range e.idxVals {
 			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
 			if datumsContainNull(idxVals) {
 				continue
 			}
 
-			physID, err := getPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos])
-			if err != nil {
-				continue
+			var physID int64
+			if len(e.planPhysIDs) > 0 {
+				physID = e.planPhysIDs[i]
+			} else {
+				physID, err = core.GetPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos])
+				if err != nil {
+					continue
+				}
 			}
 
 			// If this BatchPointGetExec is built only for the specific table partition, skip those filters not matching this partition.
@@ -355,10 +358,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		var tID int64
 		if len(e.physIDs) > 0 {
 			tID = e.physIDs[i]
+		} else if len(e.planPhysIDs) > 0 {
+			tID = e.planPhysIDs[i]
 		} else {
 			if handle.IsInt() {
 				d := types.NewIntDatum(handle.IntValue())
-				tID, err = getPhysID(e.tblInfo, e.partExpr, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}
@@ -367,7 +372,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				if err1 != nil {
 					return err1
 				}
-				tID, err = getPhysID(e.tblInfo, e.partExpr, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}
@@ -491,58 +496,6 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 		return val, nil
 	}
 	return nil, kv.ErrNotExist
-}
-
-func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d types.Datum) (int64, error) {
-	pi := tblInfo.GetPartitionInfo()
-	if pi == nil {
-		return tblInfo.ID, nil
-	}
-
-	if partitionExpr == nil {
-		return tblInfo.ID, nil
-	}
-
-	switch pi.Type {
-	case model.PartitionTypeHash:
-		intVal := d.GetInt64()
-		partIdx := mathutil.Abs(intVal % int64(pi.Num))
-		return pi.Definitions[partIdx].ID, nil
-	case model.PartitionTypeKey:
-		if len(pi.Columns) > 1 {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
-		}
-		partIdx, err := partitionExpr.LocateKeyPartitionWithSPC(pi, []types.Datum{d})
-		if err != nil {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
-		}
-		return pi.Definitions[partIdx].ID, nil
-	case model.PartitionTypeRange:
-		// we've check the type assertions in func TryFastPlan
-		col, ok := partitionExpr.Expr.(*expression.Column)
-		if !ok {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
-		}
-		unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
-		ranges := partitionExpr.ForRangePruning
-		length := len(ranges.LessThan)
-		intVal := d.GetInt64()
-		partIdx := sort.Search(length, func(i int) bool {
-			return ranges.Compare(i, intVal, unsigned) > 0
-		})
-		if partIdx >= 0 && partIdx < length {
-			return pi.Definitions[partIdx].ID, nil
-		}
-	case model.PartitionTypeList:
-		isNull := false // we've guaranteed this in the build process of either TryFastPlan or buildBatchPointGet
-		intVal := d.GetInt64()
-		partIdx := partitionExpr.ForListPruning.LocatePartition(intVal, isNull)
-		if partIdx >= 0 {
-			return pi.Definitions[partIdx].ID, nil
-		}
-	}
-
-	return 0, errors.Errorf("dual partition")
 }
 
 type cacheBatchGetter struct {

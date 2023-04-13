@@ -956,9 +956,8 @@ func TestPrefetchPartitionTable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, txn.Valid())
 	snap := txn.GetSnapshot()
-	// TODO: support it later
 	//nolint:forcetypeassert
-	require.Equal(t, 2, snap.(snapshotCache).SnapCacheHitCount())
+	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
 }
