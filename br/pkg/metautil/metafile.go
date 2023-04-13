@@ -129,8 +129,8 @@ func walkLeafMetaFile(
 
 		checksum := sha256.Sum256(decryptContent)
 		if !bytes.Equal(node.Sha256, checksum[:]) {
-			return errors.Annotatef(berrors.ErrInvalidMetaFile,
-				"checksum mismatch expect %x, got %x", node.Sha256, checksum[:])
+			return berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
+				"checksum mismatch expect %x, got %x", node.Sha256, checksum[:]))
 		}
 
 		child := &backuppb.MetaFile{}

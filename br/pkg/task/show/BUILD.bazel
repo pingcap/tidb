@@ -13,6 +13,7 @@ go_library(
         "//br/pkg/task",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_tikv_client_go_v2//oracle",
     ],
 )
 

@@ -85,9 +85,9 @@ func CreateExec(ctx context.Context, cfg Config) (*CmdExecutor, error) {
 func (exec *CmdExecutor) Read(ctx context.Context) (ShowResult, error) {
 	res := convertBasic(exec.meta.GetBasic())
 	if res.EndVersion < res.StartVersion {
-		return ShowResult{}, errors.Wrapf(berrors.ErrInvalidMetaFile,
-			"the start version(%s) is greater than the end version(%s), perhaps reading a backup meta from log backup.",
-			res.StartVersion, res.EndVersion)
+		return ShowResult{}, berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
+			"the start version(%s) is greater than the end version(%s), perhaps reading a backup meta from log backup",
+			res.StartVersion, res.EndVersion))
 	}
 	if !res.IsRawKV {
 		out := make(chan *metautil.Table, 16)
@@ -104,7 +104,7 @@ func (exec *CmdExecutor) Read(ctx context.Context) (ShowResult, error) {
 	} else {
 		// NOTE: here we assumed raw KV backup isn't executed in V2.
 		if exec.meta.GetBasic().RawRangeIndex != nil {
-			return ShowResult{}, errors.Annotate(berrors.ErrInvalidMetaFile, "show raw kv with backup meta v2 isn't supported for now.")
+			return ShowResult{}, berrors.ErrInvalidMetaFile.GenWithStackByArgs("show raw kv with backup meta v2 isn't supported for now")
 		}
 		for _, rr := range exec.meta.GetBasic().RawRanges {
 			res.RawRanges = append(res.RawRanges, convertRawRange(rr))
