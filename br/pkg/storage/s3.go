@@ -956,7 +956,14 @@ func isDeadlineExceedError(err error) bool {
 	return strings.Contains(err.Error(), "context deadline exceeded")
 }
 
+func isConnectionResetError(err error) bool {
+	return strings.Contains(err.Error(), "read: connection reset")
+}
+
 func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
+	if isConnectionResetError(r.Error) {
+		return true
+	}
 	if isDeadlineExceedError(r.Error) && r.HTTPRequest.URL.Host == ec2MetaAddress {
 		// fast fail for unreachable linklocal address in EC2 containers.
 		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
