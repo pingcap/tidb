@@ -238,5 +238,6 @@ func (s *restoreSchemaSuite) TestRestoreSchemaContextCancel() {
 	cancel()
 	err = s.rc.restoreSchema(childCtx)
 	require.Error(s.T(), err)
+	err = errors.Cause(err)
 	require.Equal(s.T(), childCtx.Err(), err)
 }
