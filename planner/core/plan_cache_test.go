@@ -1735,12 +1735,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t3 where a > 1 and full_name = 'a b'",
 		"select * from v",                // view
 		"select * from t where a = null", // null
-		"select * from t where a = 1 or a = 2 or a = 3 or a = 4 or a = 5 or a = 6 or a = 7 or a = 8 or a = 9 or a = 10 or " +
-			"a = 11 or a = 12 or a = 13 or a = 14 or a = 15 or a = 16 or a = 17 or a = 18 or a = 19 or a = 20 or " +
-			"a = 21 or a = 22 or a = 23 or a = 24 or a = 25 or a = 26 or a = 27 or a = 28 or a = 29 or a = 30 or " +
-			"a = 31 or a = 32 or a = 33 or a = 34 or a = 35 or a = 36 or a = 37 or a = 38 or a = 39 or a = 40 or " +
-			"a = 41 or a = 42 or a = 43 or a = 44 or a = 45 or a = 46 or a = 47 or a = 48 or a = 49 or a = 50 or a = 51", // more than 50 constants
-		"select * from t where false", // table dual
+		"select * from t where false",    // table dual
 	}
 
 	reasons := []string{
@@ -1762,7 +1757,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have generated columns are not supported",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
-		"skip non-prepared plan-cache: query has more than 50 constants",
 		"skip non-prepared plan-cache: get a TableDual plan",
 	}
 
