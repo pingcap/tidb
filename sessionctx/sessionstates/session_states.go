@@ -81,5 +81,6 @@ type SessionStates struct {
 	LastInsertID         uint64                       `json:"last-insert-id,omitempty"`
 	Warnings             []stmtctx.SQLWarn            `json:"warnings,omitempty"`
 	// Define it as string to avoid cycle import.
-	Bindings string `json:"bindings,omitempty"`
+	Bindings          string `json:"bindings,omitempty"`
+	ResourceGroupName string `json:"rs-group,omitempty"`
 }
