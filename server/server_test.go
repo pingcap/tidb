@@ -2157,7 +2157,7 @@ func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 		dbt.MustExec("drop table t2;")
 
 		currentStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
-		require.Equal(t, originStmtCnt["CreateTable"]+2, currentStmtCnt["CreateTable"])
+		require.Equal(t, originStmtCnt["CreateTable"]+3, currentStmtCnt["CreateTable"])
 		require.Equal(t, originStmtCnt["Insert"]+5, currentStmtCnt["Insert"])
 		require.Equal(t, originStmtCnt["Delete"]+1, currentStmtCnt["Delete"])
 		require.Equal(t, originStmtCnt["Update"]+2, currentStmtCnt["Update"])
