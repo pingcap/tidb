@@ -170,6 +170,7 @@ type Domain struct {
 
 	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
+	resourcePool    *pools.ResourcePool
 }
 
 type mdlCheckTableInfo struct {
@@ -282,7 +283,7 @@ func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, ver
 		if err != nil {
 			return 0, err
 		}
-		if len(data.Info.Writes) == 0 {
+		if data == nil || data.Info == nil || len(data.Info.Writes) == 0 {
 			return 0, errors.Errorf("There is no Write MVCC info for the schema version")
 		}
 		return int64(data.Info.Writes[0].CommitTs), nil
@@ -730,10 +731,15 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
 		return
 	}
+	// Make sure the session is new.
+	if _, err := se.(sqlexec.SQLExecutor).ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), "rollback"); err != nil {
+		se.Close()
+		return
+	}
 	defer do.sysSessionPool.Put(se)
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
-	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
@@ -1089,6 +1095,7 @@ func (do *Domain) Init(
 		return sysExecutorFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
+	do.resourcePool = sysCtxPool
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
@@ -1106,6 +1113,7 @@ func (do *Domain) Init(
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
+
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			do.ddl = d
@@ -1155,9 +1163,6 @@ func (do *Domain) Init(
 		return err
 	}
 
-	if err = do.initDistTaskLoop(ctx); err != nil {
-		return err
-	}
 	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
 	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
@@ -1345,42 +1350,31 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	return nil
 }
 
-func (do *Domain) initDistTaskLoop(ctx context.Context) error {
-	se1, err := do.sysExecutorFactory(do)
+// InitDistTaskLoop initializes the distributed task framework.
+func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
+	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil)
+		}
+	})
+
+	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
 	if err != nil {
 		return err
 	}
 
-	se2, err := do.sysExecutorFactory(do)
-	if err != nil {
-		se1.Close()
-		return err
-	}
-
-	gm := storage.NewGlobalTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se1.(sessionctx.Context))
-	sm := storage.NewSubTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se2.(sessionctx.Context))
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), gm, sm)
-	if err != nil {
-		se1.Close()
-		se2.Close()
-		return err
-	}
-
-	storage.SetGlobalTaskManager(gm)
-	storage.SetSubTaskManager(sm)
+	storage.SetTaskManager(taskManager)
 	do.wg.Run(func() {
 		defer func() {
-			storage.SetGlobalTaskManager(nil)
-			storage.SetSubTaskManager(nil)
-			se1.Close()
-			se2.Close()
+			storage.SetTaskManager(nil)
 		}()
-		do.distTaskFrameworkLoop(ctx, gm, sm, schedulerManager)
+		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, globalTaskManager *storage.GlobalTaskManager, subtaskManager *storage.SubTaskManager, schedulerManager *scheduler.Manager) {
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
 	defer func() {
@@ -1395,7 +1389,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, globalTaskManager *
 			return
 		}
 
-		newDispatch, err := dispatcher.NewDispatcher(ctx, globalTaskManager, subtaskManager)
+		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return

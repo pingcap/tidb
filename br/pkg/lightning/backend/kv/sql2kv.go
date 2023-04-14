@@ -43,10 +43,12 @@ type tableKVEncoder struct {
 	metrics *metric.Metrics
 }
 
+// GetSession4test is only used for test.
 func GetSession4test(encoder encode.Encoder) sessionctx.Context {
 	return encoder.(*tableKVEncoder).SessionCtx
 }
 
+// NewTableKVEncoder creates a new tableKVEncoder.
 func NewTableKVEncoder(
 	config *encode.EncodingConfig,
 	metrics *metric.Metrics,
@@ -130,6 +132,7 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	return genCols, nil
 }
 
+// Close implements the Encoder interface.
 func (kvcodec *tableKVEncoder) Close() {
 	kvcodec.SessionCtx.Close()
 	if kvcodec.metrics != nil {
@@ -137,7 +140,8 @@ func (kvcodec *tableKVEncoder) Close() {
 	}
 }
 
-type KvPairs struct {
+// Pairs implements the Encoder interface.
+type Pairs struct {
 	Pairs    []common.KvPair
 	BytesBuf *BytesBuf
 	MemBuf   *MemBuf
@@ -147,43 +151,42 @@ type KvPairs struct {
 // mainly used for testing only. The resulting Rows instance should only be used
 // for the importer backend.
 func MakeRowsFromKvPairs(pairs []common.KvPair) encode.Rows {
-	return &KvPairs{Pairs: pairs}
+	return &Pairs{Pairs: pairs}
 }
 
 // MakeRowFromKvPairs converts a KvPair slice into a Row instance. This is
 // mainly used for testing only. The resulting Row instance should only be used
 // for the importer backend.
 func MakeRowFromKvPairs(pairs []common.KvPair) encode.Row {
-	return &KvPairs{Pairs: pairs}
+	return &Pairs{Pairs: pairs}
 }
 
-// KvPairsFromRows converts a Rows instance constructed from MakeRowsFromKvPairs
+// Rows2KvPairs converts a Rows instance constructed from MakeRowsFromKvPairs
 // back into a slice of KvPair. This method panics if the Rows is not
 // constructed in such way.
-// nolint:golint // kv.KvPairsFromRows sounds good.
-func KvPairsFromRows(rows encode.Rows) []common.KvPair {
-	return rows.(*KvPairs).Pairs
+func Rows2KvPairs(rows encode.Rows) []common.KvPair {
+	return rows.(*Pairs).Pairs
 }
 
-// KvPairsFromRow converts a Row instance constructed from MakeRowFromKvPairs
+// Row2KvPairs converts a Row instance constructed from MakeRowFromKvPairs
 // back into a slice of KvPair. This method panics if the Row is not
 // constructed in such way.
-// nolint:golint // kv.KvPairsFromRow sounds good.
-func KvPairsFromRow(row encode.Row) []common.KvPair {
-	return row.(*KvPairs).Pairs
+func Row2KvPairs(row encode.Row) []common.KvPair {
+	return row.(*Pairs).Pairs
 }
 
 // Encode a row of data into KV pairs.
 //
 // See comments in `(*TableRestore).initializeColumns` for the meaning of the
 // `columnPermutation` parameter.
-func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
+func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
+	rowID int64, columnPermutation []int, _ int64) (encode.Row, error) {
 	var value types.Datum
 	var err error
 
 	record := kvcodec.GetOrCreateRecord()
 	for i, col := range kvcodec.Columns {
-		var theDatum *types.Datum = nil
+		var theDatum *types.Datum
 		j := columnPermutation[i]
 		if j >= 0 && j < len(row) {
 			theDatum = &row[j]
@@ -200,7 +203,8 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPerm
 		rowValue := rowID
 		j := columnPermutation[len(kvcodec.Columns)]
 		if j >= 0 && j < len(row) {
-			value, err = table.CastValue(kvcodec.SessionCtx, row[j], ExtraHandleColumnInfo, false, false)
+			value, err = table.CastValue(kvcodec.SessionCtx, row[j],
+				ExtraHandleColumnInfo, false, false)
 			rowValue = value.GetInt64()
 		} else {
 			rowID := kvcodec.AutoIDFn(rowID)
@@ -225,6 +229,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPerm
 	return kvcodec.Record2KV(record, row, rowID)
 }
 
+// IsAutoIncCol return true if the column is auto increment column.
 func IsAutoIncCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasAutoIncrementFlag(colInfo.GetFlag())
 }
@@ -240,13 +245,17 @@ func GetEncoderSe(encoder encode.Encoder) *Session {
 }
 
 // GetActualDatum export getActualDatum function.
-func GetActualDatum(encoder encode.Encoder, col *table.Column, rowID int64, inputDatum *types.Datum) (types.Datum, error) {
+func GetActualDatum(encoder encode.Encoder, col *table.Column, rowID int64,
+	inputDatum *types.Datum) (types.Datum, error) {
 	return encoder.(*tableKVEncoder).getActualDatum(col, rowID, inputDatum)
 }
 
+// GetAutoRecordID returns the record ID for an auto-increment field.
 // get record value for auto-increment field
 //
-// See: https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
+// See:
+//
+//	https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
 func GetAutoRecordID(d types.Datum, target *types.FieldType) int64 {
 	switch target.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble:
@@ -258,7 +267,8 @@ func GetAutoRecordID(d types.Datum, target *types.FieldType) int64 {
 	}
 }
 
-func (kvs *KvPairs) Size() uint64 {
+// Size returns the total size of the key-value pairs.
+func (kvs *Pairs) Size() uint64 {
 	size := uint64(0)
 	for _, kv := range kvs.Pairs {
 		size += uint64(len(kv.Key) + len(kv.Val))
@@ -266,14 +276,15 @@ func (kvs *KvPairs) Size() uint64 {
 	return size
 }
 
-func (kvs *KvPairs) ClassifyAndAppend(
+// ClassifyAndAppend separates the key-value pairs into data and index key-value pairs.
+func (kvs *Pairs) ClassifyAndAppend(
 	data *encode.Rows,
 	dataChecksum *verification.KVChecksum,
 	indices *encode.Rows,
 	indexChecksum *verification.KVChecksum,
 ) {
-	dataKVs := (*data).(*KvPairs)
-	indexKVs := (*indices).(*KvPairs)
+	dataKVs := (*data).(*Pairs)
+	indexKVs := (*indices).(*Pairs)
 
 	for _, kv := range kvs.Pairs {
 		if kv.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
@@ -297,7 +308,8 @@ func (kvs *KvPairs) ClassifyAndAppend(
 	*indices = indexKVs
 }
 
-func (kvs *KvPairs) SplitIntoChunks(splitSize int) []encode.Rows {
+// SplitIntoChunks splits the key-value pairs into chunks.
+func (kvs *Pairs) SplitIntoChunks(splitSize int) []encode.Rows {
 	if len(kvs.Pairs) == 0 {
 		return nil
 	}
@@ -308,7 +320,7 @@ func (kvs *KvPairs) SplitIntoChunks(splitSize int) []encode.Rows {
 	for j, pair := range kvs.Pairs {
 		size := len(pair.Key) + len(pair.Val)
 		if i < j && cumSize+size > splitSize {
-			res = append(res, &KvPairs{Pairs: kvs.Pairs[i:j]})
+			res = append(res, &Pairs{Pairs: kvs.Pairs[i:j]})
 			i = j
 			cumSize = 0
 		}
@@ -318,7 +330,7 @@ func (kvs *KvPairs) SplitIntoChunks(splitSize int) []encode.Rows {
 	if i == 0 {
 		res = append(res, kvs)
 	} else {
-		res = append(res, &KvPairs{
+		res = append(res, &Pairs{
 			Pairs:    kvs.Pairs[i:],
 			BytesBuf: kvs.BytesBuf,
 			MemBuf:   kvs.MemBuf,
@@ -327,7 +339,8 @@ func (kvs *KvPairs) SplitIntoChunks(splitSize int) []encode.Rows {
 	return res
 }
 
-func (kvs *KvPairs) Clear() encode.Rows {
+// Clear clears the key-value pairs.
+func (kvs *Pairs) Clear() encode.Rows {
 	if kvs.BytesBuf != nil {
 		kvs.MemBuf.Recycle(kvs.BytesBuf)
 		kvs.BytesBuf = nil

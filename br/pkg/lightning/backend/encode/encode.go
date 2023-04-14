@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// EncodingConfig is the configuration for the encoding backend.
 type EncodingConfig struct {
 	SessionOptions
 	Path   string // path of data file

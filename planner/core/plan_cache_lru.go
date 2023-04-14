@@ -271,6 +271,15 @@ func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOp
 		if plan.matchOpts.HasSubQuery && !l.sctx.GetSessionVars().EnablePlanCacheForSubquery {
 			continue
 		}
+		// table stats has changed
+		if plan.matchOpts.StatsVersionHash != matchOpts.StatsVersionHash {
+			continue
+		}
+
+		// below are some SQL variables that can affect the plan
+		if plan.matchOpts.ForeignKeyChecks != matchOpts.ForeignKeyChecks {
+			continue
+		}
 		return k, true
 	}
 	return nil, false

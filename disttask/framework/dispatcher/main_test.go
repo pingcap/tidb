@@ -24,11 +24,17 @@ import (
 // DispatcherForTest exports for testing.
 type DispatcherForTest interface {
 	GetRunningGTaskCnt() int
+	DelRunningGTask(globalTaskID int64)
 }
 
 // GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
 func (d *dispatcher) GetRunningGTaskCnt() int {
 	return d.getRunningGTaskCnt()
+}
+
+// DelRunningGTask implements Dispatcher.DelRunningGTask interface.
+func (d *dispatcher) DelRunningGTask(globalTaskID int64) {
+	d.delRunningGTask(globalTaskID)
 }
 
 func TestMain(m *testing.M) {

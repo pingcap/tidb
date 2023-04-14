@@ -174,7 +174,7 @@ func (e *BaseKVEncoder) GetOrCreateRecord() []types.Datum {
 }
 
 // Record2KV converts a row into a KV pair.
-func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64) (*KvPairs, error) {
+func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64) (*Pairs, error) {
 	_, err := e.Table.AddRecord(e.SessionCtx, record)
 	if err != nil {
 		e.logger.Error("kv encode failed",
@@ -239,7 +239,8 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	switch {
 	case IsAutoIncCol(col.ToInfo()):
 		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
-		value, err = table.CastValue(e.SessionCtx, types.NewIntDatum(rowID), col.ToInfo(), false, false)
+		value, err = table.CastValue(e.SessionCtx,
+			types.NewIntDatum(rowID), col.ToInfo(), false, false)
 	case e.IsAutoRandomCol(col.ToInfo()):
 		var val types.Datum
 		realRowID := e.AutoIDFn(rowID)
@@ -267,7 +268,8 @@ func (e *BaseKVEncoder) IsAutoRandomCol(col *model.ColumnInfo) bool {
 }
 
 // EvalGeneratedColumns evaluates the generated columns.
-func (e *BaseKVEncoder) EvalGeneratedColumns(record []types.Datum, cols []*table.Column) (errCol *model.ColumnInfo, err error) {
+func (e *BaseKVEncoder) EvalGeneratedColumns(record []types.Datum,
+	cols []*table.Column) (errCol *model.ColumnInfo, err error) {
 	return evalGeneratedColumns(e.SessionCtx, record, cols, e.GenCols)
 }
 
@@ -311,7 +313,8 @@ func (e *BaseKVEncoder) LogEvalGenExprFailed(row []types.Datum, colInfo *model.C
 	)
 }
 
-func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column, genCols []GeneratedCol) (errCol *model.ColumnInfo, err error) {
+func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column,
+	genCols []GeneratedCol) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.Index].ToInfo()

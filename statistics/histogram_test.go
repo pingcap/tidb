@@ -31,9 +31,9 @@ import (
 
 func TestNewHistogramBySelectivity(t *testing.T) {
 	coll := &HistColl{
-		Count:   330,
-		Columns: make(map[int64]*Column),
-		Indices: make(map[int64]*Index),
+		RealtimeCount: 330,
+		Columns:       make(map[int64]*Column),
+		Indices:       make(map[int64]*Index),
 	}
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
