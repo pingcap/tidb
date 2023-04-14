@@ -146,9 +146,7 @@ func (c *copReqSender) run() {
 			}
 			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
 			failpoint.Inject("MockCopSenderError", func(val failpoint.Value) {
-				if val.(bool) {
-					idxRs.err = errors.New("mock cop error")
-				}
+				idxRs.err = errors.New("mock cop error")
 			})
 			p.chunkSender.AddTask(idxRs)
 		}
