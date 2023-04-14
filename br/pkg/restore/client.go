@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -144,6 +143,9 @@ type Client struct {
 	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
 	currentTS uint64
+
+	// clusterID is the cluster id from down-stream cluster.
+	clusterID uint64
 
 	*logFileManager
 
@@ -282,6 +284,14 @@ func (rc *Client) SetCrypter(crypter *backuppb.CipherInfo) {
 // SetPolicyMap set policyMap.
 func (rc *Client) SetPolicyMap(p *sync.Map) {
 	rc.policyMap = p
+}
+
+// GetClusterID gets the cluster id from down-stream cluster.
+func (rc *Client) GetClusterID(ctx context.Context) uint64 {
+	if rc.clusterID <= 0 {
+		rc.clusterID = rc.GetPDClient().GetClusterID(ctx)
+	}
+	return rc.clusterID
 }
 
 // GetPolicyMap set policyMap.
@@ -2137,62 +2147,67 @@ func (rc *Client) CleanUpKVFiles(
 // InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
 func (rc *Client) InitSchemasReplaceForDDL(
+	dbMaps []*backuppb.PitrDBMap,
 	tables *map[int64]*metautil.Table,
 	tableFilter filter.Filter,
 ) (*stream.SchemasReplace, error) {
-	dbMap := make(map[stream.OldID]*stream.DBReplace)
+	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
+	if len(dbMaps) <= 0 {
+		for _, t := range *tables {
+			dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
+			newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
+			if !exist {
+				log.Info("db not existed", zap.String("dbname", dbName.String()))
+				continue
+			}
 
-	for _, t := range *tables {
-		name, _ := utils.GetSysDBName(t.DB.Name)
-		dbName := model.NewCIStr(name)
-		newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
-		if !exist {
-			log.Info("db not existed", zap.String("dbname", dbName.String()))
-			continue
-		}
+			dbReplace, exist := dbReplaces[t.DB.ID]
+			if !exist {
+				dbReplace = stream.NewDBReplace(t.DB.Name.O, newDBInfo.ID)
+				dbReplaces[t.DB.ID] = dbReplace
+			}
 
-		dbReplace, exist := dbMap[t.DB.ID]
-		if !exist {
-			dbReplace = stream.NewDBReplace(t.DB, newDBInfo.ID)
-			dbMap[t.DB.ID] = dbReplace
-		}
+			if t.Info == nil {
+				// If the db is empty, skip it.
+				continue
+			}
+			newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
+			if err != nil {
+				log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
+				continue
+			}
 
-		if t.Info == nil {
-			// If the db is empty, skip it.
-			continue
+			dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
+				Name:         newTableInfo.Name.O,
+				TableID:      newTableInfo.ID,
+				PartitionMap: getTableIDMap(newTableInfo, t.Info),
+				IndexMap:     getIndexIDMap(newTableInfo, t.Info),
+			}
 		}
-		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
-		if err != nil {
-			log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
-			continue
-		}
-
-		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
-			OldTableInfo: t.Info,
-			NewTableID:   newTableInfo.ID,
-			PartitionMap: getTableIDMap(newTableInfo, t.Info),
-			IndexMap:     getIndexIDMap(newTableInfo, t.Info),
-		}
+	} else {
+		dbReplaces = stream.FromSchemaMaps(dbMaps)
 	}
 
-	for oldDBID, dbReplace := range dbMap {
+	for oldDBID, dbReplace := range dbReplaces {
 		log.Info("replace info", func() []zapcore.Field {
 			fields := make([]zapcore.Field, 0, (len(dbReplace.TableMap)+1)*3)
 			fields = append(fields,
-				zap.String("dbName", dbReplace.OldDBInfo.Name.O),
+				zap.String("dbName", dbReplace.Name),
 				zap.Int64("oldID", oldDBID),
-				zap.Int64("newID", dbReplace.NewDBID))
+				zap.Int64("newID", dbReplace.DbID))
 			for oldTableID, tableReplace := range dbReplace.TableMap {
 				fields = append(fields,
-					zap.String("table", tableReplace.OldTableInfo.Name.String()),
+					zap.String("table", tableReplace.Name),
 					zap.Int64("oldID", oldTableID),
-					zap.Int64("newID", tableReplace.NewTableID))
+					zap.Int64("newID", tableReplace.TableID))
 			}
 			return fields
 		}()...)
 	}
 
-	rp := stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs, rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
+	rp := stream.NewSchemasReplace(
+		dbReplaces, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
+		rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
 	return rp, nil
 }
 
@@ -2250,11 +2265,24 @@ func (rc *Client) RestoreMetaKVFiles(
 			filesInDefaultCF = append(filesInDefaultCF, f)
 		}
 	}
+	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
+	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
+	// Preconstruct the map and save it into external storage.
+	if err := rc.PreConstructAndSaveIDMap(
+		ctx,
+		filesInWriteCF,
+		filesInDefaultCF,
+		schemasReplace,
+	); err != nil {
+		return errors.Trace(err)
+	}
+
+	// run the rewrite and restore meta-kv into TiKV cluster.
 	if err := rc.RestoreMetaKVFilesWithBatchMethod(
 		ctx,
-		SortMetaKVFiles(filesInDefaultCF),
-		SortMetaKVFiles(filesInWriteCF),
+		filesInDefaultCF,
+		filesInWriteCF,
 		schemasReplace,
 		updateStats,
 		progressInc,
@@ -2266,6 +2294,47 @@ func (rc *Client) RestoreMetaKVFiles(
 	// Update global schema version and report all of TiDBs.
 	if err := rc.UpdateSchemaVersion(ctx); err != nil {
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+// PreConstructAndSaveIDMap constructs id mapping and save it.
+func (rc *Client) PreConstructAndSaveIDMap(
+	ctx context.Context,
+	fsInWriteCF, fsInDefaultCF []*backuppb.DataFileInfo,
+	sr *stream.SchemasReplace,
+) error {
+	sr.SetPreConstructMapStatus()
+
+	if err := rc.constructIDMap(ctx, fsInWriteCF, sr); err != nil {
+		return errors.Trace(err)
+	}
+	if err := rc.constructIDMap(ctx, fsInDefaultCF, sr); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := rc.SaveIDMap(ctx, sr); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (rc *Client) constructIDMap(
+	ctx context.Context,
+	fs []*backuppb.DataFileInfo,
+	sr *stream.SchemasReplace,
+) error {
+	for _, f := range fs {
+		entries, _, err := rc.ReadAllEntries(ctx, f, math.MaxUint64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for _, entry := range entries {
+			if _, err := sr.RewriteKvEntry(&entry.e, f.GetCf()); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	return nil
 }
@@ -2288,22 +2357,24 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 		cf string,
 	) ([]*KvEntryWithTS, error),
 ) error {
+	// the average size of each KV is 2560 Bytes
+	// kvEntries is kvs left by the previous batch
+	const kvSize = 2560
 	var (
 		rangeMin uint64
 		rangeMax uint64
 		err      error
-	)
 
-	var (
 		batchSize  uint64 = 0
 		defaultIdx int    = 0
 		writeIdx   int    = 0
+
+		defaultKvEntries = make([]*KvEntryWithTS, 0)
+		writeKvEntries   = make([]*KvEntryWithTS, 0)
 	)
-	// the average size of each KV is 2560 Bytes
-	// kvEntries is kvs left by the previous batch
-	const kvSize = 2560
-	defaultKvEntries := make([]*KvEntryWithTS, 0)
-	writeKvEntries := make([]*KvEntryWithTS, 0)
+	// Set restoreKV to SchemaReplace.
+	schemasReplace.SetRestoreKVStatus()
+
 	for i, f := range defaultFiles {
 		if i == 0 {
 			rangeMax = f.MaxTs
@@ -2408,9 +2479,11 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 		return nextKvEntries, errors.Trace(err)
 	}
 
-	updateStats(kvCount, size)
-	for i := 0; i < len(files); i++ {
-		progressInc()
+	if schemasReplace.IsRestoreKVStatus() {
+		updateStats(kvCount, size)
+		for i := 0; i < len(files); i++ {
+			progressInc()
+		}
 	}
 	return nextKvEntries, nil
 }
@@ -2446,7 +2519,6 @@ func (rc *Client) restoreMetaKvEntries(
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
-
 		kvCount++
 		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}
@@ -2714,27 +2786,22 @@ func (rc *Client) GetGCRows() []string {
 	return rc.deleteRangeQuery
 }
 
-func (rc *Client) SaveSchemas(
+// SaveIDMap saves the id mapping information.
+func (rc *Client) SaveIDMap(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
-	logStartTS uint64,
-	restoreTS uint64,
 ) error {
-	metaFileName := metautil.CreateMetaFileName(restoreTS)
+	idMaps := sr.TidySchemaMaps()
+	clusterID := rc.GetClusterID(ctx)
+	metaFileName := metautil.PitrIDMapsFilename(clusterID)
 	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
-		m.StartVersion = logStartTS
+		m.ClusterId = clusterID
+		m.DbMaps = idMaps
 	})
 
-	schemas := TidyOldSchemas(sr)
-	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
-	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
+	if err := metaWriter.FlushBackupMeta(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -2864,33 +2931,6 @@ func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecord
 // MockClient create a fake client used to test.
 func MockClient(dbs map[string]*utils.Database) *Client {
 	return &Client{databases: dbs}
-}
-
-// TidyOldSchemas produces schemas information.
-func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
-	var schemaIsEmpty bool
-	schemas := backup.NewBackupSchemas()
-
-	for _, dr := range sr.DbMap {
-		if dr.OldDBInfo == nil {
-			continue
-		}
-
-		schemaIsEmpty = true
-		for _, tr := range dr.TableMap {
-			if tr.OldTableInfo == nil {
-				continue
-			}
-			schemas.AddSchema(dr.OldDBInfo, tr.OldTableInfo)
-			schemaIsEmpty = false
-		}
-
-		// backup this empty schema if it has nothing table.
-		if schemaIsEmpty {
-			schemas.AddSchema(dr.OldDBInfo, nil)
-		}
-	}
-	return schemas
 }
 
 func CheckKeyspaceBREnable(ctx context.Context, pdClient pd.Client) error {
