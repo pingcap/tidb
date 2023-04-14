@@ -1565,6 +1565,31 @@
     ]
   },
   {
+    "Name": "TestMPPRightSemiJoin",
+    "Cases": [
+      {
+        "SQL": "set @@session.tidb_allow_mpp=true",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)",
+        "Plan": [
+          "TableReader_34 0.80 root  MppVersion: 1, data:ExchangeSender_33",
+          "└─ExchangeSender_33 0.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_32 0.80 mpp[tiflash]  semi join, equal:[eq(test.t1.a, test.t2.b)]",
+          "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_14 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_13 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "    │     └─TableFullScan_12 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    └─Selection_17(Probe) 8.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "      └─TableFullScan_16 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
     "Name": "TestIssue37520",
     "Cases": [
       {

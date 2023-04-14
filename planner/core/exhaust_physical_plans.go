@@ -2387,6 +2387,9 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		}
 	} else if p.JoinType.IsSemiJoin() {
 		preferredBuildIndex = 1
+		if p.children[1].statsInfo().Count() > p.children[0].statsInfo().Count() {
+			preferredBuildIndex = 0
+		}
 		fixedBuildSide = true
 	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
