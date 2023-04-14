@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "split",
@@ -32,5 +32,19 @@ go_library(
         "@org_golang_google_grpc//status",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "split_test",
+    timeout = "short",
+    srcs = ["split_test.go"],
+    flaky = True,
+    deps = [
+        ":split",
+        "//br/pkg/errors",
+        "//br/pkg/utils",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
     ],
 )

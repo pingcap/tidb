@@ -479,7 +479,15 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL scope  */
-	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
+	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			MaxPreparedStmtCountValue.Store(num)
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: InitConnect, Value: "", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		p := parser.New()
 		p.SetSQLMode(vars.SQLMode)
@@ -2241,6 +2249,15 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableINLJoinInnerMultiPattern, Value: BoolToOnOff(false), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableINLJoinInnerMultiPattern = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(s.EnableINLJoinInnerMultiPattern), nil
 		},
 	},
 }

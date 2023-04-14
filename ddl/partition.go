@@ -1752,7 +1752,28 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 				}
 			}
-			rh := newReorgHandler(t, w.sess, w.concurrentDDL)
+			var rh *reorgHandler
+			if w.concurrentDDL {
+				sctx, err1 := w.sessPool.get()
+				if err1 != nil {
+					return ver, err1
+				}
+				defer w.sessPool.put(sctx)
+				sess := newSession(sctx)
+				err = sess.begin()
+				if err != nil {
+					return ver, err
+				}
+				defer sess.rollback()
+				txn, err1 := sess.txn()
+				if err1 != nil {
+					return ver, err1
+				}
+				newMeta := meta.NewMeta(txn)
+				rh = newReorgHandler(newMeta, sess, w.concurrentDDL)
+			} else {
+				rh = newReorgHandler(t, w.sess, w.concurrentDDL)
+			}
 			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, tbl, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
@@ -2600,15 +2621,20 @@ func isPartExprUnsigned(tbInfo *model.TableInfo) bool {
 }
 
 // truncateTableByReassignPartitionIDs reassigns new partition ids.
-func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo) error {
-	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions))
-	for _, def := range tblInfo.Partition.Definitions {
-		pid, err := t.GenGlobalID()
+func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo, pids []int64) (err error) {
+	if len(pids) < len(tblInfo.Partition.Definitions) {
+		// To make it compatible with older versions when pids was not given
+		// and if there has been any add/reorganize partition increasing the number of partitions
+		morePids, err := t.GenGlobalIDs(len(tblInfo.Partition.Definitions) - len(pids))
 		if err != nil {
 			return errors.Trace(err)
 		}
+		pids = append(pids, morePids...)
+	}
+	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions))
+	for i, def := range tblInfo.Partition.Definitions {
 		newDef := def
-		newDef.ID = pid
+		newDef.ID = pids[i]
 		newDefs = append(newDefs, newDef)
 	}
 	tblInfo.Partition.Definitions = newDefs

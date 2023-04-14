@@ -689,6 +689,8 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	if sm == nil {
 		return
 	}
+	pl := sm.ShowProcessList()
+	innerSessionStartTSList := sm.GetInternalSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -702,8 +704,18 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	minStartTS := oracle.GoTimeToTS(now)
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
-	if ts := sm.GetMinStartTS(startTSLowerLimit); ts > startTSLowerLimit && ts < minStartTS {
-		minStartTS = ts
+	for _, info := range pl {
+		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
+			minStartTS = info.CurTxnStartTS
+		}
+	}
+
+	for _, innerTS := range innerSessionStartTSList {
+		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("Internal Session Transaction StartTS", innerTS))
+		kv.PrintLongTimeInternalTxn(now, innerTS, false)
+		if innerTS > startTSLowerLimit && innerTS < minStartTS {
+			minStartTS = innerTS
+		}
 	}
 
 	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)

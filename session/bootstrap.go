@@ -738,6 +738,8 @@ const (
 	version109 = 109
 	// version110 sets tidb_server_memory_limit to "80%"
 	version110 = 110
+	// version111 sets tidb_stats_load_pseudo_timeout to ON when a cluster upgrades from some version lower than v6.5.0.
+	version111 = 111
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -860,6 +862,7 @@ var (
 		upgradeToVer108,
 		upgradeToVer109,
 		upgradeToVer110,
+		upgradeToVer111,
 	}
 )
 
@@ -2217,6 +2220,15 @@ func upgradeToVer110(s Session, ver int64) {
 	}
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n set VARIABLE_VALUE = %? where VARIABLE_NAME = %? and VARIABLE_VALUE = %?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.DefTiDBServerMemoryLimit, variable.TiDBServerMemoryLimit, "0")
+}
+
+// For users that upgrade TiDB from a 5.4-6.4 version, we want to enable tidb tidb_stats_load_pseudo_timeout by default.
+func upgradeToVer111(s Session, ver int64) {
+	if ver >= version111 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBStatsLoadPseudoTimeout, 1)
 }
 
 func writeOOMAction(s Session) {

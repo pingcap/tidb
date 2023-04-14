@@ -139,22 +139,8 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		if sctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-
-		physicalID := t.Meta().ID
-		if pt, ok := t.(table.PartitionedTable); ok {
-			p, err := pt.GetPartitionByRow(sctx, oldData)
-			if err != nil {
-				return false, err
-			}
-			physicalID = p.GetPhysicalID()
-		}
-
-		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
-		txnCtx := sctx.GetSessionVars().TxnCtx
-		if txnCtx.IsPessimistic {
-			txnCtx.AddUnchangedRowKey(unchangedRowKey)
-		}
-		return false, nil
+		_, err := appendUnchangedRowForLock(sctx, t, h, oldData)
+		return false, err
 	}
 
 	// Fill values into on-update-now fields, only if they are really changed.
@@ -228,6 +214,24 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	sc.AddUpdatedRows(1)
 	sc.AddCopiedRows(1)
 
+	return true, nil
+}
+
+func appendUnchangedRowForLock(sctx sessionctx.Context, t table.Table, h kv.Handle, row []types.Datum) (bool, error) {
+	txnCtx := sctx.GetSessionVars().TxnCtx
+	if !txnCtx.IsPessimistic {
+		return false, nil
+	}
+	physicalID := t.Meta().ID
+	if pt, ok := t.(table.PartitionedTable); ok {
+		p, err := pt.GetPartitionByRow(sctx, row)
+		if err != nil {
+			return false, err
+		}
+		physicalID = p.GetPhysicalID()
+	}
+	unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
+	txnCtx.AddUnchangedRowKey(unchangedRowKey)
 	return true, nil
 }
 

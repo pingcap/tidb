@@ -614,7 +614,7 @@ func TestOrderByandLimit(t *testing.T) {
 		x := rand.Intn(1099)
 		y := rand.Intn(2000) + 1
 		queryRangePartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
-		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
+		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from thash use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
 		require.True(t, tk.HasPlan(queryRangePartition, "IndexReader")) // check if indexReader is used
 		require.True(t, tk.HasPlan(queryHashPartition, "IndexReader"))

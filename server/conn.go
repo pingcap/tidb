@@ -2121,12 +2121,20 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	cc.audit(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
-	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
-	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
+	// - If rs is not nil, the statement tracker detachment from session tracker
+	//   is done in the `rs.Close` in most cases.
+	// - If the rs is nil and err is not nil, the detachment will be done in
+	//   the `handleNoDelay`.
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
+		// If error is returned during the planner phase or the executor.Open
+		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
+		// will not be detached. We need to detach them manually.
+		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
+			sv.StmtCtx.DetachMemDiskTracker()
+		}
 		return true, err
 	}
 
@@ -2405,34 +2413,12 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
-	// if fetchedRows is not enough, getting data from recordSet.
-	// NOTE: chunk should not be allocated from the allocator
-	// the allocator will reset every statement
-	// but it maybe stored in the result set among statements
-	// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
-	// Here server.tidbResultSet implements Next method.
-	req := rs.NewChunk(nil)
-	for len(fetchedRows) < fetchSize {
-		if err := rs.Next(ctx, req); err != nil {
-			return err
-		}
-		rowCount := req.NumRows()
-		if rowCount == 0 {
-			break
-		}
-		// filling fetchedRows with chunk
-		for i := 0; i < rowCount; i++ {
-			fetchedRows = append(fetchedRows, req.GetRow(i))
-		}
-		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
-	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
 	if len(fetchedRows) == 0 {
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
-		terror.Call(rs.Close)
 		return cc.writeEOF(ctx, serverStatus)
 	}
 
