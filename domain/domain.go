@@ -2167,9 +2167,9 @@ func (do *Domain) loadStatsWorker() {
 	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
 	var err error
 	if liteInitStats {
-		err = statsHandle.InitStats(do.InfoSchema())
-	} else {
 		err = statsHandle.InitStatsLite(do.InfoSchema())
+	} else {
+		err = statsHandle.InitStats(do.InfoSchema())
 	}
 	if err != nil {
 		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
