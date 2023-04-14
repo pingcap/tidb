@@ -731,7 +731,7 @@ func (n *ProcedureRepeatStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ProcedureWhileStmt store `while expr do ... end while` statement.
+// ProcedureWhileStmt stores `while expr do ... end while` statement.
 type ProcedureWhileStmt struct {
 	stmtNode
 
@@ -782,7 +782,7 @@ func (n *ProcedureWhileStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ProcedureCursor stored procedure cursor statement.
+// ProcedureCursor stores procedure cursor statement.
 type ProcedureCursor struct {
 	ProcedureDeclInfo
 
