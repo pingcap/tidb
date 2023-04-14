@@ -113,6 +113,7 @@ type planInfo struct {
 type LoadDataWorker struct {
 	UserSctx sessionctx.Context
 
+	importPlan *importer.Plan
 	controller *importer.LoadDataController
 	planInfo   planInfo
 
@@ -134,7 +135,11 @@ func NewLoadDataWorker(
 	plan *plannercore.LoadData,
 	tbl table.Table,
 ) (w *LoadDataWorker, err error) {
-	controller, err := importer.NewLoadDataController(userSctx, plan, tbl)
+	importPlan, err := importer.NewPlan(userSctx, plan, tbl)
+	if err != nil {
+		return nil, err
+	}
+	controller, err := importer.NewLoadDataController(importPlan, tbl)
 	if err != nil {
 		return nil, err
 	}

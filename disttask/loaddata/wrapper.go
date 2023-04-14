@@ -15,84 +15,34 @@
 package loaddata
 
 import (
-	"context"
-
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/executor/importer"
-	"github.com/pingcap/tidb/util/intest"
 )
 
-func makeTableRegions(ctx context.Context, task *TaskMeta, concurrency int) ([]*mydump.TableRegion, error) {
-	if concurrency <= 0 {
-		return nil, errors.Errorf("concurrency must be greater than 0, but got %d", concurrency)
-	}
-
-	b, err := storage.ParseBackend(task.Dir, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	opt := &storage.ExternalStorageOptions{}
-	if intest.InTest {
-		opt.NoCredentials = true
-	}
-	store, err := storage.New(ctx, b, opt)
-	if err != nil {
-		return nil, err
-	}
-
-	meta := &mydump.MDTableMeta{
-		DB:           task.Table.DBName,
-		Name:         task.Table.Info.Name.String(),
-		IsRowOrdered: task.Table.IsRowOrdered,
-	}
-
-	sourceType, err := transformSourceType(task.Format.Type)
-	if err != nil {
-		return nil, err
-	}
-	for _, file := range task.FileInfos {
-		meta.DataFiles = append(meta.DataFiles, mydump.FileInfo{
-			FileMeta: mydump.SourceFileMeta{
-				Path:        file.Path,
-				Type:        sourceType,
-				FileSize:    file.Size,
-				RealSize:    file.RealSize,
-				Compression: task.Format.Compression,
-			},
-		})
-	}
-	cfg := &config.Config{
-		App: config.Lightning{
-			RegionConcurrency: concurrency,
-			TableConcurrency:  concurrency,
+func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
+	return checkpoints.ChunkCheckpoint{
+		FileMeta: mydump.SourceFileMeta{
+			Path:        chunk.Path,
+			Type:        chunk.Type,
+			Compression: chunk.Compression,
+			FileSize:    chunk.EndOffset,
 		},
-		Mydumper: config.MydumperRuntime{
-			CSV:           task.Format.CSV.Config,
-			StrictFormat:  task.Format.CSV.Strict,
-			MaxRegionSize: config.MaxRegionSize,
-			ReadBlockSize: config.ReadBlockSize,
-			// uniform distribution
-			BatchImportRatio: 0,
+		Chunk: mydump.Chunk{
+			PrevRowIDMax: chunk.PrevRowIDMax,
+			Offset:       chunk.Offset,
 		},
+		Timestamp: chunk.Timestamp,
 	}
-
-	dataDivideConfig := mydump.NewDataDivideConfig(cfg, len(task.Table.TargetColumns), nil, store, meta)
-	return mydump.MakeTableRegions(ctx, dataDivideConfig)
 }
 
-func transformSourceType(tp string) (mydump.SourceType, error) {
-	switch tp {
-	case importer.LoadDataFormatParquet:
-		return mydump.SourceTypeParquet, nil
-	case importer.LoadDataFormatDelimitedData:
-		return mydump.SourceTypeCSV, nil
-	case importer.LoadDataFormatSQLDump:
-		return mydump.SourceTypeSQL, nil
-	default:
-		return mydump.SourceTypeIgnore, errors.Errorf("unknown source type: %s", tp)
+func toChunk(chunkCheckpoint checkpoints.ChunkCheckpoint) Chunk {
+	return Chunk{
+		Path:         chunkCheckpoint.FileMeta.Path,
+		Offset:       chunkCheckpoint.Chunk.Offset,
+		EndOffset:    chunkCheckpoint.Chunk.EndOffset,
+		PrevRowIDMax: chunkCheckpoint.Chunk.PrevRowIDMax,
+		Type:         chunkCheckpoint.FileMeta.Type,
+		Compression:  chunkCheckpoint.FileMeta.Compression,
+		Timestamp:    chunkCheckpoint.Timestamp,
 	}
 }
