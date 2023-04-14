@@ -20,6 +20,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -54,7 +55,7 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 	sg.mu.Lock()
 	if sg.mu.closed {
 		sg.mu.Unlock()
-		return nil, errors.Errorf("Session pool is closed")
+		return nil, errors.Errorf("session pool is closed")
 	}
 	sg.mu.Unlock()
 
@@ -66,10 +67,11 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 
 	ctx, ok := resource.(sessionctx.Context)
 	if !ok {
-		return nil, fmt.Errorf("Session pool resource get %v", ctx)
+		return nil, errors.Trace(fmt.Errorf("need sessionctx.Context, but got %T", ctx))
 	}
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
+	infosync.StoreInternalSession(ctx)
 	return ctx, nil
 }
 
@@ -82,6 +84,7 @@ func (sg *Pool) Put(ctx sessionctx.Context) {
 	// no need to protect sg.resPool, even the sg.resPool is closed, the ctx still need to
 	// Put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
 	sg.resPool.Put(ctx.(pools.Resource))
+	infosync.DeleteInternalSession(ctx)
 }
 
 // Close clean up the Pool.
@@ -92,7 +95,7 @@ func (sg *Pool) Close() {
 	if sg.mu.closed || sg.resPool == nil {
 		return
 	}
-	logutil.BgLogger().Info("[ddl] closing Session pool")
+	logutil.BgLogger().Info("[ddl] closing session pool")
 	sg.resPool.Close()
 	sg.mu.closed = true
 }

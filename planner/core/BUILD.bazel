@@ -271,6 +271,7 @@ go_test(
         "//util/plancodec",
         "//util/ranger",
         "//util/set",
+        "//util/size",
         "//util/stmtsummary",
         "//util/tracing",
         "@com_github_golang_snappy//:snappy",

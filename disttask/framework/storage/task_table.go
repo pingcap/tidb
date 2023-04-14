@@ -113,6 +113,34 @@ func (stm *TaskManager) withNewSession(fn func(se sessionctx.Context) error) err
 	return fn(se.(sessionctx.Context))
 }
 
+func (stm *TaskManager) withNewTxn(fn func(se sessionctx.Context) error) error {
+	return stm.withNewSession(func(se sessionctx.Context) (err error) {
+		_, err = execSQL(stm.ctx, se, "begin")
+		if err != nil {
+			return err
+		}
+
+		success := false
+		defer func() {
+			sql := "rollback"
+			if success {
+				sql = "commit"
+			}
+			_, commitErr := execSQL(stm.ctx, se, sql)
+			if err == nil && commitErr != nil {
+				err = commitErr
+			}
+		}()
+
+		if err = fn(se); err != nil {
+			return err
+		}
+
+		success = true
+		return nil
+	})
+}
+
 func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string, args ...interface{}) (rs []chunk.Row, err error) {
 	err = stm.withNewSession(func(se sessionctx.Context) error {
 		rs, err = execSQL(ctx, se, sql, args...)
@@ -165,23 +193,6 @@ func (stm *TaskManager) GetNewGlobalTask() (task *proto.Task, err error) {
 	}
 
 	return row2GlobeTask(rs[0]), nil
-}
-
-// UpdateGlobalTask updates the global task.
-func (stm *TaskManager) UpdateGlobalTask(task *proto.Task) error {
-	failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(errors.New("updateTaskErr"))
-		}
-	})
-
-	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %? where id = %?",
-		task.State, task.DispatcherID, task.Step, task.StateUpdateTime.UTC().String(), task.Concurrency, task.ID)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // GetGlobalTasksInStates gets the tasks in the states.
@@ -338,4 +349,37 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 	}
 
 	return instanceIDs, nil
+}
+
+// UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
+func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, isSubtaskRevert bool) error {
+	return stm.withNewTxn(func(se sessionctx.Context) error {
+		_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %? where id = %?",
+			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.ID)
+		if err != nil {
+			return err
+		}
+
+		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.New("updateTaskErr"))
+			}
+		})
+
+		subtaskState := proto.TaskStatePending
+		if isSubtaskRevert {
+			subtaskState = proto.TaskStateRevertPending
+		}
+
+		for _, subtask := range subtasks {
+			// TODO: insert subtasks in batch
+			_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_background_subtask(task_key, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?)",
+				gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{})
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
