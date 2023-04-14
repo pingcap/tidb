@@ -101,7 +101,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 			createTableSQL: "create table t (a bigint auto_increment primary key, b int, c varchar(100), d int);",
 			flags:          "(b, c, d)",
 			// row id is calculated by us, it's not continuous
-			res: []string{"1 1 test1 11", "2 2 test2 22", "4 3 test3 33", "5 4 test4 44", "7 5 test5 55", "8 6 test6 66"},
+			res: []string{"1 1 test1 11", "2 2 test2 22", "6 3 test3 33", "7 4 test4 44", "11 5 test5 55", "12 6 test6 66"},
 		},
 		// default value for auto_random
 		{
@@ -110,10 +110,10 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 			res: []string{
 				"288230376151711745 1 test1 11",
 				"288230376151711746 2 test2 22",
-				"1441151880758558724 3 test3 33",
-				"1441151880758558725 4 test4 44",
-				"6052837899185946631 5 test5 55",
-				"6052837899185946632 6 test6 66",
+				"6 3 test3 33",
+				"7 4 test4 44",
+				"864691128455135243 5 test5 55",
+				"864691128455135244 6 test6 66",
 			},
 			// auto_random id contains shard bit.
 			querySQL: "select * from t order by b",

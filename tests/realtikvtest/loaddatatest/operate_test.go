@@ -78,7 +78,11 @@ func (s *mockGCSSuite) testOperateRunningJob(importMode string) {
 		AuthUsername: "test-load-3",
 		AuthHostname: "test-host",
 	}
+	backupUser := s.tk.Session().GetSessionVars().User
 	s.tk.Session().GetSessionVars().User = user
+	s.T().Cleanup(func() {
+		s.tk.Session().GetSessionVars().User = backupUser
+	})
 	tk2 := testkit.NewTestKit(s.T(), s.store)
 	tk2.Session().GetSessionVars().User = user
 	var wg sync.WaitGroup

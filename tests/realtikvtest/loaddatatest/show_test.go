@@ -83,7 +83,8 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 		AuthUsername: "test-load-2",
 		AuthHostname: "test-host",
 	}
-	s.tk.Session().GetSessionVars().User = user
+	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2.Session().GetSessionVars().User = user
 
 	backup := asyncloaddata.HeartBeatInSec
 	asyncloaddata.HeartBeatInSec = 1
@@ -100,13 +101,13 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
 		INTO TABLE test_show.t %s;`, gcsEndpoint, withOptions)
-	rows := s.tk.MustQuery(sql).Rows()
+	rows := tk2.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
 	row := rows[0]
 	jobID := row[0].(string)
 
 	require.Eventually(s.T(), func() bool {
-		rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + jobID + ";").Rows()
+		rows = tk2.MustQuery("SHOW LOAD DATA JOB " + jobID + ";").Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
 		return row[9] == "finished"
@@ -241,7 +242,8 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 		AuthUsername: "test-load",
 		AuthHostname: "test-host",
 	}
-	s.tk.Session().GetSessionVars().User = user
+	tk3 := testkit.NewTestKit(s.T(), s.store)
+	tk3.Session().GetSessionVars().User = user
 
 	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
 	withOptions := "WITH DETACHED, batch_size=1"
@@ -429,6 +431,6 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	}
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t*.tsv?endpoint=%s'
 		INTO TABLE load_tsv.t %s;`, gcsEndpoint, withOptions)
-	s.tk.MustQuery(sql)
+	tk3.MustQuery(sql)
 	wg.Wait()
 }

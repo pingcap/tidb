@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,14 +68,15 @@ func (s *mockGCSSuite) testSameBehaviourDetachedOrNot(importMode string) {
 		AuthUsername: "test-detached",
 		AuthHostname: "test-host",
 	}
-	s.tk.Session().GetSessionVars().User = user
+	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2.Session().GetSessionVars().User = user
 
-	s.tk.MustExec("SET SESSION TIME_ZONE = '+08:00';")
+	tk2.MustExec("SET SESSION TIME_ZONE = '+08:00';")
 	for _, ca := range detachedCases {
-		s.tk.MustExec("DROP DATABASE IF EXISTS test_detached;")
-		s.tk.MustExec("CREATE DATABASE test_detached;")
-		s.tk.MustExec("CREATE TABLE test_detached.t1 " + ca.tableCols)
-		s.tk.MustExec("CREATE TABLE test_detached.t2 " + ca.tableCols)
+		tk2.MustExec("DROP DATABASE IF EXISTS test_detached;")
+		tk2.MustExec("CREATE DATABASE test_detached;")
+		tk2.MustExec("CREATE TABLE test_detached.t1 " + ca.tableCols)
+		tk2.MustExec("CREATE TABLE test_detached.t2 " + ca.tableCols)
 
 		data := ca.logicalModeData
 		if importMode == importer.PhysicalImportMode {
@@ -87,19 +89,19 @@ func (s *mockGCSSuite) testSameBehaviourDetachedOrNot(importMode string) {
 			},
 			Content: []byte(data),
 		})
-		s.tk.MustExec(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-detached/1.txt?endpoint=%s'
+		tk2.MustExec(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-detached/1.txt?endpoint=%s'
 			IGNORE INTO TABLE test_detached.t1 %s;`, gcsEndpoint, withOptions))
-		rows := s.tk.MustQuery(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-detached/1.txt?endpoint=%s'
+		rows := tk2.MustQuery(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-detached/1.txt?endpoint=%s'
 			IGNORE INTO TABLE test_detached.t2 %s;`, gcsEndpoint, detachedWithOptions)).Rows()
 		require.Len(s.T(), rows, 1)
 		jobID := rows[0][0].(string)
 		require.Eventually(s.T(), func() bool {
-			rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + jobID).Rows()
+			rows = tk2.MustQuery("SHOW LOAD DATA JOB " + jobID).Rows()
 			require.Len(s.T(), rows, 1)
 			return rows[0][9] == "finished"
 		}, 5*time.Second, time.Second)
 
-		r1 := s.tk.MustQuery("SELECT * FROM test_detached.t1").Sort().Rows()
-		s.tk.MustQuery("SELECT * FROM test_detached.t2").Sort().Check(r1)
+		r1 := tk2.MustQuery("SELECT * FROM test_detached.t1").Sort().Rows()
+		tk2.MustQuery("SELECT * FROM test_detached.t2").Sort().Check(r1)
 	}
 }
