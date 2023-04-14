@@ -493,6 +493,9 @@ import (
 	nulls                 "NULLS"
 	off                   "OFF"
 	offset                "OFFSET"
+	oltpReadOnly          "OLTP_READ_ONLY"
+	oltpReadWrite         "OLTP_READ_WRITE"
+	oltpWriteOnly         "OLTP_WRITE_ONLY"
 	onDuplicate           "ON_DUPLICATE"
 	online                "ONLINE"
 	only                  "ONLY"
@@ -620,6 +623,7 @@ import (
 	timeType              "TIME"
 	tokenIssuer           "TOKEN_ISSUER"
 	tp                    "TYPE"
+	tpcc                  "TPCC"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
 	transaction           "TRANSACTION"
@@ -643,6 +647,7 @@ import (
 	week                  "WEEK"
 	weightString          "WEIGHT_STRING"
 	without               "WITHOUT"
+	workload              "WORKLOAD"
 	x509                  "X509"
 	yearType              "YEAR"
 	wait                  "WAIT"
@@ -1390,6 +1395,7 @@ import (
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
+	CalibrateResourceWorkloadOption        "Calibrate Resource workload option"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -6558,6 +6564,11 @@ UnReservedKeyword:
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
 |	"CALIBRATE"
+|	"WORKLOAD"
+|	"TPCC"
+|	"OLTP_READ_WRITE"
+|	"OLTP_READ_ONLY"
+|	"OLTP_WRITE_ONLY"
 
 TiDBKeyword:
 	"ADMIN"
@@ -14816,8 +14827,32 @@ PlanReplayerStmt:
  * CALIBRATE RESOURCE
  *******************************************************************/
 CalibrateResourceStmt:
-	"CALIBRATE" "RESOURCE"
+	"CALIBRATE" "RESOURCE" CalibrateResourceWorkloadOption
 	{
-		$$ = &ast.CalibrateResourceStmt{}
+		$$ = &ast.CalibrateResourceStmt{
+			Tp: $3.(ast.CalibrateResourceType),
+		}
+	}
+
+CalibrateResourceWorkloadOption:
+	/* empty */
+	{
+		$$ = ast.WorkloadNone
+	}
+|	"WORKLOAD" "TPCC"
+	{
+		$$ = ast.TPCC
+	}
+|	"WORKLOAD" "OLTP_READ_WRITE"
+	{
+		$$ = ast.OLTPREADWRITE
+	}
+|	"WORKLOAD" "OLTP_READ_ONLY"
+	{
+		$$ = ast.OLTPREADONLY
+	}
+|	"WORKLOAD" "OLTP_WRITE_ONLY"
+	{
+		$$ = ast.OLTPWRITEONLY
 	}
 %%
