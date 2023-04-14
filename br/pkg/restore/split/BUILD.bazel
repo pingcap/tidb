@@ -48,6 +48,7 @@ go_test(
         "sum_sorted_test.go",
     ],
     flaky = True,
+    shard_count = 4,
     deps = [
         ":split",
         "//br/pkg/errors",

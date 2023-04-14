@@ -30,6 +30,7 @@ go_test(
     timeout = "short",
     srcs = ["logging_test.go"],
     flaky = True,
+    shard_count = 11,
     deps = [
         ":logutil",
         "//br/pkg/errors",

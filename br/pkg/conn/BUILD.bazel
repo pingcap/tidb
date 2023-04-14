@@ -45,6 +45,7 @@ go_test(
     ],
     embed = [":conn"],
     flaky = True,
+    shard_count = 7,
     deps = [
         "//br/pkg/conn/util",
         "//br/pkg/pdutil",
