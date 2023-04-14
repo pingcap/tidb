@@ -2727,9 +2727,12 @@ func (rc *Client) SaveSchemas(
 		m.StartVersion = logStartTS
 	})
 
-	schemas := TidyOldSchemas(sr)
-	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
-	err := backup.BackupSchemas(ctx, schemas, metaWriter, nil, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
+	schemas := backup.NewBackupSchemas(func(_ kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
+		return TidyOldSchemas(sr, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
+			fn(dbInfo, tableInfo)
+		})
+	}, 0)
+	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, nil, rc.restoreTS, backup.DefaultSchemaConcurrency, 0, true, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2867,9 +2870,8 @@ func MockClient(dbs map[string]*utils.Database) *Client {
 }
 
 // TidyOldSchemas produces schemas information.
-func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
+func TidyOldSchemas(sr *stream.SchemasReplace, fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo)) error {
 	var schemaIsEmpty bool
-	schemas := backup.NewBackupSchemas()
 
 	for _, dr := range sr.DbMap {
 		if dr.OldDBInfo == nil {
@@ -2881,16 +2883,16 @@ func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
 			if tr.OldTableInfo == nil {
 				continue
 			}
-			schemas.AddSchema(dr.OldDBInfo, tr.OldTableInfo)
+			fn(dr.OldDBInfo, tr.OldTableInfo)
 			schemaIsEmpty = false
 		}
 
 		// backup this empty schema if it has nothing table.
 		if schemaIsEmpty {
-			schemas.AddSchema(dr.OldDBInfo, nil)
+			fn(dr.OldDBInfo, nil)
 		}
 	}
-	return schemas
+	return nil
 }
 
 func CheckKeyspaceBREnable(ctx context.Context, pdClient pd.Client) error {
