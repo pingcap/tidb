@@ -1238,7 +1238,7 @@ func restoreStream(
 			return
 		}
 
-		log.Info("start to restore gc")
+		log.Info("start to restore gc", zap.String("ratio", oldRatio))
 		if err := restoreGc(oldRatio); err != nil {
 			log.Error("failed to set gc enabled", zap.Error(err))
 		}
@@ -1390,6 +1390,8 @@ func restoreStream(
 			return err
 		}
 	}
+
+	gcDisabledRestorable = true
 
 	return nil
 }
