@@ -2,12 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "jointest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "join_test.go",
         "main_test.go",
     ],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",

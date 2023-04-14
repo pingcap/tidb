@@ -572,10 +572,10 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 
 	var (
 		interval  ast.PartitionInterval
-		startIdx  int    = 0
-		endIdx    int    = len(tbInfo.Partition.Definitions) - 1
-		isIntType bool   = true
-		minVal    string = "0"
+		startIdx  = 0
+		endIdx    = len(tbInfo.Partition.Definitions) - 1
+		isIntType = true
+		minVal    = "0"
 	)
 	if len(tbInfo.Partition.Columns) > 0 {
 		partCol := findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
@@ -2619,10 +2619,6 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 	}, nil
 }
 
-func (w *reorgPartitionWorker) GetTasks() ([]*BackfillJob, error) {
-	panic("[ddl] reorg partition worker GetTask function doesn't implement")
-}
-
 func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
@@ -2758,18 +2754,6 @@ func (w *reorgPartitionWorker) AddMetricInfo(cnt float64) {
 
 func (w *reorgPartitionWorker) String() string {
 	return typeReorgPartitionWorker.String()
-}
-
-func (w *reorgPartitionWorker) GetTask() (*BackfillJob, error) {
-	panic("[ddl] partition reorg worker does not implement GetTask function")
-}
-
-func (w *reorgPartitionWorker) UpdateTask(*BackfillJob) error {
-	panic("[ddl] partition reorg worker does not implement UpdateTask function")
-}
-
-func (w *reorgPartitionWorker) FinishTask(*BackfillJob) error {
-	panic("[ddl] partition reorg worker does not implement FinishTask function")
 }
 
 func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
@@ -3321,15 +3305,20 @@ func isPartExprUnsigned(tbInfo *model.TableInfo) bool {
 }
 
 // truncateTableByReassignPartitionIDs reassigns new partition ids.
-func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo) error {
-	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions))
-	for _, def := range tblInfo.Partition.Definitions {
-		pid, err := t.GenGlobalID()
+func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo, pids []int64) (err error) {
+	if len(pids) < len(tblInfo.Partition.Definitions) {
+		// To make it compatible with older versions when pids was not given
+		// and if there has been any add/reorganize partition increasing the number of partitions
+		morePids, err := t.GenGlobalIDs(len(tblInfo.Partition.Definitions) - len(pids))
 		if err != nil {
 			return errors.Trace(err)
 		}
+		pids = append(pids, morePids...)
+	}
+	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions))
+	for i, def := range tblInfo.Partition.Definitions {
 		newDef := def
-		newDef.ID = pid
+		newDef.ID = pids[i]
 		newDefs = append(newDefs, newDef)
 	}
 	tblInfo.Partition.Definitions = newDefs

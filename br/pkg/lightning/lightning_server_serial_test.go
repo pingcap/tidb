@@ -110,7 +110,8 @@ func TestRunServer(t *testing.T) {
 	require.Regexp(t, "^cannot parse task", data["error"])
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = http.Post(url, "application/toml", strings.NewReader("[mydumper.csv]\nseparator = 'fooo'\ndelimiter= 'foo'"))
+	resp, err = http.Post(url, "application/toml",
+		strings.NewReader("[mydumper.csv]\nseparator = 'fooo'\ndelimiter= 'foo'"))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	err = json.NewDecoder(resp.Body).Decode(&data)

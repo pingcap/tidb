@@ -1128,6 +1128,13 @@ var defaultSysVars = []*SysVar{
 		}
 		return err
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPlanCacheMaxPlanSize, Value: strconv.FormatUint(DefTiDBPlanCacheMaxPlanSize, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		uVal, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			s.PlanCacheMaxPlanSize = uVal
+		}
+		return err
+	}},
 	{Scope: ScopeGlobal, Name: TiDBMemOOMAction, Value: DefTiDBMemOOMAction, PossibleValues: []string{"CANCEL", "LOG"}, Type: TypeEnum,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return OOMAction.Load(), nil
