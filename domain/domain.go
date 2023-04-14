@@ -81,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -124,7 +125,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
-	m               sync.Mutex
+	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	sysSessionPool  *sessionPool
 	exit            chan struct{}
