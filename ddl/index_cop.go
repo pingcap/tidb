@@ -145,7 +145,7 @@ func (c *copReqSender) run() {
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
-			failpoint.Inject("MockCopSenderError", func(val failpoint.Value) {
+			failpoint.Inject("MockCopSenderError", func() {
 				idxRs.err = errors.New("mock cop error")
 			})
 			p.chunkSender.AddTask(idxRs)
