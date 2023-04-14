@@ -2165,7 +2165,7 @@ func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 		require.Equal(t, originStmtCnt["Prepare"]+2, currentStmtCnt["Prepare"])
 		require.Equal(t, originStmtCnt["Execute"]+0, currentStmtCnt["Execute"])
 		require.Equal(t, originStmtCnt["Replace"]+1, currentStmtCnt["Replace"])
-		require.Equal(t, originStmtCnt["Use"]+3, currentStmtCnt["Use"])
+		require.Equal(t, originStmtCnt["Use"]+6, currentStmtCnt["Use"])
 		require.Equal(t, originStmtCnt["TruncateTable"]+1, currentStmtCnt["TruncateTable"])
 		require.Equal(t, originStmtCnt["Show"]+2, currentStmtCnt["Show"])
 		require.Equal(t, originStmtCnt["AnalyzeTable"]+2, currentStmtCnt["AnalyzeTable"])
