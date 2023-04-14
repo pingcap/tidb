@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/resourcemanager/pool"
-	"github.com/pingcap/tidb/resourcemanager/pooltask"
+	"github.com/pingcap/tidb/resourcemanager/poolmanager"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -45,7 +45,7 @@ type Pool struct {
 	condMu             sync.Mutex
 	cond               sync.Cond
 	concurrencyMetrics prometheus.Gauge
-	taskManager        pooltask.TaskManager[any, any, any, any, pooltask.NilContext]
+	taskManager        poolmanager.TaskManager
 	pool.BasePool
 }
 
@@ -55,7 +55,7 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 	result := &Pool{
 		options:            opts,
 		concurrencyMetrics: metrics.PoolConcurrencyCounter.WithLabelValues(name),
-		taskManager:        pooltask.NewTaskManager[any, any, any, any, pooltask.NilContext](size), // TODO: this general type
+		taskManager:        poolmanager.NewTaskManager(size),
 	}
 	result.cond = *sync.NewCond(&result.condMu)
 	if size == 0 {
@@ -79,8 +79,25 @@ func (p *Pool) Tune(size int32) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.SetLastTuneTs(time.Now())
+	old := p.capacity
 	p.capacity = size
 	p.concurrencyMetrics.Set(float64(size))
+	if old == size {
+		return
+	}
+	if old < size && p.running.Load() < size {
+		_, task := p.taskManager.Overclock()
+		if task != nil {
+			p.running.Add(1)
+			p.run(func() {
+				runTask(task)
+			})
+		}
+		return
+	}
+	if p.running.Load() > size {
+		p.taskManager.Downclock()
+	}
 }
 
 // Run runs a function in the pool.
@@ -95,7 +112,6 @@ func (p *Pool) Run(fn func()) error {
 	if !run {
 		return pool.ErrPoolOverload
 	}
-	p.taskManager.RegisterTask(p.GenTaskID(), 1)
 	p.run(fn)
 	return nil
 }
@@ -140,13 +156,12 @@ func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
 	if !run {
 		return pool.ErrPoolOverload
 	}
-	// TODO: taskManager need to refactor
-	p.taskManager.RegisterTask(p.GenTaskID(), conc)
+	exitCh := make(chan struct{}, 1)
+	meta := poolmanager.NewMeta(p.GenTaskID(), exitCh, fns, int32(concurrency))
+	p.taskManager.RegisterTask(meta)
 	for n := int32(0); n < conc; n++ {
 		p.run(func() {
-			for fn := range fns {
-				fn()
-			}
+			runTask(meta)
 		})
 	}
 	return nil
@@ -196,4 +211,22 @@ func (p *Pool) ReleaseAndWait() {
 	p.cond.L.Unlock()
 	p.wg.Wait()
 	resourcemanager.InstanceResourceManager.Unregister(p.Name())
+}
+
+func runTask(task *poolmanager.Meta) {
+	taskCh := task.GetTaskCh()
+	exitCh := task.GetExitCh()
+	task.IncTask()
+	defer task.DecTask()
+	for {
+		select {
+		case f, ok := <-taskCh:
+			if !ok {
+				return
+			}
+			f()
+		case <-exitCh:
+			return
+		}
+	}
 }

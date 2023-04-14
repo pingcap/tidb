@@ -16,7 +16,9 @@ package local
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -77,7 +79,7 @@ func TestIsIngestRetryable(t *testing.T) {
 	}
 
 	clone := job
-	canContinueIngest, err := (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err := (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.True(t, canContinueIngest)
 	require.Equal(t, wrote, clone.stage)
@@ -104,7 +106,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, regionScanned, clone.stage)
@@ -129,7 +131,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, needRescan, clone.stage)
@@ -139,7 +141,7 @@ func TestIsIngestRetryable(t *testing.T) {
 
 	resp.Error = &errorpb.Error{Message: "raft: proposal dropped"}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, needRescan, clone.stage)
@@ -153,7 +155,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, needRescan, clone.stage)
@@ -165,7 +167,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		DiskFull: &errorpb.DiskFull{},
 	}
 	clone = job
-	_, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	_, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.ErrorContains(t, err, "non-retryable error")
 
 	// a general error is retryable from writing
@@ -174,10 +176,88 @@ func TestIsIngestRetryable(t *testing.T) {
 		StaleCommand: &errorpb.StaleCommand{},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, regionScanned, clone.stage)
 	require.Nil(t, clone.writeResult)
 	require.Error(t, clone.lastRetryableErr)
+}
+
+func TestRegionJobRetryer(t *testing.T) {
+	var (
+		putBackCh   = make(chan *regionJob, 10)
+		jobWg       sync.WaitGroup
+		ctx, cancel = context.WithCancel(context.Background())
+	)
+	retryer := startRegionJobRetryer(ctx, putBackCh, &jobWg)
+	require.Len(t, putBackCh, 0)
+
+	for i := 0; i < 8; i++ {
+		go func() {
+			job := &regionJob{
+				waitUntil: time.Now().Add(time.Hour),
+			}
+			jobWg.Add(1)
+			ok := retryer.push(job)
+			require.True(t, ok)
+		}()
+	}
+	select {
+	case <-putBackCh:
+		require.Fail(t, "should not put back so soon")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	job := &regionJob{
+		keyRange: Range{
+			start: []byte("123"),
+		},
+		waitUntil: time.Now().Add(-time.Second),
+	}
+	jobWg.Add(1)
+	ok := retryer.push(job)
+	require.True(t, ok)
+	select {
+	case j := <-putBackCh:
+		jobWg.Done()
+		require.Equal(t, job, j)
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "should put back very quickly")
+	}
+
+	cancel()
+	jobWg.Wait()
+	ok = retryer.push(job)
+	require.False(t, ok)
+
+	// test when putBackCh is blocked, retryer.push is not blocked and
+	// the return value of retryer.close is correct
+
+	ctx, cancel = context.WithCancel(context.Background())
+	putBackCh = make(chan *regionJob)
+	retryer = startRegionJobRetryer(ctx, putBackCh, &jobWg)
+
+	job = &regionJob{
+		keyRange: Range{
+			start: []byte("123"),
+		},
+		waitUntil: time.Now().Add(-time.Second),
+	}
+	jobWg.Add(1)
+	ok = retryer.push(job)
+	require.True(t, ok)
+	time.Sleep(3 * time.Second)
+	// now retryer is sending to putBackCh, but putBackCh is blocked
+	job = &regionJob{
+		keyRange: Range{
+			start: []byte("456"),
+		},
+		waitUntil: time.Now().Add(-time.Second),
+	}
+	jobWg.Add(1)
+	ok = retryer.push(job)
+	require.True(t, ok)
+	cancel()
+	jobWg.Wait()
 }

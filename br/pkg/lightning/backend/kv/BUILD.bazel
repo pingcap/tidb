@@ -4,6 +4,7 @@ go_library(
     name = "kv",
     srcs = [
         "allocator.go",
+        "base.go",
         "kv2sql.go",
         "session.go",
         "sql2kv.go",
@@ -54,6 +55,7 @@ go_test(
     embed = [":kv"],
     flaky = True,
     race = "on",
+    shard_count = 15,
     deps = [
         "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/common",

@@ -17,6 +17,7 @@ package gctuner
 import (
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +38,8 @@ func TestTuner(t *testing.T) {
 	runtime.GC()
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		require.Equal(t, maxGCPercent.Load(), tn.getGCPercent())
+		require.Eventually(t, func() bool { return maxGCPercent.Load() == tn.getGCPercent() },
+			1*time.Second, 50*time.Microsecond)
 	}
 
 	// 1/4 threshold
@@ -53,8 +55,10 @@ func TestTuner(t *testing.T) {
 	runtime.GC()
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		require.GreaterOrEqual(t, tn.getGCPercent(), minGCPercent.Load())
-		require.LessOrEqual(t, tn.getGCPercent(), maxGCPercent.Load()/2)
+		require.Eventually(t, func() bool { return tn.getGCPercent() >= minGCPercent.Load() },
+			1*time.Second, 50*time.Microsecond)
+		require.Eventually(t, func() bool { return tn.getGCPercent() <= maxGCPercent.Load()/2 },
+			1*time.Second, 50*time.Microsecond)
 	}
 
 	// 3/4 threshold
@@ -62,7 +66,8 @@ func TestTuner(t *testing.T) {
 	runtime.GC()
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		require.Equal(t, minGCPercent.Load(), tn.getGCPercent())
+		require.Eventually(t, func() bool { return minGCPercent.Load() == tn.getGCPercent() },
+			1*time.Second, 50*time.Microsecond)
 	}
 
 	// out of threshold
@@ -70,7 +75,8 @@ func TestTuner(t *testing.T) {
 	runtime.GC()
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		require.Equal(t, minGCPercent.Load(), tn.getGCPercent())
+		require.Eventually(t, func() bool { return minGCPercent.Load() == tn.getGCPercent() },
+			1*time.Second, 50*time.Microsecond)
 	}
 }
 

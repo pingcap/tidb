@@ -15,7 +15,6 @@ package importer
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -56,13 +55,15 @@ type clusterResourceCheckItem struct {
 	preInfoGetter PreImportInfoGetter
 }
 
+// NewClusterResourceCheckItem creates a new clusterResourceCheckItem.
 func NewClusterResourceCheckItem(preInfoGetter PreImportInfoGetter) PrecheckItem {
 	return &clusterResourceCheckItem{
 		preInfoGetter: preInfoGetter,
 	}
 }
 
-func (ci *clusterResourceCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*clusterResourceCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterSize
 }
 
@@ -82,6 +83,7 @@ func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (tikvAv
 	return
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -187,6 +189,7 @@ type clusterVersionCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewClusterVersionCheckItem creates a new clusterVersionCheckItem.
 func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &clusterVersionCheckItem{
 		preInfoGetter: preInfoGetter,
@@ -194,10 +197,12 @@ func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*my
 	}
 }
 
-func (ci *clusterVersionCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*clusterVersionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterVersion
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *clusterVersionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -219,6 +224,7 @@ type emptyRegionCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewEmptyRegionCheckItem creates a new emptyRegionCheckItem.
 func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &emptyRegionCheckItem{
 		preInfoGetter: preInfoGetter,
@@ -226,10 +232,12 @@ func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydum
 	}
 }
 
-func (ci *emptyRegionCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*emptyRegionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterEmptyRegion
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -313,6 +321,7 @@ type regionDistributionCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewRegionDistributionCheckItem creates a new regionDistributionCheckItem.
 func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &regionDistributionCheckItem{
 		preInfoGetter: preInfoGetter,
@@ -320,10 +329,12 @@ func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas [
 	}
 }
 
-func (ci *regionDistributionCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*regionDistributionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterRegionDist
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -389,16 +400,19 @@ type storagePermissionCheckItem struct {
 	cfg *config.Config
 }
 
+// NewStoragePermissionCheckItem creates a new storagePermissionCheckItem.
 func NewStoragePermissionCheckItem(cfg *config.Config) PrecheckItem {
 	return &storagePermissionCheckItem{
 		cfg: cfg,
 	}
 }
 
-func (ci *storagePermissionCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*storagePermissionCheckItem) GetCheckItemID() CheckItemID {
 	return CheckSourcePermission
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -429,6 +443,7 @@ type largeFileCheckItem struct {
 	dbMetas []*mydump.MDDatabaseMeta
 }
 
+// NewLargeFileCheckItem creates a new largeFileCheckItem.
 func NewLargeFileCheckItem(cfg *config.Config, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &largeFileCheckItem{
 		cfg:     cfg,
@@ -436,11 +451,13 @@ func NewLargeFileCheckItem(cfg *config.Config, dbMetas []*mydump.MDDatabaseMeta)
 	}
 }
 
-func (ci *largeFileCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*largeFileCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLargeDataFile
 }
 
-func (ci *largeFileCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+// Check implements PrecheckItem.Check.
+func (ci *largeFileCheckItem) Check(_ context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
@@ -469,17 +486,20 @@ type localDiskPlacementCheckItem struct {
 	cfg *config.Config
 }
 
+// NewLocalDiskPlacementCheckItem creates a new localDiskPlacementCheckItem.
 func NewLocalDiskPlacementCheckItem(cfg *config.Config) PrecheckItem {
 	return &localDiskPlacementCheckItem{
 		cfg: cfg,
 	}
 }
 
-func (ci *localDiskPlacementCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*localDiskPlacementCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLocalDiskPlacement
 }
 
-func (ci *localDiskPlacementCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+// Check implements PrecheckItem.Check.
+func (ci *localDiskPlacementCheckItem) Check(_ context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
@@ -505,6 +525,7 @@ type localTempKVDirCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewLocalTempKVDirCheckItem creates a new localTempKVDirCheckItem.
 func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &localTempKVDirCheckItem{
 		cfg:           cfg,
@@ -513,7 +534,8 @@ func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreImportInfoG
 	}
 }
 
-func (ci *localTempKVDirCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*localTempKVDirCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLocalTempKVDir
 }
 
@@ -530,6 +552,7 @@ func (ci *localTempKVDirCheckItem) hasCompressedFiles() bool {
 	return false
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	severity := Critical
 	// for cases that have compressed files, the estimated size may not be accurate, set severity to Warn to avoid failure
@@ -583,6 +606,7 @@ type checkpointCheckItem struct {
 	checkpointsDB checkpoints.DB
 }
 
+// NewCheckpointCheckItem creates a new checkpointCheckItem.
 func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, checkpointsDB checkpoints.DB) PrecheckItem {
 	return &checkpointCheckItem{
 		cfg:           cfg,
@@ -592,10 +616,12 @@ func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGette
 	}
 }
 
-func (ci *checkpointCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem.GetCheckItemID.
+func (*checkpointCheckItem) GetCheckItemID() CheckItemID {
 	return CheckCheckpoints
 }
 
+// Check implements PrecheckItem.Check.
 func (ci *checkpointCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	if !ci.cfg.Checkpoint.Enable || ci.checkpointsDB == nil {
 		return nil, nil
@@ -734,7 +760,7 @@ func NewCDCPITRCheckItem(cfg *config.Config) PrecheckItem {
 }
 
 // GetCheckItemID implements PrecheckItem interface.
-func (ci *CDCPITRCheckItem) GetCheckItemID() CheckItemID {
+func (*CDCPITRCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetUsingCDCPITR
 }
 
@@ -822,24 +848,6 @@ type onlyState struct {
 	State string `json:"state"`
 }
 
-func isActiveCDCChangefeed(jsonBytes []byte) bool {
-	s := onlyState{}
-	err := json.Unmarshal(jsonBytes, &s)
-	if err != nil {
-		// maybe a compatible issue, skip this key
-		log.L().Error("unmarshal etcd value failed when check CDC changefeed, will skip this key",
-			zap.ByteString("value", jsonBytes),
-			zap.Error(err))
-		return false
-	}
-	switch s.State {
-	case "normal", "stopped", "error":
-		return true
-	default:
-		return false
-	}
-}
-
 type schemaCheckItem struct {
 	cfg           *config.Config
 	preInfoGetter PreImportInfoGetter
@@ -847,6 +855,7 @@ type schemaCheckItem struct {
 	checkpointsDB checkpoints.DB
 }
 
+// NewSchemaCheckItem creates a checker to check whether the schema is valid.
 func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) PrecheckItem {
 	return &schemaCheckItem{
 		cfg:           cfg,
@@ -856,10 +865,12 @@ func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, d
 	}
 }
 
-func (ci *schemaCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem interface.
+func (*schemaCheckItem) GetCheckItemID() CheckItemID {
 	return CheckSourceSchemaValid
 }
 
+// Check implements PrecheckItem interface.
 func (ci *schemaCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
@@ -1083,6 +1094,7 @@ type csvHeaderCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewCSVHeaderCheckItem creates a new csvHeaderCheckItem.
 func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &csvHeaderCheckItem{
 		cfg:           cfg,
@@ -1091,7 +1103,8 @@ func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter
 	}
 }
 
-func (ci *csvHeaderCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem interface.
+func (*csvHeaderCheckItem) GetCheckItemID() CheckItemID {
 	return CheckCSVHeader
 }
 
@@ -1269,7 +1282,7 @@ func checkFieldCompatibility(
 	values []types.Datum,
 	logger log.Logger,
 ) bool {
-	se := kv.NewSession(&encode.SessionOptions{
+	se := kv.NewSessionCtx(&encode.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	}, logger)
 	for i, col := range tbl.Columns {
@@ -1298,6 +1311,7 @@ type tableEmptyCheckItem struct {
 	checkpointsDB checkpoints.DB
 }
 
+// NewTableEmptyCheckItem creates a new tableEmptyCheckItem
 func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) PrecheckItem {
 	return &tableEmptyCheckItem{
 		cfg:           cfg,
@@ -1307,10 +1321,12 @@ func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGette
 	}
 }
 
-func (ci *tableEmptyCheckItem) GetCheckItemID() CheckItemID {
+// GetCheckItemID implements PrecheckItem interface
+func (*tableEmptyCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetTableEmpty
 }
 
+// Check implements PrecheckItem interface
 func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),

@@ -24,44 +24,45 @@ import (
 
 // TaskStep of LoadData.
 const (
-	ReadSortImport = 1
+	Import int64 = 1
 )
 
-// Task is the task of LoadData.
-type Task struct {
+// TaskMeta is the task of LoadData.
+type TaskMeta struct {
 	Table     Table
 	Format    Format
 	Dir       string
 	FileInfos []FileInfo
 }
 
-// Subtask is the subtask of LoadData.
+// SubtaskMeta is the subtask of LoadData.
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
-type Subtask struct {
+type SubtaskMeta struct {
 	Table  Table
 	Format Format
 	Dir    string
 	Chunks []Chunk
 }
 
-// MinimalTask is the minimal task of LoadData.
+// MinimalTaskMeta is the minimal task of LoadData.
 // Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
-type MinimalTask struct {
+type MinimalTaskMeta struct {
 	Table  Table
 	Format Format
 	Dir    string
 	Chunk  Chunk
-	Writer *backend.LocalEngineWriter
+	Writer backend.EngineWriter
 }
 
 // IsMinimalTask implements the MinimalTask interface.
-func (MinimalTask) IsMinimalTask() {}
+func (MinimalTaskMeta) IsMinimalTask() {}
 
 // Table records the table information.
 type Table struct {
 	DBName        string
 	Info          *model.TableInfo
 	TargetColumns []string
+	IsRowOrdered  bool
 }
 
 // Format records the format information.
@@ -77,15 +78,13 @@ type Format struct {
 
 // CSV records the CSV format information.
 type CSV struct {
-	Config                *config.CSVConfig
-	LoadDataReadBlockSize int64
-	Strict                bool
+	Config config.CSVConfig
+	Strict bool
 }
 
 // SQLDump records the SQL dump format information.
 type SQLDump struct {
-	SQLMode               mysql.SQLMode
-	LoadDataReadBlockSize int64
+	SQLMode mysql.SQLMode
 }
 
 // Parquet records the Parquet format information.

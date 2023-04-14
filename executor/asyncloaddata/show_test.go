@@ -25,6 +25,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/executor"
 	. "github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
@@ -269,15 +270,14 @@ func (s *mockGCSSuite) TestInternalStatus() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer close(executor.TestSyncCh)
+
 		tk2 := testkit.NewTestKit(s.T(), s.store)
 		tk2.Session().GetSessionVars().User = user
 		userStr := tk2.Session().GetSessionVars().User.String()
 
-		// tk @ 0:00
-		// create load data job record in the system table and sleep 3 seconds
-
-		time.Sleep(2 * time.Second)
-		// tk2 @ 0:02
+		// wait for the load data job to be created
+		<-TestSyncCh
 
 		jobInfos, err := GetAllJobInfo(ctx, tk2.Session(), userStr)
 		require.NoError(s.T(), err)
@@ -313,18 +313,24 @@ func (s *mockGCSSuite) TestInternalStatus() {
 			jobStatus:      "pending",
 			sourceFileSize: "<nil>",
 			loadedFileSize: "<nil>",
-			resultCode:     "0",
+			resultCode:     "<nil>",
 			resultMessage:  "",
 		}
 		r.checkIgnoreTimes(s.T(), row)
 
-		// tk @ 0:03
-		// start job and sleep 3 seconds
+		// resume the load data job
+		TestSyncCh <- struct{}{}
 
-		time.Sleep(3 * time.Second)
-		// tk2 @ 0:05
+		// wait for the load data job to be started
+		<-TestSyncCh
 
-		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
+		job := &Job{
+			ID:   id,
+			Conn: tk2.Session(),
+			User: userStr,
+		}
+
+		info, err = job.GetJobInfo(ctx)
 		require.NoError(s.T(), err)
 		expected.StartTime = info.StartTime
 		expected.Status = JobRunning
@@ -336,48 +342,65 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		r.jobStatus = "running"
 		r.checkIgnoreTimes(s.T(), row)
 
-		// tk @ 0:06
-		// commit one task and sleep 3 seconds
+		// resume the load data job
+		TestSyncCh <- struct{}{}
 
-		time.Sleep(3 * time.Second)
-		// tk2 @ 0:08
+		// wait for the first task to be committed
+		<-executor.TestSyncCh
 
-		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
+		// wait for UpdateJobProgress
+		require.Eventually(s.T(), func() bool {
+			info, err = job.GetJobInfo(ctx)
+			if err != nil {
+				return false
+			}
+			return info.Progress == `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
+		}, 6*time.Second, time.Millisecond*100)
+		info, err = job.GetJobInfo(ctx)
 		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":0,"LoadedRowCnt":1}`
+		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
 		require.Equal(s.T(), expected, info)
 
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
 		r.sourceFileSize = "2B"
-		r.loadedFileSize = "0B"
+		r.loadedFileSize = "1B"
 		r.checkIgnoreTimes(s.T(), row)
 
-		// tk @ 0:09
-		// commit one task and sleep 3 seconds
+		// resume the load data job
+		executor.TestSyncCh <- struct{}{}
 
-		time.Sleep(3 * time.Second)
-		// tk2 @ 0:11
+		// wait for the second task to be committed
+		<-executor.TestSyncCh
 
-		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
-		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":2}`
-		require.Equal(s.T(), expected, info)
+		// wait for UpdateJobProgress
+		require.Eventually(s.T(), func() bool {
+			info, err = job.GetJobInfo(ctx)
+			if err != nil {
+				return false
+			}
+			return info.Progress == `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
+		}, 6*time.Second, time.Millisecond*100)
 
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
-		r.loadedFileSize = "1B"
+		r.loadedFileSize = "2B"
 		r.checkIgnoreTimes(s.T(), row)
 
-		// tk @ 0:12
-		// finish job
+		// resume the load data job
+		executor.TestSyncCh <- struct{}{}
 
-		time.Sleep(3 * time.Second)
-		// tk2 @ 0:14
+		require.Eventually(s.T(), func() bool {
+			info, err = job.GetJobInfo(ctx)
+			if err != nil {
+				return false
+			}
+			return info.Status == JobFinished
+		}, 6*time.Second, 100*time.Millisecond)
 
-		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
+		info, err = job.GetJobInfo(ctx)
 		require.NoError(s.T(), err)
 		expected.Status = JobFinished
 		expected.EndTime = info.EndTime
@@ -388,7 +411,6 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
-		r.loadedFileSize = "2B"
 		r.jobStatus = "finished"
 		r.resultCode = "0"
 		r.resultMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
@@ -411,9 +433,9 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		config.BufferSizeScale = backup3
 	})
 
-	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCreateLoadDataJob", `sleep(3000)`)
-	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterStartJob", `sleep(3000)`)
-	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCommitOneTask", `sleep(3000)`)
+	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterCreateLoadDataJob", `return`)
+	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterStartJob", `return`)
+	s.enableFailpoint("github.com/pingcap/tidb/executor/SyncAfterCommitOneTask", `return`)
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t*.tsv?endpoint=%s'
 		INTO TABLE load_tsv.t WITH batch_size = 1;`, gcsEndpoint)
 	s.tk.MustExec(sql)

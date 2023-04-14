@@ -555,6 +555,8 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 			} else {
 				isOptimizerHint = true
 			}
+		} else {
+			s.AppendWarn(ErrWarnOptimizerHintWrongPos)
 		}
 
 	case '*': // '/**' if the next char is '/' it would close the comment.
@@ -626,7 +628,11 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		tok, lit = scanIdentifierOrString(s)
 		switch tok {
 		case stringLit, quotedIdentifier:
-			tok, lit = doubleAtIdentifier, "@@"+prefix+lit
+			var sb strings.Builder
+			sb.WriteString("@@")
+			sb.WriteString(prefix)
+			sb.WriteString(lit)
+			tok, lit = doubleAtIdentifier, sb.String()
 		case identifier:
 			tok, lit = doubleAtIdentifier, s.r.data(&pos)
 		}
