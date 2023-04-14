@@ -306,10 +306,20 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
+	var str strings.Builder
 	if p.IsIntersectionType {
-		return "type: intersection"
+		str.WriteString("type: intersection")
+	} else {
+		str.WriteString("type: union")
 	}
-	return "type: union"
+	if p.PushedLimit != nil {
+		str.WriteString(", limit embedded(offset:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
+		str.WriteString(", count:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
+		str.WriteString(")")
+	}
+	return str.String()
 }
 
 // ExplainInfo implements Plan interface.
