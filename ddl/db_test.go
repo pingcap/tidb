@@ -65,7 +65,6 @@ const (
 )
 
 const defaultBatchSize = 1024
-const defaultReorgBatchSize = 256
 
 const dbTestLease = 600 * time.Millisecond
 

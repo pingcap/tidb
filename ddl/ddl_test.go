@@ -79,32 +79,9 @@ func (d *ddl) RemoveReorgCtx(id int64) {
 // JobNeedGCForTest is only used for test.
 var JobNeedGCForTest = jobNeedGC
 
-// GetJobWithoutPartition is only used for test.
-const GetJobWithoutPartition = getJobWithoutPartition
-
-// BackfillJobPrefixKeyString is only used for test.
-func BackfillJobPrefixKeyString(ddlJobID int64, eleKey kv.Key, eleID int64) string {
-	return backfillJobPrefixKeyString(ddlJobID, eleKey, eleID)
-}
-
-// GetDDLCtx returns ddlCtx for test.
-func GetDDLCtx(d DDL) *ddlCtx {
-	return d.(*ddl).ddlCtx
-}
-
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
 	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
-}
-
-func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
-	// init infoCache and a stub infoSchema
-	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	options = append(options, WithInfoCache(ic))
-	d := newDDL(ctx, options...)
-	err := d.Start(nil)
-	return d, err
 }
 
 func createMockStore(t *testing.T) kv.Storage {
