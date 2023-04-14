@@ -26,12 +26,14 @@ const (
 )
 
 // TaskMeta is the task of LoadData.
+// All the field should be serializable.
 type TaskMeta struct {
 	Plan importer.Plan
 }
 
 // SubtaskMeta is the subtask of LoadData.
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
+// All the field should be serializable.
 type SubtaskMeta struct {
 	Plan   importer.Plan
 	ID     int32
