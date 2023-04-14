@@ -3148,17 +3148,17 @@ func buildBackupRestoreSchema(kind ast.BRIEKind) (*expression.Schema, types.Name
 }
 
 func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
-    switch kind {
-    case ast.BRIEKindShowBackupMeta:
-        return buildShowBackupMetaSchema()
-    case ast.BRIEKindShowQuery:
-        return buildShowBackupQuerySchema()
-    case ast.BRIEKindBackup, ast.BRIEKindRestore:
-        return buildBackupRestoreSchema(kind)
-    default:
-        s := newColumnsWithNames(0)
-        return s.col2Schema(), s.names
-    }
+	switch kind {
+	case ast.BRIEKindShowBackupMeta:
+		return buildShowBackupMetaSchema()
+	case ast.BRIEKindShowQuery:
+		return buildShowBackupQuerySchema()
+	case ast.BRIEKindBackup, ast.BRIEKindRestore:
+		return buildBackupRestoreSchema(kind)
+	default:
+		s := newColumnsWithNames(0)
+		return s.col2Schema(), s.names
+	}
 }
 
 func buildCalibrateResourceSchema() (*expression.Schema, types.NameSlice) {

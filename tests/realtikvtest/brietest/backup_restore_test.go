@@ -38,7 +38,7 @@ func initTestKit(t *testing.T) *testkit.TestKit {
 	config.StoreGlobalConfig(cfg)
 
 	tk := testkit.NewTestKit(t, store)
-    return tk
+	return tk
 }
 
 func TestBackupAndRestore(t *testing.T) {

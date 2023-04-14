@@ -61,16 +61,16 @@ func TestCancel(t *testing.T) {
 	}()
 
 	check := func() bool {
-        wb := tk.Session().GetSessionVars().StmtCtx.WarningCount()
-        tk.MustExec("cancel br job 1;")
-        wa := tk.Session().GetSessionVars().StmtCtx.WarningCount()
-		return wb == wa 
+		wb := tk.Session().GetSessionVars().StmtCtx.WarningCount()
+		tk.MustExec("cancel br job 1;")
+		wa := tk.Session().GetSessionVars().StmtCtx.WarningCount()
+		return wb == wa
 	}
-	req.Eventually(check, 5 * time.Second, 1 * time.Second)
+	req.Eventually(check, 5*time.Second, 1*time.Second)
 
-    select {
-    case <-ch:
-    case <-time.After(5 * time.Second):
-        req.FailNow("the backup job doesn't be canceled")
-    }
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		req.FailNow("the backup job doesn't be canceled")
+	}
 }
