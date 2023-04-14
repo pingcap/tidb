@@ -1948,9 +1948,15 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			return nil, nil
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
+<<<<<<< HEAD
 		// TODO: handle the PreprocessorReturn.
 		if err = plannercore.Preprocess(cc.getCtx(), stmt); err != nil {
 			return nil, err
+=======
+		if err = plannercore.Preprocess(ctx, cc.getCtx(), stmt); err != nil {
+			// error might happen, see https://github.com/pingcap/tidb/issues/39664
+			return nil, nil
+>>>>>>> 464fb188090 (server: ignore Preprocess error for the `prefetchPointPlanKeys` optimization (#39945))
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
 		pointPlans[i] = p
