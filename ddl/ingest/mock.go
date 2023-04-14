@@ -95,6 +95,17 @@ func (*MockBackendCtx) Unregister(jobID, indexID int64) {
 	logutil.BgLogger().Info("mock backend ctx unregister", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 }
 
+func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ bool, _ table.Table) error {
+	logutil.BgLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
+	return nil
+}
+
+// UnsafeImportAndReset implements BackendCtx.UnsafeImportAndReset interface.
+func (*MockBackendCtx) UnsafeImportAndReset(_ context.Context, _ int64, _, _ int64) error {
+	logutil.BgLogger().Info("mock backend ctx unsafe import")
+	return nil
+}
+
 // FinishImport implements BackendCtx.FinishImport interface.
 func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error {
 	logutil.BgLogger().Info("mock backend ctx finish import", zap.Int64("indexID", indexID))

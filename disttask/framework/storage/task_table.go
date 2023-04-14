@@ -184,7 +184,7 @@ func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta [
 
 // GetNewGlobalTask get a new task from global task table, it's used by dispatcher only.
 func (stm *TaskManager) GetNewGlobalTask() (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
 	if err != nil {
 		return task, err
 	}
@@ -202,7 +202,7 @@ func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*p
 		return task, nil
 	}
 
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
 	if err != nil {
 		return task, err
 	}
@@ -215,7 +215,7 @@ func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*p
 
 // GetGlobalTaskByID gets the task by the global task ID.
 func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where id = %?", taskID)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where id = %?", taskID)
 	if err != nil {
 		return task, err
 	}
@@ -228,7 +228,7 @@ func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err e
 
 // GetGlobalTaskByKey gets the task by the task key
 func (stm *TaskManager) GetGlobalTaskByKey(key string) (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where task_key = %?", key)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where task_key = %?", key)
 	if err != nil {
 		return task, err
 	}

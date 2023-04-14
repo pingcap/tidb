@@ -16,7 +16,6 @@ package ingest
 
 import (
 	"context"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -36,6 +35,8 @@ type BackendCtx interface {
 	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
 	Unregister(jobID, indexID int64)
 
+	CollectRemoteDuplicateRows(indexID int64, unique bool, tbl table.Table) error
+	UnsafeImportAndReset(ctx context.Context, indexID int64, regionSplitSize, regionSplitKeys int64) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	ResetWorkers(jobID, indexID int64)
 	Flush(indexID int64) (imported bool, err error)
@@ -55,6 +56,33 @@ type litBackendCtx struct {
 	sysVars  map[string]string
 	diskRoot DiskRoot
 	done     bool
+}
+
+func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, unique bool, tbl table.Table) error {
+	if !unique {
+		return nil
+	}
+
+	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
+	// backend must be a local backend.
+	// todo: when we can separate local backend completely from tidb backend, will remove this cast.
+	//nolint:forcetypeassert
+	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+		SysVars: bc.sysVars,
+		IndexID: indexID,
+	})
+	if err != nil {
+		logutil.BgLogger().Error(LitInfoRemoteDupCheck, zap.Error(err),
+			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
+		return err
+	} else if hasDupe {
+		logutil.BgLogger().Error(LitErrRemoteDupExistErr,
+			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
+		return tikv.ErrKeyExists
+	}
+	return nil
 }
 
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
@@ -93,6 +121,15 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 		}
 	}
 	return nil
+}
+
+// UnsafeImportAndReset implements BackendCtx.UnsafeImportAndReset interface.
+func (bc *litBackendCtx) UnsafeImportAndReset(ctx context.Context, indexID int64, regionSplitSize, regionSplitKeys int64) error {
+	ei, exist := bc.Load(indexID)
+	if !exist {
+		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
+	}
+	return bc.backend.UnsafeImportAndReset(ctx, ei.uuid, regionSplitSize, regionSplitKeys)
 }
 
 const importThreshold = 0.85

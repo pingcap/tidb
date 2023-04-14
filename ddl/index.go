@@ -1763,7 +1763,25 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if t.Meta().Partition != nil && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			return executeDistGlobalTask(reorgInfo)
+			err := executeDistGlobalTask(reorgInfo)
+			if err != nil {
+				return err
+			}
+			logutil.BgLogger().Info("11111111111111111111")
+			indexInfo := model.FindIndexInfoByID(t.Meta().Indices, reorgInfo.currElement.ID)
+			if indexInfo == nil {
+				return errors.New("unexpected error, can't find index info")
+			}
+			logutil.BgLogger().Info("222222222222222222222222222222222222")
+			if indexInfo.Unique {
+				bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, reorgInfo.ID)
+				logutil.BgLogger().Info("33333333333333333333333333333333333333333333333")
+				if err != nil {
+					return err
+				}
+				defer ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
+				return bc.CollectRemoteDuplicateRows(indexInfo.ID, true, t)
+			}
 		}
 	}
 
@@ -1862,7 +1880,7 @@ func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 
 		// TODO: get the original error message.
 		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
-			return errors.Errorf("ddl task stopped with state %s", found.State)
+			return errors.Errorf("ddl task stopped with state %s, err %s", found.State, found.Error)
 		}
 	}
 }

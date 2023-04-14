@@ -18,8 +18,8 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-
 	"github.com/pingcap/errors"
+	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
@@ -182,18 +182,18 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 		}
 	}
 	ingestScheduler.close(false)
-	// TODO: unsafe import.
+
+	err = b.bc.UnsafeImportAndReset(b.d.ctx, b.index.ID, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
+	if err != nil {
+		logutil.BgLogger().Error("[ddl] unsafe import and reset error", zap.Error(err))
+		return nil, err
+	}
 	return nil, consumer.getResult()
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler interface.
 func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
-
-	err := b.bc.FinishImport(b.index.ID, b.index.Unique, b.ptbl)
-	if err != nil {
-		return err
-	}
 
 	b.bc.Unregister(b.job.ID, b.index.ID)
 	return nil
