@@ -158,7 +158,7 @@ func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string
 // AddNewGlobalTask adds a new task to global task table.
 func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
 	err = stm.withNewSession(func(se sessionctx.Context) error {
-		_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_global_task(task_key, type, state, concurrency, meta, state_update_time) values (%?, %?, %?, %?, %?, %?)", key, tp, proto.TaskStatePending, concurrency, meta, time.Now().UTC().String())
+		_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, state_update_time) values (%?, %?, %?, %?, %?, %?, %?)", key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta, time.Now().UTC().String())
 		if err != nil {
 			return err
 		}
@@ -224,6 +224,18 @@ func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err e
 	}
 
 	return row2GlobeTask(rs[0]), nil
+}
+
+// HasTaskInStates checks if there are task in the states.
+func (stm *TaskManager) HasTaskInStates(taskID int64, states ...interface{}) (bool, error) {
+	args := []interface{}{taskID}
+	args = append(args, states...)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_global_task where id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
+	if err != nil {
+		return false, err
+	}
+
+	return len(rs) > 0, nil
 }
 
 // GetGlobalTaskByKey gets the task by the task key
