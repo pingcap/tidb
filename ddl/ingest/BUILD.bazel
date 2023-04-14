@@ -59,7 +59,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         ":ingest",
         "//config",
@@ -68,6 +68,7 @@ go_test(
         "//sessionctx",
         "//testkit",
         "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )

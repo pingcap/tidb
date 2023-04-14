@@ -109,7 +109,7 @@ func TestIngestCopSenderErr(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockCopSenderError"))
 	tk.MustExec("admin check table t;")
-	rows := tk.MustQuery(fmt.Sprintf("admin show ddl jobs 1;")).Rows()
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
 	jobTp := rows[0][3].(string)
 	require.True(t, strings.Contains(jobTp, "txn-merge"), jobTp)
