@@ -1315,6 +1315,9 @@ type SessionVars struct {
 	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	NonPreparedPlanCacheSize uint64
 
+	// PlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
+	PlanCacheMaxPlanSize uint64
+
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
 	ConstraintCheckInPlacePessimistic bool
@@ -2475,6 +2478,7 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
+	sessionStates.ResourceGroupName = s.ResourceGroupName
 
 	// Encode StatementContext. We encode it here to avoid circle dependency.
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
@@ -2508,6 +2512,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
+	s.ResourceGroupName = sessionStates.ResourceGroupName
 
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
