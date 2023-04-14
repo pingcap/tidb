@@ -133,6 +133,15 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 
 	s.simpleShowLoadDataJobs(importer.LogicalImportMode)
 
+	user := &auth.UserIdentity{
+		AuthUsername: "test-load-2",
+		AuthHostname: "test-host",
+	}
+	backupUser := s.tk.Session().GetSessionVars().User
+	s.tk.Session().GetSessionVars().User = user
+	s.T().Cleanup(func() {
+		s.tk.Session().GetSessionVars().User = backupUser
+	})
 	err := s.tk.QueryToErr("SHOW LOAD DATA JOB 999999999")
 	require.ErrorContains(s.T(), err, "Job ID 999999999 doesn't exist")
 
