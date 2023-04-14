@@ -3110,7 +3110,22 @@ func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
+func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {
+	names := []string{"Database", "Table", "Total_kvs", "Total_bytes", "Time_range_start", "Time_range_end"}
+	ftypes := []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeDatetime}
+	schema := newColumnsWithNames(len(names))
+	for i := range names {
+		fLen, _ := mysql.GetDefaultFieldLengthAndDecimal(ftypes[i])
+		schema.Append(buildColumnWithName("", names[i], ftypes[i], fLen))
+	}
+	return schema.col2Schema(), schema.names
+}
+
 func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
+	if kind == ast.BRIEKindShowBackupMeta {
+		return buildShowBackupMetaSchema()
+	}
+
 	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	datetimeSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDatetime)
 
