@@ -1422,16 +1422,13 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 		"PartitionUnion_10 9970.00 root  ",
 		"├─TableReader_15 3323.33 root  MppVersion: 1, data:ExchangeSender_14",
 		"│ └─ExchangeSender_14 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-		"│   └─Selection_13 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
+		"│   └─TableFullScan_12 3323.33 mpp[tiflash] table:t1, partition:p0 pushed down filter:lt(test.t1.c1, 2), keep order:false, stats:pseudo",
 		"├─TableReader_19 3323.33 root  MppVersion: 1, data:ExchangeSender_18",
 		"│ └─ExchangeSender_18 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-		"│   └─Selection_17 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_16 10000.00 mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
+		"│   └─TableFullScan_16 3323.33 mpp[tiflash] table:t1, partition:p1 pushed down filter:lt(test.t1.c1, 2), keep order:false, stats:pseudo",
 		"└─TableReader_23 3323.33 root  MppVersion: 1, data:ExchangeSender_22",
 		"  └─ExchangeSender_22 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-		"    └─Selection_21 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"))
+		"    └─TableFullScan_20 3323.33 mpp[tiflash] table:t1, partition:p2 pushed down filter:lt(test.t1.c1, 2), keep order:false, stats:pseudo"))
 }
 
 func TestMPPMemoryTracker(t *testing.T) {
