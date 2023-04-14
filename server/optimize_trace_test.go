@@ -20,16 +20,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/hack"
 	"net/http"
 	"path/filepath"
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -132,14 +131,13 @@ func TestOptimizerDebugTrace(t *testing.T) {
 	tk.MustExec("plan replayer capture 'c0fcc0abbaaffcaafe21115a3c67ae5d96a188cc197559953d2865ea6852d3cc' '*'")
 	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t where col1 < ? and col1 > 100"))
 	var (
-		in  []interface{}
+		in  []string
 		out []interface{}
 	)
 	optSuiteData := testDataMap["optimizer_suite"]
 	optSuiteData.LoadTestCases(t, &in, &out)
 	for i, cmdString := range in {
-		cmd := hack.Slice(cmdString.(string))
-		require.NoError(t, cc.dispatch(ctx, cmd))
+		require.NoError(t, cc.dispatch(ctx, []byte(cmdString)))
 		traceInfo := cc.ctx.Session.GetSessionVars().StmtCtx.OptimizerDebugTrace
 		var buf bytes.Buffer
 		encoder := json.NewEncoder(&buf)
