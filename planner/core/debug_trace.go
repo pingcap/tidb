@@ -74,6 +74,7 @@ func DebugTraceReceivedCommand(s sessionctx.Context, cmd byte, stmtNode ast.Stmt
 	sessionVars := s.GetSessionVars()
 	trace := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := new(receivedCmdInfo)
+	trace.AppendStepWithNameToCurrentContext(traceInfo, "Received Command")
 	traceInfo.Command = mysql.Command2Str[cmd]
 	traceInfo.ExecutedASTText = stmtNode.Text()
 
@@ -106,7 +107,6 @@ func DebugTraceReceivedCommand(s sessionctx.Context, cmd byte, stmtNode ast.Stmt
 			execInfo.BinaryParamsInfo[i].Value = param.String()
 		}
 	}
-	trace.AppendStepWithNameToCurrentContext(traceInfo, "Received Command")
 }
 
 /*

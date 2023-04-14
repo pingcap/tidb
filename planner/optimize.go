@@ -211,6 +211,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	bindRecord, scope, match := matchSQLBinding(sctx, stmtNode)
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
+			if val.(bool) && bindRecord != nil {
+				bindRecord = bindRecord.Copy()
+				for i := range bindRecord.Bindings {
+					bindRecord.Bindings[i].CreateTime = types.ZeroTime
+					bindRecord.Bindings[i].UpdateTime = types.ZeroTime
+				}
+			}
+		})
 		debugtrace.RecordAnyValuesWithNames(sctx,
 			"Used binding", useBinding,
 			"Enable binding", enableUseBinding,
