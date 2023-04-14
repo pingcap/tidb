@@ -26,6 +26,7 @@ go_test(
         "value_sorted_test.go",
     ],
     flaky = True,
+    shard_count = 4,
     deps = [
         ":spans",
         "@com_github_stretchr_testify//require",

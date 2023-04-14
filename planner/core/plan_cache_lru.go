@@ -15,7 +15,6 @@ package core
 
 import (
 	"container/list"
-	"sync"
 
 	"github.com/pingcap/errors"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	utilpc "github.com/pingcap/tidb/util/plancache"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
@@ -50,7 +50,7 @@ type LRUPlanCache struct {
 	buckets map[string]map[*list.Element]struct{}
 	lruList *list.List
 	// lock make cache thread safe
-	lock sync.Mutex
+	lock syncutil.Mutex
 	// onEvict will be called if any eviction happened, only for test use now
 	onEvict func(kvcache.Key, kvcache.Value)
 
