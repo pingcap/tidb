@@ -169,40 +169,6 @@ func FMSketchFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64
 	return DecodeFMSketch(rows[0].GetBytes(0))
 }
 
-// columnCountFromStorage reads column count from storage
-func columnCountFromStorage(reader *StatsReader, tableID, colID, statsVer int64) (int64, error) {
-	count := int64(0)
-	rows, _, err := reader.Read("select sum(count) from mysql.stats_buckets where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	// If there doesn't exist any buckets, the SQL will return NULL. So we only use the result if it's not NULL.
-	if !rows[0].IsNull(0) {
-		count, err = rows[0].GetMyDecimal(0).ToInt()
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-	}
-
-	if statsVer >= Version2 {
-		// Before stats ver 2, histogram represents all data in this column.
-		// In stats ver 2, histogram + TopN represent all data in this column.
-		// So we need to add TopN total count here.
-		rows, _, err = reader.Read("select sum(count) from mysql.stats_top_n where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if !rows[0].IsNull(0) {
-			topNCount, err := rows[0].GetMyDecimal(0).ToInt()
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			count += topNCount
-		}
-	}
-	return count, err
-}
-
 // ExtendedStatsFromStorage reads extended stats from storage.
 func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int64, loadAll bool) (*Table, error) {
 	failpoint.Inject("injectExtStatsLoadErr", func() {
@@ -357,15 +323,10 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		// Here is
 		//For one column, if there is no stats for it in the storage(analyze is never)
 		if notNeedLoad {
-			count, err := columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
-			if err != nil {
-				return errors.Trace(err)
-			}
 			col = &Column{
 				PhysicalID: table.PhysicalID,
 				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
 				Info:       colInfo,
-				Count:      count + nullCount,
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
@@ -408,8 +369,6 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
-			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
-			col.Count = int64(col.TotalRowCount())
 			if col.StatsAvailable() {
 				col.StatsLoadedStatus = NewStatsFullLoadStatus()
 			}

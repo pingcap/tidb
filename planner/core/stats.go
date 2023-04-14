@@ -159,13 +159,37 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 	return profile, nil
 }
 
+// getTotalRowCount returns the total row count, which is obtained when collecting colHist.
+func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) int64 {
+	if colHist.IsFullLoad() {
+		return int64(colHist.TotalRowCount())
+	}
+	// If colHist is not fully loaded, we may still get its total row count from other index/column stats.
+	for _, idx := range statsTbl.Indices {
+		if idx.IsFullLoad() && idx.LastUpdateVersion == colHist.LastUpdateVersion {
+			return int64(idx.TotalRowCount())
+		}
+	}
+	for _, col := range statsTbl.Columns {
+		if col.IsFullLoad() && col.LastUpdateVersion == colHist.LastUpdateVersion {
+			return int64(col.TotalRowCount())
+		}
+	}
+	return 0
+}
+
 // getColumnNDV computes estimated NDV of specified column using the original
 // histogram of `DataSource` which is retrieved from storage(not the derived one).
 func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	hist, ok := ds.statisticTable.Columns[colID]
-	if ok && hist.Count > 0 {
-		factor := float64(ds.statisticTable.RealtimeCount) / float64(hist.Count)
-		ndv = float64(hist.Histogram.NDV) * factor
+	if ok && hist.IsStatsInitialized() {
+		ndv = float64(hist.Histogram.NDV)
+		// TODO: a better way to get the total row count derived from the last analyze.
+		analyzeCount := getTotalRowCount(ds.statisticTable, hist)
+		if analyzeCount > 0 {
+			factor := float64(ds.statisticTable.RealtimeCount) / float64(analyzeCount)
+			ndv *= factor
+		}
 	} else {
 		ndv = float64(ds.statisticTable.RealtimeCount) * distinctFactor
 	}
