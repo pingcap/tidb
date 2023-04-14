@@ -2374,6 +2374,125 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 	}
 }
 
+// TODO: do extensive test for LIST [COLUMNS]
+
+// TODO: Either skip this, move it to a separate directory for big tests
+// or see if there are ways to speed this up :)
+// Leaving the test here, for reference and completeness testing
+func TestPartitionByIntExtensivePart(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "PartitionByExtensive"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + schemaName)
+
+	tBase := `(a int unsigned, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e))`
+	t2Str := `create table t2 ` + tBase
+	tStr := `create table t ` + tBase
+
+	rows := 10000
+	pkInserts := 200
+	pkUpdates := 200
+	pkDeletes := 100 // Enough to delete half of what is inserted?
+	thirdUintRange := 1 << 32 / 2
+	thirdUintRangeStr := fmt.Sprintf("%d", thirdUintRange)
+	twoThirdUintRangeStr := fmt.Sprintf("%d", 2*thirdUintRange)
+	tStart := []string{
+		// Non partitioned
+		tStr,
+		// RANGE COLUMNS
+		tStr + ` partition by range (a) (partition pFirst values less than (` + thirdUintRangeStr + `),` +
+			`partition pMid values less than (` + twoThirdUintRangeStr + `), partition pLast values less than (maxvalue))`,
+		// KEY
+		tStr + ` partition by key(a) partitions 5`,
+		// HASH
+		tStr + ` partition by hash(a) partitions 5`,
+		// HASH with function
+		tStr + ` partition by hash(a DIV 3) partitions 5`,
+	}
+	quarterUintRange := 1 << 30
+	quarterUintRangeStr := fmt.Sprintf("%d", quarterUintRange)
+	halfUintRangeStr := fmt.Sprintf("%d", 2*quarterUintRange)
+	threeQuarterUintRangeStr := fmt.Sprintf("%d", 3*quarterUintRange)
+	tAlter := []string{
+		// RANGE COLUMNS
+		`alter table t partition by range (a) (partition pFirst values less than (` + halfUintRangeStr + `), partition pLast values less than (MAXVALUE))`,
+		// RANGE COLUMNS
+		`alter table t partition by range (a) (partition pFirst values less than (` + quarterUintRangeStr + `),` +
+			`partition pLowMid values less than (` + halfUintRangeStr + `),` +
+			`partition pHighMid values less than (` + threeQuarterUintRangeStr + `),` +
+			`partition pLast values less than (maxvalue))`,
+		// KEY
+		`alter table t partition by key(a) partitions 7`,
+		`alter table t partition by key(a) partitions 3`,
+		// Hash
+		`alter table t partition by hash(a) partitions 7`,
+		`alter table t partition by hash(a) partitions 3`,
+		// Hash
+		`alter table t partition by hash(a DIV 13) partitions 7`,
+		`alter table t partition by hash(a DIV 13) partitions 3`,
+	}
+
+	seed := gotime.Now().UnixNano()
+	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	reorgRand := rand.New(rand.NewSource(seed))
+	for _, createSQL := range tStart {
+		for _, alterSQL := range tAlter {
+			tk.MustExec(createSQL)
+			tk.MustExec(t2Str)
+			getNewPK := getNewIntPK()
+			getValues := getIntValuesFunc()
+			checkDMLInAllStates(t, tk, tk2, schemaName, alterSQL, rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+			tk.MustExec(`drop table t`)
+			tk.MustExec(`drop table t2`)
+		}
+	}
+	for _, createSQL := range tStart[1:] {
+		tk.MustExec(createSQL)
+		tk.MustExec(t2Str)
+		getNewPK := getNewIntPK()
+		getValues := getIntValuesFunc()
+		checkDMLInAllStates(t, tk, tk2, schemaName, "alter table t remove partitioning", rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+		tk.MustExec(`drop table t`)
+		tk.MustExec(`drop table t2`)
+	}
+}
+
+func getNewIntPK() func(map[string]struct{}, string, *rand.Rand) string {
+	return func(m map[string]struct{}, suf string, reorgRand *rand.Rand) string {
+		uintPK := reorgRand.Uint32()
+		newPK := strconv.FormatUint(uint64(uintPK), 10)
+		for _, ok := m[newPK]; ok; {
+			uintPK = reorgRand.Uint32()
+			newPK = strconv.FormatUint(uint64(uintPK), 10)
+			_, ok = m[newPK]
+		}
+		m[newPK] = struct{}{}
+		return newPK
+	}
+}
+
+func getIntValuesFunc() func(string, bool, *rand.Rand) string {
+	cnt := 0
+	return func(pk string, asAssignment bool, reorgRand *rand.Rand) string {
+		s := `(%s, '%s', %d, '%s', '%s', %f, '%s')`
+		if asAssignment {
+			s = `a = %s, b = '%s', c = %d,  d = '%s', e = '%s', f = %f, g = '%s'`
+		}
+		cnt++
+		return fmt.Sprintf(s,
+			pk,
+			randStr(reorgRand.Intn(19), reorgRand),
+			cnt, //reorgRand.Int31(),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			reorgRand.Float64(),
+			randStr(512+reorgRand.Intn(1024), reorgRand))
+	}
+}
+
 // TODO: Either skip this, move it to a separate directory for big tests
 // or see if there are ways to speed this up :)
 // Leaving the test here, for reference and completeness testing
@@ -2412,7 +2531,7 @@ func TestPartitionByExtensivePart(t *testing.T) {
 		`alter table t partition by key(a) partitions 3`,
 	}
 
-	seed := rand.Int63()
+	seed := gotime.Now().UnixNano()
 	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
 	reorgRand := rand.New(rand.NewSource(seed))
 	for _, createSQL := range tStart {
