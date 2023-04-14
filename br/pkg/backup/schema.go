@@ -43,7 +43,7 @@ type schemaInfo struct {
 }
 
 type SchemaIterator interface {
-	Iter(kv.Storage, func(*schemaInfo) error) error
+	Iter(kv.Storage, func(*schemaInfo)) error
 	GetCheckpointChecksum() map[int64]*checkpoint.ChecksumItem
 }
 
@@ -63,11 +63,9 @@ func NewBackupSchemas() *Schemas {
 	}
 }
 
-func (ss *Schemas) Iter(_ kv.Storage, fn func(*schemaInfo) error) error {
+func (ss *Schemas) Iter(_ kv.Storage, fn func(*schemaInfo)) error {
 	for _, s := range ss.schemas {
-		if err := fn(s); err != nil {
-			return errors.Trace(err)
-		}
+		fn(s)
 	}
 	return nil
 }
@@ -123,7 +121,7 @@ func BackupSchemas[T SchemaIterator](
 	op := metautil.AppendSchema
 	metaWriter.StartWriteMetasAsync(ctx, op)
 	checkpointChecksum := schemas.GetCheckpointChecksum()
-	schemas.Iter(store, func(s *schemaInfo) error {
+	err := schemas.Iter(store, func(s *schemaInfo) {
 		schema := s
 		// Because schema.dbInfo is a pointer that many tables point to.
 		// Remove "add Temporary-prefix into dbName" from closure to prevent concurrent operations.
@@ -197,8 +195,10 @@ func BackupSchemas[T SchemaIterator](
 			}
 			return nil
 		})
-		return nil
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if err := errg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
@@ -231,12 +231,12 @@ func NewBackupSchemasV2(size int, backupTS uint64, filter filter.Filter, isFullB
 	}
 }
 
-func (ss *SchemasV2) Iter(storage kv.Storage, fn func(*schemaInfo) error) error {
-	return BuildBackupSchemas(storage, ss.filter, ss.backupTS, ss.isFullBackup, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) error {
-		return errors.Trace(fn(&schemaInfo{
+func (ss *SchemasV2) Iter(storage kv.Storage, fn func(*schemaInfo)) error {
+	return BuildBackupSchemas(storage, ss.filter, ss.backupTS, ss.isFullBackup, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
+		fn(&schemaInfo{
 			tableInfo: tableInfo,
 			dbInfo:    dbInfo,
-		}))
+		})
 	})
 }
 

@@ -518,11 +518,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Add keyspace prefix to BackupRequest
-	for i := range ranges {
-		start, end := ranges[i].StartKey, ranges[i].EndKey
-		ranges[i].StartKey, ranges[i].EndKey = mgr.GetStorage().GetCodec().EncodeRange(start, end)
-	}
 
 	// Metafile size should be less than 64MB.
 	metawriter := metautil.NewMetaWriter(client.GetStorage(),

@@ -410,7 +410,16 @@ func (bc *Client) BuildBackupRangeAndSchema(
 	isFullBackup bool,
 ) ([]rtree.Range, *SchemasV2, []*backuppb.PlacementPolicy, error) {
 	if bc.checkpointMeta == nil {
-		return BuildBackupRangeAndSchema(storage, tableFilter, backupTS, isFullBackup, true)
+		ranges, schemas, policies, err := BuildBackupRangeAndSchema(storage, tableFilter, backupTS, isFullBackup, true)
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		// Add keyspace prefix to BackupRequest
+		for i := range ranges {
+			start, end := ranges[i].StartKey, ranges[i].EndKey
+			ranges[i].StartKey, ranges[i].EndKey = storage.GetCodec().EncodeRange(start, end)
+		}
+		return ranges, schemas, policies, err
 	}
 	_, schemas, policies, err := BuildBackupRangeAndSchema(storage, tableFilter, backupTS, isFullBackup, false)
 	schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
@@ -580,7 +589,7 @@ func BuildBackupSchemas(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
-	fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) error,
+	fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo),
 ) error {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
@@ -662,7 +671,7 @@ func BuildBackupSchemas(
 			}
 			tableInfo.Indices = tableInfo.Indices[:n]
 
-			err = fn(dbInfo, tableInfo)
+			fn(dbInfo, tableInfo)
 			tableNum += 1
 
 			return nil
