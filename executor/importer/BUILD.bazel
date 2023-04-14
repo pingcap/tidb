@@ -29,6 +29,7 @@ go_library(
         "//kv",
         "//meta/autoid",
         "//parser/ast",
+        "//parser/model",
         "//parser/mysql",
         "//parser/terror",
         "//planner/core",
