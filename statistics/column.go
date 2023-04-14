@@ -39,7 +39,6 @@ type Column struct {
 	TopN       *TopN
 	FMSketch   *FMSketch
 	PhysicalID int64
-	Count      int64
 	Info       *model.ColumnInfo
 	IsHandle   bool
 	ErrorRate

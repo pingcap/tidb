@@ -9591,9 +9591,15 @@
           "      └─Projection 12500.00 mpp[tiflash]  test.partsupp.ps_supplycost",
           "        └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
           "          ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+<<<<<<< HEAD:planner/core/testdata/integration_suite_out.json
           "          │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
           "          │   └─TableFullScan 10000.00 mpp[tiflash] table:supplier keep order:false",
           "          └─TableFullScan(Probe) 800000.00 mpp[tiflash] table:partsupp keep order:false"
+=======
+          "          │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "          │   └─TableFullScan 10000.00 mpp[tiflash] table:supplier keep order:false, stats:pseudo",
+          "          └─TableFullScan(Probe) 800000.00 mpp[tiflash] table:partsupp keep order:false, stats:pseudo"
+>>>>>>> 579f47e4122 (statistics: remove statistics.Column.Count (#43033)):planner/core/casetest/testdata/integration_suite_out.json
         ]
       }
     ]
