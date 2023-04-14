@@ -44,8 +44,8 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 		HeartBeatInSec = backup
 	})
 
-	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCreateLoadDataJob", `sleep(1000)`)
-	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterStartJob", `sleep(1000)`)
+	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/AfterCreateLoadDataJob", `sleep(1000)`)
+	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/AfterStartJob", `sleep(1000)`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCommitOneTask", `sleep(1000)`)
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-operate/t.tsv?endpoint=%s'
 		INTO TABLE test_operate.t WITH batch_size = 1;`, gcsEndpoint)
@@ -101,7 +101,7 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 		jobStatus:      "canceled",
 		sourceFileSize: row[10].(string),
 		loadedFileSize: row[11].(string),
-		resultCode:     "0",
+		resultCode:     "<nil>",
 		resultMessage:  "canceled by user",
 	}
 	e.checkIgnoreTimes(s.T(), row)

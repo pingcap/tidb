@@ -1054,13 +1054,14 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataUnsupportedOption:        mysql.Message("Unsupported option %s for %s import mode", nil),
 	ErrLoadDataJobNotFound:              mysql.Message("Job ID %d doesn't exist", nil),
 	ErrLoadDataInvalidOperation:         mysql.Message("The current job status cannot perform the operation. %s", nil),
-	ErrLoadDataCantDetachWithLocal:      mysql.Message("The job can not be DETACHED when LOAD DATA LOCAL INFILE", nil),
+	ErrLoadDataLocalUnsupportedOption:   mysql.Message("Unsupported option for LOAD DATA LOCAL INFILE: %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
 	ErrWarnOptimizerHintInvalidToken:    mysql.Message("Cannot use %s '%s' (tok = %d) in an optimizer hint", nil),
 	ErrWarnMemoryQuotaOverflow:          mysql.Message("Max value of MEMORY_QUOTA is %d bytes, ignore this invalid limit", nil),
 	ErrWarnOptimizerHintParseError:      mysql.Message("Optimizer hint syntax error at %v", nil),
+	ErrWarnOptimizerHintWrongPos:        mysql.Message("Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.", nil),
 
 	ErrSequenceUnsupportedTableOption:      mysql.Message("Unsupported sequence table-option %s", nil),
 	ErrColumnTypeUnsupportedNextValue:      mysql.Message("Unsupported sequence default value for column type '%s'", nil),

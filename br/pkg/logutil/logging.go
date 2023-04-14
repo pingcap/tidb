@@ -4,6 +4,7 @@ package logutil
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -315,4 +316,22 @@ func StringifyMany[T fmt.Stringer](items []T) zapcore.ArrayMarshaler {
 		}
 		return nil
 	})
+}
+
+// HexBytes is a wrapper which make a byte sequence printed by the hex format.
+type HexBytes []byte
+
+var (
+	_ fmt.Stringer   = HexBytes{}
+	_ json.Marshaler = HexBytes{}
+)
+
+// String implements fmt.Stringer.
+func (b HexBytes) String() string {
+	return hex.EncodeToString(b)
+}
+
+// MarshalJSON implements json.Marshaler.
+func (b HexBytes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(hex.EncodeToString(b))
 }

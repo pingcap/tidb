@@ -587,10 +587,6 @@ type partialTableWorker struct {
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
 	finished <-chan struct{}, handleCols plannercore.HandleCols, parTblIdx int) (count int64, err error) {
 	chk := w.sc.GetSessionVars().GetNewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize, w.maxChunkSize, w.tableReader.base().AllocPool)
-	var basic *execdetails.BasicRuntimeStats
-	if be := w.tableReader.base(); be != nil && be.runtimeStats != nil {
-		basic = be.runtimeStats
-	}
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
@@ -615,9 +611,6 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 			return count, nil
 		case fetchCh <- task:
 		}
-		if basic != nil {
-			basic.Record(time.Since(start), chk.NumRows())
-		}
 	}
 }
 
@@ -628,9 +621,13 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
 		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
+		start := time.Now()
 		err = errors.Trace(w.tableReader.Next(ctx, chk))
 		if err != nil {
 			return handles, nil, err
+		}
+		if be := w.tableReader.base(); be != nil && be.runtimeStats != nil {
+			be.runtimeStats.Record(time.Since(start), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			failpoint.Inject("testIndexMergeErrorPartialTableWorker", func(v failpoint.Value) {
@@ -789,7 +786,7 @@ func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- 
 			defer close(ch)
 		}
 		if r == nil {
-			logutil.BgLogger().Info("worker finish without panic", zap.Any("worker", worker))
+			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
 			return
 		}
 
@@ -1195,12 +1192,6 @@ func (w *partialIndexWorker) fetchHandles(
 	handleCols plannercore.HandleCols,
 	parTblIdx int) (count int64, err error) {
 	chk := chunk.NewChunkWithCapacity(handleCols.GetFieldsTypes(), w.maxChunkSize)
-	var basicStats *execdetails.BasicRuntimeStats
-	if w.stats != nil {
-		if w.idxID != 0 {
-			basicStats = w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID)
-		}
-	}
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleCols)
@@ -1209,9 +1200,6 @@ func (w *partialIndexWorker) fetchHandles(
 			return count, err
 		}
 		if len(handles) == 0 {
-			if basicStats != nil {
-				basicStats.Record(time.Since(start), chk.NumRows())
-			}
 			return count, nil
 		}
 		count += int64(len(handles))
@@ -1228,9 +1216,6 @@ func (w *partialIndexWorker) fetchHandles(
 			return count, nil
 		case fetchCh <- task:
 		}
-		if basicStats != nil {
-			basicStats.Record(time.Since(start), chk.NumRows())
-		}
 	}
 }
 
@@ -1241,9 +1226,13 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
 		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
+		start := time.Now()
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, nil, err
+		}
+		if w.stats != nil && w.idxID != 0 {
+			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID).Record(time.Since(start), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			failpoint.Inject("testIndexMergeErrorPartialIndexWorker", func(v failpoint.Value) {
@@ -1341,7 +1330,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 func (w *indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
-			logutil.BgLogger().Info("worker finish without panic", zap.Any("worker", worker))
+			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
 			return
 		}
 

@@ -71,7 +71,8 @@ func errorEvent(err error) TaskEvent {
 
 func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
 	if !bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
-		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task path (%s)", string(event.Kv.Key))
+		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument,
+			"the path isn't a task path (%s)", string(event.Kv.Key))
 	}
 
 	te := TaskEvent{}
@@ -126,7 +127,8 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		return true
 	}
 	collectRemaining := func() {
-		log.Info("[log backup advancer] Start collecting remaining events in the channel.", zap.Int("remained", len(c)))
+		log.Info("[log backup advancer] Start collecting remaining events in the channel.",
+			zap.Int("remained", len(c)))
 		defer log.Info("[log backup advancer] Finish collecting remaining events in the channel.")
 		for {
 			select {
@@ -235,7 +237,8 @@ func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskNa
 	}
 
 	if checkpoint < oldValue {
-		log.Warn("[log backup advancer] skipping upload global checkpoint", zap.Uint64("old", oldValue), zap.Uint64("new", checkpoint))
+		log.Warn("[log backup advancer] skipping upload global checkpoint",
+			zap.Uint64("old", oldValue), zap.Uint64("new", checkpoint))
 		return nil
 	}
 

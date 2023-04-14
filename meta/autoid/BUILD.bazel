@@ -48,6 +48,7 @@ go_test(
         "seq_autoid_test.go",
     ],
     flaky = True,
+    shard_count = 10,
     deps = [
         ":autoid",
         "//kv",

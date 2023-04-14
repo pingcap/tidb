@@ -48,7 +48,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache
 		newHistColl := statistics.HistColl{
 			PhysicalID:     physicalID,
 			HavePhysicalID: true,
-			Count:          row.GetInt64(3),
+			RealtimeCount:  row.GetInt64(3),
 			ModifyCount:    row.GetInt64(2),
 			Columns:        make(map[int64]*statistics.Column, len(tableInfo.Columns)),
 			Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
@@ -438,7 +438,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	// Set columns' stats status.
 	for _, table := range cache.Values() {
 		for _, col := range table.Columns {
-			if col.StatsVer != statistics.Version0 || col.Count > 0 {
+			if col.StatsAvailable() {
 				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
 					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 				} else {
