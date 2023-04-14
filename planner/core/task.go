@@ -1214,23 +1214,19 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if tblInfo.GetPartitionInfo() == nil {
 				if tblInfo.PKIsHandle {
 					pk := tblInfo.GetPkColInfo()
-					for _, c := range tblScan.tblCols {
-						if c.ID == pk.ID {
-							tblScan.HandleCols = NewIntHandleCols(c)
-							clonedTblScan.(*PhysicalTableScan).schema.Append(c)
-							clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, c.ToInfo())
-							break
-						}
-					}
+					col := expression.ColInfo2Col(tblScan.tblCols, pk)
+					tblScan.HandleCols = NewIntHandleCols(col)
+					clonedTblScan.Schema().Append(col)
+					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, pk)
 				} else if tblInfo.IsCommonHandle {
 					idxInfo := tblInfo.GetPrimaryKey()
 					tblScan.HandleCols = NewCommonHandleCols(p.SCtx().GetSessionVars().StmtCtx, tblInfo, idxInfo, tblScan.tblCols)
 					for i := 0; i < tblScan.HandleCols.NumCols(); i++ {
-						clonedTblScan.(*PhysicalTableScan).schema.Append(tblScan.HandleCols.GetCol(i))
+						clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(i))
 						clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, tblScan.HandleCols.GetCol(i).ToInfo())
 					}
 				} else {
-					clonedTblScan.(*PhysicalTableScan).schema.Append(tblScan.HandleCols.GetCol(0))
+					clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(0))
 					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, model.NewExtraHandleColInfo())
 				}
 			}

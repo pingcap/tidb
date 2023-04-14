@@ -938,18 +938,16 @@ func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTab
 }
 
 // pruneTableWorkerTaskIdxRows prune idxRows and only keep columns that will be used in byItems.
+// e.g. the common handle is (`b`, `c`) and order by with column `c`, we should make column `c` at the first.
 func (w *indexMergeProcessWorker) pruneTableWorkerTaskIdxRows(task *indexMergeTableTask) {
 	// IndexScan no need to prune retChk, Columns required by byItems are always first.
 	if plan, ok := w.indexMerge.partialPlans[task.partialPlanID][0].(*plannercore.PhysicalTableScan); ok {
 		prune := make([]int, 0, len(w.indexMerge.byItems))
 		for _, item := range plan.ByItems {
 			c, _ := item.Expr.(*expression.Column)
-			for i, col := range plan.Schema().Columns {
-				if c.ID == col.ID {
-					prune = append(prune, i)
-					break
-				}
-			}
+			idx := plan.Schema().ColumnIndex(c)
+			// couldn't equals to -1 here, if idx == -1, just let it panic
+			prune = append(prune, idx)
 		}
 		task.idxRows = task.idxRows.Prune(prune)
 	}
