@@ -1020,7 +1020,8 @@ import (
 	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
-	SimpleWhenThen             "Procedure when then"
+	SimpleWhenThen             "Procedure case when then"
+	SearchWhenThen             "Procedure search when then"
 	ProcedureIfstmt            "The if statement in procedure, expressed by if ... elseif .. else ... end if"
 	procedurceElseIfs          "The else block in procedure, expressed by elseif or else or nil"
 	ProcedureIf                "The if block in procedure, expressed by expr then statement procedurceElseIfs"
@@ -1448,7 +1449,8 @@ import (
 	ProcedureDecls                         "Procedure variable statements"
 	ProcedureDeclsOpt                      "Optional procedure variable statements"
 	ProcedureDeclIdents                    "Procedure variable name identifiers"
-	SimpleWhenThenList                     "Procedure SimpleWhenThen list"
+	SimpleWhenThenList                     "Procedure case WhenThen list"
+	SearchedWhenThenList                   "Procedure search WhenThen list"
 	ElseCaseOpt                            "Optional procedure else statement, expressed by `else .../nil`"
 	ProcedureFetchList                     "Procedure fetch into variables"
 	ProcedureHandlerType                   "Procedure handler operation type"
@@ -15266,10 +15268,31 @@ SimpleWhenThenList:
 		$$ = l
 	}
 
+SearchedWhenThenList:
+	SearchWhenThen
+	{
+		$$ = []*ast.SearchWhenThenStmt{$1.(*ast.SearchWhenThenStmt)}
+	}
+|	SearchedWhenThenList SearchWhenThen
+	{
+		l := $1.([]*ast.SearchWhenThenStmt)
+		l = append(l, $2.(*ast.SearchWhenThenStmt))
+		$$ = l
+	}
+
 SimpleWhenThen:
 	"WHEN" Expression "THEN" ProcedureProcStmt1s
 	{
 		$$ = &ast.SimpleWhenThenStmt{
+			Expr:           $2.(ast.ExprNode),
+			ProcedureStmts: $4.([]ast.StmtNode),
+		}
+	}
+
+SearchWhenThen:
+	"WHEN" Expression "THEN" ProcedureProcStmt1s
+	{
+		$$ = &ast.SearchWhenThenStmt{
 			Expr:           $2.(ast.ExprNode),
 			ProcedureStmts: $4.([]ast.StmtNode),
 		}
@@ -15298,10 +15321,10 @@ ProcedureSimpleCase:
 	}
 
 ProcedureSearchedCase:
-	"CASE" SimpleWhenThenList ElseCaseOpt "END" "CASE"
+	"CASE" SearchedWhenThenList ElseCaseOpt "END" "CASE"
 	{
 		caseStmt := &ast.SearchCaseStmt{
-			WhenCases: $2.([]*ast.SimpleWhenThenStmt),
+			WhenCases: $2.([]*ast.SearchWhenThenStmt),
 		}
 		if $3 != nil {
 			caseStmt.ElseCases = $3.([]ast.StmtNode)

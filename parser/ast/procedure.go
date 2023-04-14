@@ -512,7 +512,7 @@ func (n *SimpleWhenThenStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SimpleCaseStmt store `case expr SimpleWhenThenStmt else ...` statement.
+// SimpleCaseStmt store WhenCases SimpleWhenThenStmt `case expr SimpleWhenThenStmt else ...` statement.
 type SimpleCaseStmt struct {
 	stmtNode
 
@@ -583,11 +583,55 @@ func (n *SimpleCaseStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// SearchWhenThenStmt stores SearchCaseStmt whencase `case expr then ...` statement.
+type SearchWhenThenStmt struct {
+	stmtNode
+
+	Expr           ExprNode
+	ProcedureStmts []StmtNode
+}
+
+// Restore implements SearchWhenThenStmt interface.
+func (n *SearchWhenThenStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("WHEN ")
+	err := n.Expr.Restore(ctx)
+	if err != nil {
+		return err
+	}
+	ctx.WriteKeyWord(" THEN ")
+	for _, stmt := range n.ProcedureStmts {
+		err := stmt.Restore(ctx)
+		if err != nil {
+			return err
+		}
+		ctx.WriteKeyWord(";")
+	}
+	return nil
+}
+
+// Accept implements SearchWhenThenStmt Accept interface.
+func (n *SearchWhenThenStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SearchWhenThenStmt)
+	if n.Expr != nil {
+		node, ok := n.Expr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Expr = node.(ExprNode)
+	}
+	// Store Procedure do not check sql justifiability, so don't traverse ProcedureStmts.
+	return v.Leave(n)
+}
+
 // SearchCaseStmt store `case SimpleWhenThenStmt else ...` statement.
 type SearchCaseStmt struct {
 	stmtNode
 
-	WhenCases []*SimpleWhenThenStmt
+	WhenCases []*SearchWhenThenStmt
 	ElseCases []StmtNode
 }
 
@@ -629,7 +673,7 @@ func (n *SearchCaseStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		n.WhenCases[i] = node.(*SimpleWhenThenStmt)
+		n.WhenCases[i] = node.(*SearchWhenThenStmt)
 	}
 	// Store Procedure do not check sql justifiability, so don't traverse ElseCases.
 	return v.Leave(n)
