@@ -1239,10 +1239,6 @@ func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.Fi
 			})
 	}
 	if err := eg.Wait(); err != nil {
-		log.Error(
-			"restore files failed",
-			zap.Error(err),
-		)
 		return errors.Trace(err)
 	}
 	return nil
