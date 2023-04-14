@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/tablecodec"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"golang.org/x/exp/slices"
@@ -632,16 +633,30 @@ func TestDeleteRangeQuery(t *testing.T) {
 	require.Equal(t, querys[3], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (9, 2, '74800000000000000a5f698000000000000001', '74800000000000000a5f698000000000000002', %[1]d),(9, 3, '74800000000000000a5f698000000000000002', '74800000000000000a5f698000000000000003', %[1]d)")
 }
 
+func MockEmptySchemasReplace() *stream.SchemasReplace {
+	dbMap := make(map[stream.UpstreamID]*stream.DBReplace)
+	return stream.NewSchemasReplace(
+		dbMap,
+		9527,
+		filter.All(),
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+}
+
 func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
 	files := []*backuppb.DataFileInfo{}
 	batchCount := 0
 
 	client := restore.MockClient(nil)
+	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
 		files,
 		files,
-		nil,
+		sr,
 		nil,
 		nil,
 		func(
@@ -674,11 +689,12 @@ func TestRestoreMetaKVFilesWithBatchMethod2(t *testing.T) {
 	result := make(map[int][]*backuppb.DataFileInfo)
 
 	client := restore.MockClient(nil)
+	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
 		files,
 		nil,
-		nil,
+		sr,
 		nil,
 		nil,
 		func(
@@ -765,11 +781,12 @@ func TestRestoreMetaKVFilesWithBatchMethod3(t *testing.T) {
 	resultKV := make(map[int]int)
 
 	client := restore.MockClient(nil)
+	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
 		defaultFiles,
 		writeFiles,
-		nil,
+		sr,
 		nil,
 		nil,
 		func(
@@ -851,11 +868,12 @@ func TestRestoreMetaKVFilesWithBatchMethod4(t *testing.T) {
 	result := make(map[int][]*backuppb.DataFileInfo)
 
 	client := restore.MockClient(nil)
+	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
 		defaultFiles,
 		writeFiles,
-		nil,
+		sr,
 		nil,
 		nil,
 		func(
@@ -931,11 +949,12 @@ func TestRestoreMetaKVFilesWithBatchMethod5(t *testing.T) {
 	result := make(map[int][]*backuppb.DataFileInfo)
 
 	client := restore.MockClient(nil)
+	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
 		defaultFiles,
 		writeFiles,
-		nil,
+		sr,
 		nil,
 		nil,
 		func(
@@ -1028,11 +1047,12 @@ func TestRestoreMetaKVFilesWithBatchMethod6(t *testing.T) {
 	resultKV := make(map[int]int)
 
 	client := restore.MockClient(nil)
+	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
 		defaultFiles,
 		writeFiles,
-		nil,
+		sr,
 		nil,
 		nil,
 		func(
