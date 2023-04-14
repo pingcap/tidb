@@ -39,7 +39,7 @@ func TestHandle(t *testing.T) {
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
 
-	handle, err := handle.NewHandle(ctx)
+	handle, err := handle.CreateHandle(ctx)
 	require.NoError(t, err)
 	defer handle.Close()
 

@@ -33,8 +33,8 @@ type Handle struct {
 	gm     *storage.TaskManager
 }
 
-// NewHandle creates a new Handle.
-func NewHandle(ctx context.Context) (Handle, error) {
+// CreateHandle creates a new Handle.
+func CreateHandle(ctx context.Context) (Handle, error) {
 	gm, err := storage.GetTaskManager()
 	if err != nil {
 		return Handle{}, err
