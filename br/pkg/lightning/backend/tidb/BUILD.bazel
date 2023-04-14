@@ -35,6 +35,7 @@ go_test(
     timeout = "short",
     srcs = ["tidb_test.go"],
     flaky = True,
+    shard_count = 11,
     deps = [
         ":tidb",
         "//br/pkg/lightning/backend",
