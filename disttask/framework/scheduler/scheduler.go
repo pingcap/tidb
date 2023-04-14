@@ -27,14 +27,14 @@ import (
 
 // InternalSchedulerImpl is the implementation of InternalScheduler.
 type InternalSchedulerImpl struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	id           string
-	taskID       int64
-	subtaskTable SubtaskTable
-	pool         Pool
-	wg           sync.WaitGroup
-	logCtx       context.Context
+	ctx       context.Context
+	cancel    context.CancelFunc
+	id        string
+	taskID    int64
+	taskTable TaskTable
+	pool      Pool
+	wg        sync.WaitGroup
+	logCtx    context.Context
 
 	mu struct {
 		sync.RWMutex
@@ -45,14 +45,14 @@ type InternalSchedulerImpl struct {
 }
 
 // NewInternalScheduler creates a new InternalScheduler.
-func NewInternalScheduler(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler {
+func NewInternalScheduler(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
 	logPrefix := fmt.Sprintf("id: %s, task_id: %d", id, taskID)
 	schedulerImpl := &InternalSchedulerImpl{
-		id:           id,
-		taskID:       taskID,
-		subtaskTable: subtaskTable,
-		pool:         pool,
-		logCtx:       logutil.WithKeyValue(context.Background(), "scheduler", logPrefix),
+		id:        id,
+		taskID:    taskID,
+		taskTable: taskTable,
+		pool:      pool,
+		logCtx:    logutil.WithKeyValue(context.Background(), "scheduler", logPrefix),
 	}
 	schedulerImpl.ctx, schedulerImpl.cancel = context.WithCancel(ctx)
 
@@ -125,7 +125,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	}
 
 	for {
-		subtask, err := s.subtaskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending)
+		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending)
 		if err != nil {
 			s.onError(err)
 			break
@@ -139,7 +139,11 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 			break
 		}
 
-		minimalTasks := scheduler.SplitSubtask(subtask.Meta)
+		minimalTasks, err := scheduler.SplitSubtask(subtask.Meta)
+		if err != nil {
+			s.onError(err)
+			break
+		}
 		logutil.Logger(s.logCtx).Info("split subTask", zap.Any("cnt", len(minimalTasks)), zap.Any("subtask_id", subtask.ID))
 		for _, minimalTask := range minimalTasks {
 			minimalTaskWg.Add(1)
@@ -200,7 +204,7 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 		s.onError(err)
 		return s.getError()
 	}
-	subtask, err := s.subtaskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStateRevertPending)
+	subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStateRevertPending)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -277,7 +281,7 @@ func (s *InternalSchedulerImpl) resetError() {
 }
 
 func (s *InternalSchedulerImpl) updateSubtaskState(id int64, state string) {
-	err := s.subtaskTable.UpdateSubtaskState(id, state)
+	err := s.taskTable.UpdateSubtaskState(id, state)
 	if err != nil {
 		s.onError(err)
 	}

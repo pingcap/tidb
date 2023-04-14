@@ -35,6 +35,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// Session is a wrapper of TiDB's session.
 type Session interface {
 	Close()
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error)
@@ -65,6 +66,7 @@ func dropPreparedStmt(ctx context.Context, session Session, stmtID uint32) {
 	}
 }
 
+// NewGlueCheckpointsDB creates a new GlueCheckpointsDB.
 func NewGlueCheckpointsDB(ctx context.Context, se Session, f func() (Session, error), schemaName string) (*GlueCheckpointsDB, error) {
 	var escapedSchemaName strings.Builder
 	common.WriteMySQLIdentifier(&escapedSchemaName, schemaName)
@@ -122,6 +124,7 @@ func NewGlueCheckpointsDB(ctx context.Context, se Session, f func() (Session, er
 	}, nil
 }
 
+// Initialize implements CheckpointsDB.Initialize.
 func (g GlueCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
 	logger := log.FromContext(ctx)
 	se, err := g.getSessionFunc()
@@ -176,6 +179,7 @@ func (g GlueCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, d
 	return errors.Trace(err)
 }
 
+// TaskCheckpoint implements CheckpointsDB.TaskCheckpoint.
 func (g GlueCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
 	logger := log.FromContext(ctx)
 	sql := fmt.Sprintf(ReadTaskTemplate, g.schema, CheckpointTableNameTask)
@@ -222,6 +226,7 @@ func (g GlueCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint,
 	return taskCp, nil
 }
 
+// Get implements CheckpointsDB.Get.
 func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableCheckpoint, error) {
 	cp := &TableCheckpoint{
 		Engines: map[int32]*EngineCheckpoint{},
@@ -352,10 +357,12 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 	return cp, nil
 }
 
-func (g GlueCheckpointsDB) Close() error {
+// Close implements CheckpointsDB.Close.
+func (GlueCheckpointsDB) Close() error {
 	return nil
 }
 
+// InsertEngineCheckpoints implements CheckpointsDB.InsertEngineCheckpoints.
 func (g GlueCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableName string, checkpointMap map[int32]*EngineCheckpoint) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
@@ -417,6 +424,7 @@ func (g GlueCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableNam
 	return errors.Trace(err)
 }
 
+// Update implements CheckpointsDB.Update.
 func (g GlueCheckpointsDB) Update(ctx context.Context, checkpointDiffs map[string]*TableCheckpointDiff) error {
 	logger := log.FromContext(ctx)
 	se, err := g.getSessionFunc()
@@ -509,6 +517,7 @@ func (g GlueCheckpointsDB) Update(ctx context.Context, checkpointDiffs map[strin
 	})
 }
 
+// RemoveCheckpoint implements CheckpointsDB.RemoveCheckpoint.
 func (g GlueCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName string) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
@@ -545,6 +554,7 @@ func (g GlueCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName strin
 	}))
 }
 
+// MoveCheckpoints implements CheckpointsDB.MoveCheckpoints.
 func (g GlueCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) error {
 	newSchema := fmt.Sprintf("`%s.%d.bak`", g.schema[1:len(g.schema)-1], taskID)
 	logger := log.FromContext(ctx).With(zap.Int64("taskID", taskID))
@@ -577,6 +587,7 @@ func (g GlueCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) er
 	return nil
 }
 
+// GetLocalStoringTables implements CheckpointsDB.GetLocalStoringTables.
 func (g GlueCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[string][]int32, error) {
 	se, err := g.getSessionFunc()
 	if err != nil {
@@ -627,6 +638,7 @@ func (g GlueCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[strin
 	return targetTables, err
 }
 
+// IgnoreErrorCheckpoint implements CheckpointsDB.IgnoreErrorCheckpoint.
 func (g GlueCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
@@ -663,6 +675,7 @@ func (g GlueCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName 
 	}))
 }
 
+// DestroyErrorCheckpoint implements CheckpointsDB.DestroyErrorCheckpoint.
 func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
@@ -755,18 +768,22 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 	return targetTables, nil
 }
 
-func (g GlueCheckpointsDB) DumpTables(ctx context.Context, csv io.Writer) error {
+// DumpTables implements CheckpointsDB.DumpTables.
+func (GlueCheckpointsDB) DumpTables(_ context.Context, _ io.Writer) error {
 	return errors.Errorf("dumping glue checkpoint into CSV not unsupported")
 }
 
-func (g GlueCheckpointsDB) DumpEngines(ctx context.Context, csv io.Writer) error {
+// DumpEngines implements CheckpointsDB.DumpEngines.
+func (GlueCheckpointsDB) DumpEngines(_ context.Context, _ io.Writer) error {
 	return errors.Errorf("dumping glue checkpoint into CSV not unsupported")
 }
 
-func (g GlueCheckpointsDB) DumpChunks(ctx context.Context, csv io.Writer) error {
+// DumpChunks implements CheckpointsDB.DumpChunks.
+func (GlueCheckpointsDB) DumpChunks(_ context.Context, _ io.Writer) error {
 	return errors.Errorf("dumping glue checkpoint into CSV not unsupported")
 }
 
+// Transact is a helper function to execute a transaction.
 func Transact(ctx context.Context, purpose string, s Session, logger log.Logger, action func(context.Context, Session) error) error {
 	return common.Retry(purpose, logger, func() error {
 		_, err := s.Execute(ctx, "BEGIN")

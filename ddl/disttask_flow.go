@@ -26,49 +26,30 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 )
 
-const (
-	// FlowHandleLitBackfillType is the task type to handle backfill for inject step.
-	FlowHandleLitBackfillType = "FlowHandleLitBackfillType"
-	// FlowHandleLitMergeType is the task type to handle backfill for merge step.
-	FlowHandleLitMergeType = "FlowHandleLitMergeType"
-)
-
-// LitBackfillGlobalTaskMeta is the global task meta for lightning backfill.
-type LitBackfillGlobalTaskMeta struct {
-	Job        model.Job `json:"job"`
-	EleID      int64     `json:"ele_id"`
-	EleTypeKey []byte    `json:"ele_type_key"`
-}
-
-// LitBackfillSubTaskMeta is the subtask meta for lightning backfill.
-type LitBackfillSubTaskMeta struct {
-	PhysicalTableID int64 `json:"physical_table_id"`
-}
-
 type litBackfillFlowHandle struct {
-	getDDL func() DDL
+	d DDL
 }
 
 // NewLitBackfillFlowHandle creates a new litBackfillFlowHandle.
-func NewLitBackfillFlowHandle(getDDL func() DDL) dispatcher.TaskFlowHandle {
+func NewLitBackfillFlowHandle(d DDL) dispatcher.TaskFlowHandle {
 	return &litBackfillFlowHandle{
-		getDDL: getDDL,
+		d: d,
 	}
 }
 
 // ProcessNormalFlow processes the normal flow.
-func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *proto.Task) (metas [][]byte, err error) {
+func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State != proto.TaskStatePending {
 		// This flow has only one step, finish task when it is not pending
 		return nil, nil
 	}
 
-	var globalTaskMeta LitBackfillGlobalTaskMeta
+	var globalTaskMeta BackfillGlobalMeta
 	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
 	}
 
-	d, ok := h.getDDL().(*ddl)
+	d, ok := h.d.(*ddl)
 	if !ok {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
@@ -92,7 +73,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 
 	subTaskMetas := make([][]byte, 0, len(physicalIDs))
 	for _, physicalID := range physicalIDs {
-		subTaskMeta := &LitBackfillSubTaskMeta{
+		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: physicalID,
 		}
 
@@ -108,7 +89,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 	return subTaskMetas, nil
 }
 
-func (*litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, _ *proto.Task, _ string) (meta []byte, err error) {
+func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back
 	return nil, nil
 }

@@ -967,6 +967,7 @@ const (
 	ErrWarnMemoryQuotaOverflow          = 8063
 	ErrWarnOptimizerHintParseError      = 8064
 	ErrWarnOptimizerHintInvalidInteger  = 8065
+	ErrWarnOptimizerHintWrongPos        = 8066
 
 	// Stop adding error code here!
 	// They are moved to github.com/pingcap/tidb/errno

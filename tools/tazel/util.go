@@ -16,6 +16,7 @@ package main
 
 import (
 	"os"
+	"strings"
 
 	"github.com/bazelbuild/buildtools/build"
 	"github.com/pingcap/tidb/util/set"
@@ -37,4 +38,10 @@ func skipTazel(path string) bool {
 	var pmap = set.NewStringSet()
 	pmap.Insert("build/BUILD.bazel")
 	return pmap.Exist(path)
+}
+
+func skipShardCount(path string) bool {
+	return strings.HasPrefix(path, "tests") ||
+		strings.HasPrefix(path, "dumpling") ||
+		strings.HasPrefix(path, "util")
 }

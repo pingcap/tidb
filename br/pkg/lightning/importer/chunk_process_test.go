@@ -97,9 +97,10 @@ func (s *chunkRestoreSuite) TestDeliverLoopCancel() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
-	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 
-	rc := &Controller{backend: backend.MakeBackend(mockBackend)}
+	rc := &Controller{engineMgr: backend.MakeEngineManager(mockBackend), backend: mockBackend, encBuilder: mockEncBuilder}
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan []deliveredKVs)
 	go cancel()
@@ -115,14 +116,15 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
-	importer := backend.MakeBackend(mockBackend)
+	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
+	importer := backend.MakeEngineManager(mockBackend)
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)
-	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 	mockWriter := mock.NewMockEngineWriter(controller)
 	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), gomock.Any()).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
-		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
+		AppendRows(ctx, gomock.Any(), gomock.Any()).
 		Return(nil).AnyTimes()
 	mockWriter.EXPECT().IsSynced().Return(true).AnyTimes()
 
@@ -139,7 +141,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 
 	cfg := &config.Config{}
 	saveCpCh := make(chan saveCp, 16)
-	rc := &Controller{cfg: cfg, backend: importer, saveCpCh: saveCpCh}
+	rc := &Controller{cfg: cfg, engineMgr: backend.MakeEngineManager(mockBackend), backend: mockBackend, saveCpCh: saveCpCh, encBuilder: mockEncBuilder}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -170,12 +172,13 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
-	importer := backend.MakeBackend(mockBackend)
+	importer := backend.MakeEngineManager(mockBackend)
+	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)
 	// avoid return the same object at each call
-	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
-	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
 	mockWriter := mock.NewMockEngineWriter(controller)
 	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), gomock.Any()).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().IsSynced().Return(true).AnyTimes()
@@ -185,7 +188,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	indexEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, -1)
 	require.NoError(s.T(), err)
 
-	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: s.tr.tableName})
 	require.NoError(s.T(), err)
 	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(s.T(), err)
@@ -193,7 +196,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	// Set up the expected API calls to the data engine...
 
 	mockWriter.EXPECT().
-		AppendRows(ctx, s.tr.tableName, mockCols, kv.MakeRowsFromKvPairs([]common.KvPair{
+		AppendRows(ctx, mockCols, kv.MakeRowsFromKvPairs([]common.KvPair{
 			{
 				Key: []byte("txxxxxxxx_ryyyyyyyy"),
 				Val: []byte("value1"),
@@ -210,7 +213,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	// Note: This test assumes data engine is written before the index engine.
 
 	mockWriter.EXPECT().
-		AppendRows(ctx, s.tr.tableName, mockCols, kv.MakeRowsFromKvPairs([]common.KvPair{
+		AppendRows(ctx, mockCols, kv.MakeRowsFromKvPairs([]common.KvPair{
 			{
 				Key: []byte("txxxxxxxx_izzzzzzzz"),
 				Val: []byte("index1"),
@@ -248,7 +251,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	}()
 
 	cfg := &config.Config{}
-	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer}
+	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, engineMgr: backend.MakeEngineManager(mockBackend), backend: mockBackend, encBuilder: mockEncBuilder}
 
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	require.NoError(s.T(), err)
@@ -513,7 +516,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(ctx, nil, config.ReplaceOnDup, errorMgr).NewEncoder(
+	encodingBuilder := tidb.NewEncodingBuilder()
+	kvEncoder, err := encodingBuilder.NewEncoder(
 		ctx,
 		&encode.EncodingConfig{
 			SessionOptions: encode.SessionOptions{
@@ -611,12 +615,8 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(
-		ctx,
-		nil,
-		config.ReplaceOnDup,
-		errormanager.New(nil, config.NewConfig(), log.L()),
-	).NewEncoder(
+	encodingBuilder := tidb.NewEncodingBuilder()
+	kvEncoder, err := encodingBuilder.NewEncoder(
 		ctx,
 		&encode.EncodingConfig{
 			SessionOptions: encode.SessionOptions{
@@ -648,7 +648,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 type mockEncoder struct{}
 
 func (mockEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
-	return &kv.KvPairs{}, nil
+	return &kv.Pairs{}, nil
 }
 
 func (mockEncoder) Close() {}
@@ -659,17 +659,18 @@ func (s *chunkRestoreSuite) TestRestore() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
-	importer := backend.MakeBackend(mockBackend)
+	importer := backend.MakeEngineManager(mockBackend)
+	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)
 	// avoid return the same object at each call
-	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
-	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
 	mockWriter := mock.NewMockEngineWriter(controller)
 	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), gomock.Any()).Return(mockWriter, nil).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(mockEncoder{}, nil).Times(1)
+	mockEncBuilder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(mockEncoder{}, nil).Times(1)
 	mockWriter.EXPECT().IsSynced().Return(true).AnyTimes()
-	mockWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, 0)
 	require.NoError(s.T(), err)
@@ -683,10 +684,12 @@ func (s *chunkRestoreSuite) TestRestore() {
 
 	saveCpCh := make(chan saveCp, 16)
 	err = s.cr.process(ctx, s.tr, 0, dataWriter, indexWriter, &Controller{
-		cfg:      s.cfg,
-		saveCpCh: saveCpCh,
-		backend:  importer,
-		pauser:   DeliverPauser,
+		cfg:        s.cfg,
+		saveCpCh:   saveCpCh,
+		engineMgr:  backend.MakeEngineManager(mockBackend),
+		backend:    mockBackend,
+		pauser:     DeliverPauser,
+		encBuilder: mockEncBuilder,
 	})
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)

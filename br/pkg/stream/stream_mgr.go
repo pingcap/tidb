@@ -195,7 +195,8 @@ func (m *MetadataHelper) decodeCompressedData(data []byte, compressionType backu
 	case backuppb.CompressionType_ZSTD:
 		return m.decoder.DecodeAll(data, nil)
 	}
-	return nil, errors.Errorf("failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
+	return nil, errors.Errorf(
+		"failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
 }
 
 func (m *MetadataHelper) ReadFile(

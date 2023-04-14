@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
@@ -571,10 +572,10 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 
 	var (
 		interval  ast.PartitionInterval
-		startIdx  int    = 0
-		endIdx    int    = len(tbInfo.Partition.Definitions) - 1
-		isIntType bool   = true
-		minVal    string = "0"
+		startIdx  = 0
+		endIdx    = len(tbInfo.Partition.Definitions) - 1
+		isIntType = true
+		minVal    = "0"
 	)
 	if len(tbInfo.Partition.Columns) > 0 {
 		partCol := findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
@@ -1822,12 +1823,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 				}
 			}
-			sctx, err1 := w.sessPool.get()
+			sctx, err1 := w.sessPool.Get()
 			if err1 != nil {
 				return ver, err1
 			}
-			defer w.sessPool.put(sctx)
-			rh := newReorgHandler(newSession(sctx))
+			defer w.sessPool.Put(sctx)
+			rh := newReorgHandler(sess.NewSession(sctx))
 			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
@@ -2146,13 +2147,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	failpoint.Inject("exchangePartitionAutoID", func(val failpoint.Value) {
 		if val.(bool) {
-			se, err := w.sessPool.get()
-			defer w.sessPool.put(se)
+			seCtx, err := w.sessPool.Get()
+			defer w.sessPool.Put(seCtx)
 			if err != nil {
 				failpoint.Return(ver, err)
 			}
-			sess := newSession(se)
-			_, err = sess.execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
+			se := sess.NewSession(seCtx)
+			_, err = se.Execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
 			if err != nil {
 				failpoint.Return(ver, err)
 			}
@@ -2529,12 +2530,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
-	sctx, err1 := w.sessPool.get()
+	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
 		return done, ver, err1
 	}
-	defer w.sessPool.put(sctx)
-	rh := newReorgHandler(newSession(sctx))
+	defer w.sessPool.Put(sctx)
+	rh := newReorgHandler(sess.NewSession(sctx))
 	elements := BuildElements(tbl.Meta().Columns[0], tbl.Meta().Indices)
 	partTbl, ok := tbl.(table.PartitionedTable)
 	if !ok {
@@ -2616,10 +2617,6 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 		maxOffset:         maxOffset,
 		reorgedTbl:        reorgedTbl,
 	}, nil
-}
-
-func (w *reorgPartitionWorker) GetTasks() ([]*BackfillJob, error) {
-	panic("[ddl] reorg partition worker GetTask function doesn't implement")
 }
 
 func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
@@ -2759,18 +2756,6 @@ func (w *reorgPartitionWorker) String() string {
 	return typeReorgPartitionWorker.String()
 }
 
-func (w *reorgPartitionWorker) GetTask() (*BackfillJob, error) {
-	panic("[ddl] partition reorg worker does not implement GetTask function")
-}
-
-func (w *reorgPartitionWorker) UpdateTask(*BackfillJob) error {
-	panic("[ddl] partition reorg worker does not implement UpdateTask function")
-}
-
-func (w *reorgPartitionWorker) FinishTask(*BackfillJob) error {
-	panic("[ddl] partition reorg worker does not implement FinishTask function")
-}
-
 func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
@@ -2845,9 +2830,6 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 
 		// Always (re)start with the full PhysicalTable range
 		reorgInfo.StartKey, reorgInfo.EndKey = startHandle, endHandle
-
-		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
-		w.getReorgCtx(reorgInfo.Job.ID).setCurrentElement(reorgInfo.elements[i+1])
 
 		// Update the element in the reorgInfo for updating the reorg meta below.
 		reorgInfo.currElement = reorgInfo.elements[i+1]
@@ -2959,11 +2941,11 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 
 	var ctx sessionctx.Context
-	ctx, err := w.sessPool.get()
+	ctx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.put(ctx)
+	defer w.sessPool.Put(ctx)
 
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, sql, paramList...)
 	if err != nil {
@@ -3323,15 +3305,20 @@ func isPartExprUnsigned(tbInfo *model.TableInfo) bool {
 }
 
 // truncateTableByReassignPartitionIDs reassigns new partition ids.
-func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo) error {
-	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions))
-	for _, def := range tblInfo.Partition.Definitions {
-		pid, err := t.GenGlobalID()
+func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo, pids []int64) (err error) {
+	if len(pids) < len(tblInfo.Partition.Definitions) {
+		// To make it compatible with older versions when pids was not given
+		// and if there has been any add/reorganize partition increasing the number of partitions
+		morePids, err := t.GenGlobalIDs(len(tblInfo.Partition.Definitions) - len(pids))
 		if err != nil {
 			return errors.Trace(err)
 		}
+		pids = append(pids, morePids...)
+	}
+	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions))
+	for i, def := range tblInfo.Partition.Definitions {
 		newDef := def
-		newDef.ID = pid
+		newDef.ID = pids[i]
 		newDefs = append(newDefs, newDef)
 	}
 	tblInfo.Partition.Definitions = newDefs

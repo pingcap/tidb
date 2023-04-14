@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -30,11 +31,13 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/kvcache"
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/size"
@@ -68,7 +71,8 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
-func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool, paramSQL string, paramStmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
+func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool,
+	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)
@@ -89,7 +93,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, ErrPsManyParam
 	}
 
-	ret := &PreprocessorReturn{}
+	ret := &PreprocessorReturn{InfoSchema: is} // is can be nil, and
 	err := Preprocess(ctx, sctx, paramStmt, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, 0, err
@@ -284,7 +288,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
-	if schemaVersion == 0 {
+	if schemaVersion == 0 && !intest.InTest {
 		return nil, errors.New("Schema version uninitialized")
 	}
 	if stmtDB == "" {
@@ -440,11 +444,14 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 }
 
 type matchOptsExtractor struct {
+	is                infoschema.InfoSchema
+	sctx              sessionctx.Context
 	cacheable         bool // For safety considerations, check if limit count less than 10000
 	offsetAndCount    []uint64
 	unCacheableReason string
 	paramTypeErr      error
 	hasSubQuery       bool
+	statsVersionHash  uint64
 }
 
 // Enter implements Visitor interface.
@@ -482,8 +489,33 @@ func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildre
 		}
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		checker.hasSubQuery = true
+	case *ast.TableName:
+		t, err := checker.is.TableByName(node.Schema, node.Name)
+		if err != nil { // CTE in this case
+			return in, false
+		}
+		tStats := getStatsTable(checker.sctx, t.Meta(), t.Meta().ID)
+		checker.statsVersionHash += tableStatsVersionForPlanCache(tStats) // use '+' as the hash function for simplicity
 	}
 	return in, false
+}
+
+func tableStatsVersionForPlanCache(tStats *statistics.Table) (tableStatsVer uint64) {
+	if tStats == nil {
+		return 0
+	}
+	// use the max version of all columns and indices as the table stats version
+	for _, col := range tStats.Columns {
+		if col.LastUpdateVersion > tableStatsVer {
+			tableStatsVer = col.LastUpdateVersion
+		}
+	}
+	for _, idx := range tStats.Indices {
+		if idx.LastUpdateVersion > tableStatsVer {
+			tableStatsVer = idx.LastUpdateVersion
+		}
+	}
+	return tableStatsVer
 }
 
 // Leave implements Visitor interface.
@@ -492,11 +524,13 @@ func (checker *matchOptsExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) (*utilpc.PlanCacheMatchOpts, error) {
+func extractMatchOptsFromAST(sctx sessionctx.Context, is infoschema.InfoSchema, node ast.Node) (*utilpc.PlanCacheMatchOpts, error) {
 	if node == nil {
 		return nil, errors.New("AST node is nil")
 	}
 	checker := matchOptsExtractor{
+		sctx:           sctx,
+		is:             is,
 		cacheable:      true,
 		offsetAndCount: []uint64{},
 		hasSubQuery:    false,
@@ -512,14 +546,16 @@ func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) (*utilpc.Pl
 	return &utilpc.PlanCacheMatchOpts{
 		LimitOffsetAndCount: checker.offsetAndCount,
 		HasSubQuery:         checker.hasSubQuery,
+		StatsVersionHash:    checker.statsVersionHash,
+		ForeignKeyChecks:    sctx.GetSessionVars().ForeignKeyChecks,
 	}, nil
 }
 
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
+func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
 	// get limit params and has sub query indicator
-	matchOpts, err := extractMatchOptsFromAST(node, sctx)
+	matchOpts, err := extractMatchOptsFromAST(sctx, is, node)
 	if err != nil {
 		return nil, err
 	}
