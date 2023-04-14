@@ -1565,3 +1565,213 @@ func TestCheckNewCollationEnable(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckTablesExists(t *testing.T) {
+	caseList := []struct {
+		userDB2Tables   map[string][]string
+		backupDB2Tables map[string][]string
+		backupMeta      *backuppb.BackupMeta
+		isErr           bool
+	}{
+		{
+			userDB2Tables: map[string][]string{
+				mysql.SystemDB: {"db", "tables_priv"},
+				"test":         {"T1", "T2"},
+			},
+			backupDB2Tables: map[string][]string{
+				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
+				"test":                      {"T1", "T2"},
+			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
+			},
+			isErr: true,
+		},
+		{
+			userDB2Tables: map[string][]string{
+				mysql.SystemDB: {"db", "tables_priv"},
+				"test":         {"T1"},
+			},
+			backupDB2Tables: map[string][]string{
+				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
+				"test":                      {"T1", "T2"},
+			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
+			},
+			isErr: true,
+		},
+		{
+			userDB2Tables: map[string][]string{
+				mysql.SystemDB: {"db", "tables_priv"},
+				"test":         {"T1", "T2"},
+			},
+			backupDB2Tables: map[string][]string{
+				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
+				"items":                     {"T1", "T2"},
+			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
+			},
+			isErr: false,
+		},
+		{
+			userDB2Tables: map[string][]string{
+				mysql.SystemDB: {"db", "tables_priv"},
+				"test":         {"T1", "T2"},
+			},
+			backupDB2Tables: map[string][]string{
+				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
+				"test":                      {"T3", "T4"},
+			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
+			},
+			isErr: false,
+		},
+		{
+			userDB2Tables: map[string][]string{
+				mysql.SystemDB: {"db", "tables_priv"},
+				"test":         {"T1", "T2"},
+			},
+			backupDB2Tables: map[string][]string{
+				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
+				"test":                      {"T2", "T3"},
+			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
+			},
+			isErr: true,
+		},
+		{
+			userDB2Tables: map[string][]string{
+				"test": {"T1", "T2"},
+			},
+			backupDB2Tables: map[string][]string{
+				"test": {"t2", "t3"},
+			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 42,
+				EndVersion:   42,
+			},
+			isErr: true,
+		},
+		{
+			userDB2Tables: map[string][]string{
+				"test": {"T1", "T2"},
+			},
+			backupDB2Tables: map[string][]string{
+				"test": {"T1", "T2"},
+			},
+			backupMeta: &backuppb.BackupMeta{
+				StartVersion: 0, // client.IsIncremental() return false when StartVersion is 0
+				EndVersion:   100,
+			},
+			isErr: true,
+		},
+		{
+			userDB2Tables: map[string][]string{
+				mysql.SystemDB: {"db", "tables_priv"},
+				"test":         {"T1", "T2"},
+			},
+			backupDB2Tables: map[string][]string{
+				"__TiDB_BR_Temporary_mysql": {"db", "tables_priv"},
+				"test":                      {"T1", "T2"},
+			},
+			backupMeta: &backuppb.BackupMeta{ // restore incremental data
+				StartVersion: 42,
+				EndVersion:   100,
+			},
+			isErr: false,
+		},
+	}
+
+	ctx := context.Background()
+	for i, ca := range caseList {
+		t.Run(fmt.Sprintf("case %d:", i), func(t *testing.T) {
+			m, client := prepareClusterAndClient(t, ca.userDB2Tables, ca.backupDB2Tables, ca.backupMeta)
+			defer m.Stop()
+
+			err := client.CheckTableExists(ctx)
+			t.Logf("err: %v\n", err)
+			if ca.isErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func prepareClusterAndClient(t *testing.T,
+	userDB2Tables, backupDB2Tables map[string][]string,
+	backupMeta *backuppb.BackupMeta) (*mock.Cluster, *restore.Client) {
+	m := getStartedMockedCluster(t)
+
+	// prepare backup tables
+	backupDBs := make(map[string]*utils.Database)
+	var dbID int64 = 1
+	for dbName, tables := range backupDB2Tables {
+		backupDBs[dbName] = &utils.Database{
+			Info: &model.DBInfo{
+				ID:   dbID,
+				Name: model.NewCIStr(dbName),
+			},
+			Tables: make([]*metautil.Table, len(tables)),
+		}
+		dbID++
+
+		for i, tableName := range tables {
+			backupDBs[dbName].Tables[i] = &metautil.Table{
+				Info: &model.TableInfo{
+					Name: model.NewCIStr(tableName),
+				},
+			}
+		}
+	}
+
+	client := restore.NewMockRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false, backupDBs, backupMeta)
+	g := gluetidb.New()
+	err := client.Init(g, m.Storage)
+	require.NoError(t, err)
+
+	// create tables
+	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+	require.NoError(t, err)
+
+	client.SetBatchDdlSize(1)
+	for dbName, tableNameList := range userDB2Tables {
+		dbSchema, isExist := info.SchemaByName(model.NewCIStr(dbName))
+		require.True(t, isExist)
+
+		tables := make([]*metautil.Table, len(tableNameList))
+		intField := types.NewFieldType(mysql.TypeLong)
+		intField.SetCharset("binary")
+		for i := len(tables) - 1; i >= 0; i-- {
+			tables[i] = &metautil.Table{
+				DB: dbSchema,
+				Info: &model.TableInfo{
+					ID:   int64(i),
+					Name: model.NewCIStr(tableNameList[i]),
+					Columns: []*model.ColumnInfo{{
+						ID:        1,
+						Name:      model.NewCIStr("id"),
+						FieldType: *intField,
+						State:     model.StatePublic,
+					}},
+					Charset: "utf8mb4",
+					Collate: "utf8mb4_bin",
+				},
+			}
+		}
+		_, _, err = client.CreateTables(m.Domain, tables, 0)
+		require.NoError(t, err)
+	}
+
+	return m, client
+}

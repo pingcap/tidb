@@ -937,6 +937,56 @@ outer:
 	return errors.Annotate(berrors.ErrRestoreNotFreshCluster, "user db/tables: "+strings.Join(userTableOrDBNames, ", "))
 }
 
+// CheckTableExists checks whether the restored tables already exist in the target cluster.
+func (rc *Client) CheckTableExists(ctx context.Context) error {
+	userDBs := GetExistedUserDBs(rc.dom)
+	if len(userDBs) == 0 || rc.IsIncremental() {
+		return nil
+	}
+
+	userTablesMap := make(map[string]struct{})
+	for _, userDB := range userDBs {
+		if utils.IsSysDB(userDB.Name.O) {
+			continue
+		}
+
+		for _, tbl := range userDB.Tables {
+			tblName := utils.EncloseDBAndTable(userDB.Name.L, tbl.Name.L)
+			userTablesMap[tblName] = struct{}{}
+			log.Info("user table", zap.String("db name", userDB.Name.O),
+				zap.String("table name", tbl.Name.O), zap.String("EncloseDBAndTable", tblName))
+		}
+	}
+
+	existedTables := make([]string, 0)
+	for _, db := range rc.databases {
+		if dbCIStrName, ok := utils.GetSysDBCIStrName(db.Info.Name); ok && utils.IsSysDB(dbCIStrName.O) {
+			continue
+		}
+
+		for _, tbl := range db.Tables {
+			if tbl.Info == nil {
+				// we may back up empty database.
+				continue
+			}
+
+			tblName := utils.EncloseDBAndTable(db.Info.Name.L, tbl.Info.Name.L)
+			if _, ok := userTablesMap[tblName]; ok {
+				existedTables = append(existedTables, utils.EncloseDBAndTable(db.Info.Name.O, tbl.Info.Name.O))
+			}
+			log.Info("restore table", zap.String("db name", db.Info.Name.O),
+				zap.String("table name", tbl.Info.Name.O), zap.String("EncloseDBAndTable", tblName))
+		}
+	}
+
+	if len(existedTables) != 0 {
+		return errors.Annotatef(berrors.ErrDatabasesAlreadyExisted,
+			"tables %s existed in restored cluster, please drop them before execute restore",
+			strings.Join(existedTables, ","))
+	}
+	return nil
+}
+
 func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) error {
 	log.Info("checking target cluster system table compatibility with backed up data")
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
@@ -2864,6 +2914,28 @@ func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecord
 // MockClient create a fake client used to test.
 func MockClient(dbs map[string]*utils.Database) *Client {
 	return &Client{databases: dbs}
+}
+
+// NewMockRestoreClient returns a new Mock RestoreClient.
+func NewMockRestoreClient(
+	pdClient pd.Client,
+	tlsConf *tls.Config,
+	keepaliveConf keepalive.ClientParameters,
+	isRawKv bool,
+	dbs map[string]*utils.Database,
+	backupMeta *backuppb.BackupMeta,
+) *Client {
+	return &Client{
+		pdClient:           pdClient,
+		toolClient:         split.NewSplitClient(pdClient, tlsConf, isRawKv),
+		tlsConf:            tlsConf,
+		keepaliveConf:      keepaliveConf,
+		switchCh:           make(chan struct{}),
+		deleteRangeQuery:   make([]string, 0),
+		deleteRangeQueryCh: make(chan string, 10),
+		databases:          dbs,
+		backupMeta:         backupMeta,
+	}
 }
 
 // TidyOldSchemas produces schemas information.
