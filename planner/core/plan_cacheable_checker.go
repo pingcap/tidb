@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
 )
 
@@ -430,6 +430,11 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.cacheable = false
 			checker.reason = "query has values with under-score charset"
 		}
+		if node.Kind() == types.KindBinaryLiteral {
+			// for safety, BIT / HEX literals are not supported.
+			checker.cacheable = false
+			checker.reason = "query has BIT / HEX literals are not supported"
+		}
 		if node.IsNull() {
 			// for a condition like `not-null-col = null`, the planner will optimize it to `False` and generate a
 			// table-dual plan, but if it is converted to `not-null-col = ?` here, then the planner cannot do this
@@ -438,9 +443,9 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.reason = "query has null constants"
 		}
 		checker.constCnt++
-		if checker.constCnt > 50 { // just for safety and reduce memory cost
+		if checker.constCnt > 200 { // just for safety and reduce memory cost
 			checker.cacheable = false
-			checker.reason = "query has more than 50 constants"
+			checker.reason = "query has more than 200 constants"
 		}
 		return in, !checker.cacheable
 	case *ast.GroupByClause:
@@ -604,8 +609,8 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 	if hasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
 		return false, "the switch 'tidb_enable_plan_cache_for_subquery' is off"
 	}
-	if uint64(pp.MemoryUsage()) > 2*size.MB { // to save memory
-		return false, "plan is too large(>2MB)"
+	if sctx.GetSessionVars().PlanCacheMaxPlanSize > 0 && uint64(pp.MemoryUsage()) > sctx.GetSessionVars().PlanCacheMaxPlanSize { // to save memory
+		return false, "plan is too large(decided by the variable @@tidb_plan_cache_max_plan_size)"
 	}
 	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
 }

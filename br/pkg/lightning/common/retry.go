@@ -126,7 +126,8 @@ func isSingleRetryableError(err error) bool {
 		return false
 	default:
 		switch status.Code(err) {
-		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
+		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied,
+			codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
 			return true
 		default:
 			return isRetryableFromErrorMessage(err)
