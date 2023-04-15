@@ -546,18 +546,14 @@ func (j *regionJob) fixIngestError(
 	case errPb.NotLeader != nil:
 		j.lastRetryableErr = common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 
-		if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
-			newRegion = &split.RegionInfo{
-				Leader: newLeader,
-				Region: j.region.Region,
-			}
-		} else {
-			newRegion, err = getRegion()
-			if err != nil {
-				return false, errors.Trace(err)
-			}
+		// NotLeader error may mask the region epoch not match error. We refresh
+		// the region for bad case.
+		newRegion, err = getRegion()
+		if err != nil {
+			return false, errors.Trace(err)
 		}
 		j.region = newRegion
+		j.convertStageTo(regionScanned)
 		return true, nil
 	case errPb.EpochNotMatch != nil:
 		j.lastRetryableErr = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
