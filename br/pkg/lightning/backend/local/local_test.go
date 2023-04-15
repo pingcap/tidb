@@ -760,6 +760,7 @@ type mockImportClient struct {
 	cnt                int
 	multiIngestCheckFn func(s *metapb.Store) bool
 	apiInvokeRecorder  map[string][]uint64
+	wrote              bool
 }
 
 func newMockImportClient() *mockImportClient {
@@ -770,10 +771,16 @@ func newMockImportClient() *mockImportClient {
 	}
 }
 
-func (c *mockImportClient) MultiIngest(context.Context, *sst.MultiIngestRequest, ...grpc.CallOption) (*sst.IngestResponse, error) {
+func (c *mockImportClient) MultiIngest(_ context.Context, req *sst.MultiIngestRequest, _ ...grpc.CallOption) (*sst.IngestResponse, error) {
 	defer func() {
 		c.cnt++
 	}()
+	for _, meta := range req.Ssts {
+		if meta.RegionId != c.store.GetId() {
+			println("lance test mismatch", meta.RegionId, c.store.GetId())
+			return &sst.IngestResponse{Error: &errorpb.Error{Message: "The file which would be ingested doest not exist."}}, nil
+		}
+	}
 	if c.apiInvokeRecorder != nil {
 		c.apiInvokeRecorder["MultiIngest"] = append(c.apiInvokeRecorder["MultiIngest"], c.store.GetId())
 	}
@@ -804,8 +811,9 @@ func (c *mockImportClient) Write(ctx context.Context, opts ...grpc.CallOption) (
 	if c.apiInvokeRecorder != nil {
 		c.apiInvokeRecorder["Write"] = append(c.apiInvokeRecorder["Write"], c.store.GetId())
 	}
+	c.wrote = true
 	return mockWriteClient{writeResp: &sst.WriteResponse{Metas: []*sst.SSTMeta{
-		{}, {}, {},
+		{RegionId: c.store.GetId()},
 	}}}, nil
 }
 
