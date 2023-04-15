@@ -45,6 +45,7 @@ type restoreSchemaSuite struct {
 	ctx              context.Context
 	rc               *Controller
 	controller       *gomock.Controller
+	dbMock           sqlmock.Sqlmock
 	tableInfos       []*model.TableInfo
 	infoGetter       *PreImportInfoGetterImpl
 	targetInfoGetter *TargetInfoGetterImpl
@@ -150,32 +151,12 @@ func (s *restoreSchemaSuite) SetupTest() {
 	for i := 0; i < 17; i++ {
 		sqlMock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(int64(i), 1))
 	}
-	mockTiDBGlue := mock.NewMockGlue(s.controller)
-	mockTiDBGlue.EXPECT().GetDB().AnyTimes().Return(mockDB, nil)
-	mockTiDBGlue.EXPECT().
-		OwnsSQLExecutor().
-		AnyTimes().
-		Return(true)
-	parser := parser.New()
-	mockTiDBGlue.EXPECT().
-		GetParser().
-		AnyTimes().
-		Return(parser)
-	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
-	s.rc.tidbGlue = mockTiDBGlue
+	s.targetInfoGetter.db = mockDB
+	s.rc.db = mockDB
+	s.dbMock = sqlMock
 }
 
 func (s *restoreSchemaSuite) TearDownTest() {
-	exec := mock.NewMockSQLExecutor(s.controller)
-	exec.EXPECT().Close()
-	mockTiDBGlue := mock.NewMockGlue(s.controller)
-	mockTiDBGlue.EXPECT().
-		GetSQLExecutor().
-		AnyTimes().
-		Return(exec)
-	s.rc.tidbGlue = mockTiDBGlue
-	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
-
 	s.rc.Close()
 	s.controller.Finish()
 }
@@ -188,17 +169,7 @@ func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful() {
 		require.Equal(s.T(), "SYSTEM", tz)
 	}
 
-	exec := mock.NewMockSQLExecutor(s.controller)
-	exec.EXPECT().
-		QueryStringsWithLog(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		AnyTimes().
-		Return([][]string{{"time_zone", "SYSTEM"}}, nil)
-	mockTiDBGlue := s.rc.tidbGlue.(*mock.MockGlue)
-	mockTiDBGlue.EXPECT().
-		GetSQLExecutor().
-		AnyTimes().
-		Return(exec)
-
+	s.dbMock.ExpectQuery(".*").WillReturnRows(sqlmock.NewRows([]string{"time_zone"}).AddRow("SYSTEM"))
 	s.rc.cfg.TiDB.Vars = map[string]string{
 		"time_zone": "UTC",
 	}
@@ -221,22 +192,8 @@ func (s *restoreSchemaSuite) TestRestoreSchemaFailed() {
 		sqlMock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(int64(i), 1))
 	}
 
-	mockTiDBGlue := mock.NewMockGlue(s.controller)
-	mockTiDBGlue.EXPECT().
-		GetDB().
-		AnyTimes().
-		Return(mockDB, nil)
-	mockTiDBGlue.EXPECT().
-		OwnsSQLExecutor().
-		AnyTimes().
-		Return(true)
-	parser := parser.New()
-	mockTiDBGlue.EXPECT().
-		GetParser().
-		AnyTimes().
-		Return(parser)
-	s.rc.tidbGlue = mockTiDBGlue
-	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
+	s.rc.db = mockDB
+	s.targetInfoGetter.db = mockDB
 	err = s.rc.restoreSchema(s.ctx)
 	require.Error(s.T(), err)
 	require.True(s.T(), errors.ErrorEqual(err, injectErr))
@@ -276,25 +233,11 @@ func (s *restoreSchemaSuite) TestRestoreSchemaContextCancel() {
 	for i := 0; i < 17; i++ {
 		sqlMock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(int64(i), 1))
 	}
-	mockTiDBGlue := mock.NewMockGlue(s.controller)
-	mockTiDBGlue.EXPECT().
-		GetDB().
-		AnyTimes().
-		Do(func() { cancel() }).
-		Return(mockDB, nil)
-	mockTiDBGlue.EXPECT().
-		OwnsSQLExecutor().
-		AnyTimes().
-		Return(true)
-	parser := parser.New()
-	mockTiDBGlue.EXPECT().
-		GetParser().
-		AnyTimes().
-		Return(parser)
-	s.rc.tidbGlue = mockTiDBGlue
-	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
-	err = s.rc.restoreSchema(childCtx)
+	s.rc.db = mockDB
+	s.targetInfoGetter.db = mockDB
 	cancel()
+	err = s.rc.restoreSchema(childCtx)
 	require.Error(s.T(), err)
+	err = errors.Cause(err)
 	require.Equal(s.T(), childCtx.Err(), err)
 }
