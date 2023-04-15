@@ -1322,9 +1322,8 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 			if job.stage == ingested {
 				jobWg.Done()
 				return
-			} else {
-				jobCh <- job
 			}
+			jobCh <- job
 		}
 	}()
 	wg.Add(1)
