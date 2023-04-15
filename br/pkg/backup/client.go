@@ -410,18 +410,9 @@ func (bc *Client) BuildBackupRangeAndSchema(
 	isFullBackup bool,
 ) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
 	if bc.checkpointMeta == nil {
-		ranges, schemas, policies, err := BuildBackupRangeAndSchema(storage, tableFilter, backupTS, isFullBackup, true)
-		if err != nil {
-			return nil, nil, nil, errors.Trace(err)
-		}
-		// Add keyspace prefix to BackupRequest
-		for i := range ranges {
-			start, end := ranges[i].StartKey, ranges[i].EndKey
-			ranges[i].StartKey, ranges[i].EndKey = storage.GetCodec().EncodeRange(start, end)
-		}
-		return ranges, schemas, policies, err
+		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup, true)
 	}
-	_, schemas, policies, err := BuildBackupRangeAndSchema(storage, tableFilter, backupTS, isFullBackup, false)
+	_, schemas, policies, err := BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup, false)
 	schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
 	return bc.checkpointMeta.Ranges, schemas, policies, errors.Trace(err)
 }
@@ -501,7 +492,7 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 // BuildBackupRangeAndSchema gets KV range and schema of tables.
 // KV ranges are separated by Table IDs.
 // Also, KV ranges are separated by Index IDs in the same table.
-func BuildBackupRangeAndSchema(
+func BuildBackupRangeAndInitSchema(
 	storage kv.Storage,
 	tableFilter filter.Filter,
 	backupTS uint64,
@@ -542,7 +533,7 @@ func BuildBackupRangeAndSchema(
 			continue
 		}
 
-		tableNum := 0
+		hasTable := false
 		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
@@ -550,16 +541,18 @@ func BuildBackupRangeAndSchema(
 			}
 
 			schemasNum += 1
-			tableNum += 1
+			hasTable = true
 			if buildRange {
 				tableRanges, err := BuildTableRanges(tableInfo)
 				if err != nil {
 					return errors.Trace(err)
 				}
 				for _, r := range tableRanges {
+					// Add keyspace prefix to BackupRequest
+					startKey, endKey := storage.GetCodec().EncodeRange(r.StartKey, r.EndKey)
 					ranges = append(ranges, rtree.Range{
-						StartKey: r.StartKey,
-						EndKey:   r.EndKey,
+						StartKey: startKey,
+						EndKey:   endKey,
 					})
 				}
 			}
@@ -571,7 +564,7 @@ func BuildBackupRangeAndSchema(
 			return nil, nil, nil, errors.Trace(err)
 		}
 
-		if tableNum == 0 {
+		if !hasTable {
 			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
 			schemasNum += 1
 		}
@@ -615,7 +608,7 @@ func BuildBackupSchemas(
 			dbInfo.PlacementPolicyRef = nil
 		}
 
-		tableNum := 0
+		hasTable := false
 		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
@@ -676,7 +669,7 @@ func BuildBackupSchemas(
 			tableInfo.Indices = tableInfo.Indices[:n]
 
 			fn(dbInfo, tableInfo)
-			tableNum += 1
+			hasTable = true
 
 			return nil
 		})
@@ -685,7 +678,7 @@ func BuildBackupSchemas(
 			return errors.Trace(err)
 		}
 
-		if tableNum == 0 {
+		if !hasTable {
 			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
 			fn(dbInfo, nil)
 		}
@@ -705,11 +698,11 @@ func BuildFullSchema(storage kv.Storage, backupTS uint64, fn func(dbInfo *model.
 	}
 
 	for _, db := range dbs {
-		tableNum := 0
+		hasTable := false
 		err = m.IterTables(db.ID, func(table *model.TableInfo) error {
 			// add table
 			fn(db, table)
-			tableNum += 1
+			hasTable = true
 			return nil
 		})
 		if err != nil {
@@ -717,7 +710,7 @@ func BuildFullSchema(storage kv.Storage, backupTS uint64, fn func(dbInfo *model.
 		}
 
 		// backup this empty db if this schema is empty.
-		if tableNum == 0 {
+		if !hasTable {
 			fn(db, nil)
 		}
 	}
