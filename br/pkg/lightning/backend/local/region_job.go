@@ -343,10 +343,8 @@ func (j *regionJob) ingest(
 	supportMultiIngest bool,
 	shouldCheckWriteStall bool,
 ) error {
-	switch j.stage {
-	case regionScanned, ingested:
+	if j.stage != wrote {
 		return nil
-	case wrote:
 	}
 
 	if len(j.writeResult.sstMeta) == 0 {
@@ -369,7 +367,7 @@ func (j *regionJob) ingest(
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
 			continue
 		}
-		canContinue, err := j.fixIngestError(ctx, resp, splitCli)
+		canContinue, err := j.fixIngestError(resp)
 		if common.IsContextCanceledError(err) {
 			return err
 		}
@@ -512,53 +510,21 @@ func (j *regionJob) doIngest(
 // Return (true, nil) when the job can retry ingesting immediately.
 // Return (false, nil) when the job should be put back to queue.
 func (j *regionJob) fixIngestError(
-	ctx context.Context,
 	resp *sst.IngestResponse,
-	splitCli split.SplitClient,
 ) (bool, error) {
 	if resp.GetError() == nil {
 		return true, nil
 	}
 
-	getRegion := func() (*split.RegionInfo, error) {
-		for i := 0; ; i++ {
-			newRegion, err := splitCli.GetRegion(ctx, j.region.Region.GetStartKey())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if newRegion != nil {
-				return newRegion, nil
-			}
-			log.FromContext(ctx).Warn("get region by key return nil, will retry",
-				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader),
-				zap.Int("retry", i))
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(time.Second):
-			}
-		}
-	}
-
 	var newRegion *split.RegionInfo
-	var err error
 	switch errPb := resp.GetError(); {
 	case errPb.NotLeader != nil:
 		j.lastRetryableErr = common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 
-		if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
-			newRegion = &split.RegionInfo{
-				Leader: newLeader,
-				Region: j.region.Region,
-			}
-		} else {
-			newRegion, err = getRegion()
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-		}
-		j.region = newRegion
-		return true, nil
+		// meet a problem that the region leader+peer are all updated but the return
+		// error is only "NotLeader", we should update the whole region info.
+		j.convertStageTo(needRescan)
+		return false, nil
 	case errPb.EpochNotMatch != nil:
 		j.lastRetryableErr = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
 
