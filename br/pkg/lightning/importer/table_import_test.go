@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -795,8 +796,8 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx(db)
-	remoteChecksum, err := DoChecksum(ctx, s.tr.tableInfo)
+	ctx := local.MockDoChecksumCtx(db)
+	remoteChecksum, err := local.DoChecksum(ctx, s.tr.tableInfo)
 	require.NoError(s.T(), err)
 	err = s.tr.compareChecksum(remoteChecksum, verification.MakeKVChecksum(1234567, 12345, 1234567890))
 	require.NoError(s.T(), err)
@@ -825,8 +826,8 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure() {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx(db)
-	remoteChecksum, err := DoChecksum(ctx, s.tr.tableInfo)
+	ctx := local.MockDoChecksumCtx(db)
+	remoteChecksum, err := local.DoChecksum(ctx, s.tr.tableInfo)
 	require.NoError(s.T(), err)
 	err = s.tr.compareChecksum(remoteChecksum, verification.MakeKVChecksum(9876543, 54321, 1357924680))
 	require.Regexp(s.T(), "checksum mismatched.*", err.Error())

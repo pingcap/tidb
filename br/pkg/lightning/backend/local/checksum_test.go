@@ -1,4 +1,4 @@
-package importer
+package local
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/importer"
 	"github.com/pingcap/tidb/ddl"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -30,8 +31,8 @@ import (
 
 func MockDoChecksumCtx(db *sql.DB) context.Context {
 	ctx := context.Background()
-	manager := newTiDBChecksumExecutor(db)
-	return context.WithValue(ctx, &checksumManagerKey, manager)
+	manager := NewTiDBChecksumExecutor(db)
+	return context.WithValue(ctx, &importer.checksumManagerKey, manager)
 }
 
 func TestDoChecksum(t *testing.T) {
@@ -176,10 +177,10 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		kvClient.onSendReq = func(req *kv.Request) {
 			checksumTS = req.StartTs
 		}
-		checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
+		checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
 		physicalTS, logicalTS, err := pdClient.GetTS(ctx)
 		require.NoError(t, err)
-		subCtx := context.WithValue(ctx, &checksumManagerKey, checksumExec)
+		subCtx := context.WithValue(ctx, &importer.checksumManagerKey, checksumExec)
 		_, err = DoChecksum(subCtx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
