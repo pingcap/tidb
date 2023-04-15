@@ -219,7 +219,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int6
 	return table, nil
 }
 
-func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
+func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -235,6 +235,24 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
 			continue
+		}
+		notNeedLoad := lease > 0 &&
+			(idx == nil || ((!idx.IsStatsInitialized() || idx.IsAllEvicted()) && idx.LastUpdateVersion < histVer)) &&
+			!loadAll
+		if notNeedLoad {
+			idx = &Index{
+				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0),
+				ErrorRate:  errorRate,
+				StatsVer:   statsVer,
+				Info:       idxInfo,
+				Flag:       flag,
+				PhysicalID: table.PhysicalID,
+			}
+			if idx.IsAnalyzed() {
+				idx.StatsLoadedStatus = NewStatsAllEvictedStatus()
+			}
+			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
+			break
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer {
 			hg, err := HistogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
@@ -303,7 +321,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		// We will not load buckets if:
 		// 1. lease > 0, and:
 		// 2. this column is not handle, and:
-		// 3. the column doesn't has any statistics before, and:
+		// 3. the column doesn't have any statistics before, and:
 		// 4. loadAll is false.
 		//
 		// Here is the explanation of the condition `!col.IsStatsInitialized() || col.IsAllEvicted()`.
@@ -320,8 +338,6 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 			!isHandle &&
 			(col == nil || ((!col.IsStatsInitialized() || col.IsAllEvicted()) && col.LastUpdateVersion < histVer)) &&
 			!loadAll
-		// Here is
-		//For one column, if there is no stats for it in the storage(analyze is never)
 		if notNeedLoad {
 			col = &Column{
 				PhysicalID: table.PhysicalID,
@@ -427,7 +443,7 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			err = indexStatsFromStorage(reader, row, table, tableInfo, loadAll)
+			err = indexStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
 		} else {
 			err = columnStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
 		}
