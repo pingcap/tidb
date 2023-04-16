@@ -1,3 +1,17 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package globalconn_test
 
 import (
@@ -58,6 +72,23 @@ func TestGlobalConnID(t *testing.T) {
 	assert.Equal(gcid2.ToConnID(), id2)
 }
 
+func TestGetReservedConnID(t *testing.T) {
+	assert := assert.New(t)
+
+	simpleAlloc := globalconn.NewSimpleAllocator()
+	assert.Equal(math.MaxUint64-uint64(0), simpleAlloc.GetReservedConnID(0))
+	assert.Equal(math.MaxUint64-uint64(1), simpleAlloc.GetReservedConnID(1))
+
+	serverID := func() uint64 {
+		return 1001
+	}
+
+	globalAlloc := globalconn.NewGlobalAllocator(serverID)
+	var maxLocalConnID uint64 = 1<<40 - 1
+	assert.Equal(uint64(1001)<<41|(maxLocalConnID)<<1|1, globalAlloc.GetReservedConnID(0))
+	assert.Equal(uint64(1001)<<41|(maxLocalConnID-1)<<1|1, globalAlloc.GetReservedConnID(1))
+}
+
 func benchmarkLocalConnIDAllocator32(b *testing.B, pool globalconn.IDPool) {
 	var (
 		id uint64
@@ -85,7 +116,7 @@ func BenchmarkLocalConnIDAllocator(b *testing.B) {
 	for _, concurrency := range concurrencyCases {
 		b.Run(fmt.Sprintf("Allocator 64 x%v", concurrency), func(b *testing.B) {
 			pool := globalconn.AutoIncPool{}
-			pool.InitExt(globalconn.LocalConnIDBits64, true, globalconn.LocalConnIDAllocator64TryCount)
+			pool.InitExt(1<<globalconn.LocalConnIDBits64, true, globalconn.LocalConnIDAllocator64TryCount)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()
@@ -115,7 +146,7 @@ func BenchmarkLocalConnIDAllocator(b *testing.B) {
 
 		b.Run(fmt.Sprintf("Allocator 32(LockFreeCircularPool) x%v", concurrency), func(b *testing.B) {
 			pool := globalconn.LockFreeCircularPool{}
-			pool.InitExt(globalconn.LocalConnIDBits32, math.MaxUint32)
+			pool.InitExt(1<<globalconn.LocalConnIDBits32, math.MaxUint32)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()

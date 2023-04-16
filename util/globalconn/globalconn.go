@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -62,6 +62,9 @@ const (
 	LocalConnIDBits64 = 40
 	// MaxLocalConnID64 is maximum localConnID for 64bits global connection ID.
 	MaxLocalConnID64 = 1<<LocalConnIDBits64 - 1
+
+	// ReservedCount is the count of reserved connection IDs for internal processes.
+	ReservedCount = 200
 )
 
 // ToConnID returns the 64bits connection ID
@@ -149,7 +152,7 @@ type SimpleAllocator struct {
 // NewSimpleAllocator creates a new SimpleAllocator.
 func NewSimpleAllocator() *SimpleAllocator {
 	a := &SimpleAllocator{}
-	a.pool.Init(64)
+	a.pool.Init(math.MaxUint64 - ReservedCount)
 	return a
 }
 
@@ -166,7 +169,10 @@ func (a *SimpleAllocator) Release(id uint64) {
 
 // GetReservedConnID implements ConnIDAllocator interface.
 func (*SimpleAllocator) GetReservedConnID(reservedNo uint64) uint64 {
-	return reservedNo
+	if reservedNo >= ReservedCount {
+		panic("invalid reservedNo exceed ReservedCount")
+	}
+	return math.MaxUint64 - reservedNo
 }
 
 // GlobalAllocator is global connection ID allocator.
@@ -196,8 +202,8 @@ func NewGlobalAllocator(serverIDGetter serverIDGetterFn) *GlobalAllocator {
 	g := &GlobalAllocator{
 		serverIDGetter: serverIDGetter,
 	}
-	g.local32.InitExt(LocalConnIDBits32, math.MaxUint32)
-	g.local64.InitExt(LocalConnIDBits64, true, LocalConnIDAllocator64TryCount)
+	g.local32.InitExt(1<<LocalConnIDBits32, math.MaxUint32)
+	g.local64.InitExt((1<<LocalConnIDBits64)-ReservedCount, true, LocalConnIDAllocator64TryCount)
 
 	g.is64bits.Set(1) // TODO: set 32bits as default, after 32bits logics is fully implemented and tested.
 	return g
@@ -211,10 +217,14 @@ func (g *GlobalAllocator) NextID() uint64 {
 
 // GetReservedConnID implements ConnIDAllocator interface.
 func (g *GlobalAllocator) GetReservedConnID(reservedNo uint64) uint64 {
+	if reservedNo >= ReservedCount {
+		panic("invalid reservedNo exceed ReservedCount")
+	}
+
 	serverID := g.serverIDGetter()
 	globalConnID := GCID{
 		ServerID:    serverID,
-		LocalConnID: reservedNo,
+		LocalConnID: (1 << LocalConnIDBits64) - 1 - reservedNo,
 		Is64bits:    true,
 	}
 	return globalConnID.ToConnID()

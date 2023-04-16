@@ -2501,8 +2501,8 @@ const (
 	acquireServerIDTimeout         = 10 * time.Second
 	retrieveServerIDSessionTimeout = 10 * time.Second
 
-	reservedLocalConns  = 200
-	reservedConnAnalyze = 1
+	// reservedConnXXX must be within [0, globalconn.ReservedCount)
+	reservedConnAnalyze = 0
 )
 
 var (
