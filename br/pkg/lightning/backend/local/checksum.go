@@ -286,6 +286,7 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 	return nil, err
 }
 
+// Checksum implements the ChecksumManager interface.
 func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
 	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	physicalTS, logicalTS, err := e.manager.pdClient.GetTS(ctx)
