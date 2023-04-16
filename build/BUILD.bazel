@@ -144,6 +144,7 @@ nogo(
                    "//build/linter/allrevive",
                    "//build/linter/errcheck",
                    "//build/linter/filepermission",
+                   "//build/linter/lll",
                    "//build/linter/revive",
                ],
                "//conditions:default": [],

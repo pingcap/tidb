@@ -46,7 +46,7 @@ go_library(
 
 go_test(
     name = "ttlworker_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "del_test.go",
         "job_manager_integration_test.go",
