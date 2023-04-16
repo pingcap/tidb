@@ -1137,22 +1137,24 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 	}
 
 	definitions := make([]model.PartitionDefinition, numParts)
-	// So start by re-using the existing ones
-	// For COALESCE, it will copy the remaining ones
-	// For ADD it will copy the existing ones
-	copy(definitions, tbInfo.Partition.Definitions)
-	offset := uint64(len(tbInfo.Partition.Definitions))
-
-	// ADD PARTITION needs to add the new partitions
-	for i := offset; i < numParts; i++ {
-		if (i - offset) < uint64(len(defs)) {
-			def := defs[i-offset]
+	oldParts := uint64(len(tbInfo.Partition.Definitions))
+	for i := uint64(0); i < numParts; i++ {
+		if i < oldParts {
+			// Use the existing definitions
+			def := tbInfo.Partition.Definitions[i]
+			definitions[i].Name = def.Name
+			definitions[i].Comment = def.Comment
+			definitions[i].PlacementPolicyRef = def.PlacementPolicyRef
+		} else if i < oldParts+uint64(len(defs)) {
+			// Use the new defs
+			def := defs[i-oldParts]
 			definitions[i].Name = def.Name
 			definitions[i].Comment, _ = def.Comment()
 			if err := setPartitionPlacementFromOptions(&definitions[i], def.Options); err != nil {
 				return nil, err
 			}
 		} else {
+			// Use the default
 			definitions[i].Name = model.NewCIStr(fmt.Sprintf("p%d", i))
 		}
 	}
