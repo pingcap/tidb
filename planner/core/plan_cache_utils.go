@@ -216,7 +216,7 @@ func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
 		var (
 			dbBytes    = hack.Slice(key.stmtText)
-			bufferSize = len(dbBytes) * 4
+			bufferSize = len(dbBytes) * 2
 		)
 		if key.hash == nil {
 			key.hash = make([]byte, 0, bufferSize)
