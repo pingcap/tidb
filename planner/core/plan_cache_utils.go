@@ -215,8 +215,8 @@ type planCacheKey struct {
 func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
 		var (
-			dbBytes    = hack.Slice(key.database)
-			bufferSize = len(dbBytes) + 8*6 + 3*8
+			dbBytes    = hack.Slice(key.stmtText)
+			bufferSize = len(dbBytes) * 4
 		)
 		if key.hash == nil {
 			key.hash = make([]byte, 0, bufferSize)
