@@ -673,7 +673,7 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 	if !fkCheck {
 		return nil
 	}
-	sctx, err := w.sessPool.get()
+	sctx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -681,7 +681,7 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 	sctx.GetSessionVars().OptimizerEnableNAAJ = true
 	defer func() {
 		sctx.GetSessionVars().OptimizerEnableNAAJ = originValue
-		w.sessPool.put(sctx)
+		w.sessPool.Put(sctx)
 	}()
 
 	var buf strings.Builder

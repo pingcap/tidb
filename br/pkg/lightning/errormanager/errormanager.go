@@ -115,6 +115,7 @@ const (
 	`
 )
 
+// ErrorManager records errors during the import process.
 type ErrorManager struct {
 	db             *sql.DB
 	taskID         int64
@@ -125,6 +126,7 @@ type ErrorManager struct {
 	logger         log.Logger
 }
 
+// TypeErrorsRemain returns the number of type errors that can be recorded.
 func (em *ErrorManager) TypeErrorsRemain() int64 {
 	return em.remainingError.Type.Load()
 }
@@ -229,6 +231,7 @@ func (em *ErrorManager) RecordTypeError(
 	return nil
 }
 
+// DataConflictInfo is the information of a data conflict error.
 type DataConflictInfo struct {
 	RawKey   []byte
 	RawValue []byte
@@ -236,6 +239,7 @@ type DataConflictInfo struct {
 	Row      string
 }
 
+// RecordDataConflictError records a data conflict error.
 func (em *ErrorManager) RecordDataConflictError(
 	ctx context.Context,
 	logger log.Logger,
@@ -251,7 +255,9 @@ func (em *ErrorManager) RecordDataConflictError(
 		threshold := em.configError.Conflict.Load()
 		// Still need to record this batch of conflict records, and then return this error at last.
 		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
-		gerr = errors.Errorf("The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'", threshold)
+		gerr = errors.Errorf(
+			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			threshold)
 	}
 
 	if em.db == nil {
@@ -289,6 +295,7 @@ func (em *ErrorManager) RecordDataConflictError(
 	return gerr
 }
 
+// RecordIndexConflictError records a index conflict error.
 func (em *ErrorManager) RecordIndexConflictError(
 	ctx context.Context,
 	logger log.Logger,
@@ -306,7 +313,9 @@ func (em *ErrorManager) RecordIndexConflictError(
 		threshold := em.configError.Conflict.Load()
 		// Still need to record this batch of conflict records, and then return this error at last.
 		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
-		gerr = errors.Errorf("The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'", threshold)
+		gerr = errors.Errorf(
+			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			threshold)
 	}
 
 	if em.db == nil {
@@ -460,12 +469,13 @@ func (em *ErrorManager) charsetError() int64 {
 	})
 }
 
+// HasError returns true if any error type has reached the limit
 func (em *ErrorManager) HasError() bool {
 	return em.typeErrors() > 0 || em.syntaxError() > 0 ||
 		em.charsetError() > 0 || em.conflictError() > 0
 }
 
-// GenErrorLogFields return a slice of zap.Field for each error type
+// LogErrorDetails return a slice of zap.Field for each error type
 func (em *ErrorManager) LogErrorDetails() {
 	fmtErrMsg := func(cnt int64, errType, tblName string) string {
 		return fmt.Sprintf("Detect %d %s errors in total, please refer to table %s for more details",

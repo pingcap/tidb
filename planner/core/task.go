@@ -1165,6 +1165,13 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if partialSel != nil && finalScan.statsInfo().RowCount > 0 {
 				selSelectivityOnPartialScan[i] = partialSel.statsInfo().RowCount / finalScan.statsInfo().RowCount
 			}
+			// TODO: Support partition table later.
+			if plan, ok := finalScan.(*PhysicalTableScan); ok && tblInfo.GetPartitionInfo() == nil {
+				plan.ByItems = p.ByItems
+			}
+			if plan, ok := finalScan.(*PhysicalIndexScan); ok && tblInfo.GetPartitionInfo() == nil {
+				plan.ByItems = p.ByItems
+			}
 			partialScans = append(partialScans, finalScan)
 		}
 	}
@@ -1202,8 +1209,42 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				return nil, false
 			}
 			clonedTblScan.statsInfo().ScaleByExpectCnt(float64(p.Count+p.Offset) * float64(len(copTsk.idxMergePartPlans)))
+			// TODO: This is a hack way, planner should not prune handle columns when `keepOrder` = true.
+			// TODO: Support partition table later.
+			if tblInfo.GetPartitionInfo() == nil {
+				if tblInfo.PKIsHandle {
+					pk := tblInfo.GetPkColInfo()
+					col := expression.ColInfo2Col(tblScan.tblCols, pk)
+					tblScan.HandleCols = NewIntHandleCols(col)
+					clonedTblScan.Schema().Append(col)
+					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, pk)
+				} else if tblInfo.IsCommonHandle {
+					idxInfo := tblInfo.GetPrimaryKey()
+					tblScan.HandleCols = NewCommonHandleCols(p.SCtx().GetSessionVars().StmtCtx, tblInfo, idxInfo, tblScan.tblCols)
+					for i := 0; i < tblScan.HandleCols.NumCols(); i++ {
+						clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(i))
+						clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, tblScan.HandleCols.GetCol(i).ToInfo())
+					}
+				} else {
+					clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(0))
+					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, model.NewExtraHandleColInfo())
+				}
+			}
 			copTsk.tablePlan = clonedTblScan
 			copTsk.indexPlanFinished = true
+			rootTask := copTsk.convertToRootTask(p.ctx)
+			// TODO: support order prop push down into partition table
+			if tblInfo.GetPartitionInfo() == nil {
+				if indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader); ok {
+					indexMerge.PushedLimit = &PushedDownLimit{
+						Offset: p.Offset,
+						Count:  p.Count,
+					}
+					indexMerge.ByItems = p.ByItems
+					indexMerge.KeepOrder = true
+					return rootTask, true
+				}
+			}
 		} else {
 			// The normal index scan cases.(single read and double read)
 			propMatched := p.checkOrderPropForSubIndexScan(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
@@ -1211,6 +1252,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				return nil, false
 			}
 			idxScan.Desc = isDesc
+			idxScan.KeepOrder = true
 			idxScan.ByItems = p.ByItems
 			childProfile := copTsk.plan().statsInfo()
 			newCount := p.Offset + p.Count
@@ -1233,16 +1275,30 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 
 			rootTask := copTsk.convertToRootTask(p.ctx)
-			// only support IndexReader now.
-			if _, ok := rootTask.p.(*PhysicalIndexReader); ok {
-				rootLimit := PhysicalLimit{
-					Count:       p.Count,
-					Offset:      p.Offset,
-					PartitionBy: newPartitionBy,
-				}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-				rootLimit.SetSchema(rootTask.plan().Schema())
-				return attachPlan2Task(rootLimit, rootTask), true
+			// embedded limit in indexLookUp, no more limit needed.
+			if idxLookup, ok := rootTask.p.(*PhysicalIndexLookUpReader); ok {
+				idxLookup.PushedLimit = &PushedDownLimit{
+					Offset: p.Offset,
+					Count:  p.Count,
+				}
+				extraInfo, extraCol, hasExtraCol := tryGetPkExtraColumn(p.ctx.GetSessionVars(), tblInfo)
+				// TODO: sometimes it will add a duplicate `_tidb_rowid` column in ts.schema()
+				if hasExtraCol {
+					idxLookup.ExtraHandleCol = extraCol
+					ts := idxLookup.TablePlans[0].(*PhysicalTableScan)
+					ts.Columns = append(ts.Columns, extraInfo)
+					ts.schema.Append(extraCol)
+					ts.HandleIdx = []int{len(ts.Columns) - 1}
+				}
+				return rootTask, true
 			}
+			rootLimit := PhysicalLimit{
+				Count:       p.Count,
+				Offset:      p.Offset,
+				PartitionBy: newPartitionBy,
+			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+			rootLimit.SetSchema(rootTask.plan().Schema())
+			return attachPlan2Task(rootLimit, rootTask), true
 		}
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {
@@ -1352,7 +1408,7 @@ func (p *PhysicalTopN) checkSubScans(colsProp *property.PhysicalProperty, isDesc
 				}
 			} else {
 				idxCols, idxColLens := expression.IndexInfo2PrefixCols(x.Columns, x.Schema().Columns, tables.FindPrimaryIndex(x.Table))
-				matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, nil, colsProp)
+				matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, x.constColsByCond, colsProp)
 				if !matched {
 					return false
 				}

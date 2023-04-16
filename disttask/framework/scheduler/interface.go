@@ -22,16 +22,11 @@ import (
 
 // TaskTable defines the interface to access task table.
 type TaskTable interface {
-	GetTasksInStates(states ...interface{}) (task []*proto.Task, err error)
-	GetTaskByID(taskID int64) (task *proto.Task, err error)
-}
-
-// SubtaskTable defines the interface to access subtask table.
-type SubtaskTable interface {
+	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
+	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
 	GetSubtaskInStates(instanceID string, taskID int64, states ...interface{}) (*proto.Subtask, error)
 	UpdateSubtaskState(id int64, state string) error
 	HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error)
-	//	UpdateHeartbeat(TiDB string, taskID int64, heartbeat time.Time) error
 }
 
 // Pool defines the interface of a pool.
@@ -52,9 +47,13 @@ type InternalScheduler interface {
 // Scheduler defines the interface of a scheduler.
 // User should implement this interface to define their own scheduler.
 type Scheduler interface {
+	// InitSubtaskExecEnv is used to initialize the environment for the subtask executor.
 	InitSubtaskExecEnv(context.Context) error
-	SplitSubtask(subtask []byte) []proto.MinimalTask
+	// SplitSubtask is used to split the subtask into multiple minimal tasks.
+	SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error)
+	// CleanupSubtaskExecEnv is used to clean up the environment for the subtask executor.
 	CleanupSubtaskExecEnv(context.Context) error
+	// Rollback is used to rollback all subtasks.
 	Rollback(context.Context) error
 }
 

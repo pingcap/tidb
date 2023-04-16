@@ -37,6 +37,7 @@ go_test(
     ],
     embed = [":pdutil"],
     flaky = True,
+    shard_count = 8,
     deps = [
         "//store/pdtypes",
         "//testkit/testsetup",

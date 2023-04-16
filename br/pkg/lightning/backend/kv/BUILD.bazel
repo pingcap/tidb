@@ -55,6 +55,7 @@ go_test(
     embed = [":kv"],
     flaky = True,
     race = "on",
+    shard_count = 15,
     deps = [
         "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/common",
