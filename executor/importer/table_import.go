@@ -267,6 +267,11 @@ func (ti *TableImporter) importTable(ctx context.Context) error {
 		return err
 	}
 	// todo: post process
+	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), 1)
+	remoteChecksum, err := manager.Checksum(ctx, ti.tableInfo)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
