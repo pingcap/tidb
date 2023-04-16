@@ -158,8 +158,9 @@ func BuildObserveMetaRange() *kv.KeyRange {
 }
 
 type ContentRef struct {
-	ref  int
-	data []byte
+	init_ref int
+	ref      int
+	data     []byte
 }
 
 // MetadataHelper make restore/truncate compatible with metadataV1 and metadataV2.
@@ -181,8 +182,9 @@ func (m *MetadataHelper) InitCacheEntry(path string, ref int) {
 		return
 	}
 	m.cache[path] = &ContentRef{
-		ref:  ref,
-		data: nil,
+		init_ref: ref,
+		ref:      ref,
+		data:     nil,
 	}
 }
 
@@ -197,8 +199,14 @@ func (m *MetadataHelper) decodeCompressedData(data []byte, compressionType backu
 		"failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
 }
 
-func (m *MetadataHelper) ReadFile(ctx context.Context, path string,
-	offset, length uint64, compressionType backuppb.CompressionType, storage storage.ExternalStorage) ([]byte, error) {
+func (m *MetadataHelper) ReadFile(
+	ctx context.Context,
+	path string,
+	offset uint64,
+	length uint64,
+	compressionType backuppb.CompressionType,
+	storage storage.ExternalStorage,
+) ([]byte, error) {
 	var err error
 	cref, exist := m.cache[path]
 	if !exist {
@@ -227,8 +235,9 @@ func (m *MetadataHelper) ReadFile(ctx context.Context, path string,
 	buf, err := m.decodeCompressedData(cref.data[offset:offset+length], compressionType)
 
 	if cref.ref <= 0 {
+		// need reset reference information.
 		cref.data = nil
-		delete(m.cache, path)
+		cref.ref = cref.init_ref
 	}
 
 	return buf, errors.Trace(err)

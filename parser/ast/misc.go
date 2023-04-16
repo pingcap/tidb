@@ -3721,14 +3721,44 @@ func (n *SetResourceGroupStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// CalibrateResourceType is the type for CalibrateResource statement.
+type CalibrateResourceType int
+
+// calibrate resource [ workload < TPCC | OLTP_READ_WRITE | OLTP_READ_ONLY | OLTP_WRITE_ONLY> ]
+const (
+	WorkloadNone CalibrateResourceType = iota
+	TPCC
+	OLTPREADWRITE
+	OLTPREADONLY
+	OLTPWRITEONLY
+)
+
+func (n CalibrateResourceType) Restore(ctx *format.RestoreCtx) error {
+	switch n {
+	case TPCC:
+		ctx.WriteKeyWord(" WORKLOAD TPCC")
+	case OLTPREADWRITE:
+		ctx.WriteKeyWord(" WORKLOAD OLTP_READ_WRITE")
+	case OLTPREADONLY:
+		ctx.WriteKeyWord(" WORKLOAD OLTP_READ_ONLY")
+	case OLTPWRITEONLY:
+		ctx.WriteKeyWord(" WORKLOAD OLTP_WRITE_ONLY")
+	}
+	return nil
+}
+
 // CalibrateResourceStmt is a statement to fetch the cluster RU capacity
 type CalibrateResourceStmt struct {
 	stmtNode
+	Tp CalibrateResourceType
 }
 
 // Restore implements Node interface.
 func (n *CalibrateResourceStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CALIBRATE RESOURCE")
+	if err := n.Tp.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CalibrateResourceStmt.CalibrateResourceType")
+	}
 	return nil
 }
 
