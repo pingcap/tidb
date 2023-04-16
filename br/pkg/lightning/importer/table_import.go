@@ -987,7 +987,7 @@ func (tr *TableImporter) postProcess(
 			}
 
 			var remoteChecksum *local.RemoteChecksum
-			remoteChecksum, err = local.DoChecksum(ctx, tr.tableInfo)
+			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
 			if err != nil {
 				return false, err
 			}

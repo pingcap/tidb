@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/kv"
@@ -137,7 +136,7 @@ func (m *gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
 	defer m.runningJobsLock.Unlock()
 
 	if m.runningJobs == 0 {
-		oriGCLifeTime, err := importer.ObtainGCLifeTime(ctx, db)
+		oriGCLifeTime, err := obtainGCLifeTime(ctx, db)
 		if err != nil {
 			return err
 		}
@@ -161,7 +160,7 @@ func (m *gcLifeTimeManager) removeOneJob(ctx context.Context, db *sql.DB) {
 
 	m.runningJobs--
 	if m.runningJobs == 0 {
-		err := importer.UpdateGCLifeTime(ctx, db, m.oriGCLifeTime)
+		err := updateGCLifeTime(ctx, db, m.oriGCLifeTime)
 		if err != nil {
 			query := fmt.Sprintf(
 				"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
@@ -192,7 +191,7 @@ func increaseGCLifeTime(ctx context.Context, manager *gcLifeTimeManager, db *sql
 	}
 
 	if increaseGCLifeTime {
-		err = importer.UpdateGCLifeTime(ctx, db, defaultGCLifeTime.String())
+		err = updateGCLifeTime(ctx, db, defaultGCLifeTime.String())
 		if err != nil {
 			return err
 		}
@@ -201,6 +200,30 @@ func increaseGCLifeTime(ctx context.Context, manager *gcLifeTimeManager, db *sql
 	failpoint.Inject("IncreaseGCUpdateDuration", nil)
 
 	return nil
+}
+
+// obtainGCLifeTime obtains the current GC lifetime.
+func obtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
+	var gcLifeTime string
+	err := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}.QueryRow(
+		ctx,
+		"obtain GC lifetime",
+		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
+		&gcLifeTime,
+	)
+	return gcLifeTime, err
+}
+
+// updateGCLifeTime updates the current GC lifetime.
+func updateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
+	sql := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.FromContext(ctx).With(zap.String("gcLifeTime", gcLifeTime)),
+	}
+	return sql.Exec(ctx, "update GC lifetime",
+		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
+		gcLifeTime,
+	)
 }
 
 // TiKVChecksumManager is a manager that can compute checksum of a table using TiKV.

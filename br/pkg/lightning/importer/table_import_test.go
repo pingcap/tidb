@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -773,6 +774,12 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 	}
 }
 
+func MockDoChecksumCtx(db *sql.DB) context.Context {
+	ctx := context.Background()
+	manager := local.NewTiDBChecksumExecutor(db)
+	return context.WithValue(ctx, &checksumManagerKey, manager)
+}
+
 func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
 	db, mock, err := sqlmock.New()
 	require.NoError(s.T(), err)
@@ -796,8 +803,8 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := local.MockDoChecksumCtx(db)
-	remoteChecksum, err := local.DoChecksum(ctx, s.tr.tableInfo)
+	ctx := MockDoChecksumCtx(db)
+	remoteChecksum, err := DoChecksum(ctx, s.tr.tableInfo)
 	require.NoError(s.T(), err)
 	err = s.tr.compareChecksum(remoteChecksum, verification.MakeKVChecksum(1234567, 12345, 1234567890))
 	require.NoError(s.T(), err)
@@ -826,8 +833,8 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure() {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := local.MockDoChecksumCtx(db)
-	remoteChecksum, err := local.DoChecksum(ctx, s.tr.tableInfo)
+	ctx := MockDoChecksumCtx(db)
+	remoteChecksum, err := DoChecksum(ctx, s.tr.tableInfo)
 	require.NoError(s.T(), err)
 	err = s.tr.compareChecksum(remoteChecksum, verification.MakeKVChecksum(9876543, 54321, 1357924680))
 	require.Regexp(s.T(), "checksum mismatched.*", err.Error())
