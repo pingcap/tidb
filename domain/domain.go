@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/gctuner"
+	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -157,7 +158,7 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
-	connIDAllocator      util.ConnIDAllocator
+	connIDAllocator      globalconn.Allocator
 
 	onClose            func()
 	sysExecutorFactory func(*Domain) (pools.Resource, error)
@@ -1129,7 +1130,7 @@ func (do *Domain) Init(
 	}
 
 	if config.GetGlobalConfig().EnableGlobalKill {
-		do.connIDAllocator = util.NewGlobalConnIDAllocator(do.ServerID)
+		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID)
 
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
@@ -1147,7 +1148,7 @@ func (do *Domain) Init(
 			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
 		}
 	} else {
-		do.connIDAllocator = util.NewSimpleConnIDAllocator()
+		do.connIDAllocator = globalconn.NewSimpleAllocator()
 	}
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
@@ -2596,7 +2597,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 
 	for {
 		// get a random serverID: [1, MaxServerID64]
-		randServerID := rand.Int63n(int64(util.MaxServerID64)) + 1 // #nosec G404
+		randServerID := rand.Int63n(int64(globalconn.MaxServerID64)) + 1 // #nosec G404
 		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
 		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
 		value := "0"

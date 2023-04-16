@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,7 +74,7 @@ func TestKillStmt(t *testing.T) {
 	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: unexpected connectionID exceeds int64"))
 
 	// local kill
-	connIDAllocator := util.NewGlobalConnIDAllocator(dom.ServerID)
+	connIDAllocator := globalconn.NewGlobalAllocator(dom.ServerID)
 	killConnID := connIDAllocator.NextID()
 	tk.MustExec("kill " + strconv.FormatUint(killConnID, 10))
 	result = tk.MustQuery("show warnings")
