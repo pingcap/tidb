@@ -457,28 +457,44 @@ func (d Datum) String() string {
 		t = "KindString"
 	case KindBytes:
 		t = "KindBytes"
+	case KindBinaryLiteral:
+		t = "KindBinaryLiteral"
 	case KindMysqlDecimal:
 		t = "KindMysqlDecimal"
 	case KindMysqlDuration:
 		t = "KindMysqlDuration"
 	case KindMysqlEnum:
 		t = "KindMysqlEnum"
-	case KindBinaryLiteral:
-		t = "KindBinaryLiteral"
 	case KindMysqlBit:
 		t = "KindMysqlBit"
 	case KindMysqlSet:
 		t = "KindMysqlSet"
-	case KindMysqlJSON:
-		t = "KindMysqlJSON"
 	case KindMysqlTime:
 		t = "KindMysqlTime"
+	case KindInterface:
+		t = "KindInterface"
+	case KindMinNotNull:
+		t = "KindMinNotNull"
+	case KindMaxValue:
+		t = "KindMaxValue"
+	case KindRaw:
+		t = "KindRaw"
+	case KindMysqlJSON:
+		t = "KindMysqlJSON"
 	default:
 		t = "Unknown"
 	}
 	v := d.GetValue()
-	if b, ok := v.([]byte); ok && d.k == KindBytes {
-		v = string(b)
+	switch v.(type) {
+	case []byte, string:
+		quote := `"`
+		// We only need the escape functionality of %q, the quoting is not needed,
+		// so we trim the \" prefix and suffix here.
+		v = strings.TrimSuffix(
+			strings.TrimPrefix(
+				fmt.Sprintf("%q", v),
+				quote),
+			quote)
 	}
 	return fmt.Sprintf("%v %v", t, v)
 }

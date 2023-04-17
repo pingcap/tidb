@@ -1432,14 +1432,14 @@ create table t(
 			exprStr:     `a LIKE "\\"`,
 			accessConds: "[like(test.t.a, \\, 92)]",
 			filterConds: "[]",
-			resultStr:   "[[\"\\\",\"\\\"]]",
+			resultStr:   "[[\"\\\\\",\"\\\\\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\\\a%"`,
 			accessConds: `[like(test.t.a, \\a%, 92)]`,
 			filterConds: "[]",
-			resultStr:   "[[\"\\a\",\"\\b\")]",
+			resultStr:   "[[\"\\\\a\",\"\\\\b\")]",
 		},
 		{
 			indexPos:    0,
@@ -1663,7 +1663,7 @@ create table t(
 			exprStr:     `h LIKE 'ÿÿ%'`,
 			accessConds: `[like(test.t.h, ÿÿ%, 92)]`,
 			filterConds: "[like(test.t.h, ÿÿ%, 92)]",
-			resultStr:   "[[\"ÿÿ\",\"ÿ\xc3\xc0\")]", // The decoding error is ignored.
+			resultStr:   "[[\"ÿÿ\",\"ÿ\\xc3\\xc0\")]", // The decoding error is ignored.
 		},
 	}
 
