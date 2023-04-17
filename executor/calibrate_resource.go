@@ -223,7 +223,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		tidbQuota := tidbCPUs[idx] / totalTiDBCPU
 		// If one of the two cpu usage is greater than the `valuableUsageThreshold`, we can accept it.
 		// And if both are greater than the `lowUsageThreshold`, we can also accpet it.
-		if tikvQuota > valuableUsageThreshold || tidbQuota > tidbQuota {
+		if tikvQuota > valuableUsageThreshold || tidbQuota > valuableUsageThreshold {
 			quotas = append(quotas, ru/mathutil.Max(tikvQuota, tidbQuota))
 		} else if tikvQuota < lowUsageThreshold {
 			lowCount++
