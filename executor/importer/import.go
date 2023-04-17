@@ -582,6 +582,10 @@ func (e *LoadDataController) initFieldMappings() []string {
 
 	if len(e.ColumnsAndUserVars) == 0 {
 		for _, v := range tableCols {
+			// Data for generated column is generated from the other rows rather than from the parsed data.
+			if v.IsGenerated() {
+				continue
+			}
 			fieldMapping := &FieldMapping{
 				Column: v,
 			}

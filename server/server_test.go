@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -588,6 +589,43 @@ func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(t *testing
 		res = res + " "
 		res = res + strconv.Itoa(cksum2)
 		cli.checkRows(t, rows, res)
+	})
+}
+
+func (cli *testServerClient) runTestLoadDataForGeneratedColumns(t *testing.T) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "load_data_generated_columns", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`create table t_gen (a int, b int generated ALWAYS AS (a+1));`)
+		dbt.MustExec("insert into t_gen (a) values (1);")
+		dbt.MustExec("insert into t_gen (a) values (2);")
+
+		// Dump a table with generated column, read it back.
+		// For issue https://github.com/pingcap/tidb/issues/39885
+		tmpFileName := path.Join(os.TempDir(), "load_data_generated_columns.csv")
+		dbt.MustExec(fmt.Sprintf("select * from t_gen into outfile '%s'", tmpFileName))
+		defer os.Remove(tmpFileName)
+		dbt.MustExec("delete from t_gen")
+
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t_gen", tmpFileName))
+		rows := dbt.MustQuery("select * from t_gen")
+		cli.checkRows(t, rows, "1 2", "2 3")
+		require.NoError(t, rows.Close())
+
+		// Specify the column, this should also work.
+		dbt.MustExec("delete from t_gen")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t_gen (a)", tmpFileName))
+		rows = dbt.MustQuery("select * from t_gen")
+		cli.checkRows(t, rows, "1 2", "2 3")
+		require.NoError(t, rows.Close())
+
+		// Swap the column and test again.
+		// dbt.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
+		// dbt.MustExec(fmt.Sprintf("load data local infile %q into table t_gen2", tmpFileName))
+		// rows = dbt.MustQuery("select * from t_gen2")
+		// cli.checkRows(t, rows, "3 2", "4 3")
+		// require.NoError(t, rows.Close())
 	})
 }
 
