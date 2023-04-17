@@ -59,6 +59,7 @@ type litBackendCtx struct {
 	done     bool
 }
 
+// CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
 func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, unique bool, tbl table.Table) error {
 	if !unique {
 		return nil
