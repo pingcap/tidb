@@ -41,10 +41,10 @@ ifneq "$(TIDB_EDITION)" "Enterprise"
 endif
 endif
 
-AUDIT_LOG_VERSION := "None"
+ENTERPRISE_EXTENSION_VERSION := "None"
 
 ifeq ($(shell if [ -d extension/enterprise ]; then echo "true"; fi),true)
-	AUDIT_LOG_VERSION := $(shell cd extension/enterprise && git rev-parse HEAD)
+	ENTERPRISE_EXTENSION_VERSION := $(shell cd extension/enterprise && git rev-parse HEAD)
 endif
 
 ARCH      := "`uname -s`"
@@ -71,7 +71,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBBuildTS=$(shell date
 LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBAuditLogVersion=$(AUDIT_LOG_VERSION)"
+LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEnterpriseExtensionVersion=$(ENTERPRISE_EXTENSION_VERSION)"
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
 COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
