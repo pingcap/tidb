@@ -139,9 +139,15 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 			break
 		}
 
-		minimalTasks, err := scheduler.SplitSubtask(subtask.Meta)
+		var minimalTasks []proto.MinimalTask
+		minimalTasks, err = scheduler.SplitSubtask(subtask.Meta)
 		if err != nil {
 			s.onError(err)
+			if errors.Cause(err) == context.Canceled {
+				s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
+			} else {
+				s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError().Error())
+			}
 			break
 		}
 		logutil.Logger(s.logCtx).Info("split subTask", zap.Any("cnt", len(minimalTasks)), zap.Any("subtask_id", subtask.ID))

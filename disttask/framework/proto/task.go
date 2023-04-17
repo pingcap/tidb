@@ -62,7 +62,7 @@ type Task struct {
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
-	Error           string
+	Error           []byte
 }
 
 // IsFinished checks if the task is finished.

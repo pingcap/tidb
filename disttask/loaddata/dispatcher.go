@@ -66,8 +66,8 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, dispatch dispatcher.Ta
 }
 
 // ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
-func (*FlowHandle) ProcessErrFlow(ctx context.Context, h dispatcher.TaskHandle, gTask *proto.Task, receiveErr []string) ([]byte, error) {
-	logutil.BgLogger().Info("process error flow", zap.Strings("error message", receiveErr))
+func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
+	logutil.BgLogger().Info("process error flow", zap.Any("error message", receiveErr))
 	gTask.Error = receiveErr[0]
 	return nil, nil
 }

@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -183,8 +184,16 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 	}
 	ingestScheduler.close(false)
 
+	_, err = b.bc.Flush(b.index.ID)
+	if err != nil {
+		logutil.BgLogger().Error("[ddl] flush error", zap.Error(err))
+		return nil, err
+	}
 	err = b.bc.UnsafeImportAndReset(b.d.ctx, b.index.ID, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
 	if err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
+		}
 		logutil.BgLogger().Error("[ddl] unsafe import and reset error", zap.Error(err))
 		return nil, err
 	}

@@ -97,7 +97,7 @@ func row2GlobeTask(r chunk.Row) *proto.Task {
 		Meta:         r.GetBytes(7),
 		Concurrency:  uint64(r.GetInt64(8)),
 		Step:         r.GetInt64(9),
-		Error:        r.GetString(10),
+		Error:        r.GetBytes(10),
 	}
 	// TODO: convert to local time.
 	task.StartTime, _ = r.GetTime(5).GoTime(time.UTC)
@@ -300,15 +300,15 @@ func (stm *TaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{
 }
 
 // CollectSubTaskError collects the subtask error.
-func (stm *TaskManager) CollectSubTaskError(taskID int64) ([]string, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select error from mysql.tidb_background_subtask where task_key = %?", taskID)
+func (stm *TaskManager) CollectSubTaskError(taskID int64) ([][]byte, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select error from mysql.tidb_background_subtask where task_key = %? AND state = %?", taskID, proto.TaskStateFailed)
 	if err != nil {
 		return nil, err
 	}
 
-	subTaskErrors := make([]string, 0, len(rs))
+	subTaskErrors := make([][]byte, 0, len(rs))
 	for _, err := range rs {
-		subTaskErrors = append(subTaskErrors, err.GetString(0))
+		subTaskErrors = append(subTaskErrors, err.GetBytes(0))
 	}
 
 	return subTaskErrors, nil

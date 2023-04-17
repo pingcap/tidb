@@ -1878,6 +1878,11 @@ func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			return nil
 		}
 
+		if found.State == proto.TaskStateReverted {
+			logutil.BgLogger().Error("[ddl] global task reverted", zap.Int64("taskID", globalTask.ID), zap.String("error", string(found.Error)))
+			return errors.New(string(found.Error))
+		}
+
 		// TODO: get the original error message.
 		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
 			return errors.Errorf("ddl task stopped with state %s, err %s", found.State, found.Error)
