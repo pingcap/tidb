@@ -71,7 +71,7 @@ type brieTaskProgress struct {
 	// this field is atomically updated outside of the lock below.
 	current int64
 
-	// lock is the mutex protected the three fields below.
+	// lock is the mutex protected the two fields below.
 	lock syncutil.Mutex
 	// cmd is the name of the step the BRIE task is currently performing.
 	cmd string
