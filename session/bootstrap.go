@@ -562,7 +562,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
-		error varbinary(65536),
+		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
 	);`
@@ -2447,8 +2447,8 @@ func upgradeToVer141(s Session, ver int64) {
 	if ver >= version141 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `error` VARBINARY(65536)", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `error` VARBINARY(65536)", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {
