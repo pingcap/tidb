@@ -199,7 +199,7 @@ func TestBasic(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(2)
 
 	tableRanges := [][]rtree.Range{
@@ -232,7 +232,7 @@ func TestAutoSend(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(1024)
 
 	simpleTable := fakeTableWithRange(1, []rtree.Range{fakeRange("caa", "cab"), fakeRange("cac", "cad")})
@@ -263,7 +263,7 @@ func TestSplitRangeOnSameTable(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(2)
 
 	simpleTable := fakeTableWithRange(1, []rtree.Range{
@@ -314,7 +314,7 @@ func TestRewriteRules(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(2)
 
 	batcher.Add(tables[0])
@@ -345,7 +345,7 @@ func TestBatcherLen(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(15)
 
 	simpleTable := fakeTableWithRange(1, []rtree.Range{

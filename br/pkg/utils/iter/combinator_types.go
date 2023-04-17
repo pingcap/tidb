@@ -127,3 +127,21 @@ func (j *join[T]) TryNext(ctx context.Context) IterResult[T] {
 	j.current = nr.Item
 	return j.TryNext(ctx)
 }
+
+type withIndex[T any] struct {
+	inner TryNextor[T]
+	index int
+}
+
+func (wi *withIndex[T]) TryNext(ctx context.Context) IterResult[Indexed[T]] {
+	r := wi.inner.TryNext(ctx)
+	if r.Finished || r.Err != nil {
+		return convertDoneOrErrResult[T, Indexed[T]](r)
+	}
+	res := Emit(Indexed[T]{
+		Index: wi.index,
+		Item:  r.Item,
+	})
+	wi.index += 1
+	return res
+}

@@ -1131,6 +1131,14 @@ func TestSortMetaKVFiles(t *testing.T) {
 	require.Equal(t, files[4].Path, "f5")
 }
 
+func toLogDataFileInfoIter(logIter iter.TryNextor[*backuppb.DataFileInfo]) restore.LogIter {
+	return iter.Map(logIter, func(d *backuppb.DataFileInfo) *restore.LogDataFileInfo {
+		return &restore.LogDataFileInfo{
+			DataFileInfo: d,
+		}
+	})
+}
+
 func TestApplyKVFilesWithSingelMethod(t *testing.T) {
 	var (
 		totalKVCount int64  = 0
@@ -1160,7 +1168,7 @@ func TestApplyKVFilesWithSingelMethod(t *testing.T) {
 		},
 	}
 	applyFunc := func(
-		files []*backuppb.DataFileInfo,
+		files []*restore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1173,7 +1181,7 @@ func TestApplyKVFilesWithSingelMethod(t *testing.T) {
 
 	restore.ApplyKVFilesWithSingelMethod(
 		context.TODO(),
-		iter.FromSlice(ds),
+		toLogDataFileInfoIter(iter.FromSlice(ds)),
 		applyFunc,
 	)
 
@@ -1230,7 +1238,7 @@ func TestApplyKVFilesWithBatchMethod1(t *testing.T) {
 		},
 	}
 	applyFunc := func(
-		files []*backuppb.DataFileInfo,
+		files []*restore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1245,7 +1253,7 @@ func TestApplyKVFilesWithBatchMethod1(t *testing.T) {
 
 	restore.ApplyKVFilesWithBatchMethod(
 		context.TODO(),
-		iter.FromSlice(ds),
+		toLogDataFileInfoIter(iter.FromSlice(ds)),
 		batchCount,
 		batchSize,
 		applyFunc,
@@ -1318,7 +1326,7 @@ func TestApplyKVFilesWithBatchMethod2(t *testing.T) {
 		},
 	}
 	applyFunc := func(
-		files []*backuppb.DataFileInfo,
+		files []*restore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1333,7 +1341,7 @@ func TestApplyKVFilesWithBatchMethod2(t *testing.T) {
 
 	restore.ApplyKVFilesWithBatchMethod(
 		context.TODO(),
-		iter.FromSlice(ds),
+		toLogDataFileInfoIter(iter.FromSlice(ds)),
 		batchCount,
 		batchSize,
 		applyFunc,
@@ -1400,7 +1408,7 @@ func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
 		},
 	}
 	applyFunc := func(
-		files []*backuppb.DataFileInfo,
+		files []*restore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1415,7 +1423,7 @@ func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
 
 	restore.ApplyKVFilesWithBatchMethod(
 		context.TODO(),
-		iter.FromSlice(ds),
+		toLogDataFileInfoIter(iter.FromSlice(ds)),
 		batchCount,
 		batchSize,
 		applyFunc,
@@ -1480,7 +1488,7 @@ func TestApplyKVFilesWithBatchMethod4(t *testing.T) {
 		},
 	}
 	applyFunc := func(
-		files []*backuppb.DataFileInfo,
+		files []*restore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1495,7 +1503,7 @@ func TestApplyKVFilesWithBatchMethod4(t *testing.T) {
 
 	restore.ApplyKVFilesWithBatchMethod(
 		context.TODO(),
-		iter.FromSlice(ds),
+		toLogDataFileInfoIter(iter.FromSlice(ds)),
 		batchCount,
 		batchSize,
 		applyFunc,
