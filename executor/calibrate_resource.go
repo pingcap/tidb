@@ -30,11 +30,9 @@ import (
 	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
 )
 
 // workloadBaseRUCostMap contains the base resource cost rate per 1 kv cpu within 1 second,
@@ -161,7 +159,6 @@ func (e *calibrateResourceExec) checkDynamicCalibrateOptions() (string, string, 
 	if err := checkDurationFn(); err != nil {
 		return "", "", err
 	}
-	logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.String("startTimeStr", startTimeStr), zap.String("endTimeStr", endTimeStr))
 	return startTimeStr, endTimeStr, nil
 }
 
@@ -180,27 +177,22 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 			return err
 		}
 		totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
-		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Float64("totalKVCPUQuota", totalKVCPUQuota), zap.Error(err))
 		if err != nil {
 			return err
 		}
 		totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
-		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Float64("totalTiDBCPU", totalTiDBCPU), zap.Error(err))
 		if err != nil {
 			return err
 		}
 		rus, err := getRUPerSec(ctx, exec, startTime, endTime)
-		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Any("rus", rus), zap.Error(err))
 		if err != nil {
 			return err
 		}
 		tikvCPUs, err := getTiKVCPUUsagePerSec(ctx, exec, startTime, endTime)
-		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Any("tikvCPUs", tikvCPUs), zap.Error(err))
 		if err != nil {
 			return err
 		}
 		tidbCPUs, err := getTiDBCPUUsagePerSec(ctx, exec, startTime, endTime)
-		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Any("tidbCPUs", tidbCPUs), zap.Error(err))
 		if err != nil {
 			return err
 		}
@@ -267,7 +259,6 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 			return err
 		}
 
-		// we only support TPC-C currently, will support more in the future.
 		// The default workload to calculate the RU capacity.
 		if e.workloadType == ast.WorkloadNone {
 			e.workloadType = ast.TPCC
@@ -356,19 +347,16 @@ func getTiDBTotalCPUQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecuto
 
 func getRUPerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) ([]float64, error) {
 	query := fmt.Sprintf("SELECT value FROM METRICS_SCHEMA.resource_manager_resource_unit where time >= '%s' and time <= '%s' ORDER BY time desc", startTime, endTime)
-	logutil.BgLogger().Info("getRUPerSec", zap.String("query", query))
 	return getValuesFromMetrics(ctx, exec, query, "resource_manager_resource_unit")
 }
 
 func getTiDBCPUUsagePerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) ([]float64, error) {
 	query := fmt.Sprintf("SELECT sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%tidb' GROUP BY time ORDER BY time desc", startTime, endTime)
-	logutil.BgLogger().Info("getTiDBCPUUsagePerSec", zap.String("getTiDBCPUUsagePerSec", query))
 	return getValuesFromMetrics(ctx, exec, query, "process_cpu_usage")
 }
 
 func getTiKVCPUUsagePerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) ([]float64, error) {
 	query := fmt.Sprintf("SELECT sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%tikv' GROUP BY time ORDER BY time desc", startTime, endTime)
-	logutil.BgLogger().Info("getTiKVCPUUsagePerSec", zap.String("getTiKVCPUUsagePerSec", query))
 	return getValuesFromMetrics(ctx, exec, query, "process_cpu_usage")
 }
 
@@ -387,7 +375,6 @@ func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecuto
 func getValuesFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) ([]float64, error) {
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
 	if err != nil {
-		logutil.BgLogger().Info("getValuesFromMetrics", zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
