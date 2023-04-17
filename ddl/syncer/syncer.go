@@ -66,39 +66,39 @@ type SyncerWatch interface {
 
 type watcher struct {
 	sync.RWMutex
-	ch clientv3.WatchChan
+	wCh clientv3.WatchChan
 }
 
 // WatchChan implements SyncerWatch.WatchChan interface.
 func (w *watcher) WatchChan() clientv3.WatchChan {
 	w.RLock()
 	defer w.RUnlock()
-	return w.ch
+	return w.wCh
 }
 
 // Rewatch implements SyncerWatch.Watch interface.
 func (w *watcher) Watch(ctx context.Context, etcdCli *clientv3.Client, path string) {
 	w.Lock()
-	w.ch = etcdCli.Watch(ctx, path)
+	w.wCh = etcdCli.Watch(ctx, path)
 	w.Unlock()
 }
 
 // Rewatch implements SyncerWatch.Rewatch interface.
 func (w *watcher) Rewatch(ctx context.Context, etcdCli *clientv3.Client, path string) {
 	startTime := time.Now()
-	// Make sure the ch doesn't receive the information of 'close' before we finish the rewatch.
+	// Make sure the wCh doesn't receive the information of 'close' before we finish the rewatch.
 	w.Lock()
-	w.ch = nil
+	w.wCh = nil
 	w.Unlock()
 
 	go func() {
 		defer func() {
 			metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerRewatch, metrics.RetLabel(nil)).Observe(time.Since(startTime).Seconds())
 		}()
-		ch := etcdCli.Watch(ctx, path)
+		wCh := etcdCli.Watch(ctx, path)
 
 		w.Lock()
-		w.ch = ch
+		w.wCh = wCh
 		w.Unlock()
 		logutil.BgLogger().Info("[ddl] syncer rewatch global info finished")
 	}()
@@ -133,7 +133,7 @@ type schemaVersionSyncer struct {
 	selfSchemaVerPath string
 	etcdCli           *clientv3.Client
 	session           unsafe.Pointer
-	globalVerCh       watcher
+	globalVerWatcher  watcher
 	ddlID             string
 }
 
@@ -168,7 +168,7 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 	}
 	s.storeSession(session)
 
-	s.globalVerCh.Watch(ctx, s.etcdCli, util.DDLGlobalSchemaVersion)
+	s.globalVerWatcher.Watch(ctx, s.etcdCli, util.DDLGlobalSchemaVersion)
 
 	err = util.PutKVToEtcd(ctx, s.etcdCli, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.loadSession().Lease()))
@@ -221,12 +221,12 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
 func (s *schemaVersionSyncer) GlobalVersionCh() clientv3.WatchChan {
-	return s.globalVerCh.WatchChan()
+	return s.globalVerWatcher.WatchChan()
 }
 
 // WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
 func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context) {
-	s.globalVerCh.Rewatch(ctx, s.etcdCli, util.DDLGlobalSchemaVersion)
+	s.globalVerWatcher.Rewatch(ctx, s.etcdCli, util.DDLGlobalSchemaVersion)
 }
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
