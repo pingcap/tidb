@@ -449,7 +449,6 @@ func (t *Tracker) Consume(bs int64) {
 				currentAction = nextAction
 				nextAction = currentAction.GetFallback()
 			}
-			logutil.BgLogger().Warn("global memory controller, lastAction", zap.Any("action", currentAction))
 			currentAction.Action(tracker)
 		}
 	}
