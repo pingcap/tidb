@@ -456,6 +456,8 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 	return nil
 }
 
+// InitStatsLite initiates the stats cache. The function is liter and faster than InitStats.
+// Column/index stats are not loaded, i.e., we only load scalars such as NDV, NullCount, Correlation and don't load CMSketch/Histogram/TopN.
 func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	defer func() {
@@ -486,7 +488,9 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	return nil
 }
 
-// InitStats will init the stats cache using full load strategy.
+// InitStats initiates the stats cache.
+// Index/PK stats are fully loaded.
+// Column stats are not loaded, i.e., we only load scalars such as NDV, NullCount, Correlation and don't load CMSketch/Histogram/TopN.
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
