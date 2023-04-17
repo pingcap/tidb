@@ -40,7 +40,8 @@ func PrintTiDBInfo() {
 		zap.String("GoVersion", buildVersion),
 		zap.Bool("Race Enabled", israce.RaceEnabled),
 		zap.Bool("Check Table Before Drop", config.CheckTableBeforeDrop),
-		zap.String("TiKV Min Version", versioninfo.TiKVMinVersion))
+		zap.String("TiKV Min Version", versioninfo.TiKVMinVersion),
+		zap.String("Audit Log Version", versioninfo.TiDBAuditLogVersion))
 	configJSON, err := json.Marshal(config.GetGlobalConfig())
 	if err != nil {
 		panic(err)
@@ -59,7 +60,8 @@ func GetTiDBInfo() string {
 		"Race Enabled: %v\n"+
 		"TiKV Min Version: %s\n"+
 		"Check Table Before Drop: %v\n"+
-		"Store: %s",
+		"Store: %s\n"+
+		"Audit Log Version: %s",
 		mysql.TiDBReleaseVersion,
 		versioninfo.TiDBEdition,
 		versioninfo.TiDBGitHash,
@@ -70,6 +72,7 @@ func GetTiDBInfo() string {
 		versioninfo.TiKVMinVersion,
 		config.CheckTableBeforeDrop,
 		config.GetGlobalConfig().Store,
+		versioninfo.TiDBAuditLogVersion,
 	)
 }
 

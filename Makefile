@@ -160,7 +160,7 @@ else
 endif
 
 enterprise-prepare:
-	git submodule init && git submodule update && cd extension/enterprise/generate && $(GO) generate -run genfile main.go
+	git submodule init && git submodule update --force && cd extension/enterprise/generate && $(GO) generate -run genfile main.go
 
 enterprise-clear:
 	cd extension/enterprise/generate && $(GO) generate -run clear main.go
