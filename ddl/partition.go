@@ -501,7 +501,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		return errors.Trace(err)
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(ctx, s.Definitions, tbInfo)
+	defs, err := buildPartitionDefinitionsInfo(ctx, s.Definitions, tbInfo, s.Num)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1079,12 +1079,12 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 }
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
-func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) (partitions []model.PartitionDefinition, err error) {
+func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, numParts uint64) (partitions []model.PartitionDefinition, err error) {
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
 		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo)
 	case model.PartitionTypeHash, model.PartitionTypeKey:
-		partitions, err = buildHashPartitionDefinitions(ctx, defs, tbInfo)
+		partitions, err = buildHashPartitionDefinitions(ctx, defs, tbInfo, numParts)
 	case model.PartitionTypeList:
 		partitions, err = buildListPartitionDefinitions(ctx, defs, tbInfo)
 	}
@@ -1115,22 +1115,47 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 	return nil
 }
 
-func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
+func isNonDefaultPartitionOptionsUsed(defs []model.PartitionDefinition) bool {
+	for i := range defs {
+		orgDef := defs[i]
+		if orgDef.Name.O != fmt.Sprintf("p%d", i) {
+			return true
+		}
+		if len(orgDef.Comment) > 0 {
+			return true
+		}
+		if orgDef.PlacementPolicyRef != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, numParts uint64) ([]model.PartitionDefinition, error) {
 	if err := checkAddPartitionTooManyPartitions(tbInfo.Partition.Num); err != nil {
 		return nil, err
 	}
 
-	definitions := make([]model.PartitionDefinition, tbInfo.Partition.Num)
-	for i := 0; i < len(definitions); i++ {
-		if len(defs) == 0 {
-			definitions[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
-		} else {
-			def := defs[i]
+	definitions := make([]model.PartitionDefinition, numParts)
+	oldParts := uint64(len(tbInfo.Partition.Definitions))
+	for i := uint64(0); i < numParts; i++ {
+		if i < oldParts {
+			// Use the existing definitions
+			def := tbInfo.Partition.Definitions[i]
+			definitions[i].Name = def.Name
+			definitions[i].Comment = def.Comment
+			definitions[i].PlacementPolicyRef = def.PlacementPolicyRef
+		} else if i < oldParts+uint64(len(defs)) {
+			// Use the new defs
+			def := defs[i-oldParts]
 			definitions[i].Name = def.Name
 			definitions[i].Comment, _ = def.Comment()
 			if err := setPartitionPlacementFromOptions(&definitions[i], def.Options); err != nil {
 				return nil, err
 			}
+		} else {
+			// Use the default
+			definitions[i].Name = model.NewCIStr(fmt.Sprintf("p%d", i))
 		}
 	}
 	return definitions, nil
