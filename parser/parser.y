@@ -14880,4 +14880,27 @@ DynamicCalibrateResourceOption:
 		}
 		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateDuration, StrValue: $2}
 	}
+
+CalibrateResourceWorkloadOption:
+	/* empty */
+	{
+		$$ = ast.WorkloadNone
+	}
+|	"WORKLOAD" "TPCC"
+	{
+		$$ = ast.TPCC
+	}
+|	"WORKLOAD" "OLTP_READ_WRITE"
+	{
+		$$ = ast.OLTPREADWRITE
+	}
+|	"WORKLOAD" "OLTP_READ_ONLY"
+	{
+		$$ = ast.OLTPREADONLY
+	}
+|	"WORKLOAD" "OLTP_WRITE_ONLY"
+	{
+		$$ = ast.OLTPWRITEONLY
+	}
+	
 %%
