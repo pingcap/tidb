@@ -36,7 +36,7 @@ go_test(
     embed = [":dispatcher"],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 5,
     deps = [
         "//disttask/framework/proto",
         "//disttask/framework/storage",
@@ -45,6 +45,7 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "//util/logutil",
+        "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

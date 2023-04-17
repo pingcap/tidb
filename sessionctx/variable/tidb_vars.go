@@ -781,6 +781,8 @@ const (
 	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
 	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
+	// TiDBPlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
+	TiDBPlanCacheMaxPlanSize = "tidb_plan_cache_max_plan_size"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
@@ -1045,7 +1047,7 @@ const (
 	DefTiDBProjectionConcurrency                   = ConcurrencyUnset
 	DefBroadcastJoinThresholdSize                  = 100 * 1024 * 1024
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
-	DefPreferBCJByExchangeDataSize                 = true
+	DefPreferBCJByExchangeDataSize                 = false
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
 	DefTiDBEnableOuterJoinReorder                  = true
@@ -1195,6 +1197,7 @@ const (
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableNonPreparedPlanCache              = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
+	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
 	DefTiDBEnableTiFlashReadForWriteStmt           = false
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
@@ -1246,7 +1249,7 @@ const (
 	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                = true
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
-	DefTiDBOptEnableLateMaterialization              = false
+	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 )
 

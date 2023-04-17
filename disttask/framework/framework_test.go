@@ -58,12 +58,12 @@ func (t *testScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return 
 
 func (t *testScheduler) Rollback(_ context.Context) error { return nil }
 
-func (t *testScheduler) SplitSubtask(_ []byte) []proto.MinimalTask {
+func (t *testScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	return []proto.MinimalTask{
 		testMiniTask{},
 		testMiniTask{},
 		testMiniTask{},
-	}
+	}, nil
 }
 
 type testSubtaskExecutor struct {
@@ -90,10 +90,10 @@ func TestFrameworkStartUp(t *testing.T) {
 		return &testSubtaskExecutor{v: &v}, nil
 	})
 
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	gm := storage.NewGlobalTaskManager(context.TODO(), tk.Session())
-	taskID, err := gm.AddNewTask("key1", "type1", 8, nil)
+	_ = testkit.CreateMockStore(t)
+	mgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	taskID, err := mgr.AddNewGlobalTask("key1", "type1", 8, nil)
 	require.NoError(t, err)
 	start := time.Now()
 
@@ -104,7 +104,7 @@ func TestFrameworkStartUp(t *testing.T) {
 		}
 
 		time.Sleep(time.Second)
-		task, err = gm.GetTaskByID(taskID)
+		task, err = mgr.GetGlobalTaskByID(taskID)
 		require.NoError(t, err)
 		require.NotNil(t, task)
 		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning {

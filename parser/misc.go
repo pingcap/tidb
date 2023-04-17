@@ -29,8 +29,18 @@ func isIdentExtend(ch byte) bool {
 	return ch >= 0x80
 }
 
+// Initialize a lookup table for isUserVarChar
+var isUserVarCharTable [256]bool
+
+func init() {
+	for i := 0; i < 256; i++ {
+		ch := byte(i)
+		isUserVarCharTable[i] = isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
+	}
+}
+
 func isUserVarChar(ch byte) bool {
-	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
+	return isUserVarCharTable[ch]
 }
 
 type trieNode struct {
@@ -192,6 +202,7 @@ var tokenMap = map[string]int{
 	"BOOLEAN":                  booleanType,
 	"BOTH":                     both,
 	"BOUND":                    bound,
+	"BR":                       br,
 	"BRIEF":                    briefType,
 	"BTREE":                    btree,
 	"BUCKETS":                  buckets,
@@ -364,8 +375,10 @@ var tokenMap = map[string]int{
 	"FORMAT":                   format,
 	"FROM":                     from,
 	"FULL":                     full,
+	"FULL_BACKUP_STORAGE":      fullBackupStorage,
 	"FULLTEXT":                 fulltext,
 	"FUNCTION":                 function,
+	"GC_TTL":                   gcTTL,
 	"GENERAL":                  general,
 	"GENERATED":                generated,
 	"GET_FORMAT":               getFormat,
@@ -487,6 +500,7 @@ var tokenMap = map[string]int{
 	"MEMORY":                   memory,
 	"MEMBER":                   member,
 	"MERGE":                    merge,
+	"METADATA":                 metadata,
 	"MICROSECOND":              microsecond,
 	"MIN_ROWS":                 minRows,
 	"MIN":                      min,
@@ -527,6 +541,9 @@ var tokenMap = map[string]int{
 	"OF":                       of,
 	"OFF":                      off,
 	"OFFSET":                   offset,
+	"OLTP_READ_ONLY":           oltpReadOnly,
+	"OLTP_READ_WRITE":          oltpReadWrite,
+	"OLTP_WRITE_ONLY":          oltpWriteOnly,
 	"ON_DUPLICATE":             onDuplicate,
 	"ON":                       on,
 	"ONLINE":                   online,
@@ -559,6 +576,7 @@ var tokenMap = map[string]int{
 	"PLAN":                     plan,
 	"PLAN_CACHE":               planCache,
 	"PLUGINS":                  plugins,
+	"POINT":                    point,
 	"POLICY":                   policy,
 	"POSITION":                 position,
 	"PRE_SPLIT_REGIONS":        preSplitRegions,
@@ -616,6 +634,7 @@ var tokenMap = map[string]int{
 	"RESTART":                  restart,
 	"RESTORE":                  restore,
 	"RESTORES":                 restores,
+	"RESTORED_TS":              restoredTS,
 	"RESTRICT":                 restrict,
 	"REVERSE":                  reverse,
 	"REVOKE":                   revoke,
@@ -692,6 +711,7 @@ var tokenMap = map[string]int{
 	"STALENESS":                staleness,
 	"START":                    start,
 	"START_TIME":               startTime,
+	"START_TS":                 startTS,
 	"STARTING":                 starting,
 	"STATISTICS":               statistics,
 	"STATS_AUTO_RECALC":        statsAutoRecalc,
@@ -771,6 +791,7 @@ var tokenMap = map[string]int{
 	"TOKUDB_ZSTD":              tokudbZstd,
 	"TOP":                      top,
 	"TOPN":                     topn,
+	"TPCC":                     tpcc,
 	"TRACE":                    trace,
 	"TRADITIONAL":              traditional,
 	"TRAILING":                 trailing,
@@ -794,6 +815,7 @@ var tokenMap = map[string]int{
 	"UNKNOWN":                  unknown,
 	"UNLOCK":                   unlock,
 	"UNSIGNED":                 unsigned,
+	"UNTIL_TS":                 untilTS,
 	"UPDATE":                   update,
 	"USAGE":                    usage,
 	"USE":                      use,
@@ -829,6 +851,7 @@ var tokenMap = map[string]int{
 	"WITH":                     with,
 	"WITHOUT":                  without,
 	"WRITE":                    write,
+	"WORKLOAD":                 workload,
 	"X509":                     x509,
 	"XOR":                      xor,
 	"YEAR_MONTH":               yearMonth,
@@ -1007,33 +1030,30 @@ var hintTokenMap = map[string]int{
 func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	// An identifier before or after '.' means it is part of a qualified identifier.
 	// We do not parse it as keyword.
-	if s.r.peek() == '.' {
+	if s.r.peek() == '.' || (offset > 0 && s.r.s[offset-1] == '.') {
 		return 0
 	}
-	if offset > 0 && s.r.s[offset-1] == '.' {
-		return 0
-	}
+
 	buf := &s.buf
 	buf.Reset()
 	buf.Grow(len(lit))
 	data := buf.Bytes()[:len(lit)]
+
 	for i := 0; i < len(lit); i++ {
-		if lit[i] >= 'a' && lit[i] <= 'z' {
-			data[i] = lit[i] + 'A' - 'a'
+		c := lit[i]
+		if c >= 'a' && c <= 'z' {
+			data[i] = c + 'A' - 'a'
 		} else {
-			data[i] = lit[i]
+			data[i] = c
 		}
 	}
 
-	checkBtFuncToken := false
-	if s.r.peek() == '(' {
-		checkBtFuncToken = true
-	} else if s.sqlMode.HasIgnoreSpaceMode() {
+	checkBtFuncToken := s.r.peek() == '('
+	if !checkBtFuncToken && s.sqlMode.HasIgnoreSpaceMode() {
 		s.skipWhitespace()
-		if s.r.peek() == '(' {
-			checkBtFuncToken = true
-		}
+		checkBtFuncToken = s.r.peek() == '('
 	}
+
 	if checkBtFuncToken {
 		if tok := btFuncTokenMap[string(data)]; tok != 0 {
 			return tok
