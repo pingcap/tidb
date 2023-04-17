@@ -31,7 +31,7 @@ import (
 
 // PrintTiDBInfo prints the TiDB version information.
 func PrintTiDBInfo() {
-	logutil.BgLogger().Info("Welcome to TiDB.",
+	fields := []zap.Field{
 		zap.String("Release Version", mysql.TiDBReleaseVersion),
 		zap.String("Edition", versioninfo.TiDBEdition),
 		zap.String("Git Commit Hash", versioninfo.TiDBGitHash),
@@ -41,7 +41,11 @@ func PrintTiDBInfo() {
 		zap.Bool("Race Enabled", israce.RaceEnabled),
 		zap.Bool("Check Table Before Drop", config.CheckTableBeforeDrop),
 		zap.String("TiKV Min Version", versioninfo.TiKVMinVersion),
-		zap.String("Extension Version", versioninfo.TiDBEnterpriseExtensionVersion))
+	}
+	if versioninfo.TiDBEnterpriseExtensionVersion != "" {
+		fields = append(fields, zap.String("Extension Version", versioninfo.TiDBEnterpriseExtensionVersion))
+	}
+	logutil.BgLogger().Info("Welcome to TiDB.", fields...)
 	configJSON, err := json.Marshal(config.GetGlobalConfig())
 	if err != nil {
 		panic(err)
@@ -51,6 +55,10 @@ func PrintTiDBInfo() {
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.
 func GetTiDBInfo() string {
+	enterpriseVersion := ""
+	if versioninfo.TiDBEnterpriseExtensionVersion != "" {
+		enterpriseVersion = fmt.Sprintf("\nEnterprise Edition: %s", versioninfo.TiDBEnterpriseExtensionVersion)
+	}
 	return fmt.Sprintf("Release Version: %s\n"+
 		"Edition: %s\n"+
 		"Git Commit Hash: %s\n"+
@@ -60,8 +68,8 @@ func GetTiDBInfo() string {
 		"Race Enabled: %v\n"+
 		"TiKV Min Version: %s\n"+
 		"Check Table Before Drop: %v\n"+
-		"Store: %s\n"+
-		"Extension Version: %s",
+		"Store: %s"+
+		"%s",
 		mysql.TiDBReleaseVersion,
 		versioninfo.TiDBEdition,
 		versioninfo.TiDBGitHash,
@@ -72,7 +80,7 @@ func GetTiDBInfo() string {
 		versioninfo.TiKVMinVersion,
 		config.CheckTableBeforeDrop,
 		config.GetGlobalConfig().Store,
-		versioninfo.TiDBEnterpriseExtensionVersion,
+		enterpriseVersion,
 	)
 }
 
