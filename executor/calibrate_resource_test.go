@@ -67,9 +67,9 @@ func TestCalibrateResource(t *testing.T) {
 			},
 		},
 	}
-	resource_ctl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil)
+	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil)
 	require.NoError(t, err)
-	executor.SetResourceGroupController(resource_ctl)
+	executor.SetResourceGroupController(resourceCtl)
 
 	// empty metrics error
 	rs, err = tk.Exec("CALIBRATE RESOURCE")

@@ -118,7 +118,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	}
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
-		return errors.New("resource group controller is not initialized.")
+		return errors.New("resource group controller is not initialized")
 	}
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
