@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -39,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -149,6 +152,7 @@ type Client struct {
 
 	*logFileManager
 
+	// storage for log restore
 	storage storage.ExternalStorage
 
 	// if fullClusterRestore = true:
@@ -175,6 +179,10 @@ type Client struct {
 
 	// the rewrite mode of the downloaded SST files in TiKV.
 	rewriteMode RewriteMode
+
+	// checkpoint information for snapshot restore
+	checkpointRunner   *checkpoint.RestoreRunner
+	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -237,6 +245,128 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 		}
 	}
 	return errors.Trace(err)
+}
+
+// InitCheckpoint initialize the checkpoint status for the cluster. If the cluster is
+// restored for the first time, it will initialize the checkpoint metadata. Otherwrise,
+// it will load checkpoint metadata and checkpoint ranges/checksum from the external
+// storage.
+func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage, mgr *conn.Mgr, config *pdutil.ClusterConfig, useCheckpoint bool) (map[int64]rtree.RangeTree, pdutil.UndoFunc, error) {
+	var (
+		taskName = fmt.Sprintf("%d", rc.GetPDClient().GetClusterID(ctx))
+		// checkpoint ranges
+		tree = make(map[int64]rtree.RangeTree)
+
+		undo pdutil.UndoFunc
+	)
+
+	// if not use checkpoint, return empty checkpoint ranges and new gc-safepoint id
+	if !useCheckpoint {
+		return tree, nil, nil
+	}
+
+	// if the checkpoint metadata exists in the external storage, the restore is not
+	// for the first time.
+	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, taskName)
+	if err != nil {
+		return tree, nil, errors.Trace(err)
+	}
+
+	if exists {
+		// load the checkpoint since this is not the first time to restore
+		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
+		if err != nil {
+			return tree, nil, errors.Trace(err)
+		}
+
+		if meta.SchedulersConfig != nil {
+			undo = mgr.MakeUndoFunctionByConfig(*meta.SchedulersConfig)
+		} else {
+			// the schedulers config is nil, so the restore-schedulers operation is just a nop
+			undo = pdutil.Nop
+		}
+
+		// t1 is the latest time the checkpoint ranges persisted to the external storage.
+		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rg checkpoint.RestoreValueType) {
+			t, exists := tree[tableID]
+			if !exists {
+				t = rtree.NewRangeTree()
+				tree[tableID] = t
+			}
+			t.InsertRange(*rg.Range)
+		})
+		if err != nil {
+			return tree, nil, errors.Trace(err)
+		}
+		// t2 is the latest time the checkpoint checksum persisted to the external storage.
+		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
+		if err != nil {
+			return tree, nil, errors.Trace(err)
+		}
+		rc.checkpointChecksum = checkpointChecksum
+		// use the later time to adjust the summary elapsed time.
+		if t1 > t2 {
+			summary.AdjustStartTimeToEarlierTime(t1)
+		} else {
+			summary.AdjustStartTimeToEarlierTime(t2)
+		}
+	} else {
+		// initialize the checkpoint metadata since it is the first time to restore.
+		meta := &checkpoint.CheckpointMetadataForRestore{}
+		// a nil config means undo function
+		if config != nil {
+			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
+		}
+		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, meta, taskName); err != nil {
+			return tree, nil, errors.Trace(err)
+		}
+	}
+
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, s, rc.cipher, taskName)
+	return tree, undo, errors.Trace(err)
+}
+
+func (rc *Client) WaitForFinishCheckpoint(ctx context.Context) {
+	if rc.checkpointRunner != nil {
+		rc.checkpointRunner.WaitForFinish(ctx)
+	}
+}
+
+func (rc *Client) GetCheckpointRunner() *checkpoint.RestoreRunner {
+	return rc.checkpointRunner
+}
+
+func (rc *Client) StartCheckpointRunnerForLogRestore(ctx context.Context, taskName string) (*checkpoint.LogRestoreRunner, error) {
+	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.storage, rc.cipher, taskName)
+	return runner, errors.Trace(err)
+}
+
+func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {
+	// if the checkpoint metadata exists in the external storage, the restore is not
+	// for the first time.
+	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	if exists {
+		// load the checkpoint since this is not the first time to restore
+		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, rc.storage, taskName)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+
+		return meta.GcRatio, nil
+	}
+
+	// initialize the checkpoint metadata since it is the first time to restore.
+	if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, rc.storage, &checkpoint.CheckpointMetadataForRestore{
+		GcRatio: gcRatio,
+	}, taskName); err != nil {
+		return gcRatio, errors.Trace(err)
+	}
+
+	return gcRatio, nil
 }
 
 func (rc *Client) allocTableIDs(ctx context.Context, tables []*metautil.Table) error {
@@ -1150,7 +1280,7 @@ func (rc *Client) SplitRanges(ctx context.Context,
 	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
-func (rc *Client) WrapLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
+func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1159,7 +1289,45 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
-	return NewLogFilesIterWithSplitHelper(iter, rules, client, splitSize, splitKeys), nil
+	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
+}
+
+func (rc *Client) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*LogFilesSkipMap, error) {
+	skipMap := NewLogFilesSkipMap()
+	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueType) {
+		// filter out the checkpoint data of dropped table
+		_, exists := downstreamIdset[off.TableID]
+		if exists {
+			skipMap.Insert(groupKey, off.Goff, off.Foff)
+		}
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	summary.AdjustStartTimeToEarlierTime(t)
+	return skipMap, nil
+}
+
+func (rc *Client) WrapLogFilesIterWithCheckpoint(
+	ctx context.Context,
+	logIter LogIter,
+	downstreamIdset map[int64]struct{},
+	taskName string,
+	updateStats func(kvCount uint64, size uint64),
+	onProgress func(),
+) (LogIter, error) {
+	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset, taskName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
+		if skipMap.NeedSkip(d.MetaDataGroupName, d.OffsetInMetaGroup, d.OffsetInMergedGroup) {
+			onProgress()
+			updateStats(uint64(d.NumberOfEntries), d.Length)
+			return true
+		}
+		return false
+	}), nil
 }
 
 // RestoreSSTFiles tries to restore the files.
@@ -1461,36 +1629,52 @@ func (rc *Client) execChecksum(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	startTS, err := rc.GetTSWithRetry(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	exe, err := checksum.NewExecutorBuilder(tbl.Table, startTS).
-		SetOldTable(tbl.OldTable).
-		SetConcurrency(concurrency).
-		SetOldKeyspace(tbl.RewriteRule.OldKeyspace).
-		SetNewKeyspace(tbl.RewriteRule.NewKeyspace).
-		Build()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	checksumResp, err := exe.Execute(ctx, kvClient, func() {
-		// TODO: update progress here.
-	})
-	if err != nil {
-		return errors.Trace(err)
+	item, exists := rc.checkpointChecksum[tbl.Table.ID]
+	if !exists {
+		beginT := time.Now()
+		startTS, err := rc.GetTSWithRetry(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		exe, err := checksum.NewExecutorBuilder(tbl.Table, startTS).
+			SetOldTable(tbl.OldTable).
+			SetConcurrency(concurrency).
+			SetOldKeyspace(tbl.RewriteRule.OldKeyspace).
+			SetNewKeyspace(tbl.RewriteRule.NewKeyspace).
+			Build()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		checksumResp, err := exe.Execute(ctx, kvClient, func() {
+			// TODO: update progress here.
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		item = &checkpoint.ChecksumItem{
+			TableID:    tbl.Table.ID,
+			Crc64xor:   checksumResp.Checksum,
+			TotalKvs:   checksumResp.TotalKvs,
+			TotalBytes: checksumResp.TotalBytes,
+		}
+		if rc.checkpointRunner != nil {
+			err = rc.checkpointRunner.FlushChecksumItem(ctx, item, time.Since(beginT).Seconds())
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	table := tbl.OldTable
-	if checksumResp.Checksum != table.Crc64Xor ||
-		checksumResp.TotalKvs != table.TotalKvs ||
-		checksumResp.TotalBytes != table.TotalBytes {
+	if item.Crc64xor != table.Crc64Xor ||
+		item.TotalKvs != table.TotalKvs ||
+		item.TotalBytes != table.TotalBytes {
 		logger.Error("failed in validate checksum",
 			zap.Uint64("origin tidb crc64", table.Crc64Xor),
-			zap.Uint64("calculated crc64", checksumResp.Checksum),
+			zap.Uint64("calculated crc64", item.Crc64xor),
 			zap.Uint64("origin tidb total kvs", table.TotalKvs),
-			zap.Uint64("calculated total kvs", checksumResp.TotalKvs),
+			zap.Uint64("calculated total kvs", item.TotalKvs),
 			zap.Uint64("origin tidb total bytes", table.TotalBytes),
-			zap.Uint64("calculated total bytes", checksumResp.TotalBytes),
+			zap.Uint64("calculated total bytes", item.TotalBytes),
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
@@ -1896,9 +2080,9 @@ type FilesInRegion struct {
 	writeSize      uint64
 	writeKVCount   int64
 
-	defaultFiles []*backuppb.DataFileInfo
-	writeFiles   []*backuppb.DataFileInfo
-	deleteFiles  []*backuppb.DataFileInfo
+	defaultFiles []*LogDataFileInfo
+	writeFiles   []*LogDataFileInfo
+	deleteFiles  []*LogDataFileInfo
 }
 
 type FilesInTable struct {
@@ -1907,25 +2091,25 @@ type FilesInTable struct {
 
 func ApplyKVFilesWithBatchMethod(
 	ctx context.Context,
-	iter LogIter,
+	logIter LogIter,
 	batchCount int,
 	batchSize uint64,
-	applyFunc func(files []*backuppb.DataFileInfo, kvCount int64, size uint64),
+	applyFunc func(files []*LogDataFileInfo, kvCount int64, size uint64),
 ) error {
 	var (
 		tableMapFiles        = make(map[int64]*FilesInTable)
-		tmpFiles             = make([]*backuppb.DataFileInfo, 0, batchCount)
+		tmpFiles             = make([]*LogDataFileInfo, 0, batchCount)
 		tmpSize       uint64 = 0
 		tmpKVCount    int64  = 0
 	)
-	for r := iter.TryNext(ctx); !r.Finished; r = iter.TryNext(ctx) {
+	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		if r.Err != nil {
 			return r.Err
 		}
 
 		f := r.Item
 		if f.GetType() == backuppb.FileType_Put && f.GetLength() >= batchSize {
-			applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+			applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 			continue
 		}
 
@@ -1944,13 +2128,13 @@ func ApplyKVFilesWithBatchMethod(
 
 		if f.GetType() == backuppb.FileType_Delete {
 			if fs.defaultFiles == nil {
-				fs.deleteFiles = make([]*backuppb.DataFileInfo, 0)
+				fs.deleteFiles = make([]*LogDataFileInfo, 0)
 			}
 			fs.deleteFiles = append(fs.deleteFiles, f)
 		} else {
 			if f.GetCf() == stream.DefaultCF {
 				if fs.defaultFiles == nil {
-					fs.defaultFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					fs.defaultFiles = make([]*LogDataFileInfo, 0, batchCount)
 				}
 				fs.defaultFiles = append(fs.defaultFiles, f)
 				fs.defaultSize += f.Length
@@ -1963,7 +2147,7 @@ func ApplyKVFilesWithBatchMethod(
 				}
 			} else {
 				if fs.writeFiles == nil {
-					fs.writeFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					fs.writeFiles = make([]*LogDataFileInfo, 0, batchCount)
 				}
 				fs.writeFiles = append(fs.writeFiles, f)
 				fs.writeSize += f.GetLength()
@@ -1998,14 +2182,14 @@ func ApplyKVFilesWithBatchMethod(
 
 				if len(tmpFiles) >= batchCount || tmpSize >= batchSize {
 					applyFunc(tmpFiles, tmpKVCount, tmpSize)
-					tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					tmpFiles = make([]*LogDataFileInfo, 0, batchCount)
 					tmpSize = 0
 					tmpKVCount = 0
 				}
 			}
 			if len(tmpFiles) > 0 {
 				applyFunc(tmpFiles, tmpKVCount, tmpSize)
-				tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				tmpFiles = make([]*LogDataFileInfo, 0, batchCount)
 				tmpSize = 0
 				tmpKVCount = 0
 			}
@@ -2018,9 +2202,9 @@ func ApplyKVFilesWithBatchMethod(
 func ApplyKVFilesWithSingelMethod(
 	ctx context.Context,
 	files LogIter,
-	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
+	applyFunc func(file []*LogDataFileInfo, kvCount int64, size uint64),
 ) error {
-	deleteKVFiles := make([]*backuppb.DataFileInfo, 0)
+	deleteKVFiles := make([]*LogDataFileInfo, 0)
 
 	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
 		if r.Err != nil {
@@ -2032,13 +2216,13 @@ func ApplyKVFilesWithSingelMethod(
 			deleteKVFiles = append(deleteKVFiles, f)
 			continue
 		}
-		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+		applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 	}
 
 	log.Info("restore delete files", zap.Int("count", len(deleteKVFiles)))
 	for _, file := range deleteKVFiles {
 		f := file
-		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+		applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 	}
 
 	return nil
@@ -2047,7 +2231,9 @@ func ApplyKVFilesWithSingelMethod(
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
-	iter LogIter,
+	idrules map[int64]int64,
+	logIter LogIter,
+	runner *checkpoint.LogRestoreRunner,
 	pitrBatchCount uint32,
 	pitrBatchSize uint32,
 	updateStats func(kvCount uint64, size uint64),
@@ -2075,7 +2261,7 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
-	applyFunc := func(files []*backuppb.DataFileInfo, kvCount int64, size uint64) {
+	applyFunc := func(files []*LogDataFileInfo, kvCount int64, size uint64) {
 		if len(files) == 0 {
 			return
 		}
@@ -2092,6 +2278,7 @@ func (rc *Client) RestoreKVFiles(
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
+			downstreamId := idrules[files[0].TableId]
 			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer func() {
@@ -2101,8 +2288,17 @@ func (rc *Client) RestoreKVFiles(
 
 					if err == nil {
 						filenames := make([]string, 0, len(files))
-						for _, f := range files {
-							filenames = append(filenames, f.Path+", ")
+						if runner == nil {
+							for _, f := range files {
+								filenames = append(filenames, f.Path+", ")
+							}
+						} else {
+							for _, f := range files {
+								filenames = append(filenames, f.Path+", ")
+								if e := checkpoint.AppendRangeForLogRestore(ctx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+									err = errors.Annotate(e, "failed to append checkpoint data")
+								}
+							}
 						}
 						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
 							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
@@ -2116,9 +2312,9 @@ func (rc *Client) RestoreKVFiles(
 
 	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 		if supportBatch {
-			err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+			err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
 		} else {
-			err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
+			err = ApplyKVFilesWithSingelMethod(ectx, logIter, applyFunc)
 		}
 		return errors.Trace(err)
 	})
