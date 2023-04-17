@@ -601,7 +601,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=true`)
 
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, tk.Session()),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, tk.Session(), false),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
