@@ -196,6 +196,7 @@ func (cr *ChecksumRunner) FlushChecksumItem(
 		}
 		cr.checksumItems.Items = nil
 	}
+	checksumDir := cr.checkpointChecksumDir
 	cr.Unlock()
 
 	// now lock is free
@@ -227,7 +228,7 @@ func (cr *ChecksumRunner) FlushChecksumItem(
 			return
 		}
 
-		fname := fmt.Sprintf("%s/t%d_and__", cr.checkpointChecksumDir, checksumItem.TableID)
+		fname := fmt.Sprintf("%s/t%d_and__", checksumDir, checksumItem.TableID)
 		err = s.WriteFile(ctx, fname, data)
 		if err != nil {
 			cr.RecordError(err)
@@ -300,7 +301,7 @@ func (r *CheckpointRunner[K, V]) FlushChecksum(
 		TotalKvs:   totalKvs,
 		TotalBytes: totalBytes,
 	}
-	return r.checksumRunner.FlushChecksumItem(ctx, r.storage, checksumItem, timeCost)
+	return r.FlushChecksumItem(ctx, checksumItem, timeCost)
 }
 
 func (r *CheckpointRunner[K, V]) FlushChecksumItem(
@@ -317,7 +318,7 @@ func (r *CheckpointRunner[K, V]) Append(
 ) error {
 	select {
 	case <-ctx.Done():
-		return nil
+		return ctx.Err()
 	case err := <-r.errCh:
 		return err
 	case r.appendCh <- message:
@@ -349,6 +350,7 @@ func (r *CheckpointRunner[K, V]) flushMeta(ctx context.Context, errCh chan error
 	// do flush
 	select {
 	case <-ctx.Done():
+		return ctx.Err()
 	case err := <-errCh:
 		return err
 	case r.metaCh <- meta:
@@ -359,6 +361,7 @@ func (r *CheckpointRunner[K, V]) flushMeta(ctx context.Context, errCh chan error
 func (r *CheckpointRunner[K, V]) setLock(ctx context.Context, errCh chan error) error {
 	select {
 	case <-ctx.Done():
+		return ctx.Err()
 	case err := <-errCh:
 		return err
 	case r.lockCh <- struct{}{}:
@@ -375,6 +378,9 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 		for {
 			select {
 			case <-ctx.Done():
+				if err := ctx.Err(); err != nil {
+					errCh <- err
+				}
 				return
 			case meta, ok := <-r.metaCh:
 				if !ok {
@@ -431,6 +437,9 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 		for {
 			select {
 			case <-ctx.Done():
+				if err := ctx.Err(); err != nil {
+					r.sendError(err)
+				}
 				return
 			case <-lockTicker.Ch():
 				if err := r.setLock(ctx, errCh); err != nil {
