@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
