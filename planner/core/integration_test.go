@@ -4705,6 +4705,7 @@ func TestPointGetWithSelectLock(t *testing.T) {
 		"explain select c, d from t1 where c in (1,2,3,4) for update;",
 	}
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
+	tk.MustExec("set @@sql_mode='';")
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
 	tk.MustExec("begin;")
 	// assert point get / batch point get can't work with tiflash in interaction txn
