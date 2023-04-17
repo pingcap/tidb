@@ -421,11 +421,13 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			hist := statistics.HistogramFromProto(jsonIdx.Histogram)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.Correlation = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.Correlation
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonIdx.CMSketch)
-			// If the statistics is loaded from a JSON without stats version,
-			// we set it to 1.
-			statsVer := int64(statistics.Version1)
+			statsVer := int64(statistics.Version0)
 			if jsonIdx.StatsVer != nil {
 				statsVer = *jsonIdx.StatsVer
+			} else if jsonIdx.Histogram.Ndv > 0 || jsonIdx.NullCount > 0 {
+				// If the statistics are collected without setting stats version(which happens in v4.0 and earlier versions),
+				// we set it to 1.
+				statsVer = int64(statistics.Version1)
 			}
 			idx := &statistics.Index{
 				Histogram:         *hist,
@@ -465,11 +467,13 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
 			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
-			// If the statistics is loaded from a JSON without stats version,
-			// we set it to 1.
-			statsVer := int64(statistics.Version1)
+			statsVer := int64(statistics.Version0)
 			if jsonCol.StatsVer != nil {
 				statsVer = *jsonCol.StatsVer
+			} else if jsonCol.Histogram.Ndv > 0 || jsonCol.NullCount > 0 {
+				// If the statistics are collected without setting stats version(which happens in v4.0 and earlier versions),
+				// we set it to 1.
+				statsVer = int64(statistics.Version1)
 			}
 			col := &statistics.Column{
 				PhysicalID:        physicalID,
@@ -482,7 +486,6 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				StatsVer:          statsVer,
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
-			col.Count = int64(col.TotalRowCount())
 			tbl.Columns[col.ID] = col
 		}
 	}

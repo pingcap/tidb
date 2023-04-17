@@ -246,7 +246,8 @@ type CheckpointRunner struct {
 }
 
 // only for test
-func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration, timer GlobalTimer) (*CheckpointRunner, error) {
+func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo, tick time.Duration, timer GlobalTimer) (*CheckpointRunner, error) {
 	runner := &CheckpointRunner{
 		meta: make(map[string]*RangeGroups),
 
@@ -270,7 +271,8 @@ func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalS
 	return runner, nil
 }
 
-func StartCheckpointRunner(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, timer GlobalTimer) (*CheckpointRunner, error) {
+func StartCheckpointRunner(ctx context.Context, storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo, timer GlobalTimer) (*CheckpointRunner, error) {
 	runner := &CheckpointRunner{
 		meta: make(map[string]*RangeGroups),
 
@@ -294,7 +296,8 @@ func StartCheckpointRunner(ctx context.Context, storage storage.ExternalStorage,
 	return runner, nil
 }
 
-func (r *CheckpointRunner) FlushChecksum(ctx context.Context, tableID int64, crc64xor uint64, totalKvs uint64, totalBytes uint64, timeCost float64) error {
+func (r *CheckpointRunner) FlushChecksum(ctx context.Context, tableID int64, crc64xor uint64,
+	totalKvs uint64, totalBytes uint64, timeCost float64) error {
 	return r.checksumRunner.FlushChecksum(ctx, r.storage, tableID, crc64xor, totalKvs, totalBytes, timeCost)
 }
 
@@ -407,7 +410,8 @@ func (r *CheckpointRunner) sendError(err error) {
 	r.checksumRunner.RecordError(err)
 }
 
-func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDurationForFlush, tickDurationForLock time.Duration) {
+func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDurationForFlush,
+	tickDurationForLock time.Duration) {
 	r.wg.Add(1)
 	checkpointLoop := func(ctx context.Context) {
 		defer r.wg.Done()
@@ -559,7 +563,8 @@ func (r *CheckpointRunner) flushLock(ctx context.Context, p int64) error {
 		LockId:   r.lockId,
 		ExpireAt: p + lockTimeToLive.Milliseconds(),
 	}
-	log.Info("start to flush the checkpoint lock", zap.Int64("lock-at", p), zap.Int64("expire-at", lock.ExpireAt))
+	log.Info("start to flush the checkpoint lock", zap.Int64("lock-at", p),
+		zap.Int64("expire-at", lock.ExpireAt))
 	data, err := json.Marshal(lock)
 	if err != nil {
 		return errors.Trace(err)
@@ -588,12 +593,15 @@ func (r *CheckpointRunner) checkLockFile(ctx context.Context, now int64) error {
 				"Please check whether the BR is running. If not, you can retry.", lock.LockId, r.lockId)
 		}
 		if lock.LockId == r.lockId {
-			log.Warn("The lock has expired.", zap.Int64("expire-at(ms)", lock.ExpireAt), zap.Int64("now(ms)", now))
+			log.Warn("The lock has expired.",
+				zap.Int64("expire-at(ms)", lock.ExpireAt), zap.Int64("now(ms)", now))
 		}
 	} else if lock.LockId != r.lockId {
 		return errors.Errorf("The existing lock will expire in %d seconds. "+
-			"There may be another BR(%d) running. If not, you can wait for the lock to expire, or delete the file `%s%s` manually.",
-			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(r.storage.URI(), "/"), CheckpointLockPath)
+			"There may be another BR(%d) running. If not, you can wait for the lock to expire, "+
+			"or delete the file `%s%s` manually.",
+			(lock.ExpireAt-now)/1000, lock.LockId,
+			strings.TrimRight(r.storage.URI(), "/"), CheckpointLockPath)
 	}
 
 	return nil
@@ -639,7 +647,8 @@ func (r *CheckpointRunner) initialLock(ctx context.Context) error {
 
 // walk the whole checkpoint range files and retrieve the metadatat of backed up ranges
 // and return the total time cost in the past executions
-func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, fn func(groupKey string, rg *rtree.Range)) (time.Duration, error) {
+func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo,
+	fn func(groupKey string, rg *rtree.Range)) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0
 	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointDataDir}, func(path string, size int64) error {

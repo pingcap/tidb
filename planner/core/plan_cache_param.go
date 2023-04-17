@@ -15,9 +15,9 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
@@ -41,9 +41,8 @@ var (
 		return pr
 	}}
 	paramCtxPool = sync.Pool{New: func() interface{} {
-		buf := new(strings.Builder)
-		buf.Reset()
-		restoreCtx := format.NewRestoreCtx(format.RestoreForNonPrepPlanCache|format.RestoreStringWithoutCharset, buf)
+		buf := new(bytes.Buffer)
+		restoreCtx := format.NewRestoreCtx(format.RestoreForNonPrepPlanCache|format.RestoreStringWithoutCharset|format.RestoreStringSingleQuotes|format.RestoreNameBackQuotes, buf)
 		return restoreCtx
 	}}
 )
@@ -61,6 +60,16 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// 2. GroupByClause, OrderByClause: to avoid breaking the full_group_by check.
 		// 3. Limit: to generate different plans for queries with different limit values.
 		return in, true
+	case *ast.FuncCallExpr:
+		switch n.FnName.L {
+		case ast.DateFormat, ast.StrToDate, ast.TimeFormat, ast.FromUnixTime:
+			// skip the second format argument: date_format('2020', '%Y') --> date_format(?, '%Y')
+			ret, _ := n.Args[0].Accept(pr)
+			n.Args[0] = ret.(ast.ExprNode)
+			return in, true
+		default:
+			return in, false
+		}
 	case *driver.ValueExpr:
 		pr.params = append(pr.params, n)
 		param := ast.NewParamMarkerExpr(len(pr.params) - 1)      // offset is used as order in non-prepared plan cache.
@@ -96,14 +105,14 @@ func ParameterizeAST(ctx context.Context, sctx sessionctx.Context, stmt ast.Stmt
 	defer func() {
 		pr.Reset()
 		paramReplacerPool.Put(pr)
-		pCtx.In.(*strings.Builder).Reset()
+		pCtx.In.(*bytes.Buffer).Reset()
 		paramCtxPool.Put(pCtx)
 	}()
 	stmt.Accept(pr)
 	if err := stmt.Restore(pCtx); err != nil {
 		return "", nil, err
 	}
-	paramSQL, params = pCtx.In.(*strings.Builder).String(), pr.params
+	paramSQL, params = pCtx.In.(*bytes.Buffer).String(), pr.params
 	return
 }
 

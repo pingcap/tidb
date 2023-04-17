@@ -35,7 +35,7 @@ type backfillSchedulerHandle struct {
 	db          *model.DBInfo
 	index       *model.IndexInfo
 	job         *model.Job
-	bc          *ingest.BackendContext
+	bc          ingest.BackendCtx
 	ptbl        table.PhysicalTable
 	jc          *JobContext
 	eleTypeKey  []byte
@@ -107,7 +107,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning init subtask exec env")
 	d := b.d
 
-	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID, b.job.ReorgMeta.SQLMode)
+	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
 		return err
@@ -117,7 +117,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 }
 
 // SplitSubtask implements the Scheduler interface.
-func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalTask, error) {
+func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
 	d := b.d
@@ -143,7 +143,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 	mockReorgInfo.elements = elements
 	mockReorgInfo.currElement = mockReorgInfo.elements[0]
 
-	ingestScheduler := newIngestBackfillScheduler(d.ctx, mockReorgInfo, parTbl.GetPartition(pid), true)
+	ingestScheduler := newIngestBackfillScheduler(d.ctx, mockReorgInfo, d.sessPool, parTbl.GetPartition(pid), true)
 	defer ingestScheduler.close(true)
 
 	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
@@ -155,6 +155,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 		return nil, err
 	}
 
+	taskIDAlloc := newTaskIDAllocator()
 	for {
 		kvRanges, err := splitTableRanges(b.ptbl, d.store, startKey, endKey, backfillTaskChanSize)
 		if err != nil {
@@ -170,7 +171,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
 
-		sendTasks(ingestScheduler, consumer, parTbl.GetPartition(pid), kvRanges, mockReorgInfo)
+		sendTasks(ingestScheduler, consumer, parTbl.GetPartition(pid), kvRanges, mockReorgInfo, taskIDAlloc)
 		if consumer.shouldAbort() {
 			break
 		}
@@ -194,7 +195,7 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 		return err
 	}
 
-	b.bc.EngMgr.UnregisterAll(b.job.ID)
+	b.bc.Unregister(b.job.ID, b.index.ID)
 	return nil
 }
 
@@ -212,3 +213,6 @@ type BackFillSubtaskExecutor struct {
 func (b *BackFillSubtaskExecutor) Run(ctx context.Context) error {
 	return nil
 }
+
+// BackfillTaskType is the type of backfill task.
+const BackfillTaskType = "backfill"

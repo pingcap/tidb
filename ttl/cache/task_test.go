@@ -76,11 +76,15 @@ func TestRowToTTLTask(t *testing.T) {
 	require.Equal(t, now, task.ExpireTime)
 	require.Equal(t, now, task.CreatedTime)
 
-	rangeStart, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, []byte{}, []types.Datum{types.NewDatum(1)}...)
+	rangeStart, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx,
+		[]byte{}, []types.Datum{types.NewDatum(1)}...)
 	require.NoError(t, err)
-	rangeEnd, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, []byte{}, []types.Datum{types.NewDatum(2)}...)
+	rangeEnd, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx,
+		[]byte{}, []types.Datum{types.NewDatum(2)}...)
 	require.NoError(t, err)
-	tk.MustExec("UPDATE mysql.tidb_ttl_task SET scan_range_start = ?, scan_range_end = ? WHERE job_id = 'test-job'", rangeStart, rangeEnd)
+	tk.MustExec(
+		"UPDATE mysql.tidb_ttl_task SET scan_range_start = ?, scan_range_end = ? WHERE job_id = 'test-job'",
+		rangeStart, rangeEnd)
 
 	task = tg.mustGetTestTask()
 	require.Equal(t, []types.Datum{types.NewDatum(1)}, task.ScanRangeStart)
@@ -101,7 +105,8 @@ func TestInsertIntoTTLTask(t *testing.T) {
 	now := time.Now()
 	now = now.Round(time.Second)
 
-	sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", 1, 1, rangeStart, rangeEnd, now, now)
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", 1, 1,
+		rangeStart, rangeEnd, now, now)
 	require.NoError(t, err)
 	// tk.MustExec cannot handle the NULL parameter, use the `tk.Session().ExecuteInternal` instead here.
 	_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
