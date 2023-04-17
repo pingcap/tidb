@@ -68,18 +68,18 @@ var (
 		},
 	}
 
-	// resource_ctl is the ResourceGroupController in pd client
-	resource_ctl *rmclient.ResourceGroupsController
+	// resourceGrooupCtl is the ResourceGroupController in pd client
+	resourceGrooupCtl *rmclient.ResourceGroupsController
 )
 
 // SetResourceGroupController set a inited ResourceGroupsController for calibrate usage.
 func SetResourceGroupController(rc *rmclient.ResourceGroupsController) {
-	resource_ctl = rc
+	resourceGrooupCtl = rc
 }
 
 // GetResourceGroupController returns the ResourceGroupsController.
 func GetResourceGroupController() *rmclient.ResourceGroupsController {
-	return resource_ctl
+	return resourceGrooupCtl
 }
 
 // the resource cost rate of a specified workload per 1 tikv cpu
@@ -117,7 +117,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	// first fetch the ru settings config.
-	if resource_ctl == nil {
+	if resourceGrooupCtl == nil {
 		return errors.New("resource group controller is not initialized.")
 	}
 
@@ -144,7 +144,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
 		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbCPU
 	}
-	ruCfg := resource_ctl.GetConfig()
+	ruCfg := resourceGrooupCtl.GetConfig()
 	ruPerKVCPU := float64(ruCfg.ReadBaseCost)*float64(baseCost.readReqCount) +
 		float64(ruCfg.CPUMsCost)*baseCost.kvCPU +
 		float64(ruCfg.ReadBytesCost)*float64(baseCost.readBytes) +
