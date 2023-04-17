@@ -215,14 +215,10 @@ type planCacheKey struct {
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		var (
-			dbBytes    = hack.Slice(key.stmtText)
-			bufferSize = len(dbBytes) * 2
-		)
 		if key.hash == nil {
-			key.hash = make([]byte, 0, bufferSize)
+			key.hash = make([]byte, 0, len(key.stmtText)*2)
 		}
-		key.hash = append(key.hash, dbBytes...)
+		key.hash = append(key.hash, hack.Slice(key.database)...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
