@@ -1111,7 +1111,7 @@ func TestDBAStmt(t *testing.T) {
 		// PROCEDURE and FUNCTION are currently not supported.
 		// And FUNCTION reuse show procedure status process logic.
 		{`SHOW PROCEDURE STATUS WHERE Db='test'`, true, "SHOW PROCEDURE STATUS WHERE `Db`=_UTF8MB4'test'"},
-		{`SHOW FUNCTION STATUS WHERE Db='test'`, true, "SHOW PROCEDURE STATUS WHERE `Db`=_UTF8MB4'test'"},
+		{`SHOW FUNCTION STATUS WHERE Db='test'`, true, "SHOW FUNCTION STATUS WHERE `Db`=_UTF8MB4'test'"},
 		{`SHOW INDEX FROM t;`, true, "SHOW INDEX IN `t`"},
 		{`SHOW KEYS FROM t;`, true, "SHOW INDEX IN `t`"},
 		{`SHOW INDEX IN t;`, true, "SHOW INDEX IN `t`"},
