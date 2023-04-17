@@ -248,8 +248,8 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 	return nil
 }
 
-// GetPlanCache implements the sessionctx.Context interface.
-func (c *Context) GetPlanCache(_ bool) sessionctx.PlanCache {
+// GetSessionPlanCache implements the sessionctx.Context interface.
+func (c *Context) GetSessionPlanCache() sessionctx.PlanCache {
 	return c.pcache
 }
 
