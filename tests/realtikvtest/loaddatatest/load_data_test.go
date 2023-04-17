@@ -33,6 +33,20 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 	s.tk.MustExec("use " + db)
 }
 
+func (s *mockGCSSuite) prepareVariables(distributed bool) {
+	if distributed {
+		s.tk.MustExec("set GLOBAL tidb_enable_dist_task=ON;")
+	}
+	s.tk.MustExec("set GLOBAL tidb_enable_dist_task=OFF;")
+}
+
+func adjustOptions(options string, distributed bool) string {
+	if distributed {
+		options += ", __distributed=true"
+	}
+	return options
+}
+
 func (s *mockGCSSuite) TestPhysicalMode() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
@@ -303,12 +317,15 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 }
 
 func (s *mockGCSSuite) TestMultiValueIndex() {
-	s.testMultiValueIndex(importer.LogicalImportMode)
-	s.testMultiValueIndex(importer.PhysicalImportMode)
+	s.testMultiValueIndex(importer.LogicalImportMode, false)
+	s.testMultiValueIndex(importer.PhysicalImportMode, false)
+	s.testMultiValueIndex(importer.PhysicalImportMode, true)
 }
 
-func (s *mockGCSSuite) testMultiValueIndex(importMode string) {
+func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	withOptions = adjustOptions(withOptions, distributed)
+	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec(`CREATE TABLE load_csv.t (
@@ -337,12 +354,15 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string) {
 }
 
 func (s *mockGCSSuite) TestMixedCompression() {
-	s.testMixedCompression(importer.LogicalImportMode)
-	s.testMixedCompression(importer.PhysicalImportMode)
+	s.testMixedCompression(importer.LogicalImportMode, false)
+	s.testMixedCompression(importer.PhysicalImportMode, false)
+	s.testMixedCompression(importer.PhysicalImportMode, true)
 }
 
-func (s *mockGCSSuite) testMixedCompression(importMode string) {
+func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH thread=1, import_mode='%s'", importMode)
+	withOptions = adjustOptions(withOptions, distributed)
+	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
 	s.tk.MustExec("CREATE DATABASE multi_load;")
 	s.tk.MustExec("CREATE TABLE multi_load.t (i INT PRIMARY KEY, s varchar(32));")
@@ -397,12 +417,15 @@ func (s *mockGCSSuite) testMixedCompression(importMode string) {
 }
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
-	s.testLoadSQLDump(importer.LogicalImportMode)
-	s.testLoadSQLDump(importer.PhysicalImportMode)
+	s.testLoadSQLDump(importer.LogicalImportMode, false)
+	s.testLoadSQLDump(importer.PhysicalImportMode, false)
+	s.testLoadSQLDump(importer.PhysicalImportMode, true)
 }
 
-func (s *mockGCSSuite) testLoadSQLDump(importMode string) {
+func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	withOptions = adjustOptions(withOptions, distributed)
+	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("CREATE TABLE load_csv.t (" +
@@ -435,12 +458,15 @@ func (s *mockGCSSuite) testLoadSQLDump(importMode string) {
 }
 
 func (s *mockGCSSuite) TestGBK() {
-	s.testGBK(importer.LogicalImportMode)
-	s.testGBK(importer.PhysicalImportMode)
+	s.testGBK(importer.LogicalImportMode, false)
+	s.testGBK(importer.PhysicalImportMode, false)
+	s.testGBK(importer.PhysicalImportMode, true)
 }
 
-func (s *mockGCSSuite) testGBK(importMode string) {
+func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	withOptions = adjustOptions(withOptions, distributed)
+	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_charset;")
 	s.tk.MustExec("CREATE DATABASE load_charset;")
 	s.tk.MustExec(`CREATE TABLE load_charset.gbk (
@@ -545,12 +571,15 @@ func (s *mockGCSSuite) testGBK(importMode string) {
 }
 
 func (s *mockGCSSuite) TestOtherCharset() {
-	s.testOtherCharset(importer.LogicalImportMode)
-	s.testOtherCharset(importer.PhysicalImportMode)
+	s.testOtherCharset(importer.LogicalImportMode, false)
+	s.testOtherCharset(importer.PhysicalImportMode, false)
+	s.testOtherCharset(importer.PhysicalImportMode, true)
 }
 
-func (s *mockGCSSuite) testOtherCharset(importMode string) {
+func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	withOptions = adjustOptions(withOptions, distributed)
+	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_charset;")
 	s.tk.MustExec("CREATE DATABASE load_charset;")
 	s.tk.MustExec(`CREATE TABLE load_charset.utf8 (

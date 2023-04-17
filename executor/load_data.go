@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/expression"
@@ -38,6 +39,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -151,6 +153,7 @@ func NewLoadDataWorker(
 	loadDataWorker := &LoadDataWorker{
 		UserSctx:   userSctx,
 		table:      tbl,
+		importPlan: importPlan,
 		controller: controller,
 		planInfo: planInfo{
 			ID:          plan.ID(),
@@ -267,6 +270,10 @@ func (e *LoadDataWorker) getJobImporter(ctx context.Context, job *asyncloaddata.
 		GroupCtx: groupCtx,
 		Done:     make(chan struct{}),
 		Progress: e.progress,
+	}
+
+	if variable.EnableDistTask.Load() && e.importPlan.Distributed {
+		return loaddata.NewDistImporter(param, e.importPlan)
 	}
 
 	if e.controller.ImportMode == importer.LogicalImportMode {

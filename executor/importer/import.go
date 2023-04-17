@@ -79,6 +79,9 @@ const (
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
+
+	// debug option, not for user
+	distributedOption = "__distributed"
 )
 
 var (
@@ -97,14 +100,16 @@ var (
 		splitFileOption:     true,
 		recordErrorsOption:  true,
 		detachedOption:      false,
+		distributedOption:   true,
 	}
 
 	// options only allowed when import mode is physical
 	optionsForPhysicalImport = map[string]struct{}{
-		diskQuotaOption: {},
-		checksumOption:  {},
-		addIndexOption:  {},
-		analyzeOption:   {},
+		diskQuotaOption:   {},
+		checksumOption:    {},
+		addIndexOption:    {},
+		analyzeOption:     {},
+		distributedOption: {},
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
@@ -165,6 +170,9 @@ type Plan struct {
 	SplitFile         bool
 	MaxRecordedErrors int64
 	Detached          bool
+
+	// debug
+	Distributed bool `json:"-"`
 }
 
 // LoadDataController load data controller.
@@ -387,6 +395,7 @@ func (p *Plan) initDefaultOptions() {
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
 	p.Detached = false
+	p.Distributed = false
 }
 
 func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
@@ -512,6 +521,19 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
 		p.Detached = true
+	}
+
+	// debug
+	if opt, ok := specifiedOptions[distributedOption]; ok {
+		var vInt int64
+		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.Distributed = vInt == 1
 	}
 
 	p.adjustOptions()
