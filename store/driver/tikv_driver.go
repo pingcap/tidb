@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -109,6 +110,7 @@ func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv
 	if err != nil {
 		return err
 	}
+	executor.SetResourceGroupController(control)
 	tikv.SetResourceControlInterceptor(control)
 	control.Start(ctx)
 	return nil
