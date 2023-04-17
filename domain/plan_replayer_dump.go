@@ -345,10 +345,22 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 
 	if len(task.EncodedPlan) > 0 {
 		records = generateRecords(task)
-		return dumpEncodedPlan(sctx, zw, task.EncodedPlan)
+		if err = dumpEncodedPlan(sctx, zw, task.EncodedPlan); err != nil {
+			return err
+		}
+	} else {
+		// Dump explain
+		if err = dumpPlanReplayerExplain(sctx, zw, task, &records); err != nil {
+			return err
+		}
 	}
-	// Dump explain
-	return dumpPlanReplayerExplain(sctx, zw, task, &records)
+
+	if task.DebugTrace != nil {
+		if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
@@ -661,6 +673,10 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 	if err != nil {
 		return errors.AddStack(err)
 	}
+	ctx.GetSessionVars().InPlanReplayer = true
+	defer func() {
+		ctx.GetSessionVars().InPlanReplayer = false
+	}()
 	for i, sql := range sqls {
 		var recordSets []sqlexec.RecordSet
 		var err error
@@ -828,4 +844,16 @@ func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 		}
 	}
 	return rows, nil
+}
+
+func dumpDebugTrace(zw *zip.Writer, debugTrace interface{}) error {
+	fw, err := zw.Create("debug_trace.json")
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	jsonEncoder := json.NewEncoder(fw)
+	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
+	jsonEncoder.SetEscapeHTML(false)
+	err = jsonEncoder.Encode(debugTrace)
+	return err
 }

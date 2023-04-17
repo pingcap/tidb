@@ -554,6 +554,7 @@ type PlanReplayerDumpTask struct {
 	SessionVars     *variable.SessionVars
 	ExecStmts       []ast.StmtNode
 	Analyze         bool
+	DebugTrace      interface{}
 
 	FileName string
 	Zf       *os.File
