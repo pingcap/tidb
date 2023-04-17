@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -266,12 +267,44 @@ func (ti *TableImporter) importTable(ctx context.Context) error {
 	if err := ti.importEngines(ctx); err != nil {
 		return err
 	}
+	return ti.postProcess(ctx)
+}
+
+func (ti *TableImporter) postProcess(ctx context.Context) error {
 	// todo: post process
+	var localChecksum verify.KVChecksum
+	for _, engine := range ti.tableCp.Engines {
+		for _, chunk := range engine.Chunks {
+			localChecksum.Add(&chunk.Checksum)
+		}
+	}
+	ti.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), 1)
 	remoteChecksum, err := manager.Checksum(ctx, ti.tableInfo)
 	if err != nil {
 		return err
 	}
+	err = ti.compareChecksum(remoteChecksum, localChecksum)
+	// with post restore level 'optional', we will skip checksum error
+	if err != nil && ti.checksum == config.OpLevelOptional {
+		ti.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+		err = nil
+	}
+	return err
+}
+
+func (ti *TableImporter) compareChecksum(remoteChecksum *local.RemoteChecksum, localChecksum verify.KVChecksum) error {
+	if remoteChecksum.Checksum != localChecksum.Sum() ||
+		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
+		remoteChecksum.TotalBytes != localChecksum.SumSize() {
+		return common.ErrChecksumMismatch.GenWithStackByArgs(
+			remoteChecksum.Checksum, localChecksum.Sum(),
+			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
+			remoteChecksum.TotalBytes, localChecksum.SumSize(),
+		)
+	}
+
+	ti.logger.Info("checksum pass", zap.Object("local", &localChecksum))
 	return nil
 }
 
