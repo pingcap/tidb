@@ -94,7 +94,12 @@ go_test(
     ],
     embed = [":local"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 40,
+=======
+    race = "on",
+    shard_count = 49,
+>>>>>>> 0c736ce28f2 (lightning: always retry from needRescan when NotLeader (#43079))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/backend",
