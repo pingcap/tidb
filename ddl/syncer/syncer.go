@@ -55,7 +55,8 @@ var (
 	CheckVersFirstWaitTime = 50 * time.Millisecond
 )
 
-type SyncerWatch interface {
+// Watcher is responsible for watching the etcd path related operations.
+type Watcher interface {
 	// WatchChan returns the chan for watching etcd path.
 	WatchChan() clientv3.WatchChan
 	// Watch watches the etcd path.
