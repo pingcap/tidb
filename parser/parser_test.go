@@ -1071,6 +1071,9 @@ AAAAAAAAAAAA5gm5Mg==
 
 		// for calibrate resource
 		{"calibrate resource", true, "CALIBRATE RESOURCE"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' DURATION '20m'"},
 	}
 	RunTest(t, table, false)
 }

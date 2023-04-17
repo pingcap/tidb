@@ -16,15 +16,26 @@ package executor
 
 import (
 	"context"
+	"fmt"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/duration"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 const (
@@ -66,15 +77,82 @@ type baseResourceCost struct {
 	writeReqCount uint64
 }
 
-func (b *executorBuilder) buildCalibrateResource(schema *expression.Schema) Executor {
+func (b *executorBuilder) buildCalibrateResource(schema *expression.Schema, optionList []*ast.DynamicCalibrateResourceOption) Executor {
 	return &calibrateResourceExec{
 		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
+		optionList:   optionList,
 	}
 }
 
+const lowUsageThreshold = 10.
+const percentOfPass = 0.9
+const discardRate = 0.1
+
 type calibrateResourceExec struct {
 	baseExecutor
-	done bool
+	optionList []*ast.DynamicCalibrateResourceOption
+	done       bool
+}
+
+func (e *calibrateResourceExec) checkDynamicCalibrateOptions() (string, string, error) {
+	var startTime, endTime time.Time
+	var startTimeStr, endTimeStr string
+	checkDurationFn := func() error {
+		// check the duration
+		duration := endTime.Sub(startTime)
+		if duration > time.Hour*24 {
+			return errors.Errorf("the duration of calibration is too long.")
+		}
+		if duration < time.Minute*10 {
+			return errors.Errorf("the duration of calibration is too short.")
+		}
+		return nil
+	}
+	if len(e.optionList) == 2 {
+		if e.optionList[0].Tp != ast.CalibrateStartTime || (e.optionList[1].Tp != ast.CalibrateEndTime && e.optionList[1].Tp != ast.CalibrateDuration) {
+			return "", "", errors.Errorf("dynamic calibarate options are not matched, please input start time and end time or duration is optional.")
+		}
+		// check start time and end time whether validated
+		startTs, err := staleread.CalculateAsOfTsExpr(e.ctx, e.optionList[0].Ts)
+		if err != nil {
+			return "", "", err
+		}
+		startTime = oracle.GetTimeFromTS(startTs)
+		if e.optionList[1].Tp == ast.CalibrateEndTime {
+			endTs, err := staleread.CalculateAsOfTsExpr(e.ctx, e.optionList[1].Ts)
+			if err != nil {
+				return "", "", err
+			}
+			endTime = oracle.GetTimeFromTS(endTs)
+		} else {
+			duration, err := duration.ParseDuration(e.optionList[1].StrValue)
+			if err != nil {
+				return "", "", err
+			}
+			endTime = startTime.Add(duration)
+		}
+
+	} else if len(e.optionList) == 1 {
+		if e.optionList[0].Tp != ast.CalibrateStartTime {
+			return "", "", errors.Errorf("dynamic calibarate options are not matched, please input start time and end time is optional.")
+		}
+		// check start time whether validated
+		startTs, err := staleread.CalculateAsOfTsExpr(e.ctx, e.optionList[0].Ts)
+		if err != nil {
+			return "", "", err
+		}
+		startTime = oracle.GetTimeFromTS(startTs)
+		endTime = time.Now()
+	} else {
+		return "", "", errors.Errorf("dynamic calibarate options are too much.")
+	}
+	startTimeStr = startTime.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
+	endTimeStr = endTime.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
+	if err := checkDurationFn(); err != nil {
+		return "", "", err
+	}
+	logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.String("startTimeStr", startTimeStr), zap.String("endTimeStr", endTimeStr))
+	return startTimeStr, endTimeStr, nil
 }
 
 func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -86,39 +164,115 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	if len(e.optionList) > 0 {
+		startTime, endTime, err := e.checkDynamicCalibrateOptions()
+		if err != nil {
+			return err
+		}
+		totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
+		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Float64("totalKVCPUQuota", totalKVCPUQuota), zap.Error(err))
+		if err != nil {
+			return err
+		}
+		totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
+		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Float64("totalTiDBCPU", totalTiDBCPU), zap.Error(err))
+		if err != nil {
+			return err
+		}
+		rus, err := getRUPerSec(ctx, exec, startTime, endTime)
+		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Any("rus", rus), zap.Error(err))
+		if err != nil {
+			return err
+		}
+		tikvCPUs, err := getTiKVCPUUsagePerSec(ctx, exec, startTime, endTime)
+		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Any("tikvCPUs", tikvCPUs), zap.Error(err))
+		if err != nil {
+			return err
+		}
+		tidbCPUs, err := getTiDBCPUUsagePerSec(ctx, exec, startTime, endTime)
+		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Any("tidbCPUs", tikvCPUs), zap.Error(err))
+		if err != nil {
+			return err
+		}
+		quotas := make([]float64, 0)
+		lowCount := 0
+		tidbCPULowCount := 0
+		tikvCPULowCOunt := 0
+		for idx, ru := range rus {
+			if idx >= len(tikvCPUs) || idx >= len(tidbCPUs) {
+				break
+			}
+			tikvQuota := totalKVCPUQuota / tikvCPUs[idx]
+			tidbQuota := totalTiDBCPU / tidbCPUs[idx]
+			if tikvQuota > lowUsageThreshold {
+				lowCount++
+				tikvCPULowCOunt++
+				if tidbQuota > lowUsageThreshold {
+					tidbCPULowCount++
+				}
+			} else if tidbQuota > lowUsageThreshold {
+				lowCount++
+				tidbCPULowCount++
+			} else {
+				quotas = append(quotas, ru*mathutil.Min(tikvQuota, tidbQuota))
+			}
+		}
+		if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
+			sort.Slice(quotas, func(i, j int) bool {
+				return quotas[i] > quotas[j]
+			})
+			lowerBound := int(math.Round(float64(len(quotas)) * float64(discardRate)))
+			upperBound := len(quotas) - lowerBound
+			sum := 0.
+			for i := lowerBound; i < upperBound; i++ {
+				sum += quotas[i]
+			}
+			quota := sum / float64(upperBound-lowerBound)
+			req.AppendUint64(0, uint64(quota))
+		} else {
+			if tidbCPULowCount > 0 && tikvCPULowCOunt > 0 {
+				return errors.Errorf("The CPU utilizations of TiDB and TiKV are less than one tenth in some of the time.")
+			} else if tidbCPULowCount > 0 {
+				errors.Errorf("The CPU utilization of TiDB is less than one tenth in some of the time.")
+			} else {
+				errors.Errorf("The CPU utilization of TiKV is less than one tenth in some of the time.")
+			}
+		}
 
-	// first fetch the ru settings config.
-	ruCfg, err := getRUSettings(ctx, exec)
-	if err != nil {
-		return err
-	}
+	} else { // first fetch the ru settings config.
+		ruCfg, err := getRUSettings(ctx, exec)
+		if err != nil {
+			return err
+		}
 
-	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
-	if err != nil {
-		return err
-	}
-	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
-	if err != nil {
-		return err
-	}
+		totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
+		if err != nil {
+			return err
+		}
+		totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
+		if err != nil {
+			return err
+		}
 
-	// we only support TPC-C currently, will support more in the future.
-	workload := defaultWorkload
-	baseCost, ok := workloadBaseRUCostMap[workload]
-	if !ok {
-		return errors.Errorf("unknown workload '%s'", workload)
-	}
+		// we only support TPC-C currently, will support more in the future.
+		workload := defaultWorkload
+		baseCost, ok := workloadBaseRUCostMap[workload]
+		if !ok {
+			return errors.Errorf("unknown workload '%s'", workload)
+		}
 
-	if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
-		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbCPU
+		if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
+			totalKVCPUQuota = totalTiDBCPU / baseCost.tidbCPU
+		}
+		ruPerKVCPU := ruCfg.readBaseCost*float64(baseCost.readReqCount) +
+			ruCfg.readCostCPU*baseCost.kvCPU +
+			ruCfg.readCostPerByte*float64(baseCost.readBytes) +
+			ruCfg.writeBaseCost*float64(baseCost.writeReqCount) +
+			ruCfg.writeCostPerByte*float64(baseCost.writeBytes)
+		quota := totalKVCPUQuota * ruPerKVCPU
+		req.AppendUint64(0, uint64(quota))
+
 	}
-	ruPerKVCPU := ruCfg.readBaseCost*float64(baseCost.readReqCount) +
-		ruCfg.readCostCPU*baseCost.kvCPU +
-		ruCfg.readCostPerByte*float64(baseCost.readBytes) +
-		ruCfg.writeBaseCost*float64(baseCost.writeReqCount) +
-		ruCfg.writeCostPerByte*float64(baseCost.writeBytes)
-	quota := totalKVCPUQuota * ruPerKVCPU
-	req.AppendUint64(0, uint64(quota))
 
 	return nil
 }
@@ -184,6 +338,24 @@ func getTiDBTotalCPUQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecuto
 	return getNumberFromMetrics(ctx, exec, query, "tidb_server_maxprocs")
 }
 
+func getRUPerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) ([]float64, error) {
+	query := fmt.Sprintf("SELECT value FROM METRICS_SCHEMA.resource_manager_resource_unit where time >= '%s' and time <= '%s' ORDER BY time desc", startTime, endTime)
+	logutil.BgLogger().Info("getRUPerSec", zap.String("query", query))
+	return getValuesFromMetrics(ctx, exec, query, "resource_manager_resource_unit")
+}
+
+func getTiDBCPUUsagePerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) ([]float64, error) {
+	query := fmt.Sprintf("SELECT value FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%tidb' ORDER BY time desc", startTime, endTime)
+	logutil.BgLogger().Info("getRUPerSec", zap.String("getTiDBCPUUsagePerSec", query))
+	return getValuesFromMetrics(ctx, exec, query, "process_cpu_usage")
+}
+
+func getTiKVCPUUsagePerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) ([]float64, error) {
+	query := fmt.Sprintf("SELECT value FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%tikv' ORDER BY time desc", startTime, endTime)
+	logutil.BgLogger().Info("getRUPerSec", zap.String("getTiKVCPUUsagePerSec", query))
+	return getValuesFromMetrics(ctx, exec, query, "process_cpu_usage")
+}
+
 func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) (float64, error) {
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
 	if err != nil {
@@ -194,4 +366,20 @@ func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecuto
 	}
 
 	return rows[0].GetFloat64(0), nil
+}
+
+func getValuesFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) ([]float64, error) {
+	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
+	if err != nil {
+		logutil.BgLogger().Info("getValuesFromMetrics", zap.Error(err))
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, errors.Errorf("metrics '%s' is empty", metrics)
+	}
+	ret := make([]float64, 0, len(rows))
+	for _, row := range rows {
+		ret = append(ret, row.GetFloat64(0))
+	}
+	return ret, nil
 }

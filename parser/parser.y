@@ -387,6 +387,7 @@ import (
 	disk                  "DISK"
 	do                    "DO"
 	duplicate             "DUPLICATE"
+	time_duration         "DURATION"
 	dynamic               "DYNAMIC"
 	enable                "ENABLE"
 	enabled               "ENABLED"
@@ -668,6 +669,7 @@ import (
 	defined               "DEFINED"
 	dotType               "DOT"
 	dump                  "DUMP"
+	endTime               "END_TIME"
 	exact                 "EXACT"
 	exprPushdownBlacklist "EXPR_PUSHDOWN_BLACKLIST"
 	extract               "EXTRACT"
@@ -704,6 +706,7 @@ import (
 	s3                    "S3"
 	schedule              "SCHEDULE"
 	staleness             "STALENESS"
+	startTime             "START_TIME"
 	std                   "STD"
 	stddev                "STDDEV"
 	stddevPop             "STDDEV_POP"
@@ -1382,6 +1385,9 @@ import (
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
+	DynamicCalibrateResourceOption         "Dynamic resource calibrate option"
+	DynamicCalibrateOptionListOpt          "Anomymous or direct dynamic resource calibrate option list opt"
+	DynamicCalibrateOptionList             "Anomymous or direct dynamic resource calibrate option list"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -14680,8 +14686,50 @@ PlanReplayerStmt:
  * CALIBRATE RESOURCE
  *******************************************************************/
 CalibrateResourceStmt:
-	"CALIBRATE" "RESOURCE"
+	"CALIBRATE" "RESOURCE" DynamicCalibrateOptionListOpt
 	{
-		$$ = &ast.CalibrateResourceStmt{}
+		$$ = &ast.CalibrateResourceStmt{
+			DynamicCalibrateResourceOptionList: $3.([]*ast.DynamicCalibrateResourceOption),
+		}
+	}
+
+DynamicCalibrateOptionListOpt:
+	{
+		$$ = []*ast.DynamicCalibrateResourceOption{}
+	}
+|	DynamicCalibrateOptionList
+
+DynamicCalibrateOptionList:
+	DynamicCalibrateResourceOption
+	{
+		$$ = []*ast.DynamicCalibrateResourceOption{$1.(*ast.DynamicCalibrateResourceOption)}
+	}
+|	DynamicCalibrateOptionList DynamicCalibrateResourceOption
+	{
+		if $1.([]*ast.DynamicCalibrateResourceOption)[0].Tp == $2.(*ast.DynamicCalibrateResourceOption).Tp ||
+			(len($1.([]*ast.DynamicCalibrateResourceOption)) > 1 && $1.([]*ast.DynamicCalibrateResourceOption)[1].Tp == $2.(*ast.DynamicCalibrateResourceOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.DynamicCalibrateResourceOption), $2.(*ast.DynamicCalibrateResourceOption))
+	}
+
+DynamicCalibrateResourceOption:
+	"START_TIME" stringLit
+	{
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateStartTime, Ts: ast.NewValueExpr($2, "", "")}
+	}
+|	"END_TIME" stringLit
+	{
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateEndTime, Ts: ast.NewValueExpr($2, "", "")}
+	}
+|	"DURATION" stringLit
+	{
+		_, err := duration.ParseDuration($2)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The DURATION option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateDuration, StrValue: $2}
 	}
 %%
