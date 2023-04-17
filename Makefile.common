@@ -41,9 +41,9 @@ ifneq "$(TIDB_EDITION)" "Enterprise"
 endif
 endif
 
-ENTERPRISE_EXTENSION_VERSION := "None"
+ENTERPRISE_EXTENSION_VERSION := None
 
-ifeq ($(shell if [ -d extension/enterprise ]; then echo "true"; fi),true)
+ifeq ($(shell if [ -a extension/enterprise/.git ]; then echo "true"; fi),true)
 	ENTERPRISE_EXTENSION_VERSION := $(shell cd extension/enterprise && git rev-parse HEAD)
 endif
 
