@@ -236,6 +236,10 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 		if histID != idxInfo.ID {
 			continue
 		}
+		// We will not load buckets, topn and cmsketch if:
+		// 1. lease > 0, and:
+		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
+		// 3. loadAll is false.
 		notNeedLoad := lease > 0 &&
 			(idx == nil || ((!idx.IsStatsInitialized() || idx.IsAllEvicted()) && idx.LastUpdateVersion < histVer)) &&
 			!loadAll
@@ -317,12 +321,10 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		if histID != colInfo.ID {
 			continue
 		}
-		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
-		// We will not load buckets if:
+		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
-		// 2. this column is not handle, and:
-		// 3. the column doesn't have any statistics before, and:
-		// 4. loadAll is false.
+		// 2. the column doesn't have any of buckets, topn, cmsketch in memory before, and:
+		// 3. loadAll is false.
 		//
 		// Here is the explanation of the condition `!col.IsStatsInitialized() || col.IsAllEvicted()`.
 		// For one column:
@@ -335,7 +337,6 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		// 3. If some parts(Histogram/TopN/CMSketch) of stats for it exist in TiDB memory currently, we choose to load all of
 		//    its new stats once we find stats version is updated.
 		notNeedLoad := lease > 0 &&
-			!isHandle &&
 			(col == nil || ((!col.IsStatsInitialized() || col.IsAllEvicted()) && col.LastUpdateVersion < histVer)) &&
 			!loadAll
 		if notNeedLoad {
