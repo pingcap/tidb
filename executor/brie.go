@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -345,11 +346,10 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	// is expected to be performed insensitive.
 	cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
 
-	query, ok := b.ctx.Value(sessionctx.QueryString).(string)
-	if !ok {
-		query = "N/A"
-	}
-	e.info.query = query
+	// We cannot directly use the query string, or the secret may be print.
+	// NOTE: the ownership of `s.Storage` is taken here.
+	s.Storage = e.info.storage
+	e.info.query = restoreQuery(s)
 
 	switch s.Kind {
 	case ast.BRIEKindBackup:
@@ -759,4 +759,13 @@ func (gs *tidbGlueSession) GetVersion() string {
 func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se glue.Session) error) error {
 	// in SQL backup. we don't need to close domain.
 	return fn(gs)
+}
+
+func restoreQuery(stmt *ast.BRIEStmt) string {
+	out := bytes.NewBuffer(nil)
+	rc := format.NewRestoreCtx(format.RestoreNameBackQuotes|format.RestoreStringSingleQuotes, out)
+	if err := stmt.Restore(rc); err != nil {
+		return "N/A"
+	}
+	return out.String()
 }

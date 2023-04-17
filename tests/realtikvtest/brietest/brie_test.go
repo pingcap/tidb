@@ -47,6 +47,38 @@ func TestShowBackupQuery(t *testing.T) {
 	res.CheckContain(restoreQuery)
 }
 
+func TestShowBackupQueryRedact(t *testing.T) {
+	tk := initTestKit(t)
+
+	failpoint.Enable("github.com/pingcap/tidb/executor/block-on-brie", "return")
+	ch := make(chan any)
+	go func() {
+		err := tk.QueryToErr("backup database * to 's3://nonexist/real?endpoint=http://127.0.0.1&access-key=notleaked&secret-access-key=notleaked'")
+		require.Error(t, err)
+		close(ch)
+	}()
+
+	check := func() bool {
+		res := tk.MustQuery("show br job query 1;")
+		rs := res.Rows()
+		if len(rs) == 0 {
+			return false
+		}
+		theItem := rs[0][0].(string)
+		if strings.Contains(theItem, "secret-access-key") {
+			t.Fatalf("The secret key not redacted: %q", theItem)
+		}
+		fmt.Println(theItem)
+		res.CheckContain("BACKUP DATABASE * TO 's3://nonexist/real'")
+		return true
+	}
+	require.Eventually(t, check, 5*time.Second, 1*time.Second)
+	tk.MustExec("cancel br job 1;")
+	// Make sure the background job returns.
+	// So `goleak` would be happy.
+	<-ch
+}
+
 func TestCancel(t *testing.T) {
 	tk := initTestKit(t)
 	tk.MustExec("use test;")
