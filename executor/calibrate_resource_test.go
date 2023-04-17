@@ -303,7 +303,7 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "The CPU utilizations of TiDB and TiKV are less than one tenth in some of the time.")
+	require.ErrorContains(t, err, "The CPU utilizations of TiDB and TiKV are less than one tenth in some of the time")
 
 	mockData["process_cpu_usage"] = [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "tidb", 3.212),

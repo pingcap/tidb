@@ -109,16 +109,16 @@ func (e *calibrateResourceExec) checkDynamicCalibrateOptions() (string, string, 
 		// check the duration
 		duration := endTime.Sub(startTime)
 		if duration > time.Hour*24 {
-			return errors.Errorf("the duration of calibration is too long.")
+			return errors.Errorf("the duration of calibration is too long")
 		}
 		if duration < time.Minute*10 {
-			return errors.Errorf("the duration of calibration is too short.")
+			return errors.Errorf("the duration of calibration is too short")
 		}
 		return nil
 	}
 	if len(e.optionList) == 2 {
 		if e.optionList[0].Tp != ast.CalibrateStartTime || (e.optionList[1].Tp != ast.CalibrateEndTime && e.optionList[1].Tp != ast.CalibrateDuration) {
-			return "", "", errors.Errorf("dynamic calibarate options are not matched, please input start time and end time or duration is optional.")
+			return "", "", errors.Errorf("dynamic calibarate options are not matched, please input start time and end time or duration is optional")
 		}
 		// check start time and end time whether validated
 		startTs, err := staleread.CalculateAsOfTsExpr(e.ctx, e.optionList[0].Ts)
@@ -142,7 +142,7 @@ func (e *calibrateResourceExec) checkDynamicCalibrateOptions() (string, string, 
 
 	} else if len(e.optionList) == 1 {
 		if e.optionList[0].Tp != ast.CalibrateStartTime {
-			return "", "", errors.Errorf("dynamic calibarate options are not matched, please input start time and end time is optional.")
+			return "", "", errors.Errorf("dynamic calibarate options are not matched, please input start time and end time is optional")
 		}
 		// check start time whether validated
 		startTs, err := staleread.CalculateAsOfTsExpr(e.ctx, e.optionList[0].Ts)
@@ -152,7 +152,7 @@ func (e *calibrateResourceExec) checkDynamicCalibrateOptions() (string, string, 
 		startTime = oracle.GetTimeFromTS(startTs)
 		endTime = time.Now()
 	} else {
-		return "", "", errors.Errorf("dynamic calibarate options are too much.")
+		return "", "", errors.Errorf("dynamic calibarate options are too much")
 	}
 	startTimeStr = startTime.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
 	endTimeStr = endTime.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
@@ -220,7 +220,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 			}
 		}
 		if len(quotas) < 5 {
-			return errors.Errorf("there are too few metrics points available.")
+			return errors.Errorf("there are too few metrics points available")
 		}
 		if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
 			sort.Slice(quotas, func(i, j int) bool {
@@ -236,11 +236,11 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 			req.AppendUint64(0, uint64(quota))
 		} else {
 			if tidbCPULowCount > 0 && tikvCPULowCOunt > 0 {
-				return errors.Errorf("The CPU utilizations of TiDB and TiKV are less than one tenth in some of the time.")
+				return errors.Errorf("The CPU utilizations of TiDB and TiKV are less than one tenth in some of the time")
 			} else if tidbCPULowCount > 0 {
-				errors.Errorf("The CPU utilization of TiDB is less than one tenth in some of the time.")
+				errors.Errorf("The CPU utilization of TiDB is less than one tenth in some of the time")
 			} else {
-				errors.Errorf("The CPU utilization of TiKV is less than one tenth in some of the time.")
+				errors.Errorf("The CPU utilization of TiKV is less than one tenth in some of the time")
 			}
 		}
 
