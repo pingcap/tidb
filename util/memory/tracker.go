@@ -475,7 +475,6 @@ func (t *Tracker) Consume(bs int64) {
 				}
 				oldTracker = MemUsageTop1Tracker.Load()
 			}
-			logutil.BgLogger().Error("global memory controller, update the Top1 session", zap.Int64("memUsage", memUsage), zap.Uint64("conn", sessionRootTracker.SessionID), zap.Uint64("limitSessMinSize", limitSessMinSize))
 		}
 	}
 
