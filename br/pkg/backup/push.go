@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -20,6 +21,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/zap"
+)
+
+const (
+	// from PD: https://github.com/tikv/pd/blob/c40e319f50822678cda71ae62ee2fd70a9cac010/pkg/core/store.go#L523
+	storeDisconnectionDuration = 20 * time.Second
 )
 
 // pushDown wraps a backup task.
@@ -51,6 +57,20 @@ func newPushDown(mgr ClientMgr, capacity int) *pushDown {
 	}
 }
 
+func checkStoreLiveness(s *metapb.Store) error {
+	if s.State != metapb.StoreState_Up {
+		return errors.Annotatef(berrors.ErrKVStorage, "the store state isn't up, it is %s", s.State)
+	}
+	// If the field isn't present (the default value), skip this check.
+	if s.GetLastHeartbeat() > 0 {
+		lastHeartBeat := time.Unix(0, s.GetLastHeartbeat())
+		if sinceLastHB := time.Since(lastHeartBeat); sinceLastHB > storeDisconnectionDuration {
+			return errors.Annotatef(berrors.ErrKVStorage, "the store last heartbeat is too long ago, it is %s", sinceLastHB)
+		}
+	}
+	return nil
+}
+
 // FullBackup make a full backup of a tikv cluster.
 func (push *pushDown) pushBackup(
 	ctx context.Context,
@@ -77,8 +97,8 @@ func (push *pushDown) pushBackup(
 		store := s
 		storeID := s.GetId()
 		lctx := logutil.ContextWithField(ctx, zap.Uint64("store-id", storeID))
-		if s.GetState() != metapb.StoreState_Up {
-			logutil.CL(lctx).Warn("skip store", zap.Stringer("State", s.GetState()))
+		if err := checkStoreLiveness(s); err != nil {
+			logutil.CL(lctx).Warn("skip store", logutil.ShortError(err))
 			continue
 		}
 		client, err := push.mgr.GetBackupClient(lctx, storeID)
@@ -86,7 +106,7 @@ func (push *pushDown) pushBackup(
 			// BR should be able to backup even some of stores disconnected.
 			// The regions managed by this store can be retried at fine-grained backup then.
 			logutil.CL(lctx).Warn("fail to connect store, skipping", zap.Error(err))
-			return nil
+			continue
 		}
 		wg.Add(1)
 		go func() {
