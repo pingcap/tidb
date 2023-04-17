@@ -147,10 +147,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && sctx.GetSessionVars().StrictSQLMode && !IsReadOnly(node, sessVars) {
-		sessVars.TiFlashEngineRemovedDueToStrictSQLMode = true
+		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		delete(sessVars.IsolationReadEngines, kv.TiFlash)
 		defer func() {
-			sessVars.TiFlashEngineRemovedDueToStrictSQLMode = false
+			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
 	}

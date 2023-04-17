@@ -1478,7 +1478,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 		helpMsg := ""
 		if engineVals == "tiflash" {
 			helpMsg = ". Please check tiflash replica"
-			if ctx.GetSessionVars().TiFlashEngineRemovedDueToStrictSQLMode {
+			if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
 				helpMsg += " or check if the query is not readonly and sql mode is strict"
 			}
 		}
@@ -1486,7 +1486,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
 	}
 	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
-		if ctx.GetSessionVars().TiFlashEngineRemovedDueToStrictSQLMode {
+		if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
 			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
 				"MPP mode may be blocked because the query is not readonly and sql mode is strict.")
 		} else {
