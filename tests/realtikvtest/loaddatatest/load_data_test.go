@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -680,4 +682,61 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
+}
+
+func (s *mockGCSSuite) TestChecksumNotMatch() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-multi-load",
+			Name:       "duplicate-pk-01.csv",
+		},
+		Content: []byte(`1,test1,11
+2,test2,22
+2,test3,33`),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-multi-load",
+			Name:       "duplicate-pk-02.csv",
+		},
+		Content: []byte(`4,test4,44
+4,test5,55
+6,test6,66`),
+	})
+
+	backup := config.DefaultBatchSize
+	config.DefaultBatchSize = 1
+	s.T().Cleanup(func() {
+		config.DefaultBatchSize = backup
+	})
+
+	s.prepareAndUseDB("load_data")
+	s.tk.MustExec("drop table if exists t;")
+	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
+	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
+		INTO TABLE t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+	err := s.tk.ExecToErr(loadDataSQL)
+	require.ErrorIs(s.T(), err, common.ErrChecksumMismatch)
+	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
+	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
+		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
+	}...))
+
+	s.tk.MustExec("truncate table t;")
+	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
+		INTO TABLE t fields terminated by ',' with import_mode='physical', checksum_table='off'`, gcsEndpoint)
+	s.tk.MustExec(loadDataSQL)
+	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
+	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
+		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
+	}...))
+
+	s.tk.MustExec("truncate table t;")
+	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
+		INTO TABLE t fields terminated by ',' with import_mode='physical', checksum_table='optional'`, gcsEndpoint)
+	s.tk.MustExec(loadDataSQL)
+	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
+	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
+		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
+	}...))
 }

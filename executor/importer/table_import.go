@@ -46,11 +46,10 @@ import (
 	"go.uber.org/zap"
 )
 
-func prepareSortDir(e *LoadDataController) (string, error) {
+func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 	tidbCfg := tidb.GetGlobalConfig()
-	// todo: add job id too
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
-	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(jobID, 10))
 
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
@@ -84,7 +83,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
-	dir, err := prepareSortDir(e)
+	dir, err := prepareSortDir(e, param.Job.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +271,13 @@ func (ti *TableImporter) importTable(ctx context.Context) error {
 
 func (ti *TableImporter) postProcess(ctx context.Context) error {
 	// todo: post process
+	if ti.checksum != config.OpLevelOff {
+		return ti.checksumTable(ctx)
+	}
+	return nil
+}
+
+func (ti *TableImporter) checksumTable(ctx context.Context) error {
 	var localChecksum verify.KVChecksum
 	for _, engine := range ti.tableCp.Engines {
 		for _, chunk := range engine.Chunks {
@@ -284,27 +290,20 @@ func (ti *TableImporter) postProcess(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = ti.compareChecksum(remoteChecksum, localChecksum)
-	// with post restore level 'optional', we will skip checksum error
-	if err != nil && ti.checksum == config.OpLevelOptional {
-		ti.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-		err = nil
-	}
-	return err
-}
-
-func (ti *TableImporter) compareChecksum(remoteChecksum *local.RemoteChecksum, localChecksum verify.KVChecksum) error {
-	if remoteChecksum.Checksum != localChecksum.Sum() ||
-		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
-		remoteChecksum.TotalBytes != localChecksum.SumSize() {
-		return common.ErrChecksumMismatch.GenWithStackByArgs(
+	if remoteChecksum.IsEqual(&localChecksum) {
+		ti.logger.Info("checksum pass", zap.Object("local", &localChecksum))
+	} else {
+		err2 := common.ErrChecksumMismatch.GenWithStackByArgs(
 			remoteChecksum.Checksum, localChecksum.Sum(),
 			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
 			remoteChecksum.TotalBytes, localChecksum.SumSize(),
 		)
+		if ti.checksum == config.OpLevelOptional {
+			ti.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err2))
+			err2 = nil
+		}
+		return err2
 	}
-
-	ti.logger.Info("checksum pass", zap.Object("local", &localChecksum))
 	return nil
 }
 
