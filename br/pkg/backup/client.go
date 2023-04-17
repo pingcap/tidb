@@ -94,8 +94,8 @@ type Client struct {
 	apiVersion kvrpcpb.APIVersion
 
 	cipher           *backuppb.CipherInfo
-	checkpointMeta   *checkpoint.CheckpointMetadata
-	checkpointRunner *checkpoint.CheckpointRunner
+	checkpointMeta   *checkpoint.CheckpointMetadataForBackup
+	checkpointRunner *checkpoint.BackupRunner
 
 	gcTTL int64
 }
@@ -274,7 +274,7 @@ func (bc *Client) CheckCheckpoint(hash []byte) error {
 	return nil
 }
 
-func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner {
+func (bc *Client) GetCheckpointRunner() *checkpoint.BackupRunner {
 	return bc.checkpointRunner
 }
 
@@ -291,7 +291,7 @@ func (bc *Client) StartCheckpointRunner(
 	progressCallBack func(ProgressUnit),
 ) (err error) {
 	if bc.checkpointMeta == nil {
-		bc.checkpointMeta = &checkpoint.CheckpointMetadata{
+		bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{
 			GCServiceId: safePointID,
 			ConfigHash:  cfgHash,
 			BackupTS:    backupTS,
@@ -312,7 +312,7 @@ func (bc *Client) StartCheckpointRunner(
 		}
 	}
 
-	bc.checkpointRunner, err = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher, bc.mgr.GetPDClient())
+	bc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForBackup(ctx, bc.storage, bc.cipher, bc.mgr.GetPDClient())
 	return errors.Trace(err)
 }
 
@@ -356,7 +356,7 @@ func (bc *Client) GetProgressRange(r rtree.Range) (*rtree.ProgressRange, error) 
 func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func(ProgressUnit)) (map[string]rtree.RangeTree, error) {
 	rangeDataMap := make(map[string]rtree.RangeTree)
 
-	pastDureTime, err := checkpoint.WalkCheckpointFile(ctx, bc.storage, bc.cipher, func(groupKey string, rg *rtree.Range) {
+	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(groupKey string, rg checkpoint.BackupValueType) {
 		rangeTree, exists := rangeDataMap[groupKey]
 		if !exists {
 			rangeTree = rtree.NewRangeTree()
@@ -1071,8 +1071,9 @@ func (bc *Client) fineGrainedBackup(
 					logutil.Key("fine-grained-range-end", resp.EndKey),
 				)
 				if bc.checkpointRunner != nil {
-					if err := bc.checkpointRunner.Append(
+					if err := checkpoint.AppendForBackup(
 						ctx,
+						bc.checkpointRunner,
 						pr.GroupKey,
 						resp.StartKey,
 						resp.EndKey,
