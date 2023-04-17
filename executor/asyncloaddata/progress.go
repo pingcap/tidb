@@ -24,7 +24,7 @@ import (
 type Progress struct {
 	// SourceFileSize is the size of the source file in bytes. When we can't get
 	// the size of the source file, it will be set to -1.
-	// Currently the value is read by seek(0, end), when LOAD DATA LOCAL we wrap
+	// Currently, the value is read by seek(0, end), when LOAD DATA LOCAL we wrap
 	// SimpleSeekerOnReadCloser on MySQL client connection which doesn't support
 	// it.
 	SourceFileSize int64
@@ -52,7 +52,7 @@ func (p *Progress) String() string {
 	return string(bs)
 }
 
-// ProgressFromJSON creates a Progress from a JSON string.
+// ProgressFromJSON creates Progress from a JSON string.
 func ProgressFromJSON(bs []byte) (*Progress, error) {
 	var p Progress
 	err := json.Unmarshal(bs, &p)

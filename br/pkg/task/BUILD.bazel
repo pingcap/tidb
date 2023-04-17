@@ -97,6 +97,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
+    shard_count = 19,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/errors",

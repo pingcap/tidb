@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -313,8 +314,8 @@ func (rc *logFileManager) ReadAllEntries(
 	}
 
 	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
-		return nil, nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
-			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
+		return nil, nil, berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
+			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:]))
 	}
 
 	iter := stream.NewEventIterator(buff)
