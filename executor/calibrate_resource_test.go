@@ -49,7 +49,7 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(context.Background(), rs.NewChunk(nil))
-	require.ErrorContains(t, err, "resource group controller is not initialized.")
+	require.ErrorContains(t, err, "resource group controller is not initialized")
 
 	oldResourceCtl := executor.GetResourceGroupController()
 	defer func() {
