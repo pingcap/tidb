@@ -225,6 +225,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			return ok, reason
 		}
 	case *ast.UpdateStmt:
+		if len(x.TableHints) > 0 {
+			return false, "not support update statement with table hints"
+		}
 		if x.MultipleTable {
 			return false, "not support multiple tables update statements"
 		}
@@ -233,6 +236,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			return ok, reason
 		}
 	case *ast.InsertStmt:
+		if len(x.TableHints) > 0 {
+			return false, "not support insert statement with table hints"
+		}
 		if x.Select == nil { // `insert into t values (...)`
 			nRows := len(x.Lists)
 			nCols := 0
@@ -261,6 +267,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			}
 		}
 	case *ast.DeleteStmt:
+		if len(x.TableHints) > 0 {
+			return false, "not support insert statement with table hints"
+		}
 		if x.IsMultiTable {
 			return false, "not support multiple tables delete statements"
 		}
