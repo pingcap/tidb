@@ -4,6 +4,7 @@ package utils_test
 
 import (
 	"context"
+	"io"
 	"testing"
 	"time"
 
@@ -101,13 +102,16 @@ func TestPdBackoffWithRetryableError(t *testing.T) {
 	gRPCError := status.Error(codes.Unavailable, "transport is closing")
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() { counter++ }()
+		if counter == 2 {
+			return io.EOF
+		}
 		return gRPCError
 	}, backoffer)
 	require.Equal(t, 16, counter)
 	require.Equal(t, []error{
 		gRPCError,
 		gRPCError,
-		gRPCError,
+		io.EOF,
 		gRPCError,
 		gRPCError,
 		gRPCError,
