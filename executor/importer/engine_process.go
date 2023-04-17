@@ -143,6 +143,7 @@ func ProcessChunk(
 		indexWriter: indexWriter,
 		encoder:     encoder,
 		kvCodec:     tableImporter.kvStore.GetCodec(),
+		progress:    tableImporter.Progress,
 	}
 	// todo: process in parallel
 	err = cp.process(ctx)
