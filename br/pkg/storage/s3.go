@@ -290,7 +290,7 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 }
 
 // NewS3Storage initialize a new s3 storage for metadata.
-func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
+func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet *Error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
@@ -315,7 +315,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 	cred, err := autoNewCred(&qs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, NewSimpleError(errors.Trace(err))
 	}
 	if cred != nil {
 		awsConfig.WithCredentials(cred)
@@ -326,7 +326,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 	ses, err := session.NewSessionWithOptions(awsSessionOpts)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, NewSimpleError(errors.Trace(err))
 	}
 
 	if !opts.SendCredentials {
@@ -338,7 +338,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		if qs.AccessKey == "" || qs.SecretAccessKey == "" {
 			v, cerr := ses.Config.Credentials.Get()
 			if cerr != nil {
-				return nil, errors.Trace(cerr)
+				return nil, NewSimpleError(errors.Trace(cerr))
 			}
 			backend.AccessKey = v.AccessKeyID
 			backend.SecretAccessKey = v.SecretAccessKey
@@ -377,7 +377,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		}
 		region, err = s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
 		if err != nil {
-			return nil, newWrappedError(err, "failed to get region of bucket %s", qs.Bucket)
+			return nil, NewSimpleError(errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket))
 		}
 	} else {
 		// for other s3 compatible provider like ovh storage didn't return the region correctlly
@@ -387,8 +387,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 	if qs.Region != region {
 		if qs.Region != "" {
-			return nil, errors.Trace(fmt.Errorf("s3 bucket and region are not matched, bucket=%s, input region=%s, real region=%s",
-				qs.Bucket, qs.Region, region))
+			return nil, NewSimpleErrorWithMessage("s3 bucket and region are not matched, bucket=%s, input region=%s, real region=%s",
+				qs.Bucket, qs.Region, region)
 		}
 
 		qs.Region = region
@@ -407,7 +407,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	for _, p := range opts.CheckPermissions {
 		err := permissionCheckFn[p](c, &qs)
 		if err != nil {
-			return nil, newWrappedError(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
+			return nil, NewErrorWithMessage(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
 		}
 	}
 
@@ -482,7 +482,7 @@ func (rs *S3Storage) IsObjectLockEnabled() bool {
 }
 
 // WriteFile writes data to a file to storage.
-func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) error {
+func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) *Error {
 	input := &s3.PutObjectInput{
 		Body:   aws.ReadSeekCloser(bytes.NewReader(data)),
 		Bucket: aws.String(rs.options.Bucket),
@@ -505,49 +505,49 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
 	if err != nil {
-		return errors.Trace(err)
+		return NewSimpleError(errors.Trace(err))
 	}
 	hinput := &s3.HeadObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 	err = rs.svc.WaitUntilObjectExistsWithContext(ctx, hinput)
-	return errors.Trace(err)
+	return NewSimpleError(errors.Trace(err))
 }
 
 // ReadFile reads the file from the storage and returns the contents.
-func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) {
+func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, *Error) {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 	result, err := rs.svc.GetObjectWithContext(ctx, input)
 	if err != nil {
-		return nil, newWrappedError(err,
+		return nil, NewSimpleError(errors.Annotatef(err,
 			"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
-			*input.Bucket, *input.Key)
+			*input.Bucket, *input.Key))
 	}
 	defer result.Body.Close()
 	data, err := io.ReadAll(result.Body)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, NewSimpleError(errors.Trace(err))
 	}
 	return data, nil
 }
 
 // DeleteFile delete the file in s3 storage
-func (rs *S3Storage) DeleteFile(ctx context.Context, file string) error {
+func (rs *S3Storage) DeleteFile(ctx context.Context, file string) *Error {
 	input := &s3.DeleteObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
 	_, err := rs.svc.DeleteObjectWithContext(ctx, input)
-	return errors.Trace(err)
+	return NewSimpleError(errors.Trace(err))
 }
 
 // FileExists check if file exists on s3 storage.
-func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) {
+func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, *Error) {
 	input := &s3.HeadObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
@@ -561,7 +561,7 @@ func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) 
 				return false, nil
 			}
 		}
-		return false, errors.Trace(err)
+		return false, NewSimpleError(errors.Trace(err))
 	}
 	return true, nil
 }
@@ -572,7 +572,7 @@ func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) 
 // The first argument is the file path that can be used in `Open`
 // function; the second argument is the size in byte of the file determined
 // by path.
-func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) *Error) *Error {
 	if opt == nil {
 		opt = &WalkOption{}
 	}
@@ -601,7 +601,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		// (as of 2020, DigitalOcean Spaces still does not support V2 - https://developers.digitalocean.com/documentation/spaces/#list-bucket-contents)
 		res, err := rs.svc.ListObjectsWithContext(ctx, req)
 		if err != nil {
-			return errors.Trace(err)
+			return NewSimpleError(errors.Trace(err))
 		}
 		for _, r := range res.Contents {
 			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#AmazonS3-ListObjects-response-NextMarker -
@@ -629,7 +629,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 				continue
 			}
 			if err = fn(path, itemSize); err != nil {
-				return errors.Trace(err)
+				return NewSimpleError(errors.Trace(err))
 			}
 		}
 		if !aws.BoolValue(res.IsTruncated) {
@@ -646,10 +646,10 @@ func (rs *S3Storage) URI() string {
 }
 
 // Open a Reader by file path.
-func (rs *S3Storage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
+func (rs *S3Storage) Open(ctx context.Context, path string) (ExternalFileReader, *Error) {
 	reader, r, err := rs.open(ctx, path, 0, 0)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &s3ObjectReader{
 		storage:   rs,
@@ -679,7 +679,7 @@ func (rs *S3Storage) open(
 	ctx context.Context,
 	path string,
 	startOffset, endOffset int64,
-) (io.ReadCloser, RangeInfo, error) {
+) (io.ReadCloser, RangeInfo, *Error) {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + path),
@@ -705,7 +705,7 @@ func (rs *S3Storage) open(
 	input.Range = rangeOffset
 	result, err := rs.svc.GetObjectWithContext(ctx, input)
 	if err != nil {
-		return nil, RangeInfo{}, errors.Trace(err)
+		return nil, RangeInfo{}, NewSimpleError(errors.Trace(err))
 	}
 
 	var r RangeInfo
@@ -715,7 +715,7 @@ func (rs *S3Storage) open(
 		// We must ensure the `ContentLengh` has data even if for empty objects,
 		// otherwise we have no places to get the object size
 		if result.ContentLength == nil {
-			return nil, RangeInfo{}, newWrappedError(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
+			return nil, RangeInfo{}, NewErrorWithMessage(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
 		}
 		objectSize := *(result.ContentLength)
 		r = RangeInfo{
@@ -724,14 +724,15 @@ func (rs *S3Storage) open(
 			Size:  objectSize,
 		}
 	} else {
-		r, err = ParseRangeInfo(result.ContentRange)
-		if err != nil {
-			return nil, RangeInfo{}, errors.Trace(err)
+		var err2 *Error
+		r, err2 = ParseRangeInfo(result.ContentRange)
+		if err2 != nil {
+			return nil, RangeInfo{}, err2
 		}
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
-		return nil, r, newWrappedError(berrors.ErrStorageUnknown, "open file '%s' failed, expected range: %s, got: %v",
+		return nil, r, NewErrorWithMessage(berrors.ErrStorageUnknown, "open file '%s' failed, expected range: %s, got: %v",
 			path, *rangeOffset, result.ContentRange)
 	}
 
@@ -741,30 +742,31 @@ func (rs *S3Storage) open(
 var contentRangeRegex = regexp.MustCompile(`bytes (\d+)-(\d+)/(\d+)$`)
 
 // ParseRangeInfo parses the Content-Range header and returns the offsets.
-func ParseRangeInfo(info *string) (ri RangeInfo, err error) {
+func ParseRangeInfo(info *string) (ri RangeInfo, err *Error) {
 	if info == nil || len(*info) == 0 {
-		err = newWrappedError(berrors.ErrStorageUnknown, "ContentRange is empty")
+		err = NewErrorWithMessage(berrors.ErrStorageUnknown, "ContentRange is empty")
 		return
 	}
 	subMatches := contentRangeRegex.FindStringSubmatch(*info)
 	if len(subMatches) != 4 {
-		err = newWrappedError(berrors.ErrStorageUnknown, "invalid content range: '%s'", *info)
+		err = NewErrorWithMessage(berrors.ErrStorageUnknown, "invalid content range: '%s'", *info)
 		return
 	}
 
-	ri.Start, err = strconv.ParseInt(subMatches[1], 10, 64)
-	if err != nil {
-		err = newWrappedError(err, "invalid start offset value '%s' in ContentRange '%s'", subMatches[1], *info)
+	var err2 error
+	ri.Start, err2 = strconv.ParseInt(subMatches[1], 10, 64)
+	if err2 != nil {
+		err = NewSimpleError(errors.Annotatef(err2, "invalid start offset value '%s' in ContentRange '%s'", subMatches[1], *info))
 		return
 	}
-	ri.End, err = strconv.ParseInt(subMatches[2], 10, 64)
-	if err != nil {
-		err = newWrappedError(err, "invalid end offset value '%s' in ContentRange '%s'", subMatches[2], *info)
+	ri.End, err2 = strconv.ParseInt(subMatches[2], 10, 64)
+	if err2 != nil {
+		err = NewSimpleError(errors.Annotatef(err2, "invalid end offset value '%s' in ContentRange '%s'", subMatches[2], *info))
 		return
 	}
-	ri.Size, err = strconv.ParseInt(subMatches[3], 10, 64)
-	if err != nil {
-		err = newWrappedError(err, "invalid size size value '%s' in ContentRange '%s'", subMatches[3], *info)
+	ri.Size, err2 = strconv.ParseInt(subMatches[3], 10, 64)
+	if err2 != nil {
+		err = NewSimpleError(errors.Annotatef(err2, "invalid size size value '%s' in ContentRange '%s'", subMatches[3], *info))
 		return
 	}
 	return
@@ -912,27 +914,27 @@ func (rs *S3Storage) CreateUploader(ctx context.Context, name string) (ExternalF
 }
 
 // Create creates multi upload request.
-func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWriter, *Error) {
 	uploader, err := rs.CreateUploader(ctx, name)
 	if err != nil {
-		return nil, err
+		return nil, NewSimpleError(err)
 	}
 	uploaderWriter := newBufferedWriter(uploader, hardcodedS3ChunkSize, NoCompression)
 	return uploaderWriter, nil
 }
 
 // Rename implements ExternalStorage interface.
-func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string) *Error {
 	content, err := rs.ReadFile(ctx, oldFileName)
 	if err != nil {
-		return errors.Trace(err)
+		return NewSimpleError(errors.Trace(err))
 	}
 	err = rs.WriteFile(ctx, newFileName, content)
 	if err != nil {
-		return errors.Trace(err)
+		return NewSimpleError(errors.Trace(err))
 	}
 	if err = rs.DeleteFile(ctx, oldFileName); err != nil {
-		return errors.Trace(err)
+		return NewSimpleError(errors.Trace(err))
 	}
 	return nil
 }

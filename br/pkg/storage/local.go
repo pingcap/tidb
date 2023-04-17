@@ -30,13 +30,13 @@ type LocalStorage struct {
 }
 
 // DeleteFile deletes the file.
-func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
+func (l *LocalStorage) DeleteFile(_ context.Context, name string) *Error {
 	path := filepath.Join(l.base, name)
-	return os.Remove(path)
+	return NewSimpleError(os.Remove(path))
 }
 
 // WriteFile writes data to a file to storage.
-func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) error {
+func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) *Error {
 	// because `os.WriteFile` is not atomic, directly write into it may reset the file
 	// to an empty file if write is not finished.
 	tmpPath := filepath.Join(l.base, name) + ".tmp." + uuid.NewString()
@@ -45,32 +45,36 @@ func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) er
 		log.Info("failed to write file, try to mkdir the path", zap.String("path", path))
 		exists, existErr := pathExists(path)
 		if existErr != nil {
-			return newWrappedError(err, "after failed to write file, failed to check path exists : %v", existErr)
+			return NewSimpleError(errors.Annotatef(err, "after failed to write file, failed to check path exists : %v", existErr))
 		}
 		if exists {
-			return errors.Trace(err)
+			return NewSimpleError(errors.Trace(err))
 		}
 		if mkdirErr := mkdirAll(path); mkdirErr != nil {
-			return newWrappedError(err, "after failed to write file, failed to mkdir : %v", mkdirErr)
+			return NewSimpleError(errors.Annotatef(err, "after failed to write file, failed to mkdir : %v", mkdirErr))
 		}
 		if err := os.WriteFile(tmpPath, data, localFilePerm); err != nil {
-			return errors.Trace(err)
+			return NewSimpleError(errors.Trace(err))
 		}
 	}
 	if err := os.Rename(tmpPath, filepath.Join(l.base, name)); err != nil {
-		return errors.Trace(err)
+		return NewSimpleError(errors.Trace(err))
 	}
 	return nil
 }
 
 // ReadFile reads the file from the storage and returns the contents.
-func (l *LocalStorage) ReadFile(_ context.Context, name string) ([]byte, error) {
+func (l *LocalStorage) ReadFile(_ context.Context, name string) ([]byte, *Error) {
 	path := filepath.Join(l.base, name)
-	return os.ReadFile(path)
+	bs, err := os.ReadFile(path)
+	if err != nil {
+		return nil, NewSimpleError(errors.Trace(err))
+	}
+	return bs, nil
 }
 
 // FileExists implement ExternalStorage.FileExists.
-func (l *LocalStorage) FileExists(_ context.Context, name string) (bool, error) {
+func (l *LocalStorage) FileExists(_ context.Context, name string) (bool, *Error) {
 	path := filepath.Join(l.base, name)
 	return pathExists(path)
 }
@@ -81,12 +85,12 @@ func (l *LocalStorage) FileExists(_ context.Context, name string) (bool, error) 
 // The first argument is the file path that can be used in `Open`
 // function; the second argument is the size in byte of the file determined
 // by path.
-func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(string, int64) *Error) *Error {
 	if opt == nil {
 		opt = &WalkOption{}
 	}
 	base := filepath.Join(l.base, opt.SubDir)
-	return filepath.Walk(base, func(path string, f os.FileInfo, err error) error {
+	err := filepath.Walk(base, func(path string, f os.FileInfo, err error) error {
 		if os.IsNotExist(err) {
 			// if path not exists, we should return nil to continue.
 			return nil
@@ -117,6 +121,7 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 		}
 		return fn(path, size)
 	})
+	return NewSimpleError(errors.Trace(err))
 }
 
 // URI returns the base path as an URI with a file:/// prefix.
@@ -125,33 +130,34 @@ func (l *LocalStorage) URI() string {
 }
 
 // Open a Reader by file path, path is a relative path to base path.
-func (l *LocalStorage) Open(_ context.Context, path string) (ExternalFileReader, error) {
+func (l *LocalStorage) Open(_ context.Context, path string) (ExternalFileReader, *Error) {
 	//nolint: gosec
-	return os.Open(filepath.Join(l.base, path))
+	reader, err := os.Open(filepath.Join(l.base, path))
+	return reader, NewSimpleError(err)
 }
 
 // Create implements ExternalStorage interface.
-func (l *LocalStorage) Create(_ context.Context, name string) (ExternalFileWriter, error) {
+func (l *LocalStorage) Create(_ context.Context, name string) (ExternalFileWriter, *Error) {
 	file, err := os.Create(filepath.Join(l.base, name))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, NewSimpleError(errors.Trace(err))
 	}
 	buf := bufio.NewWriter(file)
 	return newFlushStorageWriter(buf, buf, file), nil
 }
 
 // Rename implements ExternalStorage interface.
-func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string) error {
-	return errors.Trace(os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName)))
+func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string) *Error {
+	return NewSimpleError(errors.Trace(os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName))))
 }
 
-func pathExists(_path string) (bool, error) {
+func pathExists(_path string) (bool, *Error) {
 	_, err := os.Stat(_path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		return false, errors.Trace(err)
+		return false, NewSimpleError(errors.Trace(err))
 	}
 	return true, nil
 }
@@ -159,15 +165,15 @@ func pathExists(_path string) (bool, error) {
 // NewLocalStorage return a LocalStorage at directory `base`.
 //
 // export for test.
-func NewLocalStorage(base string) (*LocalStorage, error) {
+func NewLocalStorage(base string) (*LocalStorage, *Error) {
 	ok, err := pathExists(base)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, NewSimpleError(errors.Trace(err))
 	}
 	if !ok {
 		err := mkdirAll(base)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, NewSimpleError(errors.Trace(err))
 		}
 	}
 	return &LocalStorage{base: base}, nil

@@ -109,10 +109,10 @@ func (s *GCSStorage) GetOptions() *backuppb.GCS {
 }
 
 // DeleteFile delete the file in storage
-func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
+func (s *GCSStorage) DeleteFile(ctx context.Context, name string) *Error {
 	object := s.objectName(name)
 	err := s.bucket.Object(object).Delete(ctx)
-	return errors.Trace(err)
+	return NewSimpleError(errors.Trace(err))
 }
 
 func (s *GCSStorage) objectName(name string) string {
@@ -120,26 +120,26 @@ func (s *GCSStorage) objectName(name string) string {
 }
 
 // WriteFile writes data to a file to storage.
-func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) *Error {
 	object := s.objectName(name)
 	wc := s.bucket.Object(object).NewWriter(ctx)
 	wc.StorageClass = s.gcs.StorageClass
 	wc.PredefinedACL = s.gcs.PredefinedAcl
 	_, err := wc.Write(data)
 	if err != nil {
-		return errors.Trace(err)
+		return NewSimpleError(errors.Trace(err))
 	}
-	return wc.Close()
+	return NewSimpleError(wc.Close())
 }
 
 // ReadFile reads the file from the storage and returns the contents.
-func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, *Error) {
 	object := s.objectName(name)
 	rc, err := s.bucket.Object(object).NewReader(ctx)
 	if err != nil {
-		return nil, newWrappedError(err,
+		return nil, NewSimpleError(errors.Annotatef(err,
 			"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
-			s.gcs.Bucket, object)
+			s.gcs.Bucket, object))
 	}
 	defer rc.Close()
 
@@ -152,37 +152,37 @@ func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 		b = make([]byte, size)
 		_, err = io.ReadFull(rc, b)
 	}
-	return b, errors.Trace(err)
+	return b, NewSimpleError(errors.Trace(err))
 }
 
 // FileExists return true if file exists.
-func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) {
+func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, *Error) {
 	object := s.objectName(name)
 	_, err := s.bucket.Object(object).Attrs(ctx)
 	if err != nil {
 		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
 			return false, nil
 		}
-		return false, errors.Trace(err)
+		return false, NewSimpleError(errors.Trace(err))
 	}
 	return true, nil
 }
 
 // Open a Reader by file path.
-func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
+func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader, *Error) {
 	object := s.objectName(path)
 	handle := s.bucket.Object(object)
 
 	attrs, err := handle.Attrs(ctx)
 	if err != nil {
 		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
-			return nil, newWrappedError(err,
+			return nil, NewSimpleError(errors.Annotatef(err,
 				"the object doesn't exist, file info: input.bucket='%s', input.key='%s'",
-				s.gcs.Bucket, path)
+				s.gcs.Bucket, path))
 		}
-		return nil, newWrappedError(err,
+		return nil, NewSimpleError(errors.Annotatef(err,
 			"failed to get gcs file attribute, file info: input.bucket='%s', input.key='%s'",
-			s.gcs.Bucket, path)
+			s.gcs.Bucket, path))
 	}
 
 	return &gcsObjectReader{
@@ -201,7 +201,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 // The first argument is the file path that can be used in `Open`
 // function; the second argument is the size in byte of the file determined
 // by path.
-func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) *Error) *Error {
 	if opt == nil {
 		opt = &WalkOption{}
 	}
@@ -217,7 +217,7 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	// only need each object's name and size
 	err := query.SetAttrSelection([]string{"Name", "Size"})
 	if err != nil {
-		return errors.Trace(err)
+		return NewSimpleError(errors.Trace(err))
 	}
 	iter := s.bucket.Objects(ctx, query)
 	for {
@@ -226,7 +226,7 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			break
 		}
 		if err != nil {
-			return errors.Trace(err)
+			return NewSimpleError(errors.Trace(err))
 		}
 		// when walk on specify directory, the result include storage.Prefix,
 		// which can not be reuse in other API(Open/Read) directly.
@@ -235,7 +235,7 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		// trim the prefix '/' to ensure that the path returned is consistent with the local storage
 		path = strings.TrimPrefix(path, "/")
 		if err = fn(path, attrs.Size); err != nil {
-			return errors.Trace(err)
+			return NewSimpleError(err)
 		}
 	}
 	return nil
@@ -246,7 +246,7 @@ func (s *GCSStorage) URI() string {
 }
 
 // Create implements ExternalStorage interface.
-func (s *GCSStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (s *GCSStorage) Create(ctx context.Context, name string) (ExternalFileWriter, *Error) {
 	object := s.objectName(name)
 	wc := s.bucket.Object(object).NewWriter(ctx)
 	wc.StorageClass = s.gcs.StorageClass
@@ -255,20 +255,20 @@ func (s *GCSStorage) Create(ctx context.Context, name string) (ExternalFileWrite
 }
 
 // Rename file name from oldFileName to newFileName.
-func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string) *Error {
 	data, err := s.ReadFile(ctx, oldFileName)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = s.WriteFile(ctx, newFileName, data)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return s.DeleteFile(ctx, oldFileName)
 }
 
 // NewGCSStorage creates a GCS external storage implementation.
-func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, error) {
+func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, *Error) {
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {
 		clientOps = append(clientOps, option.WithoutAuthentication())
@@ -276,11 +276,11 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		if gcs.CredentialsBlob == "" {
 			creds, err := google.FindDefaultCredentials(ctx, storage.ScopeReadWrite)
 			if err != nil {
-				return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
+				return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
 			}
 			if opts.SendCredentials {
 				if len(creds.JSON) <= 0 {
-					return nil, newWrappedError(berrors.ErrStorageInvalidConfig,
+					return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig,
 						"You should provide '--gcs.credentials_file' when '--send-credentials-to-tikv' is true")
 				}
 				gcs.CredentialsBlob = string(creds.JSON)
@@ -301,7 +301,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	}
 	client, err := storage.NewClient(ctx, clientOps...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, NewSimpleError(errors.Trace(err))
 	}
 
 	if !opts.SendCredentials {

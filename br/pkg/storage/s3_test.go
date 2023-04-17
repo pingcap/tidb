@@ -604,9 +604,9 @@ func TestReadError(t *testing.T) {
 		Return(nil, expectedErr)
 
 	_, err := s.storage.ReadFile(ctx, "file-missing")
-	require.Error(t, err)
-	err = TryConvertToBRError(err)
-	require.Regexp(t, "failed to read s3 file, file info: input.bucket='bucket', input.key='prefix/file-missing': ", err.Error())
+	require.NotNil(t, err)
+	err2 := err.ToBRError()
+	require.ErrorContains(t, err2, "failed to read s3 file, file info: input.bucket='bucket', input.key='prefix/file-missing': ")
 }
 
 // TestFileExistsError checks that a HeadObject error is propagated.
@@ -641,14 +641,14 @@ func TestOpenAsBufio(t *testing.T) {
 		})
 
 	reader, err := s.storage.Open(ctx, "plain-text-file")
-	require.NoError(t, err)
+	require.Nil(t, err)
 	require.Nil(t, reader.Close())
 	bufReader := bufio.NewReaderSize(reader, 5)
-	content, err := bufReader.ReadString('\n')
-	require.NoError(t, err)
+	content, err2 := bufReader.ReadString('\n')
+	require.NoError(t, err2)
 	require.Equal(t, "plain text\n", content)
-	content, err = bufReader.ReadString('\n')
-	require.EqualError(t, err, "EOF")
+	content, err2 = bufReader.ReadString('\n')
+	require.EqualError(t, err2, "EOF")
 	require.Equal(t, "content", content)
 }
 
@@ -686,9 +686,9 @@ func TestOpenReadSlowly(t *testing.T) {
 		}, nil)
 
 	reader, err := s.storage.Open(ctx, "alphabets")
-	require.NoError(t, err)
-	res, err := io.ReadAll(reader)
-	require.NoError(t, err)
+	require.Nil(t, err)
+	res, err2 := io.ReadAll(reader)
+	require.NoError(t, err2)
 	require.Equal(t, []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), res)
 }
 
@@ -705,8 +705,8 @@ func TestOpenSeek(t *testing.T) {
 		return io.NopCloser(bytes.NewReader(data[offset:]))
 	})
 
-	reader, err := s.storage.Open(ctx, "random")
-	require.NoError(t, err)
+	reader, packageErr := s.storage.Open(ctx, "random")
+	require.Nil(t, packageErr)
 	defer func() {
 		require.NoError(t, reader.Close())
 	}()
@@ -823,8 +823,8 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 		return io.NopCloser(&limitedBytesReader{Reader: bytes.NewReader(data[offset:]), limit: 30})
 	})
 
-	reader, err := s.storage.Open(ctx, "random")
-	require.NoError(t, err)
+	reader, packageErr := s.storage.Open(ctx, "random")
+	require.Nil(t, packageErr)
 	defer func() {
 		require.NoError(t, reader.Close())
 	}()
@@ -832,7 +832,7 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 	var n int
 	slice := make([]byte, 30)
 	readAndCheck := func(cnt, offset int) {
-		n, err = io.ReadFull(reader, slice[:cnt])
+		n, err := io.ReadFull(reader, slice[:cnt])
 		require.NoError(t, err)
 		require.Equal(t, cnt, n)
 		require.Equal(t, someRandomBytes[offset:offset+cnt], slice[:cnt])
@@ -848,7 +848,7 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 	readAndCheck(20, 75)
 
 	// there only remains 10 bytes
-	n, err = reader.Read(slice)
+	n, err := reader.Read(slice)
 	require.NoError(t, err)
 	require.Equal(t, 5, n)
 
@@ -869,16 +869,15 @@ func TestS3ReaderWithRetryFailed(t *testing.T) {
 		return io.NopCloser(&limitedBytesReader{Reader: bytes.NewReader(data[offset:]), limit: 30})
 	})
 
-	reader, err := s.storage.Open(ctx, "random")
-	require.NoError(t, err)
+	reader, packageErr := s.storage.Open(ctx, "random")
+	require.Nil(t, packageErr)
 	defer func() {
 		require.NoError(t, reader.Close())
 	}()
 
-	var n int
 	slice := make([]byte, 20)
 	readAndCheck := func(cnt, offset int) {
-		n, err = io.ReadFull(reader, slice[:cnt])
+		n, err := io.ReadFull(reader, slice[:cnt])
 		require.NoError(t, err)
 		require.Equal(t, cnt, n)
 		require.Equal(t, someRandomBytes[offset:offset+cnt], slice[:cnt])
@@ -889,7 +888,7 @@ func TestS3ReaderWithRetryFailed(t *testing.T) {
 		readAndCheck(20, i*20)
 	}
 
-	_, err = reader.Read(slice)
+	_, err := reader.Read(slice)
 	require.EqualError(t, err, "read exceeded limit")
 }
 
@@ -1002,7 +1001,7 @@ func TestWalkDir(t *testing.T) {
 	err := s.storage.WalkDir(
 		ctx,
 		&WalkOption{SubDir: "sp", ListCount: 2},
-		func(path string, size int64) error {
+		func(path string, size int64) *Error {
 			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
 			i++
@@ -1017,7 +1016,7 @@ func TestWalkDir(t *testing.T) {
 	err = s.storage.WalkDir(
 		ctx,
 		&WalkOption{ListCount: 4},
-		func(path string, size int64) error {
+		func(path string, size int64) *Error {
 			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
 			i++
@@ -1032,7 +1031,7 @@ func TestWalkDir(t *testing.T) {
 	err = s.storage.WalkDir(
 		ctx,
 		&WalkOption{SubDir: "sp", ObjPrefix: "1", ListCount: 3},
-		func(path string, size int64) error {
+		func(path string, size int64) *Error {
 			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
 			i++
@@ -1104,7 +1103,7 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 	err := storage.WalkDir(
 		ctx,
 		&WalkOption{SubDir: "", ListCount: 2},
-		func(path string, size int64) error {
+		func(path string, size int64) *Error {
 			require.Equal(t, *contents[i].Key, path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
 			i++
@@ -1119,7 +1118,7 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 	err = storage.WalkDir(
 		ctx,
 		&WalkOption{SubDir: "sp", ListCount: 2},
-		func(path string, size int64) error {
+		func(path string, size int64) *Error {
 			require.Equal(t, *contents[i].Key, path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
 			i++

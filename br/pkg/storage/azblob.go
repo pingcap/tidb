@@ -224,19 +224,27 @@ type AzureBlobStorage struct {
 	accessTier azblob.AccessTier
 }
 
-func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (*AzureBlobStorage, error) {
+func newAzureBlobStorage(
+	ctx context.Context,
+	options *backuppb.AzureBlobStorage,
+	opts *ExternalStorageOptions,
+) (*AzureBlobStorage, *Error) {
 	clientBuilder, err := getAzureServiceClientBuilder(options, opts)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, NewSimpleError(errors.Trace(err))
 	}
 
 	return newAzureBlobStorageWithClientBuilder(ctx, options, clientBuilder)
 }
 
-func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb.AzureBlobStorage, clientBuilder ClientBuilder) (*AzureBlobStorage, error) {
+func newAzureBlobStorageWithClientBuilder(
+	ctx context.Context,
+	options *backuppb.AzureBlobStorage,
+	clientBuilder ClientBuilder,
+) (*AzureBlobStorage, *Error) {
 	serviceClient, err := clientBuilder.GetServiceClient()
 	if err != nil {
-		return nil, newWrappedError(err, "Failed to create azure service client")
+		return nil, NewSimpleError(errors.Annotate(err, "Failed to create azure service client"))
 	}
 
 	containerClient := serviceClient.NewContainerClient(options.Bucket)
@@ -244,10 +252,10 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 	if err != nil {
 		var errResp *azblob.StorageError
 		if internalErr, ok := err.(*azblob.InternalError); !(ok && internalErr.As(&errResp)) {
-			return nil, newWrappedError(err, "Failed to create the container: error can not be parsed")
+			return nil, NewSimpleError(errors.Annotate(err, "Failed to create the container: error can not be parsed"))
 		}
 		if errResp.ErrorCode != azblob.StorageErrorCodeContainerAlreadyExists {
-			return nil, newWrappedError(err, fmt.Sprintf("Failed to create the container: %s", errResp.ErrorCode))
+			return nil, NewSimpleError(errors.Annotate(err, fmt.Sprintf("Failed to create the container: %s", errResp.ErrorCode)))
 		}
 	}
 

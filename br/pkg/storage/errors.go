@@ -18,14 +18,57 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	brerrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
-// wrappedError is a wrapper of BR specified errors.wrappedError. When this package is used
-// generally, wrappedError can provide a clear error message. When this package is used
-// in BR, wrappedError can be converted to BR's error.
-type wrappedError struct {
-	text    string
-	brError error
+// Error in storage package provides both a simple standard error with given
+// message and a BR specified error class that can be converted to BR's error.
+type Error struct {
+	error
+	brErrorClass *errors.Error
+}
+
+//// NewError creates a new Error with given error and BR error class.
+//func NewError(brErr *errors.Error, err error) *Error {
+//	return &Error{
+//		error:        err,
+//		brErrorClass: brErr,
+//	}
+//}
+
+// NewErrorWithMessage creates a new Error with given text message and BR error class.
+func NewErrorWithMessage(brErr *errors.Error, format string, args ...interface{}) *Error {
+	return &Error{
+		error:        fmt.Errorf(format, args...),
+		brErrorClass: brErr,
+	}
+}
+
+// NewSimpleError wraps Error on given standard error. If the given error is
+// already a *Error, it will be returned directly.
+func NewSimpleError(err error) *Error {
+	if err == nil {
+		return nil
+	}
+	if e, ok := err.(*Error); ok {
+		return e
+	}
+	return &Error{
+		error:        err,
+		brErrorClass: brerrors.ErrUnknown,
+	}
+}
+
+// NewSimpleErrorWithMessage wraps Error on a standard error.
+func NewSimpleErrorWithMessage(format string, args ...interface{}) *Error {
+	return &Error{
+		error:        fmt.Errorf(format, args...),
+		brErrorClass: brerrors.ErrUnknown,
+	}
+}
+
+func (e *Error) ToBRError() error {
+	return errors.Annotate(e.brErrorClass, e.error.Error())
 }
 
 func newWrappedError(err error, format string, args ...interface{}) error {
@@ -33,20 +76,4 @@ func newWrappedError(err error, format string, args ...interface{}) error {
 		text:    fmt.Sprintf(format, args...),
 		brError: err,
 	}
-}
-
-func (e *wrappedError) Error() string {
-	return e.text
-}
-
-// TryConvertToBRError converts the error to BR's error if it is a *wrappedError.
-func TryConvertToBRError(err error) error {
-	if err == nil {
-		return nil
-	}
-	err2 := errors.Cause(err)
-	if e, ok := err2.(*wrappedError); ok {
-		return errors.Annotatef(e.brError, e.text)
-	}
-	return err
 }

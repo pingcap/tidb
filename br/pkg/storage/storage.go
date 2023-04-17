@@ -59,14 +59,6 @@ type ReadSeekCloser interface {
 	io.Closer
 }
 
-// Uploader upload file with chunks.
-type Uploader interface {
-	// UploadPart upload part of file data to storage
-	UploadPart(ctx context.Context, data []byte) error
-	// CompleteUpload make the upload data to a complete file
-	CompleteUpload(ctx context.Context) error
-}
-
 // Writer is like io.Writer but with Context, create a new writer on top of Uploader with NewUploaderWriter.
 type Writer interface {
 	// Write writes to buffer and if chunk is filled will upload it
@@ -78,30 +70,30 @@ type Writer interface {
 // ExternalStorage represents a kind of file system storage.
 type ExternalStorage interface {
 	// WriteFile writes a complete file to storage, similar to os.WriteFile, but WriteFile should be atomic
-	WriteFile(ctx context.Context, name string, data []byte) error
+	WriteFile(ctx context.Context, name string, data []byte) *Error
 	// ReadFile reads a complete file from storage, similar to os.ReadFile
-	ReadFile(ctx context.Context, name string) ([]byte, error)
+	ReadFile(ctx context.Context, name string) ([]byte, *Error)
 	// FileExists return true if file exists
-	FileExists(ctx context.Context, name string) (bool, error)
+	FileExists(ctx context.Context, name string) (bool, *Error)
 	// DeleteFile delete the file in storage
-	DeleteFile(ctx context.Context, name string) error
+	DeleteFile(ctx context.Context, name string) *Error
 	// Open a Reader by file path. path is relative path to storage base path
-	Open(ctx context.Context, path string) (ExternalFileReader, error)
+	Open(ctx context.Context, path string) (ExternalFileReader, *Error)
 	// WalkDir traverse all the files in a dir.
 	//
 	// fn is the function called for each regular file visited by WalkDir.
 	// The argument `path` is the file path that can be used in `Open`
 	// function; the argument `size` is the size in byte of the file determined
 	// by path.
-	WalkDir(ctx context.Context, opt *WalkOption, fn func(path string, size int64) error) error
+	WalkDir(ctx context.Context, opt *WalkOption, fn func(path string, size int64) *Error) *Error
 
 	// URI returns the base path as a URI
 	URI() string
 
 	// Create opens a file writer by path. path is relative path to storage base path
-	Create(ctx context.Context, path string) (ExternalFileWriter, error)
+	Create(ctx context.Context, path string) (ExternalFileWriter, *Error)
 	// Rename file name from oldFileName to newFileName
-	Rename(ctx context.Context, oldFileName, newFileName string) error
+	Rename(ctx context.Context, oldFileName, newFileName string) *Error
 }
 
 // ExternalFileReader represents the streaming external file reader.
@@ -111,6 +103,7 @@ type ExternalFileReader interface {
 
 // ExternalFileWriter represents the streaming external file writer.
 type ExternalFileWriter interface {
+	// TODO: need *Error?
 	// Write writes to buffer and if chunk is filled will upload it
 	Write(ctx context.Context, p []byte) (int, error)
 	// Close writes final chunk and completes the upload
@@ -156,36 +149,36 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 }
 
 // New creates an ExternalStorage with options.
-func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalStorageOptions) (ExternalStorage, error) {
+func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalStorageOptions) (ExternalStorage, *Error) {
 	if opts == nil {
 		opts = &ExternalStorageOptions{}
 	}
 	switch backend := backend.Backend.(type) {
 	case *backuppb.StorageBackend_Local:
 		if backend.Local == nil {
-			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "local config not found")
+			return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "local config not found")
 		}
 		return NewLocalStorage(backend.Local.Path)
 	case *backuppb.StorageBackend_Hdfs:
 		if backend.Hdfs == nil {
-			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "hdfs config not found")
+			return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "hdfs config not found")
 		}
 		return NewHDFSStorage(backend.Hdfs.Remote), nil
 	case *backuppb.StorageBackend_S3:
 		if backend.S3 == nil {
-			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "s3 config not found")
+			return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
 		return NewS3Storage(ctx, backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
 		return newNoopStorage(), nil
 	case *backuppb.StorageBackend_Gcs:
 		if backend.Gcs == nil {
-			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "GCS config not found")
+			return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "GCS config not found")
 		}
 		return NewGCSStorage(ctx, backend.Gcs, opts)
 	case *backuppb.StorageBackend_AzureBlobStorage:
 		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)
 	default:
-		return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
+		return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
 	}
 }
