@@ -119,9 +119,8 @@ type Context interface {
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
-	// GetPlanCache returns the cache of the physical plan.
-	// isNonPrepared indicates to return the non-prepared plan cache or the prepared plan cache.
-	GetPlanCache(isNonPrepared bool) PlanCache
+	// GetSessionPlanCache returns the session-level cache of the physical plan.
+	GetSessionPlanCache() PlanCache
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
