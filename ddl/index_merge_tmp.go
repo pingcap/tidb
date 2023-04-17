@@ -139,7 +139,7 @@ func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, eleID in
 	}
 }
 
-// BackfillDataInTxn merge temp index data in txn.
+// BackfillData merge temp index data in txn.
 func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
@@ -212,18 +212,6 @@ func (*mergeIndexWorker) AddMetricInfo(float64) {
 
 func (*mergeIndexWorker) String() string {
 	return typeAddIndexMergeTmpWorker.String()
-}
-
-func (*mergeIndexWorker) GetTasks() ([]*BackfillJob, error) {
-	panic("[ddl] merge index worker GetTask function doesn't implement")
-}
-
-func (*mergeIndexWorker) UpdateTask(*BackfillJob) error {
-	panic("[ddl] merge index worker UpdateTask function doesn't implement")
-}
-
-func (*mergeIndexWorker) FinishTask(*BackfillJob) error {
-	panic("[ddl] merge index worker FinishTask function doesn't implement")
 }
 
 func (w *mergeIndexWorker) GetCtx() *backfillCtx {

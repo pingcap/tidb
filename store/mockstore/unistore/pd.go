@@ -17,6 +17,7 @@ package unistore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -39,23 +40,40 @@ type pdClient struct {
 	gcSafePointMu        sync.Mutex
 	globalConfig         map[string]string
 	externalTimestamp    atomic.Uint64
-	resourceGroupManager struct {
-		sync.RWMutex
-		groups map[string]*rmpb.ResourceGroup
+	resourceGroupManager *resourceGroupManager
+}
+
+type resourceGroupManager struct {
+	sync.RWMutex
+	groups map[string]*rmpb.ResourceGroup
+}
+
+func newResourceGroupManager() *resourceGroupManager {
+	mgr := &resourceGroupManager{
+		groups: make(map[string]*rmpb.ResourceGroup),
 	}
+	mgr.groups["default"] = &rmpb.ResourceGroup{
+		Name: "default",
+		Mode: rmpb.GroupMode_RUMode,
+		RUSettings: &rmpb.GroupRequestUnitSettings{
+			RU: &rmpb.TokenBucket{
+				Settings: &rmpb.TokenLimitSettings{
+					FillRate:   math.MaxInt32,
+					BurstLimit: -1,
+				},
+			},
+		},
+		Priority: 8,
+	}
+	return mgr
 }
 
 func newPDClient(pd *us.MockPD) *pdClient {
 	return &pdClient{
-		MockPD:            pd,
-		serviceSafePoints: make(map[string]uint64),
-		globalConfig:      make(map[string]string),
-		resourceGroupManager: struct {
-			sync.RWMutex
-			groups map[string]*rmpb.ResourceGroup
-		}{
-			groups: make(map[string]*rmpb.ResourceGroup),
-		},
+		MockPD:               pd,
+		serviceSafePoints:    make(map[string]uint64),
+		globalConfig:         make(map[string]string),
+		resourceGroupManager: newResourceGroupManager(),
 	}
 }
 
@@ -220,6 +238,9 @@ func (c *pdClient) GetResourceGroup(ctx context.Context, name string) (*rmpb.Res
 func (c *pdClient) AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
 	c.resourceGroupManager.Lock()
 	defer c.resourceGroupManager.Unlock()
+	if _, ok := c.resourceGroupManager.groups[group.Name]; ok {
+		return "", fmt.Errorf("the group %s already exists", group.Name)
+	}
 	c.resourceGroupManager.groups[group.Name] = group
 	return "Success!", nil
 }

@@ -23,9 +23,9 @@ import (
 
 func TestPrecheckBuilderBasic(t *testing.T) {
 	var err error
-	mockSrc, err := mock.NewMockImportSource(nil)
+	mockSrc, err := mock.NewImportSource(nil)
 	require.NoError(t, err)
-	mockTarget := mock.NewMockTargetInfo()
+	mockTarget := mock.NewTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 

@@ -935,12 +935,12 @@ func TestCartesianProduct(t *testing.T) {
 func TestBatchInsertDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	originLimit := kv.TxnTotalSizeLimit.Load()
 	defer func() {
-		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
+		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5900)
+	kv.TxnTotalSizeLimit.Store(6000)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

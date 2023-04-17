@@ -70,7 +70,7 @@ func (s *mockGCSSuite) TestFilenameAsterisk() {
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
-		INTO TABLE multi_load.t;`, gcsEndpoint)
+		INTO TABLE multi_load.t WITH thread=2;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"1 test1", "2 test2", "3 test3", "4 test4", "5 test5", "6 test6",
@@ -78,7 +78,7 @@ func (s *mockGCSSuite) TestFilenameAsterisk() {
 
 	s.tk.MustExec("TRUNCATE TABLE multi_load.t;")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
-		INTO TABLE multi_load.t IGNORE 1 LINES;`, gcsEndpoint)
+		INTO TABLE multi_load.t IGNORE 1 LINES WITH thread=20;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"2 test2", "4 test4", "6 test6",
@@ -123,9 +123,8 @@ func (s *mockGCSSuite) TestMultiBatchWithIgnoreLines() {
 		Content: genData(11, 20),
 	})
 
-	s.tk.MustExec("SET SESSION tidb_dml_batch_size = 3;")
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/multi-batch.*.tsv?endpoint=%s'
-		INTO TABLE multi_load.t2 IGNORE 2 LINES;`, gcsEndpoint)
+		INTO TABLE multi_load.t2 IGNORE 2 LINES WITH batch_size = 3;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t2;").Check(testkit.Rows(
 		"3", "4", "5", "6", "7", "8", "9", "10",

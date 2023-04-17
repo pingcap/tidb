@@ -108,15 +108,16 @@ func (h *chunkRowHeap) Pop() interface{} {
 }
 
 // NewSortedSelectResults is only for partition table
-func NewSortedSelectResults(selectResult []SelectResult, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
+// When pids != nil, the pid will be set in the last column of each chunk.Rows.
+func NewSortedSelectResults(selectResult []SelectResult, pids []int64, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
 	s := &sortedSelectResults{
 		selectResult: selectResult,
 		byItems:      byitems,
 		memTracker:   memTracker,
+		pids:         pids,
 	}
 	s.initCompareFuncs()
 	s.buildKeyColumns()
-
 	s.heap = &chunkRowHeap{s}
 	s.cachedChunks = make([]*chunk.Chunk, len(selectResult))
 	return s
@@ -132,6 +133,7 @@ type sortedSelectResults struct {
 	rowPtrs      []chunk.RowPtr
 	heap         *chunkRowHeap
 
+	pids       []int64
 	memTracker *memory.Tracker
 }
 
@@ -189,6 +191,13 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 	for i := range ssr.cachedChunks {
 		if ssr.cachedChunks[i] == nil {
 			ssr.cachedChunks[i] = c.CopyConstruct()
+			if len(ssr.pids) != 0 {
+				r := make([]int, c.NumCols()-1)
+				for i := range r {
+					r[i] = i
+				}
+				ssr.cachedChunks[i] = ssr.cachedChunks[i].Prune(r)
+			}
 			ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage())
 		}
 	}
@@ -208,6 +217,9 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 
 		idx := heap.Pop(ssr.heap).(chunk.RowPtr)
 		c.AppendRow(ssr.cachedChunks[idx.ChkIdx].GetRow(int(idx.RowIdx)))
+		if len(ssr.pids) != 0 {
+			c.AppendInt64(c.NumCols()-1, ssr.pids[idx.ChkIdx])
+		}
 
 		if int(idx.RowIdx) >= ssr.cachedChunks[idx.ChkIdx].NumRows()-1 {
 			if err = ssr.updateCachedChunk(ctx, idx.ChkIdx); err != nil {
@@ -318,9 +330,6 @@ type selectResult struct {
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
 	defer func() {
-		if enableTelemetry, telemetryErr := telemetry.IsTelemetryEnabled(r.ctx); telemetryErr != nil || !enableTelemetry {
-			return
-		}
 		if r.stats != nil {
 			// Ignore internal sql.
 			if !r.ctx.GetSessionVars().InRestrictedSQL && len(r.stats.copRespTime) > 0 {
@@ -520,7 +529,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 	if copStats.ScanDetail != nil {
 		readKeys := copStats.ScanDetail.ProcessedKeys
-		readTime := copStats.TimeDetail.KvReadWallTimeMs.Seconds()
+		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
 		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
 		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
 	}

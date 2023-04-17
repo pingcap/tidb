@@ -218,7 +218,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// The curCntPlan records the number of possible plans for pp
 		curCntPlan = 1
 		timeStampNow := p.GetLogicalTS4TaskMap()
-		savedPlanID := p.ctx.GetSessionVars().PlanID
+		savedPlanID := p.ctx.GetSessionVars().PlanID.Load()
 		for j, child := range p.children {
 			childProp := pp.GetChildReqProps(j)
 			childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
@@ -240,7 +240,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
 		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
-			p.ctx.GetSessionVars().PlanID = savedPlanID
+			p.ctx.GetSessionVars().PlanID.Store(savedPlanID)
 			curCntPlan = int64(*planCounter)
 			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*planCounter), timeStampNow, opt)
 			if err != nil {
@@ -953,9 +953,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
 
-		if canConvertPointGet && expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
-			canConvertPointGet = ds.canConvertToPointGetForPlanCache(path)
-		}
 		if canConvertPointGet && path.Index != nil && path.Index.MVIndex {
 			canConvertPointGet = false // cannot use PointGet upon MVIndex
 		}
@@ -1015,6 +1012,13 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				} else {
 					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName, opt)
 				}
+
+				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
+				// For safety, prevent these plans from the plan cache here.
+				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) && !ds.isSafePointGetPlan4PlanCache(candidate.path) {
+					ds.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Batch/PointGet plans may be over-optimized"))
+				}
+
 				appendCandidate(ds, pointGetTask, prop, opt)
 				if !pointGetTask.invalid() {
 					cntPlan++
@@ -1094,12 +1098,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return
 }
 
-func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bool {
+func (ds *DataSource) isSafePointGetPlan4PlanCache(path *util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
-	// So for safety, we narrow down the scope and just generate PointGet in some particular and simple scenarios.
 
-	// scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
+	// safe scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
 	if len(path.Ranges) > 0 && path.Ranges[0].Width() == len(path.AccessConds) {
 		for _, accessCond := range path.AccessConds {
 			f, ok := accessCond.(*expression.ScalarFunction)
@@ -1241,7 +1244,11 @@ func overwritePartialTableScanSchema(ds *DataSource, ts *PhysicalTableScan) {
 	for i := 0; i < hdColNum; i++ {
 		col := handleCols.GetCol(i)
 		exprCols = append(exprCols, col)
-		infoCols = append(infoCols, col.ToInfo())
+		if c := model.FindColumnInfoByID(ds.TableInfo().Columns, col.ID); c != nil {
+			infoCols = append(infoCols, c)
+		} else {
+			infoCols = append(infoCols, col.ToInfo())
+		}
 	}
 	ts.schema = expression.NewSchema(exprCols...)
 	ts.Columns = infoCols
@@ -2220,7 +2227,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
-	batchPointGetPlan := BatchPointGetPlan{
+	batchPointGetPlan := &BatchPointGetPlan{
 		ctx:              ds.ctx,
 		dbName:           ds.DBName.L,
 		AccessConditions: candidate.path.AccessConds,
@@ -2230,11 +2237,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		SinglePart:       ds.isPartition,
 		PartTblID:        ds.physicalTableID,
 		PartitionExpr:    getPartitionExpr(ds.ctx, ds.TableInfo()),
-	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
+	}
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
-	rTsk := &rootTask{p: batchPointGetPlan}
+	rTsk := &rootTask{}
 	if candidate.path.IsIntHandlePath {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
@@ -2242,6 +2249,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		batchPointGetPlan.accessCols = ds.TblCols
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
+			batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 			sel := PhysicalSelection{
 				Conditions: candidate.path.TableFilters,
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
@@ -2267,12 +2275,16 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
+			batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 			sel := PhysicalSelection{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
 			sel.SetChildren(batchPointGetPlan)
 			rTsk.p = sel
 		}
+	}
+	if rTsk.p == nil {
+		rTsk.p = batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	}
 
 	return rTsk
@@ -2339,6 +2351,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		HandleCols:      ds.handleCols,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
+		constColsByCond: path.ConstCols,
 		prop:            prop,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))
@@ -2412,7 +2425,14 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
-	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
+
+	// If (1) there exists an index whose selectivity is smaller than the threshold,
+	// and (2) there is Selection on the IndexScan, we don't use the ExpectedCnt to
+	// adjust the estimated row count of the IndexScan.
+	ignoreExpectedCnt := ds.accessPathMinSelectivity < ds.ctx.GetSessionVars().OptOrderingIdxSelThresh &&
+		len(path.IndexFilters)+len(path.TableFilters) > 0
+
+	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.stats.RowCount && !ignoreExpectedCnt {
 		count, ok, corr := ds.crossEstimateIndexRowCount(path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 		if ok {
 			rowCount = count

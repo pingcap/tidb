@@ -23,27 +23,25 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+// metric label values.
 const (
-	// states used for the TableCounter labels
-	TableStatePending   = "pending"
+	TableStatePending   = "pending" // for the TableCounter labels, below too
 	TableStateImported  = "imported"
 	TableStateCompleted = "completed"
 
-	BytesStateTotalRestore   = "total_restore" // total source data bytes needs to restore
-	BytesStateRestored       = "restored"      // source data bytes restored during restore engine
-	BytesStateRestoreWritten = "written"       // bytes written during restore engine
-	BytesStateImported       = "imported"      // bytes imported during import engine
+	StateTotalRestore   = "total_restore" // total source data bytes needs to restore
+	StateRestored       = "restored"      // source data bytes restored during restore engine
+	StateRestoreWritten = "written"       // bytes written during restore engine
+	StateImported       = "imported"      // bytes imported during import engine
 
 	ProgressPhaseTotal   = "total"   // total restore progress(not include post-process, like checksum and analyze)
 	ProgressPhaseRestore = "restore" // restore engine progress
 	ProgressPhaseImport  = "import"  // import engine progress
 
-	// results used for the TableCounter labels
-	TableResultSuccess = "success"
+	TableResultSuccess = "success" // for the TableCounter labels, below too
 	TableResultFailure = "failure"
 
-	// states used for the ChunkCounter labels
-	ChunkStateEstimated = "estimated"
+	ChunkStateEstimated = "estimated" // for the ChunkCounter labels, below too
 	ChunkStatePending   = "pending"
 	ChunkStateRunning   = "running"
 	ChunkStateFinished  = "finished"
@@ -53,6 +51,7 @@ const (
 	BlockDeliverKindData  = "data"
 )
 
+// Metrics contains all metrics used by lightning.
 type Metrics struct {
 	ImporterEngineCounter                *prometheus.CounterVec
 	IdleWorkersGauge                     *prometheus.GaugeVec
@@ -61,6 +60,7 @@ type Metrics struct {
 	ProcessedEngineCounter               *prometheus.CounterVec
 	ChunkCounter                         *prometheus.CounterVec
 	BytesCounter                         *prometheus.CounterVec
+	RowsCounter                          *prometheus.CounterVec
 	ImportSecondsHistogram               prometheus.Histogram
 	ChunkParserReadBlockSecondsHistogram prometheus.Histogram
 	ApplyWorkerSecondsHistogram          *prometheus.HistogramVec
@@ -133,6 +133,13 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 		//  - running
 		//  - finished
 		//  - failed
+
+		RowsCounter: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "lightning",
+				Name:      "rows",
+				Help:      "count of total rows",
+			}, []string{"state", "table"}),
 
 		ImportSecondsHistogram: factory.NewHistogram(
 			prometheus.HistogramOpts{
@@ -244,6 +251,7 @@ func (m *Metrics) RegisterTo(r promutil.Registry) {
 		m.ProcessedEngineCounter,
 		m.ChunkCounter,
 		m.BytesCounter,
+		m.RowsCounter,
 		m.ImportSecondsHistogram,
 		m.ChunkParserReadBlockSecondsHistogram,
 		m.ApplyWorkerSecondsHistogram,
@@ -269,6 +277,7 @@ func (m *Metrics) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(m.ProcessedEngineCounter)
 	r.Unregister(m.ChunkCounter)
 	r.Unregister(m.BytesCounter)
+	r.Unregister(m.RowsCounter)
 	r.Unregister(m.ImportSecondsHistogram)
 	r.Unregister(m.ChunkParserReadBlockSecondsHistogram)
 	r.Unregister(m.ApplyWorkerSecondsHistogram)
@@ -284,6 +293,7 @@ func (m *Metrics) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(m.ProgressGauge)
 }
 
+// RecordTableCount records the number of tables processed.
 func (m *Metrics) RecordTableCount(status string, err error) {
 	var result string
 	if err != nil {
@@ -294,6 +304,7 @@ func (m *Metrics) RecordTableCount(status string, err error) {
 	m.TableCounter.WithLabelValues(status, result).Inc()
 }
 
+// RecordEngineCount records the number of engines processed.
 func (m *Metrics) RecordEngineCount(status string, err error) {
 	var result string
 	if err != nil {
@@ -311,6 +322,37 @@ func ReadCounter(counter prometheus.Counter) float64 {
 		return math.NaN()
 	}
 	return metric.Counter.GetValue()
+}
+
+func metricHasLabel(labelPairs []*dto.LabelPair, labels prometheus.Labels) bool {
+	for _, label := range labelPairs {
+		if v, ok := labels[label.GetName()]; ok && v == label.GetValue() {
+			return true
+		}
+	}
+	return false
+}
+
+// ReadAllCounters reports the summary value of the counters with given labels.
+func ReadAllCounters(metricsVec *prometheus.MetricVec, labels prometheus.Labels) float64 {
+	metricsChan := make(chan prometheus.Metric, 8)
+	go func() {
+		metricsVec.Collect(metricsChan)
+		close(metricsChan)
+	}()
+
+	var sum float64
+	for counter := range metricsChan {
+		var metric dto.Metric
+		if err := counter.Write(&metric); err != nil {
+			return math.NaN()
+		}
+		if !metricHasLabel(metric.GetLabel(), labels) {
+			continue
+		}
+		sum += metric.Counter.GetValue()
+	}
+	return sum
 }
 
 // ReadHistogramSum reports the sum of all observed values in the histogram.

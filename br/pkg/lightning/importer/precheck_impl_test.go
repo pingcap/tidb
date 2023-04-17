@@ -34,8 +34,8 @@ import (
 type precheckImplSuite struct {
 	suite.Suite
 	cfg           *config.Config
-	mockSrc       *mock.MockImportSource
-	mockTarget    *mock.MockTargetInfo
+	mockSrc       *mock.ImportSource
+	mockTarget    *mock.TargetInfo
 	preInfoGetter PreImportInfoGetter
 }
 
@@ -52,15 +52,15 @@ func (s *precheckImplSuite) SetupSuite() {
 func (s *precheckImplSuite) SetupTest() {
 	var err error
 	s.Require().NoError(err)
-	s.mockTarget = mock.NewMockTargetInfo()
+	s.mockTarget = mock.NewTargetInfo()
 	s.cfg = config.NewConfig()
 	s.cfg.TikvImporter.Backend = config.BackendLocal
 	s.Require().NoError(s.setMockImportData(nil))
 }
 
-func (s *precheckImplSuite) setMockImportData(mockDataMap map[string]*mock.MockDBSourceData) error {
+func (s *precheckImplSuite) setMockImportData(mockDataMap map[string]*mock.DBSourceData) error {
 	var err error
-	s.mockSrc, err = mock.NewMockImportSource(mockDataMap)
+	s.mockSrc, err = mock.NewImportSource(mockDataMap)
 	if err != nil {
 		return err
 	}
@@ -77,27 +77,27 @@ func (s *precheckImplSuite) generateMockData(
 	eachTableFileCount int,
 	createSchemaSQLFunc func(dbName string, tblName string) string,
 	sizeAndDataAndSuffixFunc func(dbID int, tblID int, fileID int) ([]byte, int, string),
-) map[string]*mock.MockDBSourceData {
-	result := make(map[string]*mock.MockDBSourceData)
+) map[string]*mock.DBSourceData {
+	result := make(map[string]*mock.DBSourceData)
 	for dbID := 0; dbID < dbCount; dbID++ {
 		dbName := fmt.Sprintf("db%d", dbID+1)
-		tables := make(map[string]*mock.MockTableSourceData)
+		tables := make(map[string]*mock.TableSourceData)
 		for tblID := 0; tblID < eachDBTableCount; tblID++ {
 			tblName := fmt.Sprintf("tbl%d", tblID+1)
-			files := []*mock.MockSourceFile{}
+			files := []*mock.SourceFile{}
 			for fileID := 0; fileID < eachTableFileCount; fileID++ {
 				fileData, totalSize, suffix := sizeAndDataAndSuffixFunc(dbID, tblID, fileID)
-				mockSrcFile := &mock.MockSourceFile{
+				mockSrcFile := &mock.SourceFile{
 					FileName:  fmt.Sprintf("/%s/%s/data.%d.%s", dbName, tblName, fileID+1, suffix),
 					Data:      fileData,
 					TotalSize: totalSize,
 				}
 				files = append(files, mockSrcFile)
 			}
-			mockTblSrcData := &mock.MockTableSourceData{
+			mockTblSrcData := &mock.TableSourceData{
 				DBName:    dbName,
 				TableName: tblName,
-				SchemaFile: &mock.MockSourceFile{
+				SchemaFile: &mock.SourceFile{
 					FileName: fmt.Sprintf("/%s/%s/%s.schema.sql", dbName, tblName, tblName),
 					Data:     []byte(createSchemaSQLFunc(dbName, tblName)),
 				},
@@ -105,7 +105,7 @@ func (s *precheckImplSuite) generateMockData(
 			}
 			tables[tblName] = mockTblSrcData
 		}
-		mockDBSrcData := &mock.MockDBSourceData{
+		mockDBSrcData := &mock.DBSourceData{
 			Name:   dbName,
 			Tables: tables,
 		}
@@ -574,7 +574,7 @@ func (s *precheckImplSuite) TestTableEmptyCheckBasic() {
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
-	s.mockTarget.SetTableInfo("db1", "tbl1", &mock.MockTableInfo{
+	s.mockTarget.SetTableInfo("db1", "tbl1", &mock.TableInfo{
 		RowCount: 100,
 	})
 	result, err = ci.Check(ctx)

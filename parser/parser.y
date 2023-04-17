@@ -51,10 +51,11 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier  "identifier"
-	asof        "AS OF"
-	toTimestamp "TO TIMESTAMP"
-	memberof    "MEMBER OF"
+	identifier           "identifier"
+	asof                 "AS OF"
+	toTimestamp          "TO TIMESTAMP"
+	memberof             "MEMBER OF"
+	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -179,6 +180,7 @@ import (
 	leading           "LEADING"
 	left              "LEFT"
 	like              "LIKE"
+	ilike             "ILIKE"
 	limit             "LIMIT"
 	lines             "LINES"
 	linear            "LINEAR"
@@ -330,6 +332,7 @@ import (
 	btree                 "BTREE"
 	byteType              "BYTE"
 	cache                 "CACHE"
+	calibrate             "CALIBRATE"
 	capture               "CAPTURE"
 	cascaded              "CASCADED"
 	causal                "CAUSAL"
@@ -490,6 +493,9 @@ import (
 	nulls                 "NULLS"
 	off                   "OFF"
 	offset                "OFFSET"
+	oltpReadOnly          "OLTP_READ_ONLY"
+	oltpReadWrite         "OLTP_READ_WRITE"
+	oltpWriteOnly         "OLTP_WRITE_ONLY"
 	onDuplicate           "ON_DUPLICATE"
 	online                "ONLINE"
 	only                  "ONLY"
@@ -508,6 +514,7 @@ import (
 	per_table             "PER_TABLE"
 	pipesAsOr
 	plugins               "PLUGINS"
+	point                 "POINT"
 	policy                "POLICY"
 	preSplitRegions       "PRE_SPLIT_REGIONS"
 	preceding             "PRECEDING"
@@ -616,6 +623,7 @@ import (
 	timeType              "TIME"
 	tokenIssuer           "TOKEN_ISSUER"
 	tp                    "TYPE"
+	tpcc                  "TPCC"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
 	transaction           "TRANSACTION"
@@ -639,6 +647,7 @@ import (
 	week                  "WEEK"
 	weightString          "WEIGHT_STRING"
 	without               "WITHOUT"
+	workload              "WORKLOAD"
 	x509                  "X509"
 	yearType              "YEAR"
 	wait                  "WAIT"
@@ -653,6 +662,7 @@ import (
 	bitOr                 "BIT_OR"
 	bitXor                "BIT_XOR"
 	bound                 "BOUND"
+	br                    "BR"
 	briefType             "BRIEF"
 	burstable             "BURSTABLE"
 	cast                  "CAST"
@@ -672,7 +682,9 @@ import (
 	follower              "FOLLOWER"
 	followerConstraints   "FOLLOWER_CONSTRAINTS"
 	followers             "FOLLOWERS"
+	fullBackupStorage     "FULL_BACKUP_STORAGE"
 	getFormat             "GET_FORMAT"
+	gcTTL                 "GC_TTL"
 	groupConcat           "GROUP_CONCAT"
 	next_row_id           "NEXT_ROW_ID"
 	inplace               "INPLACE"
@@ -687,6 +699,7 @@ import (
 	learners              "LEARNERS"
 	min                   "MIN"
 	max                   "MAX"
+	metadata              "METADATA"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
@@ -697,10 +710,12 @@ import (
 	primaryRegion         "PRIMARY_REGION"
 	recent                "RECENT"
 	replayer              "REPLAYER"
+	restoredTS            "RESTORED_TS"
 	running               "RUNNING"
 	s3                    "S3"
 	schedule              "SCHEDULE"
 	staleness             "STALENESS"
+	startTS               "START_TS"
 	std                   "STD"
 	stddev                "STDDEV"
 	stddevPop             "STDDEV_POP"
@@ -728,6 +743,7 @@ import (
 	tokudbZstd            "TOKUDB_ZSTD"
 	top                   "TOP"
 	trim                  "TRIM"
+	untilTS               "UNTIL_TS"
 	variance              "VARIANCE"
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
@@ -737,6 +753,10 @@ import (
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
 	ruRate                "RU_PER_SEC"
+	priority              "PRIORITY"
+	high                  "HIGH"
+	medium                "MEDIUM"
+	low                   "LOW"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
@@ -890,6 +910,7 @@ import (
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
 	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
+	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
@@ -1006,6 +1027,7 @@ import (
 	Boolean                                "Boolean (0, 1, false, true)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
+	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
 	ColumnDef                              "table column definition"
 	ColumnDefList                          "table column definition list"
 	ColumnName                             "column name"
@@ -1108,6 +1130,7 @@ import (
 	LimitClause                            "LIMIT clause"
 	LimitOption                            "Limit option could be integer or parameter marker."
 	Lines                                  "Lines clause"
+	LinesTerminated                        "Lines terminated by"
 	LoadDataSetSpecOpt                     "Optional load data specification"
 	LoadDataOptionListOpt                  "Optional load data option list"
 	LoadDataOptionList                     "Load data option list"
@@ -1118,7 +1141,6 @@ import (
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	MaxValPartOpt                          "MAXVALUE partition option"
-	NullDefinedByClause                    "NULL DEFINED BY clause in LOAD DATA statement"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt                "NO_WRITE_TO_BINLOG alias LOCAL or empty"
@@ -1126,6 +1148,7 @@ import (
 	OnDuplicateKeyUpdate                   "ON DUPLICATE KEY UPDATE value list"
 	OnCommitOpt                            "ON COMMIT DELETE |PRESERVE ROWS"
 	DuplicateOpt                           "[IGNORE|REPLACE] in CREATE TABLE ... SELECT statement or LOAD DATA statement"
+	FormatOpt                              "FORMAT 'SQL FILE'..."
 	OfTablesOpt                            "OF table_name [, ...]"
 	OptFull                                "Full or empty"
 	OptTemporary                           "TEMPORARY or empty"
@@ -1215,6 +1238,7 @@ import (
 	ShowProfileTypes                       "Show profile types"
 	SplitOption                            "Split Option"
 	SplitSyntaxOption                      "Split syntax Option"
+	Starting                               "Starting by"
 	StatementList                          "statement list"
 	StatsPersistentVal                     "stats_persistent value"
 	StatsType                              "stats type value"
@@ -1319,6 +1343,7 @@ import (
 	IsOrNotOp                              "Is predicate"
 	InOrNotOp                              "In predicate"
 	LikeOrNotOp                            "Like predicate"
+	IlikeOrNotOp                           "Ilike predicate"
 	RegexpOrNotOp                          "Regexp predicate"
 	NumericType                            "Numeric types"
 	IntegerType                            "Integer Types types"
@@ -1369,6 +1394,8 @@ import (
 	PlacementOptionList                    "Anomymous or direct placement option list"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
+	ResourceGroupPriorityOption            "Resource group priority option"
+	CalibrateResourceWorkloadOption        "Calibrate Resource workload option"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -1442,14 +1469,12 @@ import (
 	FieldTerminator                 "Field terminator"
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
-	LikeEscapeOpt                   "like escape option"
-	LinesTerminated                 "Lines terminated by"
+	LikeOrIlikeEscapeOpt            "like or ilike escape option"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
 	PasswordOpt                     "Password option"
 	RoleNameString                  "role name string"
 	ShowDatabaseNameOpt             "Show tables/columns statement database name option"
-	Starting                        "Starting by"
 	StringName                      "string literal or identifier"
 	StringNameOrBRIEOptionKeyword   "string literal or identifier or keyword used for BRIE options"
 	Symbol                          "Constraint Symbol"
@@ -1503,7 +1528,7 @@ import (
 %left andand and
 %left between
 %precedence lowerThanEq
-%left eq ge le neq neqSynonym '>' '<' is like in
+%left eq ge le neq neqSynonym '>' '<' is like ilike in
 %left '|'
 %left '&'
 %left rsh lsh
@@ -1614,10 +1639,28 @@ ResourceGroupOptionList:
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
 	}
 
+ResourceGroupPriorityOption:
+	"LOW"
+	{
+		$$ = uint64(1)
+	}
+|	"MEDIUM"
+	{
+		$$ = uint64(8)
+	}
+|	"HIGH"
+	{
+		$$ = uint64(16)
+	}
+
 DirectResourceGroupOption:
 	"RU_PER_SEC" EqOpt LengthNum
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
+	}
+|	"PRIORITY" EqOpt ResourceGroupPriorityOption
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourcePriority, UintValue: $3.(uint64)}
 	}
 |	"BURSTABLE"
 	{
@@ -5077,10 +5120,94 @@ BRIEStmt:
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
+|	"BACKUP" "LOGS" "TO" stringLit BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamStart
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"STOP" "BACKUP" "LOGS"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamStop
+		$$ = stmt
+	}
+|	"PAUSE" "BACKUP" "LOGS" BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamPause
+		stmt.Options = $4.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"RESUME" "BACKUP" "LOGS"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamResume
+		$$ = stmt
+	}
+|	"PURGE" "BACKUP" "LOGS" "FROM" stringLit BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamPurge
+		stmt.Storage = $5
+		stmt.Options = $6.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"SHOW" "BACKUP" "LOGS" "STATUS"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamStatus
+		$$ = stmt
+	}
+|	"SHOW" "BACKUP" "LOGS" "METADATA" "FROM" stringLit
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamMetaData
+		stmt.Storage = $6
+		$$ = stmt
+	}
+|	"SHOW" "BR" "JOB" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowJob
+		stmt.JobID = $4.(int64)
+		$$ = stmt
+	}
+|	"SHOW" "BR" "JOB" "QUERY" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowQuery
+		stmt.JobID = $5.(int64)
+		$$ = stmt
+	}
+|	"CANCEL" "BR" "JOB" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindCancelJob
+		stmt.JobID = $4.(int64)
+		$$ = stmt
+	}
+|	"SHOW" "BACKUP" "METADATA" "FROM" stringLit
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowBackupMeta
+		stmt.Storage = $5
+		$$ = stmt
+	}
 |	"RESTORE" BRIETables "FROM" stringLit BRIEOptions
 	{
 		stmt := $2.(*ast.BRIEStmt)
 		stmt.Kind = ast.BRIEKindRestore
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"RESTORE" "POINT" "FROM" stringLit BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindRestorePIT
 		stmt.Storage = $4
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
@@ -5330,6 +5457,41 @@ BRIEOption:
 			UintValue: uint64($3.(ast.BRIEOptionLevel)),
 		}
 	}
+|	"FULL_BACKUP_STORAGE" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionFullBackupStorage,
+			StrValue: $3,
+		}
+	}
+|	"RESTORED_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionRestoredTS,
+			StrValue: $3,
+		}
+	}
+|	"START_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionStartTS,
+			StrValue: $3,
+		}
+	}
+|	"UNTIL_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionUntilTS,
+			StrValue: $3,
+		}
+	}
+|	"GC_TTL" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionGCTTL,
+			StrValue: $3,
+		}
+	}
 
 LengthNum:
 	NUM
@@ -5383,7 +5545,7 @@ PauseLoadDataStmt:
 	"PAUSE" "LOAD" "DATA" "JOB" Int64Num
 	{
 		$$ = &ast.LoadDataActionStmt{
-			Tp: ast.LoadDataPause,
+			Tp:    ast.LoadDataPause,
 			JobID: $5.(int64),
 		}
 	}
@@ -5392,7 +5554,7 @@ ResumeLoadDataStmt:
 	"RESUME" "LOAD" "DATA" "JOB" Int64Num
 	{
 		$$ = &ast.LoadDataActionStmt{
-			Tp: ast.LoadDataResume,
+			Tp:    ast.LoadDataResume,
 			JobID: $5.(int64),
 		}
 	}
@@ -5401,7 +5563,7 @@ CancelLoadDataStmt:
 	"CANCEL" "LOAD" "DATA" "JOB" Int64Num
 	{
 		$$ = &ast.LoadDataActionStmt{
-			Tp: ast.LoadDataCancel,
+			Tp:    ast.LoadDataCancel,
 			JobID: $5.(int64),
 		}
 	}
@@ -5410,7 +5572,7 @@ DropLoadDataStmt:
 	"DROP" "LOAD" "DATA" "JOB" Int64Num
 	{
 		$$ = &ast.LoadDataActionStmt{
-			Tp: ast.LoadDataDrop,
+			Tp:    ast.LoadDataDrop,
 			JobID: $5.(int64),
 		}
 	}
@@ -5651,6 +5813,16 @@ LikeOrNotOp:
 		$$ = false
 	}
 
+IlikeOrNotOp:
+	"ILIKE"
+	{
+		$$ = true
+	}
+|	NotSym "ILIKE"
+	{
+		$$ = false
+	}
+
 RegexpOrNotOp:
 	RegexpSym
 	{
@@ -5695,7 +5867,7 @@ PredicateExpr:
 			Not:   !$2.(bool),
 		}
 	}
-|	BitExpr LikeOrNotOp SimpleExpr LikeEscapeOpt
+|	BitExpr LikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
 		escape := $4
 		if len(escape) > 1 {
@@ -5704,11 +5876,29 @@ PredicateExpr:
 		} else if len(escape) == 0 {
 			escape = "\\"
 		}
-		$$ = &ast.PatternLikeExpr{
+		$$ = &ast.PatternLikeOrIlikeExpr{
 			Expr:    $1,
 			Pattern: $3,
 			Not:     !$2.(bool),
 			Escape:  escape[0],
+			IsLike:  true,
+		}
+	}
+|	BitExpr IlikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
+	{
+		escape := $4
+		if len(escape) > 1 {
+			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
+			return 1
+		} else if len(escape) == 0 {
+			escape = "\\"
+		}
+		$$ = &ast.PatternLikeOrIlikeExpr{
+			Expr:    $1,
+			Pattern: $3,
+			Not:     !$2.(bool),
+			Escape:  escape[0],
+			IsLike:  false,
 		}
 	}
 |	BitExpr RegexpOrNotOp SimpleExpr
@@ -5725,7 +5915,7 @@ RegexpSym:
 	"REGEXP"
 |	"RLIKE"
 
-LikeEscapeOpt:
+LikeOrIlikeEscapeOpt:
 	%prec empty
 	{
 		$$ = "\\"
@@ -5781,7 +5971,7 @@ FieldList:
 	{
 		field := $1.(*ast.SelectField)
 		field.Offset = parser.startOffset(&yyS[yypt])
-		if field.Expr != nil && field.AsName.O == "" {
+		if field.Expr != nil {
 			endOffset := parser.yylval.offset
 			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
@@ -5792,7 +5982,7 @@ FieldList:
 		fl := $1.([]*ast.SelectField)
 		field := $3.(*ast.SelectField)
 		field.Offset = parser.startOffset(&yyS[yypt])
-		if field.Expr != nil && field.AsName.O == "" {
+		if field.Expr != nil {
 			endOffset := parser.yylval.offset
 			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
@@ -6118,6 +6308,7 @@ UnReservedKeyword:
 |	"START"
 |	"STATUS"
 |	"OPEN"
+|	"POINT"
 |	"SUBPARTITIONS"
 |	"SUBPARTITION"
 |	"TABLES"
@@ -6372,6 +6563,12 @@ UnReservedKeyword:
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|	"CALIBRATE"
+|	"WORKLOAD"
+|	"TPCC"
+|	"OLTP_READ_WRITE"
+|	"OLTP_READ_ONLY"
+|	"OLTP_WRITE_ONLY"
 
 TiDBKeyword:
 	"ADMIN"
@@ -6512,7 +6709,18 @@ NotKeywordToken:
 |	"IO_READ_BANDWIDTH"
 |	"IO_WRITE_BANDWIDTH"
 |	"RU_PER_SEC"
+|	"PRIORITY"
+|	"HIGH"
+|	"MEDIUM"
+|	"LOW"
 |	"BURSTABLE"
+|	"BR"
+|	"GC_TTL"
+|	"METADATA"
+|	"START_TS"
+|	"UNTIL_TS"
+|	"RESTORED_TS"
+|	"FULL_BACKUP_STORAGE"
 
 /************************************************************************************
  *
@@ -6791,6 +6999,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -6815,6 +7024,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -6831,6 +7041,7 @@ Literal:
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
+		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -7300,6 +7511,7 @@ FunctionNameConflict:
 |	"MINUTE"
 |	"MONTH"
 |	builtinNow
+|	"POINT"
 |	"QUARTER"
 |	"REPEAT"
 |	"REPLACE"
@@ -10611,7 +10823,7 @@ ShowStmt:
 	{
 		stmt := $2.(*ast.ShowStmt)
 		if $3 != nil {
-			if x, ok := $3.(*ast.PatternLikeExpr); ok && x.Expr == nil {
+			if x, ok := $3.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
 				stmt.Pattern = x
 			} else {
 				stmt.Where = $3.(ast.ExprNode)
@@ -10779,7 +10991,7 @@ ShowStmt:
 	{
 		v := $5.(int64)
 		$$ = &ast.ShowStmt{
-			Tp: ast.ShowLoadDataJobs,
+			Tp:            ast.ShowLoadDataJobs,
 			LoadDataJobID: &v,
 		}
 	}
@@ -11133,9 +11345,10 @@ ShowLikeOrWhereOpt:
 	}
 |	"LIKE" SimpleExpr
 	{
-		$$ = &ast.PatternLikeExpr{
+		$$ = &ast.PatternLikeOrIlikeExpr{
 			Pattern: $2,
 			Escape:  '\\',
+			IsLike:  true,
 		}
 	}
 |	"WHERE" Expression
@@ -11348,6 +11561,7 @@ Statement:
 |	DeleteFromStmt
 |	ExecuteStmt
 |	ExplainStmt
+|	CalibrateResourceStmt
 |	ChangeStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
@@ -13652,15 +13866,20 @@ RevokeRoleStmt:
  * for load stmt with format see https://github.com/pingcap/tidb/issues/40499
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines NullDefinedByClause IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit FormatOpt DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
 	{
 		x := &ast.LoadDataStmt{
 			FileLocRef:         ast.FileLocServerOrRemote,
 			Path:               $5,
-			OnDuplicate:        $6.(ast.OnDuplicateKeyHandlingType),
-			Table:              $9.(*ast.TableName),
+			Format:             $6.(*string),
+			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
+			Table:              $10.(*ast.TableName),
+			Charset:            $11.(*string),
+			FieldsInfo:         $12.(*ast.FieldsClause),
+			LinesInfo:          $13.(*ast.LinesClause),
+			IgnoreLines:        $14.(*uint64),
 			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
-			IgnoreLines:        $14.(uint64),
+			ColumnAssignments:  $16.([]*ast.Assignment),
 			Options:            $17.([]*ast.LoadDataOpt),
 		}
 		if $3 != nil {
@@ -13671,18 +13890,6 @@ LoadDataStmt:
 				x.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
 			}
 		}
-		if $11 != nil {
-			x.FieldsInfo = $11.(*ast.FieldsClause)
-		}
-		if $12 != nil {
-			x.LinesInfo = $12.(*ast.LinesClause)
-		}
-		if $13 != nil {
-			x.NullInfo = $13.(*ast.NullDefinedBy)
-		}
-		if $16 != nil {
-			x.ColumnAssignments = $16.([]*ast.Assignment)
-		}
 		columns := []*ast.ColumnName{}
 		for _, v := range x.ColumnsAndUserVars {
 			if v.ColumnName != nil {
@@ -13693,51 +13900,36 @@ LoadDataStmt:
 
 		$$ = x
 	}
-|	"LOAD" "DATA" LocalOpt "INFILE" stringLit "FORMAT" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
-	{
-		x := &ast.LoadDataStmt{
-			FileLocRef:         ast.FileLocServerOrRemote,
-			Path:               $5,
-			Format:             $7,
-			OnDuplicate:        $8.(ast.OnDuplicateKeyHandlingType),
-			Table:              $11.(*ast.TableName),
-			ColumnsAndUserVars: $13.([]*ast.ColumnNameOrUserVar),
-			Options:            $15.([]*ast.LoadDataOpt),
-		}
-		if $3 != nil {
-			x.FileLocRef = ast.FileLocClient
-			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
-			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
-			if x.OnDuplicate == ast.OnDuplicateKeyHandlingError {
-				x.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
-			}
-		}
-		if $14 != nil {
-			x.ColumnAssignments = $14.([]*ast.Assignment)
-		}
-		columns := []*ast.ColumnName{}
-		for _, v := range x.ColumnsAndUserVars {
-			if v.ColumnName != nil {
-				columns = append(columns, v.ColumnName)
-			}
-		}
-		x.Columns = columns
 
-		$$ = x
+FormatOpt:
+	{
+		$$ = (*string)(nil)
+	}
+|	"FORMAT" stringLit
+	{
+		str := $2
+		$$ = &str
 	}
 
 IgnoreLines:
 	{
-		$$ = uint64(0)
+		$$ = (*uint64)(nil)
 	}
 |	"IGNORE" NUM "LINES"
 	{
-		$$ = getUint64FromNUM($2)
+		v := getUint64FromNUM($2)
+		$$ = &v
 	}
 
 CharsetOpt:
-	{}
+	{
+		$$ = (*string)(nil)
+	}
 |	"CHARACTER" "SET" CharsetName
+	{
+		v := $3
+		$$ = &v
+	}
 
 LocalOpt:
 	{
@@ -13750,41 +13942,24 @@ LocalOpt:
 
 Fields:
 	{
-		defaultEscaped := byte('\\')
-		$$ = &ast.FieldsClause{
-			Terminated: "\t",
-			Escaped:    &defaultEscaped,
-		}
+		$$ = (*ast.FieldsClause)(nil)
 	}
 |	FieldsOrColumns FieldItemList
 	{
-		defaultEscaped := byte('\\')
-		fieldsClause := &ast.FieldsClause{
-			Terminated: "\t",
-			Escaped:    &defaultEscaped,
-		}
+		fieldsClause := &ast.FieldsClause{}
 		fieldItems := $2.([]*ast.FieldItem)
 		for _, item := range fieldItems {
 			switch item.Type {
 			case ast.Terminated:
-				fieldsClause.Terminated = item.Value
+				fieldsClause.Terminated = &item.Value
 			case ast.Enclosed:
-				var enclosed *byte = nil
-				if len(item.Value) > 0 {
-					b := item.Value[0]
-					enclosed = &b
-				}
-				fieldsClause.Enclosed = enclosed
-				if item.OptEnclosed {
-					fieldsClause.OptEnclosed = true
-				}
+				fieldsClause.Enclosed = &item.Value
+				fieldsClause.OptEnclosed = item.OptEnclosed
 			case ast.Escaped:
-				var escaped *byte = nil
-				if len(item.Value) > 0 {
-					b := item.Value[0]
-					escaped = &b
-				}
-				fieldsClause.Escaped = escaped
+				fieldsClause.Escaped = &item.Value
+			case ast.DefinedNullBy:
+				fieldsClause.DefinedNullBy = &item.Value
+				fieldsClause.NullValueOptEnclosed = item.OptEnclosed
 			}
 		}
 		$$ = fieldsClause
@@ -13815,9 +13990,9 @@ FieldItem:
 			Value: $3,
 		}
 	}
-|	"OPTIONALLY" "ENCLOSED" "BY" FieldTerminator
+|	optionallyEnclosedBy FieldTerminator
 	{
-		str := $4
+		str := $2
 		if str != "\\" && len(str) > 1 {
 			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
@@ -13852,6 +14027,21 @@ FieldItem:
 			Value: str,
 		}
 	}
+|	"DEFINED" "NULL" "BY" TextString
+	{
+		$$ = &ast.FieldItem{
+			Type:  ast.DefinedNullBy,
+			Value: $4.(*ast.TextString).Value,
+		}
+	}
+|	"DEFINED" "NULL" "BY" TextString "OPTIONALLY" "ENCLOSED"
+	{
+		$$ = &ast.FieldItem{
+			Type:        ast.DefinedNullBy,
+			Value:       $4.(*ast.TextString).Value,
+			OptEnclosed: true,
+		}
+	}
 
 FieldTerminator:
 	stringLit
@@ -13866,47 +14056,36 @@ FieldTerminator:
 
 Lines:
 	{
-		$$ = &ast.LinesClause{Terminated: "\n"}
+		$$ = (*ast.LinesClause)(nil)
 	}
 |	"LINES" Starting LinesTerminated
 	{
-		$$ = &ast.LinesClause{Starting: $2, Terminated: $3}
+		$$ = &ast.LinesClause{Starting: $2.(*string), Terminated: $3.(*string)}
 	}
 
 Starting:
 	{
-		$$ = ""
+		$$ = (*string)(nil)
 	}
 |	"STARTING" "BY" FieldTerminator
 	{
-		$$ = $3
+		s := $3
+		$$ = &s
 	}
 
 LinesTerminated:
 	{
-		$$ = "\n"
+		$$ = (*string)(nil)
 	}
 |	"TERMINATED" "BY" FieldTerminator
 	{
-		$$ = $3
-	}
-
-NullDefinedByClause:
-	{
-		$$ = nil
-	}
-|	"NULL" "DEFINED" "BY" TextString
-	{
-		$$ = &ast.NullDefinedBy{NullDef: $4.(*ast.TextString).Value}
-	}
-|	"NULL" "DEFINED" "BY" TextString "OPTIONALLY" "ENCLOSED"
-	{
-		$$ = &ast.NullDefinedBy{NullDef: $4.(*ast.TextString).Value, OptEnclosed: true}
+		s := $3
+		$$ = &s
 	}
 
 LoadDataSetSpecOpt:
 	{
-		$$ = nil
+		$$ = ([]*ast.Assignment)(nil)
 	}
 |	"SET" LoadDataSetList
 	{
@@ -14639,5 +14818,41 @@ PlanReplayerStmt:
 		}
 
 		$$ = x
+	}
+
+/********************************************************************
+ *
+ * Calibrate Resource Statement
+ *
+ * CALIBRATE RESOURCE
+ *******************************************************************/
+CalibrateResourceStmt:
+	"CALIBRATE" "RESOURCE" CalibrateResourceWorkloadOption
+	{
+		$$ = &ast.CalibrateResourceStmt{
+			Tp: $3.(ast.CalibrateResourceType),
+		}
+	}
+
+CalibrateResourceWorkloadOption:
+	/* empty */
+	{
+		$$ = ast.WorkloadNone
+	}
+|	"WORKLOAD" "TPCC"
+	{
+		$$ = ast.TPCC
+	}
+|	"WORKLOAD" "OLTP_READ_WRITE"
+	{
+		$$ = ast.OLTPREADWRITE
+	}
+|	"WORKLOAD" "OLTP_READ_ONLY"
+	{
+		$$ = ast.OLTPREADONLY
+	}
+|	"WORKLOAD" "OLTP_WRITE_ONLY"
+	{
+		$$ = ast.OLTPWRITEONLY
 	}
 %%

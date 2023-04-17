@@ -15,36 +15,59 @@
 package importer
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"math"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/filter"
+	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
+	kvconfig "github.com/tikv/client-go/v2/config"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
-	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is
-	// mydumper-format DML file
+	// LoadDataFormatDelimitedData delimited data.
+	LoadDataFormatDelimitedData = "delimited data"
+	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is mydumper-format DML file.
 	LoadDataFormatSQLDump = "sql file"
-	// LoadDataFormatParquet represents the data source file of LOAD DATA is
-	// parquet
+	// LoadDataFormatParquet represents the data source file of LOAD DATA is parquet.
 	LoadDataFormatParquet = "parquet"
 
 	// LogicalImportMode represents the import mode is SQL-like.
-	LogicalImportMode   = "logical"  // tidb backend
-	physicalImportMode  = "physical" // local backend
-	unlimitedWriteSpeed = config.ByteSize(math.MaxInt64)
+	LogicalImportMode = "logical"
+	// PhysicalImportMode represents the import mode is KV-like.
+	PhysicalImportMode = "physical"
+	// 0 means no limit
+	unlimitedWriteSpeed = config.ByteSize(0)
 	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
-	minBatchSize        = config.ByteSize(1 << 10)  // 1KiB
-	minWriteSpeed       = config.ByteSize(1 << 10)  // 1KiB/s
 
 	importModeOption    = "import_mode"
 	diskQuotaOption     = "disk_quota"
@@ -56,10 +79,10 @@ const (
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
-	detachedOption      = "detached"
 )
 
 var (
+	detachedOption = plannercore.DetachedOption
 
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
@@ -83,7 +106,14 @@ var (
 		addIndexOption:  {},
 		analyzeOption:   {},
 	}
+
+	// LoadDataReadBlockSize is exposed for test.
+	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 )
+
+// GetKVStore returns a kv.Storage.
+// kv encoder of physical mode needs it.
+var GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
 
 // FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {
@@ -91,166 +121,320 @@ type FieldMapping struct {
 	UserVar *ast.VariableExpr
 }
 
+// LoadDataReaderInfo provides information for a data reader of LOAD DATA.
+type LoadDataReaderInfo struct {
+	// Opener can be called at needed to get a io.ReadSeekCloser. It will only
+	// be called once.
+	Opener func(ctx context.Context) (io.ReadSeekCloser, error)
+	// Remote is not nil only if load from cloud storage.
+	Remote *mydump.SourceFileMeta
+}
+
+// Plan describes the plan of LOAD DATA.
+type Plan struct {
+	TableName *ast.TableName
+	TableInfo *model.TableInfo
+
+	FileLocRef         ast.FileLocRefTp
+	Path               string
+	Format             string
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	ColumnAssignments  []*ast.Assignment
+	OnDuplicate        ast.OnDuplicateKeyHandlingType
+	FieldsInfo         *ast.FieldsClause
+	LinesInfo          *ast.LinesClause
+	Restrictive        bool
+	IgnoreLines        *uint64
+
+	SQLMode          mysql.SQLMode
+	Charset          *string
+	ImportantSysVars map[string]string
+
+	ImportMode        string
+	DiskQuota         config.ByteSize
+	Checksum          config.PostOpLevel
+	AddIndex          bool
+	Analyze           config.PostOpLevel
+	ThreadCnt         int64
+	BatchSize         int64
+	MaxWriteSpeed     config.ByteSize
+	SplitFile         bool
+	MaxRecordedErrors int64
+	Detached          bool
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
-	Path       string
-	fieldsInfo *ast.FieldsClause
-	linesInfo  *ast.LinesClause
-	nullInfo   *ast.NullDefinedBy
-
+	FileLocRef         ast.FileLocRefTp
+	Path               string
 	Format             string
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	ColumnAssignments  []*ast.Assignment
 	OnDuplicate        ast.OnDuplicateKeyHandlingType
 
-	Table      table.Table
-	SchemaName string
+	Table  table.Table
+	DBName string
+	DBID   int64
 
 	// how input field(or input column) from data file is mapped, either to a column or variable.
 	// if there's NO column list clause in load data statement, then it's table's columns
 	// else it's user defined list.
-	fieldMappings []*FieldMapping
-	// see InsertValues.insertColumns
+	FieldMappings []*FieldMapping
+	// see InsertValues.InsertColumns
 	// todo: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
-	insertColumns []*table.Column
+	// - ref columns in set clause is allowed in mysql, but not in tidb
+	InsertColumns []*table.Column
+	// Data interpretation is restrictive if the SQL mode is restrictive and neither
+	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
+	// operation.
+	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
+	Restrictive bool
 
-	fieldNullDef     []string
-	quotedNullIsText bool
-	// expose some fields for test
-	FieldsEnclosedBy   string
-	FieldsEscapedBy    string
-	FieldsTerminatedBy string
-	LinesTerminatedBy  string
-	LinesStartingBy    string
-	IgnoreLines        uint64
+	// used for DELIMITED DATA format
+	FieldNullDef         []string
+	NullValueOptEnclosed bool
+	plannercore.LineFieldsInfo
+	IgnoreLines uint64
 
 	// import options
-	importMode        string
+	ImportMode        string
 	diskQuota         config.ByteSize
 	checksum          config.PostOpLevel
 	addIndex          bool
 	analyze           config.PostOpLevel
-	threadCnt         int64
-	batchSize         config.ByteSize
+	ThreadCnt         int64
+	BatchSize         int64
 	maxWriteSpeed     config.ByteSize // per second
 	splitFile         bool
 	maxRecordedErrors int64 // -1 means record all error
-	detached          bool
+	Detached          bool
+
+	logger           *zap.Logger
+	sqlMode          mysql.SQLMode
+	charset          *string
+	importantSysVars map[string]string
+	dataStore        storage.ExternalStorage
+	dataFiles        []*mydump.SourceFileMeta
+	// total data file size in bytes, only initialized when load from remote.
+	TotalFileSize int64
 }
 
-// NewLoadDataController create new controller.
-func NewLoadDataController(plan *plannercore.LoadData, tbl table.Table) *LoadDataController {
-	return &LoadDataController{
+func getImportantSysVars(sctx sessionctx.Context) map[string]string {
+	res := map[string]string{}
+	for k, defVal := range common.DefaultImportantVariables {
+		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
+			res[k] = val
+		} else {
+			res[k] = defVal
+		}
+	}
+	for k, defVal := range common.DefaultImportVariablesTiDB {
+		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
+			res[k] = val
+		} else {
+			res[k] = defVal
+		}
+	}
+	return res
+}
+
+// NewPlan creates a new load data plan.
+func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*Plan, error) {
+	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
+	logger := log.L().With(zap.String("table", fullTableName))
+	var format string
+	if plan.Format != nil {
+		format = strings.ToLower(*plan.Format)
+	} else {
+		// without FORMAT 'xxx' clause, default to DELIMITED DATA
+		format = LoadDataFormatDelimitedData
+	}
+	charset := plan.Charset
+	if charset == nil {
+		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
+		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
+			context.Background(), variable.CharsetDatabase)
+		if err2 != nil {
+			logger.Error("LOAD DATA get charset failed", zap.Error(err2))
+		} else {
+			charset = &d
+		}
+	}
+	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode() &&
+		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
+
+	p := &Plan{
+		TableName: plan.Table,
+		TableInfo: tbl.Meta(),
+
+		FileLocRef:         plan.FileLocRef,
 		Path:               plan.Path,
-		fieldsInfo:         plan.FieldsInfo,
-		linesInfo:          plan.LinesInfo,
-		nullInfo:           plan.NullInfo,
-		IgnoreLines:        plan.IgnoreLines,
-		Format:             strings.ToLower(plan.Format),
+		Format:             format,
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
 		ColumnAssignments:  plan.ColumnAssignments,
 		OnDuplicate:        plan.OnDuplicate,
-		SchemaName:         plan.Table.Schema.O,
+		FieldsInfo:         plan.FieldsInfo,
+		LinesInfo:          plan.LinesInfo,
+		Restrictive:        restrictive,
+		IgnoreLines:        plan.IgnoreLines,
+
+		SQLMode:          userSctx.GetSessionVars().SQLMode,
+		Charset:          charset,
+		ImportantSysVars: getImportantSysVars(userSctx),
+	}
+	if err := p.initOptions(userSctx, plan.Options); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// NewLoadDataController create new controller.
+func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, error) {
+	fullTableName := common.UniqueTable(plan.TableName.Schema.L, plan.TableName.Name.L)
+	logger := log.L().With(zap.String("table", fullTableName))
+	c := &LoadDataController{
+		FileLocRef:         plan.FileLocRef,
+		Path:               plan.Path,
+		Format:             plan.Format,
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		OnDuplicate:        plan.OnDuplicate,
+		DBName:             plan.TableName.Schema.O,
+		DBID:               plan.TableName.DBInfo.ID,
 		Table:              tbl,
+		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
+		Restrictive:        plan.Restrictive,
+
+		ImportMode:        plan.ImportMode,
+		diskQuota:         plan.DiskQuota,
+		checksum:          plan.Checksum,
+		addIndex:          plan.AddIndex,
+		analyze:           plan.Analyze,
+		ThreadCnt:         plan.ThreadCnt,
+		BatchSize:         plan.BatchSize,
+		maxWriteSpeed:     plan.MaxWriteSpeed,
+		splitFile:         plan.SplitFile,
+		maxRecordedErrors: plan.MaxRecordedErrors,
+		Detached:          plan.Detached,
+
+		logger:           logger,
+		sqlMode:          plan.SQLMode,
+		charset:          plan.Charset,
+		importantSysVars: plan.ImportantSysVars,
 	}
+	if err := c.initFieldParams(plan); err != nil {
+		return nil, err
+	}
+
+	columnNames := c.initFieldMappings()
+	if err := c.initLoadColumns(columnNames); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
-// Init inner params, should call this before use.
-func (e *LoadDataController) Init(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	if err := e.initFieldParams(); err != nil {
-		return err
-	}
-	if err := e.initOptions(seCtx, options); err != nil {
-		return err
-	}
-
-	columnNames := e.initFieldMappings()
-	return e.initLoadColumns(columnNames)
-}
-
-func (e *LoadDataController) initFieldParams() error {
+func (e *LoadDataController) initFieldParams(plan *Plan) error {
 	if e.Path == "" {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
-
-	// CSV-like
-	if e.Format == "" {
-		if e.nullInfo != nil && e.nullInfo.OptEnclosed &&
-			(e.fieldsInfo == nil || e.fieldsInfo.Enclosed == nil) {
-			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
-		}
-		// TODO: support lines terminated is "".
-		if len(e.linesInfo.Terminated) == 0 {
-			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
-		}
-	}
-	if e.Format != "" && e.Format != LoadDataFormatParquet && e.Format != LoadDataFormatSQLDump {
+	if e.Format != LoadDataFormatDelimitedData && e.Format != LoadDataFormatParquet && e.Format != LoadDataFormatSQLDump {
 		return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 	}
 
-	if e.Format != "" {
+	if e.FileLocRef == ast.FileLocClient {
+		if e.Detached {
+			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("DETACHED")
+		}
+		if e.Format == LoadDataFormatParquet {
+			// parquet parser need seek around, it's not supported for client local file
+			return exeerrors.ErrLoadParquetFromLocal
+		}
+		if e.ImportMode == PhysicalImportMode {
+			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("import_mode='physical'")
+		}
+	}
+
+	if e.Format != LoadDataFormatDelimitedData {
+		if plan.FieldsInfo != nil || plan.LinesInfo != nil || plan.IgnoreLines != nil {
+			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs(fmt.Sprintf("cannot specify FIELDS ... or LINES ... or IGNORE N LINES for format '%s'", e.Format))
+		}
 		// no need to init those param for sql/parquet
 		return nil
 	}
 
+	if plan.IgnoreLines != nil {
+		e.IgnoreLines = *plan.IgnoreLines
+	}
+
 	var (
-		nullDef          []string
-		quotedNullIsText = true
+		nullDef              []string
+		nullValueOptEnclosed = false
 	)
 
-	if e.nullInfo != nil {
-		nullDef = append(nullDef, e.nullInfo.NullDef)
-		quotedNullIsText = !e.nullInfo.OptEnclosed
-	} else if e.fieldsInfo.Enclosed != nil {
+	// todo: move null defined into plannercore.LineFieldsInfo
+	// in load data, there maybe multiple null def, but in SELECT ... INTO OUTFILE there's only one
+	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
+		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
+		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
+	} else if len(e.FieldsEnclosedBy) != 0 {
 		nullDef = append(nullDef, "NULL")
 	}
-	if e.fieldsInfo.Escaped != nil {
-		nullDef = append(nullDef, string([]byte{*e.fieldsInfo.Escaped, 'N'}))
+	if len(e.FieldsEscapedBy) != 0 {
+		nullDef = append(nullDef, string([]byte{e.FieldsEscapedBy[0], 'N'}))
 	}
 
-	enclosed := ""
-	if e.fieldsInfo.Enclosed != nil {
-		enclosed = string([]byte{*e.fieldsInfo.Enclosed})
+	e.FieldNullDef = nullDef
+	e.NullValueOptEnclosed = nullValueOptEnclosed
+
+	if nullValueOptEnclosed && len(e.FieldsEnclosedBy) == 0 {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
 	}
-	escaped := ""
-	if e.fieldsInfo.Escaped != nil {
-		escaped = string([]byte{*e.fieldsInfo.Escaped})
+	// moved from planerbuilder.buildLoadData
+	// see https://github.com/pingcap/tidb/issues/33298
+	if len(e.FieldsTerminatedBy) == 0 {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("load data with empty field terminator")
+	}
+	// TODO: support lines terminated is "".
+	if len(e.LinesTerminatedBy) == 0 {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
+	}
+	if len(e.FieldsEnclosedBy) > 0 &&
+		(strings.HasPrefix(e.FieldsEnclosedBy, e.FieldsTerminatedBy) || strings.HasPrefix(e.FieldsTerminatedBy, e.FieldsEnclosedBy)) {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other")
 	}
 
-	e.fieldNullDef = nullDef
-	e.quotedNullIsText = quotedNullIsText
-	e.FieldsEnclosedBy = enclosed
-	e.FieldsEscapedBy = escaped
-	e.FieldsTerminatedBy = e.fieldsInfo.Terminated
-	e.LinesTerminatedBy = e.linesInfo.Terminated
-	e.LinesStartingBy = e.linesInfo.Starting
 	return nil
 }
 
-func (e *LoadDataController) initDefaultOptions() {
+var ignoreInTest = false
+
+func (p *Plan) initDefaultOptions() {
 	threadCnt := runtime.NumCPU()
-	if e.Format == LoadDataFormatParquet {
+	if intest.InTest && !ignoreInTest {
+		threadCnt = 1
+	}
+	if p.Format == LoadDataFormatParquet {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
 
-	e.importMode = LogicalImportMode
-	_ = e.diskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
-	e.checksum = config.OpLevelRequired
-	e.addIndex = true
-	e.analyze = config.OpLevelOptional
-	e.threadCnt = int64(threadCnt)
-	_ = e.batchSize.UnmarshalText([]byte("100MiB")) // todo confirm with pm
-	e.maxWriteSpeed = unlimitedWriteSpeed
-	e.splitFile = false
-	e.maxRecordedErrors = 100
-	e.detached = false
+	p.ImportMode = LogicalImportMode
+	_ = p.DiskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
+	p.Checksum = config.OpLevelRequired
+	p.AddIndex = true
+	p.Analyze = config.OpLevelOptional
+	p.ThreadCnt = int64(threadCnt)
+	p.BatchSize = 1000
+	p.MaxWriteSpeed = unlimitedWriteSpeed
+	p.SplitFile = false
+	p.MaxRecordedErrors = 100
+	p.Detached = false
 }
 
-func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	e.initDefaultOptions()
+func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
+	p.initDefaultOptions()
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
@@ -278,17 +462,17 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		v = strings.ToLower(v)
-		if v != LogicalImportMode && v != physicalImportMode {
+		if v != LogicalImportMode && v != PhysicalImportMode {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		e.importMode = v
+		p.ImportMode = v
 	}
 
-	if e.importMode == LogicalImportMode {
+	if p.ImportMode == LogicalImportMode {
 		// some options are only allowed in physical mode
 		for _, opt := range specifiedOptions {
 			if _, ok := optionsForPhysicalImport[opt.Name]; ok {
-				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, e.importMode)
+				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, p.ImportMode)
 			}
 		}
 	}
@@ -297,7 +481,7 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.diskQuota.UnmarshalText([]byte(v)); err != nil || e.diskQuota <= 0 {
+		if err = p.DiskQuota.UnmarshalText([]byte(v)); err != nil || p.DiskQuota <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -306,7 +490,7 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.checksum.FromStringValue(v); err != nil {
+		if err = p.Checksum.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -319,30 +503,27 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		e.addIndex = vInt == 1
+		p.AddIndex = vInt == 1
 	}
 	if opt, ok := specifiedOptions[analyzeOption]; ok {
 		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.analyze.FromStringValue(v); err != nil {
+		if err = p.Analyze.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
 	if opt, ok := specifiedOptions[threadOption]; ok {
 		// boolean true will be taken as 1
-		e.threadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || e.threadCnt <= 0 {
+		p.ThreadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || p.ThreadCnt <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
 	if opt, ok := specifiedOptions[batchSizeOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = e.batchSize.UnmarshalText([]byte(v)); err != nil || e.batchSize <= 0 {
+		p.BatchSize, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || p.BatchSize < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -351,7 +532,7 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.maxWriteSpeed.UnmarshalText([]byte(v)); err != nil || e.maxWriteSpeed <= 0 {
+		if err = p.MaxWriteSpeed.UnmarshalText([]byte(v)); err != nil || p.MaxWriteSpeed < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -364,37 +545,31 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		e.splitFile = vInt == 1
+		p.SplitFile = vInt == 1
 	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
-		e.maxRecordedErrors, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || e.maxRecordedErrors < -1 {
+		p.MaxRecordedErrors, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || p.MaxRecordedErrors < -1 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		// todo: set a max value for this param?
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
-		e.detached = true
+		p.Detached = true
 	}
 
-	e.adjustOptions()
+	p.adjustOptions()
 	return nil
 }
 
-func (e *LoadDataController) adjustOptions() {
-	if e.diskQuota < minDiskQuota {
-		e.diskQuota = minDiskQuota
+func (p *Plan) adjustOptions() {
+	if p.DiskQuota < minDiskQuota {
+		p.DiskQuota = minDiskQuota
 	}
 	// max value is cpu-count
 	numCPU := int64(runtime.NumCPU())
-	if e.threadCnt > numCPU {
-		e.threadCnt = numCPU
-	}
-	if e.batchSize < minBatchSize {
-		e.batchSize = minBatchSize
-	}
-	if e.maxWriteSpeed < minWriteSpeed {
-		e.maxWriteSpeed = minWriteSpeed
+	if p.ThreadCnt > numCPU {
+		p.ThreadCnt = numCPU
 	}
 }
 
@@ -403,14 +578,14 @@ func (e *LoadDataController) adjustOptions() {
 // Returns a slice of same ordered column names without user defined variable names.
 func (e *LoadDataController) initFieldMappings() []string {
 	columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
-	tableCols := e.Table.Cols()
+	tableCols := e.Table.VisibleCols()
 
 	if len(e.ColumnsAndUserVars) == 0 {
 		for _, v := range tableCols {
 			fieldMapping := &FieldMapping{
 				Column: v,
 			}
-			e.fieldMappings = append(e.fieldMappings, fieldMapping)
+			e.FieldMappings = append(e.FieldMappings, fieldMapping)
 			columns = append(columns, v.Name.O)
 		}
 
@@ -431,7 +606,7 @@ func (e *LoadDataController) initFieldMappings() []string {
 			Column:  column,
 			UserVar: v.UserVar,
 		}
-		e.fieldMappings = append(e.fieldMappings, fieldMapping)
+		e.FieldMappings = append(e.FieldMappings, fieldMapping)
 	}
 
 	return columns
@@ -442,7 +617,7 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 	var cols []*table.Column
 	var missingColName string
 	var err error
-	tableCols := e.Table.Cols()
+	tableCols := e.Table.VisibleCols()
 
 	if len(columnNames) != len(tableCols) {
 		for _, v := range e.ColumnAssignments {
@@ -458,11 +633,11 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 	for _, col := range cols {
 		if !col.IsGenerated() {
 			// todo: should report error here, since in reorderColumns we report error if en(cols) != len(columnNames)
-			e.insertColumns = append(e.insertColumns, col)
+			e.InsertColumns = append(e.InsertColumns, col)
 		}
 	}
 
-	// e.insertColumns is appended according to the original tables' column sequence.
+	// e.InsertColumns is appended according to the original tables' column sequence.
 	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
 	if err = e.reorderColumns(columnNames); err != nil {
 		return err
@@ -477,10 +652,10 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 	return nil
 }
 
-// reorderColumns reorder the e.insertColumns according to the order of columnNames
-// Note: We must ensure there must be one-to-one mapping between e.insertColumns and columnNames in terms of column name.
+// reorderColumns reorder the e.InsertColumns according to the order of columnNames
+// Note: We must ensure there must be one-to-one mapping between e.InsertColumns and columnNames in terms of column name.
 func (e *LoadDataController) reorderColumns(columnNames []string) error {
-	cols := e.insertColumns
+	cols := e.InsertColumns
 
 	if len(cols) != len(columnNames) {
 		return exeerrors.ErrColumnsNotMatched
@@ -502,25 +677,14 @@ func (e *LoadDataController) reorderColumns(columnNames []string) error {
 		reorderedColumns[idx] = col
 	}
 
-	e.insertColumns = reorderedColumns
+	e.InsertColumns = reorderedColumns
 
 	return nil
 }
 
-// GetInsertColumns get column list need to insert into target table.
-// this list include all columns and in the same order as in fieldMappings and ColumnAssignments
-func (e *LoadDataController) GetInsertColumns() []*table.Column {
-	return e.insertColumns
-}
-
-// GetFieldMapping get field mapping.
-func (e *LoadDataController) GetFieldMapping() []*FieldMapping {
-	return e.fieldMappings
-}
-
 // GetFieldCount get field count.
 func (e *LoadDataController) GetFieldCount() int {
-	return len(e.fieldMappings)
+	return len(e.FieldMappings)
 }
 
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
@@ -531,13 +695,278 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 		Delimiter:        e.FieldsEnclosedBy,
 		Terminator:       e.LinesTerminatedBy,
 		NotNull:          false,
-		Null:             e.fieldNullDef,
+		Null:             e.FieldNullDef,
 		Header:           false,
 		TrimLastSep:      false,
 		EscapedBy:        e.FieldsEscapedBy,
 		StartingBy:       e.LinesStartingBy,
 		AllowEmptyLine:   true,
-		QuotedNullIsText: e.quotedNullIsText,
+		QuotedNullIsText: !e.NullValueOptEnclosed,
 		UnescapedQuote:   true,
 	}
 }
+
+// InitDataFiles initializes the data store and load data files.
+func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
+	u, err2 := storage.ParseRawURL(e.Path)
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
+	}
+	path := strings.Trim(u.Path, "/")
+	u.Path = ""
+	b, err2 := storage.ParseBackendFromURL(u, nil)
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
+	}
+	if b.GetLocal() != nil {
+		return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
+	}
+	// try to find pattern error in advance
+	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
+	}
+
+	opt := &storage.ExternalStorageOptions{}
+	if intest.InTest {
+		opt.NoCredentials = true
+	}
+	s, err := storage.New(ctx, b, opt)
+	if err != nil {
+		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
+	}
+
+	var totalSize int64
+	dataFiles := []*mydump.SourceFileMeta{}
+	idx := strings.IndexByte(path, '*')
+	// simple path when the INFILE represent one file
+	sourceType := e.getSourceType()
+	if idx == -1 {
+		fileReader, err2 := s.Open(ctx, path)
+		if err2 != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+		}
+		defer func() {
+			terror.Log(fileReader.Close())
+		}()
+		size, err3 := fileReader.Seek(0, io.SeekEnd)
+		if err3 != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek in LOAD DATA")
+		}
+		compressTp := mydump.ParseCompressionOnFileExtension(path)
+		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
+			Path:        path,
+			FileSize:    size,
+			Compression: compressTp,
+			Type:        sourceType,
+			// todo: if we support compression for physical mode, should set it to size * compressRatio to better split
+			// engines
+			RealSize: size,
+		})
+		totalSize = size
+	} else {
+		commonPrefix := path[:idx]
+		// we only support '*', in order to reuse glob library manually escape the path
+		escapedPath := stringutil.EscapeGlobExceptAsterisk(path)
+		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix},
+			func(remotePath string, size int64) error {
+				// we have checked in LoadDataExec.Next
+				//nolint: errcheck
+				match, _ := filepath.Match(escapedPath, remotePath)
+				if !match {
+					return nil
+				}
+				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
+				dataFiles = append(dataFiles, &mydump.SourceFileMeta{
+					Path:        remotePath,
+					FileSize:    size,
+					Compression: compressTp,
+					Type:        sourceType,
+					RealSize:    size,
+				})
+				totalSize += size
+				return nil
+			})
+		if err != nil {
+			return err
+		}
+	}
+
+	e.dataStore = s
+	e.dataFiles = dataFiles
+	e.TotalFileSize = totalSize
+	return nil
+}
+
+func (e *LoadDataController) getSourceType() mydump.SourceType {
+	switch e.Format {
+	case LoadDataFormatParquet:
+		return mydump.SourceTypeParquet
+	case LoadDataFormatDelimitedData:
+		return mydump.SourceTypeCSV
+	default:
+		// LoadDataFormatSQLDump
+		return mydump.SourceTypeSQL
+	}
+}
+
+// GetLoadDataReaderInfos returns the LoadDataReaderInfo for each data file.
+func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
+	result := make([]LoadDataReaderInfo, 0, len(e.dataFiles))
+	for i := range e.dataFiles {
+		f := e.dataFiles[i]
+		result = append(result, LoadDataReaderInfo{
+			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
+				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore)
+				if err2 != nil {
+					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+				}
+				return fileReader, nil
+			},
+			Remote: f,
+		})
+	}
+	return result
+}
+
+// GetParser returns a parser for the data file.
+func (e *LoadDataController) GetParser(
+	ctx context.Context,
+	dataFileInfo LoadDataReaderInfo,
+) (parser mydump.Parser, err error) {
+	reader, err2 := dataFileInfo.Opener(ctx)
+	if err2 != nil {
+		return nil, err2
+	}
+	defer func() {
+		if err != nil {
+			if err3 := reader.Close(); err3 != nil {
+				e.logger.Warn("failed to close reader", zap.Error(err3))
+			}
+		}
+	}()
+	switch e.Format {
+	case LoadDataFormatDelimitedData:
+		var charsetConvertor *mydump.CharsetConvertor
+		if e.charset != nil {
+			charsetConvertor, err = mydump.NewCharsetConvertor(*e.charset, string(utf8.RuneError))
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		parser, err = mydump.NewCSVParser(
+			ctx,
+			e.GenerateCSVConfig(),
+			reader,
+			LoadDataReadBlockSize,
+			nil,
+			false,
+			charsetConvertor)
+	case LoadDataFormatSQLDump:
+		parser = mydump.NewChunkParser(
+			ctx,
+			e.sqlMode,
+			reader,
+			LoadDataReadBlockSize,
+			nil,
+		)
+	case LoadDataFormatParquet:
+		parser, err = mydump.NewParquetParser(
+			ctx,
+			e.dataStore,
+			reader,
+			dataFileInfo.Remote.Path,
+		)
+	}
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
+	}
+	parser.SetLogger(litlog.Logger{Logger: logutil.Logger(ctx)})
+
+	// handle IGNORE N LINES
+	ignoreOneLineFn := parser.ReadRow
+	if csvParser, ok := parser.(*mydump.CSVParser); ok {
+		ignoreOneLineFn = func() error {
+			_, _, err3 := csvParser.ReadUntilTerminator()
+			return err3
+		}
+	}
+
+	ignoreLineCnt := e.IgnoreLines
+	for ignoreLineCnt > 0 {
+		err = ignoreOneLineFn()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				return parser, nil
+			}
+			return nil, err
+		}
+
+		ignoreLineCnt--
+	}
+	return parser, nil
+}
+
+func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
+	tbl := filter.Table{
+		Schema: e.DBName,
+		Name:   e.Table.Meta().Name.O,
+	}
+	res := []mydump.FileInfo{}
+	for _, f := range e.dataFiles {
+		res = append(res, mydump.FileInfo{
+			TableName: tbl,
+			FileMeta:  *f,
+		})
+	}
+	return res
+}
+
+// JobImportParam is the param of the job import.
+type JobImportParam struct {
+	Job      *asyncloaddata.Job
+	Group    *errgroup.Group
+	GroupCtx context.Context
+	// should be closed in the end of the job.
+	Done chan struct{}
+
+	Progress *asyncloaddata.Progress
+}
+
+// JobImporter is the interface for importing a job.
+type JobImporter interface {
+	// Param returns the param of the job import.
+	Param() *JobImportParam
+	// Import imports the job.
+	// import should run in routines using param.Group, when import finished, it should close param.Done.
+	// during import, we should use param.GroupCtx, so this method has no context param.
+	Import()
+	// Result returns the result of the job import.
+	// todo: return a struct
+	Result() string
+	io.Closer
+}
+
+// GetMsgFromBRError get msg from BR error.
+// TODO: add GetMsg() to errors package to replace this function.
+// see TestGetMsgFromBRError for more details.
+func GetMsgFromBRError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if berr, ok := err.(*errors.Error); ok {
+		return berr.GetMsg()
+	}
+	raw := err.Error()
+	berrMsg := errors.Cause(err).Error()
+	if len(raw) <= len(berrMsg)+len(": ") {
+		return raw
+	}
+	return raw[:len(raw)-len(berrMsg)-len(": ")]
+}
+
+// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
+var TestSyncCh = make(chan struct{})

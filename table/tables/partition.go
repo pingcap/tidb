@@ -99,7 +99,7 @@ type partitionedTable struct {
 	// Only used during Reorganize partition
 	// reorganizePartitions is the currently used partitions that are reorganized
 	reorganizePartitions map[int64]interface{}
-	// doubleWriteParittions are the partitions not visible, but we should double write to
+	// doubleWritePartitions are the partitions not visible, but we should double write to
 	doubleWritePartitions map[int64]interface{}
 	reorgPartitionExpr    *PartitionExpr
 }
@@ -1426,6 +1426,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	tblInfo.Partition.Definitions = tblInfo.Partition.AddingDefinitions
 	tblInfo.Partition.AddingDefinitions = nil
 	tblInfo.Partition.DroppingDefinitions = nil
+	tblInfo.Partition.Num = uint64(len(tblInfo.Partition.Definitions))
 	var tc TableCommon
 	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil))
 
@@ -1474,6 +1475,9 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 	tbl := t.GetPartition(pid)
 	recordID, err = tbl.AddRecord(ctx, r, opts...)
 	if err != nil {
+		return
+	}
+	if t.Meta().Partition.DDLState == model.StateDeleteOnly {
 		return
 	}
 	if _, ok := t.reorganizePartitions[pid]; ok {
@@ -1663,9 +1667,12 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 			return errors.Trace(err)
 		}
 		if newTo == newFrom {
-			// Update needs to be done in StateDeleteOnly as well
 			tbl = t.GetPartition(newTo)
-			err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+				err = tbl.RemoveRecord(ctx, h, currData)
+			} else {
+				err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			}
 			if err != nil {
 				return errors.Trace(err)
 			}

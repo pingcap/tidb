@@ -53,7 +53,8 @@ type TiDBSelectionImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (sel *TiDBSelectionImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().GetCPUFactor() + children[0].GetCost()
+	sel.cost = children[0].GetPlan().Stats().RowCount*
+		sel.plan.SCtx().GetSessionVars().GetCPUFactor() + children[0].GetCost()
 	return sel.cost
 }
 
@@ -69,7 +70,8 @@ type TiKVSelectionImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (sel *TiKVSelectionImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().GetCopCPUFactor() + children[0].GetCost()
+	sel.cost = children[0].GetPlan().Stats().RowCount*
+		sel.plan.SCtx().GetSessionVars().GetCopCPUFactor() + children[0].GetCost()
 	return sel.cost
 }
 

@@ -320,13 +320,13 @@
         ]
       },
       {
-        "Digest": "5fc0a796273b90410acda281d59ff137547ace7422739f9b1dbf90ded8cb836c",
+        "Digest": "c3b0c0b4844f65d08430c45f539cca8c7cc11aca1b491e62e2ba3eda6822f9d6",
         "Plan": [
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",
           "   └─Projection        cop[tiflash] plus(test.t1.a, test.t1.b)",
           "     └─Selection       cop[tiflash] lt(plus(test.t1.a, test.t1.b), ?)",
-          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:empty, keep order:false"
         ]
       },
       {
@@ -336,6 +336,141 @@
           " └─TableReader       root ",
           "   └─Selection       cop  lt(plus(test.t1.a, test.t1.b), ?)",
           "     └─TableFullScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTiFlashLateMaterialization",
+    "Cases": [
+      {
+        "SQL": "explain select * from t1;",
+        "Plan": [
+          " TableReader       root         ",
+          " └─ExchangeSender  cop[tiflash] ",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where a<1;",
+        "Plan": [
+          " TableReader       root         ",
+          " └─ExchangeSender  cop[tiflash] ",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:lt(test.t1.a, ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where a>1",
+        "Plan": [
+          " TableReader       root         ",
+          " └─ExchangeSender  cop[tiflash] ",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where a=1",
+        "Plan": [
+          " TableReader       root         ",
+          " └─ExchangeSender  cop[tiflash] ",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:eq(test.t1.a, ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where a in (1,2,3)",
+        "Plan": [
+          " TableReader         root         ",
+          " └─ExchangeSender    cop[tiflash] ",
+          "   └─Selection       cop[tiflash] in(test.t1.a, ?, ?, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:empty, keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where b=1",
+        "Plan": [
+          " TableReader       root         ",
+          " └─ExchangeSender  cop[tiflash] ",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:eq(test.t1.b, ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where a!=1 order by c limit 1",
+        "Plan": [
+          " TopN                  root         test.t1.c",
+          " └─TableReader         root         ",
+          "   └─ExchangeSender    cop[tiflash] ",
+          "     └─TopN            cop[tiflash] test.t1.c",
+          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:ne(test.t1.a, ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select a from t1 where a>1",
+        "Plan": [
+          " TableReader         root         ",
+          " └─ExchangeSender    cop[tiflash] ",
+          "   └─Selection       cop[tiflash] gt(test.t1.a, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:empty, keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select a from t1 where a>1 and b>1",
+        "Plan": [
+          " TableReader           root         ",
+          " └─ExchangeSender      cop[tiflash] ",
+          "   └─Projection        cop[tiflash] test.t1.a",
+          "     └─Selection       cop[tiflash] gt(test.t1.b, ?)",
+          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where a>1 and b>1 and c>1",
+        "Plan": [
+          " TableReader         root         ",
+          " └─ExchangeSender    cop[tiflash] ",
+          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where a<1 or b<2",
+        "Plan": [
+          " TableReader       root         ",
+          " └─ExchangeSender  cop[tiflash] ",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:or(lt(test.t1.a, ?), lt(test.t1.b, ?)), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where (a<1 or b<2) and (a>3 and b>3)",
+        "Plan": [
+          " TableReader         root         ",
+          " └─ExchangeSender    cop[tiflash] ",
+          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where (a<1 or b<2) and (a>3 and b>3) and c>1",
+        "Plan": [
+          " TableReader         root         ",
+          " └─ExchangeSender    cop[tiflash] ",
+          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t1 where (a>2 or b<2) and (a>3 and b>3) and c>2",
+        "Plan": [
+          " TableReader         root         ",
+          " └─ExchangeSender    cop[tiflash] ",
+          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?), or(gt(test.t1.a, ?), lt(test.t1.b, ?))",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select count(a), max(t) from t1 where a>1",
+        "Plan": [
+          " HashAgg           root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
+          " └─TableReader     root         ",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
       }
     ]

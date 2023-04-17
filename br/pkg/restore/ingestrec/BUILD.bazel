@@ -14,7 +14,10 @@ go_library(
 
 go_test(
     name = "ingestrec_test",
+    timeout = "short",
     srcs = ["ingest_recorder_test.go"],
+    flaky = True,
+    shard_count = 3,
     deps = [
         ":ingestrec",
         "//parser/model",

@@ -20,6 +20,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/pingcap/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
@@ -31,24 +33,29 @@ import (
 )
 
 func TestInitDefaultOptions(t *testing.T) {
-	e := LoadDataController{}
-	e.initDefaultOptions()
-	require.Equal(t, LogicalImportMode, e.importMode)
-	require.Equal(t, config.ByteSize(50<<30), e.diskQuota)
-	require.Equal(t, config.OpLevelRequired, e.checksum)
-	require.Equal(t, true, e.addIndex)
-	require.Equal(t, config.OpLevelOptional, e.analyze)
-	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt)
-	require.Equal(t, config.ByteSize(100<<20), e.batchSize)
-	require.Equal(t, unlimitedWriteSpeed, e.maxWriteSpeed)
-	require.Equal(t, false, e.splitFile)
-	require.Equal(t, int64(100), e.maxRecordedErrors)
-	require.Equal(t, false, e.detached)
+	ignoreInTest = true
+	t.Cleanup(func() {
+		ignoreInTest = false
+	})
 
-	e = LoadDataController{Format: LoadDataFormatParquet}
-	e.initDefaultOptions()
-	require.Greater(t, e.threadCnt, int64(0))
-	require.Equal(t, int64(math.Max(1, float64(runtime.NumCPU())*0.75)), e.threadCnt)
+	plan := &Plan{}
+	plan.initDefaultOptions()
+	require.Equal(t, LogicalImportMode, plan.ImportMode)
+	require.Equal(t, config.ByteSize(50<<30), plan.DiskQuota)
+	require.Equal(t, config.OpLevelRequired, plan.Checksum)
+	require.Equal(t, true, plan.AddIndex)
+	require.Equal(t, config.OpLevelOptional, plan.Analyze)
+	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
+	require.Equal(t, int64(1000), plan.BatchSize)
+	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
+	require.Equal(t, false, plan.SplitFile)
+	require.Equal(t, int64(100), plan.MaxRecordedErrors)
+	require.Equal(t, false, plan.Detached)
+
+	plan = &Plan{Format: LoadDataFormatParquet}
+	plan.initDefaultOptions()
+	require.Greater(t, plan.ThreadCnt, int64(0))
+	require.Equal(t, int64(math.Max(1, float64(runtime.NumCPU())*0.75)), plan.ThreadCnt)
 }
 
 func TestInitOptions(t *testing.T) {
@@ -97,13 +104,12 @@ func TestInitOptions(t *testing.T) {
 
 		{OptionStr: batchSizeOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: batchSizeOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: batchSizeOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: batchSizeOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
 		{OptionStr: maxWriteSpeedOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: maxWriteSpeedOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: maxWriteSpeedOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: maxWriteSpeedOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: maxWriteSpeedOption + "=-1", Err: exeerrors.ErrInvalidOptionVal},
 
 		{OptionStr: splitFileOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: splitFileOption + "=111", Err: exeerrors.ErrInvalidOptionVal},
@@ -139,49 +145,56 @@ func TestInitOptions(t *testing.T) {
 		sql := fmt.Sprintf(sqlTemplate, c.OptionStr)
 		stmt, err2 := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err2, sql)
-		e := LoadDataController{}
-		err := e.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
+		plan := &Plan{}
+		err := plan.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
 		require.ErrorIs(t, err, c.Err, sql)
 	}
-	e := LoadDataController{}
+	plan := &Plan{}
 	sql := fmt.Sprintf(sqlTemplate, importModeOption+"='physical', "+
 		diskQuotaOption+"='100gib', "+
 		checksumOption+"='optional', "+
 		addIndexOption+"=false, "+
 		analyzeOption+"='required', "+
 		threadOption+"='100000', "+
-		batchSizeOption+"='100mib', "+
+		batchSizeOption+"=2000, "+
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+"=true, "+
 		recordErrorsOption+"=123, "+
 		detachedOption)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
-	err = e.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
+	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
 	require.NoError(t, err, sql)
-	require.Equal(t, physicalImportMode, e.importMode, sql)
-	require.Equal(t, config.ByteSize(100<<30), e.diskQuota, sql)
-	require.Equal(t, config.OpLevelOptional, e.checksum, sql)
-	require.False(t, e.addIndex, sql)
-	require.Equal(t, config.OpLevelRequired, e.analyze, sql)
-	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt, sql)
-	require.Equal(t, config.ByteSize(100<<20), e.batchSize, sql)
-	require.Equal(t, config.ByteSize(200<<20), e.maxWriteSpeed, sql)
-	require.True(t, e.splitFile, sql)
-	require.Equal(t, int64(123), e.maxRecordedErrors, sql)
-	require.True(t, e.detached, sql)
+	require.Equal(t, PhysicalImportMode, plan.ImportMode, sql)
+	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
+	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
+	require.False(t, plan.AddIndex, sql)
+	require.Equal(t, config.OpLevelRequired, plan.Analyze, sql)
+	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt, sql)
+	require.Equal(t, int64(2000), plan.BatchSize, sql)
+	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
+	require.True(t, plan.SplitFile, sql)
+	require.Equal(t, int64(123), plan.MaxRecordedErrors, sql)
+	require.True(t, plan.Detached, sql)
 }
 
 func TestAdjustOptions(t *testing.T) {
-	e := LoadDataController{
-		diskQuota:     1,
-		threadCnt:     100000000,
-		batchSize:     1,
-		maxWriteSpeed: 10,
+	plan := &Plan{
+		DiskQuota:     1,
+		ThreadCnt:     100000000,
+		MaxWriteSpeed: 10,
 	}
-	e.adjustOptions()
-	require.Equal(t, minDiskQuota, e.diskQuota)
-	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt)
-	require.Equal(t, minBatchSize, e.batchSize)
-	require.Equal(t, minWriteSpeed, e.maxWriteSpeed)
+	plan.adjustOptions()
+	require.Equal(t, minDiskQuota, plan.DiskQuota)
+	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
+	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+}
+
+func TestGetMsgFromBRError(t *testing.T) {
+	var berr error = berrors.ErrStorageInvalidConfig
+	require.Equal(t, "[BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
+	require.Equal(t, "invalid external storage config", GetMsgFromBRError(berr))
+	berr = errors.Annotatef(berr, "some message about error reason")
+	require.Equal(t, "some message about error reason: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
+	require.Equal(t, "some message about error reason", GetMsgFromBRError(berr))
 }

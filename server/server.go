@@ -151,6 +151,7 @@ type Server struct {
 	autoIDService       *autoid.Service
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
+	printMDLLogTime     time.Time
 }
 
 // ConnectionCount gets current connection count.
@@ -213,6 +214,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		internalSessions:  make(map[interface{}]struct{}, 100),
 		health:            uatomic.NewBool(true),
 		inShutdownMode:    uatomic.NewBool(false),
+		printMDLLogTime:   time.Now(),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -981,9 +983,15 @@ func setSystemTimeZoneVariable() {
 func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
+
+	printLog := false
+	if time.Since(s.printMDLLogTime) > 10*time.Second {
+		printLog = true
+		s.printMDLLogTime = time.Now()
+	}
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids)
+			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids, printLog)
 		}
 	}
 }
@@ -1011,38 +1019,4 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	for _, id := range connIDs {
 		s.Kill(id, false)
 	}
-}
-
-// GetMinStartTS implements SessionManager interface.
-func (s *Server) GetMinStartTS(lowerBound uint64) (ts uint64) {
-	// sys processes
-	if s.dom != nil {
-		for _, pi := range s.dom.SysProcTracker().GetSysProcessList() {
-			if thisTS := pi.GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
-				ts = thisTS
-			}
-		}
-	}
-	// user sessions
-	func() {
-		s.rwlock.RLock()
-		defer s.rwlock.RUnlock()
-		for _, client := range s.clients {
-			if thisTS := client.ctx.ShowProcess().GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
-				ts = thisTS
-			}
-		}
-	}()
-	// internal sessions
-	func() {
-		s.sessionMapMutex.Lock()
-		defer s.sessionMapMutex.Unlock()
-		analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
-		for se := range s.internalSessions {
-			if thisTS, processInfoID := session.GetStartTSFromSession(se); processInfoID != analyzeProcID && thisTS > lowerBound && (thisTS < ts || ts == 0) {
-				ts = thisTS
-			}
-		}
-	}()
-	return
 }

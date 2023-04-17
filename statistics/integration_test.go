@@ -25,11 +25,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -270,6 +272,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // estRows won't be updated if hit cache.
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table exp_backoff(a int, b int, c int, d int, index idx(a, b, c, d))")
 	tk.MustExec("insert into exp_backoff values(1, 1, 1, 1), (1, 1, 1, 2), (1, 1, 2, 3), (1, 2, 2, 4), (1, 2, 3, 5)")
@@ -768,7 +771,6 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	require.NoError(t, err)
 	for i := 1; i <= 2; i++ {
 		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
-			Count:             500000,
 			Histogram:         *mockStatsHistogram(int64(i), colValues, 1000, types.NewFieldType(mysql.TypeLonglong)),
 			Info:              tblInfo.Columns[i-1],
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
@@ -787,9 +789,91 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 			"│ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
 			"│   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 			"└─IndexLookUp(Probe) 1000000.00 root  ",
-			"  ├─Selection(Build) 1000000.00 cop[tikv]  not(isnull(test.t.b))",
-			"  │ └─IndexRangeScan 1000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+			"  ├─Selection(Build) 500000000.00 cop[tikv]  not(isnull(test.t.b))",
+			"  │ └─IndexRangeScan 500000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
 			"  └─Selection(Probe) 1000000.00 cop[tikv]  eq(test.t.a, 0)",
-			"    └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"    └─TableRowIDScan 500000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
 		))
+}
+
+func TestOrderingIdxSelectivityThreshold(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int primary key , b int, c int, index ib(b), index ic(c))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock the stats:
+	// total row count 100000
+	// column a: PK, from 0 to 100000, NDV 100000
+	// column b, c: from 0 to 10000, each value has 10 rows, NDV 10000
+	// indexes are created on (b), (c) respectively
+	mockStatsTbl := mockStatsTable(tblInfo, 100000)
+	pkColValues, err := generateIntDatum(1, 100000)
+	require.NoError(t, err)
+	mockStatsTbl.Columns[1] = &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, pkColValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	colValues, err := generateIntDatum(1, 10000)
+	require.NoError(t, err)
+	idxValues := make([]types.Datum, 0)
+	for _, val := range colValues {
+		b, err := codec.EncodeKey(sc, nil, val)
+		require.NoError(t, err)
+		idxValues = append(idxValues, types.NewBytesDatum(b))
+	}
+
+	for i := 2; i <= 3; i++ {
+		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	for i := 1; i <= 2; i++ {
+		mockStatsTbl.Indices[int64(i)] = &statistics.Index{
+			Histogram:         *mockStatsHistogram(int64(i), idxValues, 10, types.NewFieldType(mysql.TypeBlob)),
+			Info:              tblInfo.Indices[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	generateMapsForMockStatsTbl(mockStatsTbl)
+	stat := h.GetTableStats(tblInfo)
+	stat.HistColl = mockStatsTbl.HistColl
+
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
+		}
+	)
+	integrationSuiteData := statistics.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i := 0; i < len(input); i++ {
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+		})
+		if !strings.HasPrefix(input[i], "explain") {
+			testKit.MustExec(input[i])
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
 }

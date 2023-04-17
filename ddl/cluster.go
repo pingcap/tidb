@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -218,24 +219,24 @@ func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string)
 	return nil
 }
 
-func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
-	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
+func checkAndSetFlashbackClusterInfo(se sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
+	if err = ValidateFlashbackTS(d.ctx, se, flashbackTS); err != nil {
 		return err
 	}
 
-	if err = gcutil.DisableGC(sess); err != nil {
+	if err = gcutil.DisableGC(se); err != nil {
 		return err
 	}
 	if err = closePDSchedule(); err != nil {
 		return err
 	}
-	if err = setTiDBEnableAutoAnalyze(d.ctx, sess, variable.Off); err != nil {
+	if err = setTiDBEnableAutoAnalyze(d.ctx, se, variable.Off); err != nil {
 		return err
 	}
-	if err = setTiDBSuperReadOnly(d.ctx, sess, variable.On); err != nil {
+	if err = setTiDBSuperReadOnly(d.ctx, se, variable.On); err != nil {
 		return err
 	}
-	if err = setTiDBTTLJobEnable(d.ctx, sess, variable.Off); err != nil {
+	if err = setTiDBTTLJobEnable(d.ctx, se, variable.Off); err != nil {
 		return err
 	}
 
@@ -254,12 +255,12 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 
 	// Check if there is an upgrade during [flashbackTS, now)
 	sql := fmt.Sprintf("select VARIABLE_VALUE from mysql.tidb as of timestamp '%s' where VARIABLE_NAME='tidb_server_version'", flashbackTSString)
-	rows, err := newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
+	rows, err := sess.NewSession(se).Execute(d.ctx, sql, "check_tidb_server_version")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history `tidb_server_version` failed, can't do flashback")
 	}
 	sql = fmt.Sprintf("select 1 from mysql.tidb where VARIABLE_NAME='tidb_server_version' and VARIABLE_VALUE=%s", rows[0].GetString(0))
-	rows, err = newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
+	rows, err = sess.NewSession(se).Execute(d.ctx, sql, "check_tidb_server_version")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -269,7 +270,7 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 
 	// Check is there a DDL task at flashbackTS.
 	sql = fmt.Sprintf("select count(*) from mysql.%s as of timestamp '%s'", JobTable, flashbackTSString)
-	rows, err = newSession(sess).execute(d.ctx, sql, "check_history_job")
+	rows, err = sess.NewSession(se).Execute(d.ctx, sql, "check_history_job")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history ddl jobs failed, can't do flashback")
 	}
@@ -295,7 +296,7 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 		}
 	}
 
-	jobs, err := GetAllDDLJobs(sess, t)
+	jobs, err := GetAllDDLJobs(se, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -652,12 +653,12 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	var totalRegions, completedRegions atomic.Uint64
 	totalRegions.Store(lockedRegions)
 
-	sess, err := w.sessPool.get()
+	sess, err := w.sessPool.Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	defer w.sessPool.put(sess)
+	defer w.sessPool.Put(sess)
 
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
@@ -792,11 +793,11 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue); err != nil {
 		return errors.Trace(err)
 	}
-	sess, err := w.sessPool.get()
+	sess, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.put(sess)
+	defer w.sessPool.Put(sess)
 
 	err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if err = recoverPDSchedule(pdScheduleValue); err != nil {

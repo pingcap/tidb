@@ -551,6 +551,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			schemaName = job.BinlogInfo.DBInfo.Name.L
 		}
 	}
+	if len(tableName) == 0 {
+		tableName = job.TableName
+	}
 	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
 	if len(schemaName) == 0 {
 		schemaName = getSchemaName(e.is, job.SchemaID)
@@ -799,7 +802,7 @@ func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Ch
 	if e.cursor >= len(e.jobs) {
 		return nil
 	}
-	if int(e.limit) > len(e.jobs) {
+	if int(e.offset) > len(e.jobs) {
 		return nil
 	}
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
@@ -2127,14 +2130,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.UpdateStmt:
 		ResetUpdateStmtCtx(sc, stmt, vars)
 	case *ast.DeleteStmt:
-		sc.InDeleteStmt = true
-		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
-		sc.Priority = stmt.Priority
+		ResetDeleteStmtCtx(sc, stmt, vars)
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
 		// For insert statement (not for update statement), disabling the StrictSQLMode
@@ -2184,7 +2180,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	case *ast.ShowStmt:
-		sc.IgnoreTruncate = true
+		sc.IgnoreTruncate.Store(true)
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
@@ -2192,23 +2188,23 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
 	case *ast.SplitRegionStmt:
-		sc.IgnoreTruncate = false
+		sc.IgnoreTruncate.Store(false)
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	case *ast.SetSessionStatesStmt:
 		sc.InSetSessionStatesStmt = true
-		sc.IgnoreTruncate = true
+		sc.IgnoreTruncate.Store(true)
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
-		sc.IgnoreTruncate = true
+		sc.IgnoreTruncate.Store(true)
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
 	sc.SkipUTF8Check = vars.SkipUTF8Check
 	sc.SkipASCIICheck = vars.SkipASCIICheck
 	sc.SkipUTF8MB4Check = !globalConfig.Instance.CheckMb4ValueInUTF8.Load()
-	vars.PreparedParams = vars.PreparedParams[:0]
+	vars.PlanCacheParams.Reset()
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
 	}
@@ -2273,6 +2269,18 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
 	sc.IgnoreNoPartition = stmt.IgnoreErr
+}
+
+// ResetDeleteStmtCtx resets statement context for DeleteStmt.
+func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars *variable.SessionVars) {
+	sc.InDeleteStmt = true
+	sc.DupKeyAsWarning = stmt.IgnoreErr
+	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+	sc.Priority = stmt.Priority
 }
 
 func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {

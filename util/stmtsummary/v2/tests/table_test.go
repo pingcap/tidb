@@ -37,6 +37,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
@@ -53,6 +54,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test.
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -149,6 +151,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
@@ -474,7 +477,7 @@ func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {
 
 	tk.MustQuery("select exec_count, digest_text, prepared, plan_in_cache, plan_cache_hits, query_sample_text " +
 		"from information_schema.statements_summary where digest_text='select * from `t` where `a` = ?'").Check(testkit.Rows(
-		"2 select * from `t` where `a` = ? 0 1 1 select * from t where a=1 [arguments: 1]"))
+		"2 select * from `t` where `a` = ? 0 1 1 select * from t where a=1"))
 
 	tk.MustExec(`select * from t where a=2`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
@@ -484,7 +487,7 @@ func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {
 	// exec_count 2->4, plan_cache_hits 1->3
 	tk.MustQuery("select exec_count, digest_text, prepared, plan_in_cache, plan_cache_hits, query_sample_text " +
 		"from information_schema.statements_summary where digest_text='select * from `t` where `a` = ?'").Check(testkit.Rows(
-		"4 select * from `t` where `a` = ? 0 1 3 select * from t where a=1 [arguments: 1]"))
+		"4 select * from `t` where `a` = ? 0 1 3 select * from t where a=1"))
 
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 	tk.MustExec(`select * from t where a=2`)
@@ -495,7 +498,7 @@ func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {
 	// exec_count 4->6, plan_cache_hits 3->3
 	tk.MustQuery("select exec_count, digest_text, prepared, plan_in_cache, plan_cache_hits, query_sample_text " +
 		"from information_schema.statements_summary where digest_text='select * from `t` where `a` = ?'").Check(testkit.Rows(
-		"6 select * from `t` where `a` = ? 0 0 3 select * from t where a=1 [arguments: 1]"))
+		"6 select * from `t` where `a` = ? 0 0 3 select * from t where a=1"))
 }
 
 func TestPerformanceSchemaforPlanCache(t *testing.T) {
