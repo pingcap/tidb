@@ -6639,7 +6639,9 @@ NotKeywordToken:
 |	"DEFINED"
 |	"DOT"
 |	"DUMP"
+|	"DURATION"
 |	"EXTRACT"
+|	"END_TIME"
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
 |	"INPLACE"
@@ -6661,6 +6663,7 @@ NotKeywordToken:
 |	"SUBDATE"
 |	"SUBSTRING"
 |	"SUM"
+|	"START_TIME"
 |	"STD"
 |	"STDDEV"
 |	"STDDEV_POP"
@@ -14902,5 +14905,5 @@ CalibrateResourceWorkloadOption:
 	{
 		$$ = ast.OLTPWRITEONLY
 	}
-	
+
 %%

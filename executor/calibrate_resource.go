@@ -200,7 +200,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 			return err
 		}
 		tidbCPUs, err := getTiDBCPUUsagePerSec(ctx, exec, startTime, endTime)
-		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Any("tidbCPUs", tikvCPUs), zap.Error(err))
+		logutil.BgLogger().Info("checkDynamicCalibrateOptions", zap.Any("tidbCPUs", tidbCPUs), zap.Error(err))
 		if err != nil {
 			return err
 		}
@@ -226,6 +226,9 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 			} else {
 				quotas = append(quotas, ru*mathutil.Min(tikvQuota, tidbQuota))
 			}
+		}
+		if len(quotas) < 5 {
+			return errors.Errorf("there are too few metrics points available.")
 		}
 		if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
 			sort.Slice(quotas, func(i, j int) bool {
@@ -271,7 +274,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 		}
 		baseCost, ok := workloadBaseRUCostMap[e.workloadType]
 		if !ok {
-			return errors.Errorf("unknown workload '%s'", e.workloadType)
+			return errors.Errorf("unknown workload '%T'", e.workloadType)
 		}
 
 		if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
@@ -358,14 +361,14 @@ func getRUPerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startT
 }
 
 func getTiDBCPUUsagePerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) ([]float64, error) {
-	query := fmt.Sprintf("SELECT value FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%tidb' ORDER BY time desc", startTime, endTime)
-	logutil.BgLogger().Info("getRUPerSec", zap.String("getTiDBCPUUsagePerSec", query))
+	query := fmt.Sprintf("SELECT sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%tidb' GROUP BY time ORDER BY time desc", startTime, endTime)
+	logutil.BgLogger().Info("getTiDBCPUUsagePerSec", zap.String("getTiDBCPUUsagePerSec", query))
 	return getValuesFromMetrics(ctx, exec, query, "process_cpu_usage")
 }
 
 func getTiKVCPUUsagePerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) ([]float64, error) {
-	query := fmt.Sprintf("SELECT value FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%tikv' ORDER BY time desc", startTime, endTime)
-	logutil.BgLogger().Info("getRUPerSec", zap.String("getTiKVCPUUsagePerSec", query))
+	query := fmt.Sprintf("SELECT sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%tikv' GROUP BY time ORDER BY time desc", startTime, endTime)
+	logutil.BgLogger().Info("getTiKVCPUUsagePerSec", zap.String("getTiKVCPUUsagePerSec", query))
 	return getValuesFromMetrics(ctx, exec, query, "process_cpu_usage")
 }
 
