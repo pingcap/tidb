@@ -43,6 +43,11 @@ func (b *builtinAesDecryptSig) vectorized() bool {
 
 func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	if n == 0 {
+		result.Reset(types.ETString)
+		return nil
+	}
+
 	strBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
