@@ -64,11 +64,11 @@ func TestBackfillFlowHandle(t *testing.T) {
 	require.Equal(t, 0, len(metas))
 
 	// test partition table ProcessErrFlow
-	errMeta, err := handler.ProcessErrFlow(context.Background(), nil, gTask, []string{"mockErr"})
+	errMeta, err := handler.ProcessErrFlow(context.Background(), nil, gTask, [][]byte{"mockErr"})
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
-	errMeta, err = handler.ProcessErrFlow(context.Background(), nil, gTask, []string{"mockErr"})
+	errMeta, err = handler.ProcessErrFlow(context.Background(), nil, gTask, [][]byte{"mockErr"})
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
