@@ -89,12 +89,14 @@ func (ss *Schemas) BackupSchemas(
 	op := metautil.AppendSchema
 	metaWriter.StartWriteMetasAsync(ctx, op)
 	err := ss.iterFunc(store, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
+		// because the field of `dbInfo` would be modified, which affects the later iteration.
+		// so copy the `dbInfo` for each to `newDBInfo`
+		newDBInfo := *dbInfo
 		schema := &schemaInfo{
 			tableInfo: tableInfo,
-			dbInfo:    dbInfo,
+			dbInfo:    &newDBInfo,
 		}
-		// Because schema.dbInfo is a pointer that many tables point to.
-		// Remove "add Temporary-prefix into dbName" from closure to prevent concurrent operations.
+
 		if utils.IsSysDB(schema.dbInfo.Name.L) {
 			schema.dbInfo.Name = utils.TemporaryDBName(schema.dbInfo.Name.O)
 		}
