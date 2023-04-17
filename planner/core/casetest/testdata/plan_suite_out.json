@@ -8045,12 +8045,12 @@
         "Warning": null
       },
       {
-        "SQL": "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten",
+        "SQL": "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten",
         "Plan": [
           "Projection 10000.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.f, test.t.g, test.t.h",
           "└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(test.t.a, Column#19)",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:out keep order:false, stats:pseudo",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:outTable keep order:false, stats:pseudo",
           "  └─StreamAgg(Probe) 10000.00 root  funcs:count(Column#21)->Column#19",
           "    └─TableReader 10000.00 root  data:StreamAgg",
           "      └─StreamAgg 10000.00 cop[tikv]  funcs:count(1)->Column#21",
@@ -8175,12 +8175,12 @@
         "Warning": null
       },
       {
-        "SQL": "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten for correlated sub query",
+        "SQL": "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten for correlated sub query",
         "Plan": [
           "Projection 10000.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.f, test.t.g, test.t.h",
           "└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(test.t.a, Column#19)",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tiflash] table:out keep order:false, stats:pseudo",
+          "  │ └─TableFullScan 10000.00 cop[tiflash] table:outTable keep order:false, stats:pseudo",
           "  └─HashAgg(Probe) 10000.00 root  funcs:count(Column#21)->Column#19",
           "    └─TableReader 10000.00 root  MppVersion: 1, data:ExchangeSender",
           "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
