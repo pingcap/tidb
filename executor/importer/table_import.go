@@ -123,7 +123,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		ShouldCheckTiKV:         true,
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
-		StoreWriteBWLimit:       int(e.maxWriteSpeed),
+		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
 		// todo: we can set it false when we support switch import mode.
 		ShouldCheckWriteStall: true,
 		MaxOpenFiles:          int(util.GenRLimit()),
@@ -242,9 +242,9 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
-			SQLMode:        ti.sqlMode,
+			SQLMode:        ti.SQLMode,
 			Timestamp:      chunk.Timestamp,
-			SysVars:        ti.importantSysVars,
+			SysVars:        ti.ImportantSysVars,
 			AutoRandomSeed: chunk.Chunk.PrevRowIDMax,
 		},
 		Path:   chunk.FileMeta.Path,

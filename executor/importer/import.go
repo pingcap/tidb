@@ -143,8 +143,12 @@ type Plan struct {
 	OnDuplicate        ast.OnDuplicateKeyHandlingType
 	FieldsInfo         *ast.FieldsClause
 	LinesInfo          *ast.LinesClause
-	Restrictive        bool
-	IgnoreLines        *uint64
+	// Data interpretation is restrictive if the SQL mode is restrictive and neither
+	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
+	// operation.
+	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
+	Restrictive bool
+	IgnoreLines *uint64
 
 	SQLMode          mysql.SQLMode
 	Charset          *string
@@ -166,12 +170,7 @@ type Plan struct {
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
-	FileLocRef         ast.FileLocRefTp
-	Path               string
-	Format             string
-	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
-	ColumnAssignments  []*ast.Assignment
-	OnDuplicate        ast.OnDuplicateKeyHandlingType
+	*Plan
 
 	Table  table.Table
 	DBName string
@@ -187,11 +186,6 @@ type LoadDataController struct {
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
 	// - ref columns in set clause is allowed in mysql, but not in tidb
 	InsertColumns []*table.Column
-	// Data interpretation is restrictive if the SQL mode is restrictive and neither
-	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
-	// operation.
-	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
-	Restrictive bool
 
 	// used for DELIMITED DATA format
 	FieldNullDef         []string
@@ -199,25 +193,9 @@ type LoadDataController struct {
 	plannercore.LineFieldsInfo
 	IgnoreLines uint64
 
-	// import options
-	ImportMode        string
-	diskQuota         config.ByteSize
-	checksum          config.PostOpLevel
-	addIndex          bool
-	analyze           config.PostOpLevel
-	ThreadCnt         int64
-	BatchSize         int64
-	maxWriteSpeed     config.ByteSize // per second
-	splitFile         bool
-	maxRecordedErrors int64 // -1 means record all error
-	Detached          bool
-
-	logger           *zap.Logger
-	sqlMode          mysql.SQLMode
-	charset          *string
-	importantSysVars map[string]string
-	dataStore        storage.ExternalStorage
-	dataFiles        []*mydump.SourceFileMeta
+	logger    *zap.Logger
+	dataStore storage.ExternalStorage
+	dataFiles []*mydump.SourceFileMeta
 	// total data file size in bytes, only initialized when load from remote.
 	TotalFileSize int64
 }
@@ -296,34 +274,12 @@ func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, er
 	fullTableName := common.UniqueTable(plan.TableName.Schema.L, plan.TableName.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
-		FileLocRef:         plan.FileLocRef,
-		Path:               plan.Path,
-		Format:             plan.Format,
-		ColumnsAndUserVars: plan.ColumnsAndUserVars,
-		ColumnAssignments:  plan.ColumnAssignments,
-		OnDuplicate:        plan.OnDuplicate,
-		DBName:             plan.TableName.Schema.O,
-		DBID:               plan.TableName.DBInfo.ID,
-		Table:              tbl,
-		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
-		Restrictive:        plan.Restrictive,
-
-		ImportMode:        plan.ImportMode,
-		diskQuota:         plan.DiskQuota,
-		checksum:          plan.Checksum,
-		addIndex:          plan.AddIndex,
-		analyze:           plan.Analyze,
-		ThreadCnt:         plan.ThreadCnt,
-		BatchSize:         plan.BatchSize,
-		maxWriteSpeed:     plan.MaxWriteSpeed,
-		splitFile:         plan.SplitFile,
-		maxRecordedErrors: plan.MaxRecordedErrors,
-		Detached:          plan.Detached,
-
-		logger:           logger,
-		sqlMode:          plan.SQLMode,
-		charset:          plan.Charset,
-		importantSysVars: plan.ImportantSysVars,
+		Plan:           plan,
+		DBName:         plan.TableName.Schema.O,
+		DBID:           plan.TableName.DBInfo.ID,
+		Table:          tbl,
+		LineFieldsInfo: plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
+		logger:         logger,
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
@@ -848,8 +804,8 @@ func (e *LoadDataController) GetParser(
 	switch e.Format {
 	case LoadDataFormatDelimitedData:
 		var charsetConvertor *mydump.CharsetConvertor
-		if e.charset != nil {
-			charsetConvertor, err = mydump.NewCharsetConvertor(*e.charset, string(utf8.RuneError))
+		if e.Charset != nil {
+			charsetConvertor, err = mydump.NewCharsetConvertor(*e.Charset, string(utf8.RuneError))
 			if err != nil {
 				return nil, err
 			}
@@ -868,7 +824,7 @@ func (e *LoadDataController) GetParser(
 	case LoadDataFormatSQLDump:
 		parser = mydump.NewChunkParser(
 			ctx,
-			e.sqlMode,
+			e.SQLMode,
 			reader,
 			LoadDataReadBlockSize,
 			nil,
