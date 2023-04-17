@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
@@ -196,6 +197,9 @@ type TableImporter struct {
 	logger          *zap.Logger
 	regionSplitSize int64
 	regionSplitKeys int64
+	// the smallest auto-generated ID in current import.
+	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
+	lastInsertID uint64
 }
 
 var _ JobImporter = &TableImporter{}
@@ -215,7 +219,23 @@ func (ti *TableImporter) Import() {
 
 // Result implements JobImporter.Result.
 func (ti *TableImporter) Result() string {
-	return ""
+	var (
+		numWarnings uint64
+		numRecords  uint64
+		numDeletes  uint64
+		numSkipped  uint64
+	)
+	numRecords = ti.Progress.ReadRowCnt.Load()
+	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
+	// we can have it when there's duplicate detection.
+	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
+	if !ti.Detached {
+		userStmtCtx := ti.UserCtx.GetSessionVars().StmtCtx
+		userStmtCtx.SetMessage(msg)
+		userStmtCtx.SetAffectedRows(ti.Progress.LoadedRowCnt.Load())
+		userStmtCtx.LastInsertID = ti.lastInsertID
+	}
+	return msg
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -477,4 +497,10 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 func (ti *TableImporter) Close() error {
 	ti.backend.Close()
 	return nil
+}
+
+func (ti *TableImporter) setLastInsertID(id uint64) {
+	if ti.lastInsertID == 0 || id < ti.lastInsertID {
+		ti.lastInsertID = id
+	}
 }

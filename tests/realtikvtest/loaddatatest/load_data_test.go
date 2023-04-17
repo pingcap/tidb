@@ -68,13 +68,14 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 		flags          string
 		res            []string
 		querySQL       string
+		lastInsertID   uint64
 	}{
-		{"create table t (a bigint, b varchar(100), c int);", "", allData, ""},
-		{"create table t (a bigint primary key, b varchar(100), c int);", "", allData, ""},
-		{"create table t (a bigint primary key, b varchar(100), c int, key(b, a));", "", allData, ""},
-		{"create table t (a bigint auto_increment primary key, b varchar(100), c int);", "", allData, ""},
-		{"create table t (a bigint auto_random primary key, b varchar(100), c int);", "", allData, ""},
-		{"create table t (a bigint, b varchar(100), c int, primary key(b,c));", "", allData, ""},
+		{"create table t (a bigint, b varchar(100), c int);", "", allData, "", 0},
+		{"create table t (a bigint primary key, b varchar(100), c int);", "", allData, "", 0},
+		{"create table t (a bigint primary key, b varchar(100), c int, key(b, a));", "", allData, "", 0},
+		{"create table t (a bigint auto_increment primary key, b varchar(100), c int);", "", allData, "", 0},
+		{"create table t (a bigint auto_random primary key, b varchar(100), c int);", "", allData, "", 0},
+		{"create table t (a bigint, b varchar(100), c int, primary key(b,c));", "", allData, "", 0},
 
 		{
 			createTableSQL: "create table t (a bigint, b varchar(100), c int);",
@@ -103,7 +104,8 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 			createTableSQL: "create table t (a bigint auto_increment primary key, b int, c varchar(100), d int);",
 			flags:          "(b, c, d)",
 			// row id is calculated by us, it's not continuous
-			res: []string{"1 1 test1 11", "2 2 test2 22", "6 3 test3 33", "7 4 test4 44", "11 5 test5 55", "12 6 test6 66"},
+			res:          []string{"1 1 test1 11", "2 2 test2 22", "6 3 test3 33", "7 4 test4 44", "11 5 test5 55", "12 6 test6 66"},
+			lastInsertID: 1,
 		},
 		// default value for auto_random
 		{
@@ -118,7 +120,8 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 				"864691128455135244 6 test6 66",
 			},
 			// auto_random id contains shard bit.
-			querySQL: "select * from t order by b",
+			querySQL:     "select * from t order by b",
+			lastInsertID: 6,
 		},
 	}
 
@@ -129,6 +132,9 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 		s.tk.MustExec(c.createTableSQL)
 		sql := fmt.Sprintf(loadDataSQL, c.flags)
 		s.tk.MustExec(sql)
+		s.Equal("Records: 6  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
+		s.Equal(uint64(6), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+		s.Equal(c.lastInsertID, s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 		querySQL := "SELECT * FROM t;"
 		if c.querySQL != "" {
 			querySQL = c.querySQL
@@ -184,6 +190,9 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		INTO TABLE t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
+	s.Equal("Records: 9  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	s.Equal(uint64(9), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	s.Equal(uint64(0), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
 		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -192,6 +201,9 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		INTO TABLE t fields terminated by ',' ignore 1 lines with import_mode='physical'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
+	s.Equal("Records: 7  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	s.Equal(uint64(7), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	s.Equal(uint64(0), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"2 test2 22", "3 test3 33", "4 test4 44",
 		"6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -200,6 +212,9 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		INTO TABLE t fields terminated by ',' ignore 3 lines with import_mode='physical'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
+	s.Equal("Records: 3  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	s.Equal(uint64(3), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	s.Equal(uint64(0), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"4 test4 44",
 		"8 test8 88", "9 test9 99",

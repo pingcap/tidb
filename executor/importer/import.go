@@ -161,6 +161,8 @@ type Plan struct {
 	SplitFile         bool
 	MaxRecordedErrors int64
 	Detached          bool
+
+	UserCtx sessionctx.Context
 }
 
 // LoadDataController load data controller.
@@ -220,6 +222,8 @@ type LoadDataController struct {
 	dataFiles        []*mydump.SourceFileMeta
 	// total data file size in bytes, only initialized when load from remote.
 	TotalFileSize int64
+	// user session context. DO NOT use it if load is in DETACHED mode.
+	UserCtx sessionctx.Context
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -284,6 +288,7 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		Charset:          charset,
 		ImportantSysVars: getImportantSysVars(userSctx),
+		UserCtx:          userSctx,
 	}
 	if err := p.initOptions(userSctx, plan.Options); err != nil {
 		return nil, err
@@ -324,6 +329,7 @@ func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, er
 		sqlMode:          plan.SQLMode,
 		charset:          plan.Charset,
 		importantSysVars: plan.ImportantSysVars,
+		UserCtx:          plan.UserCtx,
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
