@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
@@ -55,6 +56,7 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 
 	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
+		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
 	}, controller)
 	if err != nil {
 		return err

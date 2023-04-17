@@ -64,10 +64,10 @@ const (
 	// LogicalImportMode represents the import mode is SQL-like.
 	LogicalImportMode = "logical"
 	// PhysicalImportMode represents the import mode is KV-like.
-	PhysicalImportMode  = "physical"
-	unlimitedWriteSpeed = config.ByteSize(math.MaxInt64)
+	PhysicalImportMode = "physical"
+	// 0 means no limit
+	unlimitedWriteSpeed = config.ByteSize(0)
 	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
-	minWriteSpeed       = config.ByteSize(1 << 10)  // 1KiB/s
 
 	importModeOption    = "import_mode"
 	diskQuotaOption     = "disk_quota"
@@ -532,7 +532,7 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = p.MaxWriteSpeed.UnmarshalText([]byte(v)); err != nil || p.MaxWriteSpeed <= 0 {
+		if err = p.MaxWriteSpeed.UnmarshalText([]byte(v)); err != nil || p.MaxWriteSpeed < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -570,9 +570,6 @@ func (p *Plan) adjustOptions() {
 	numCPU := int64(runtime.NumCPU())
 	if p.ThreadCnt > numCPU {
 		p.ThreadCnt = numCPU
-	}
-	if p.MaxWriteSpeed < minWriteSpeed {
-		p.MaxWriteSpeed = minWriteSpeed
 	}
 }
 
@@ -743,6 +740,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	dataFiles := []*mydump.SourceFileMeta{}
 	idx := strings.IndexByte(path, '*')
 	// simple path when the INFILE represent one file
+	sourceType := e.getSourceType()
 	if idx == -1 {
 		fileReader, err2 := s.Open(ctx, path)
 		if err2 != nil {
@@ -760,6 +758,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Path:        path,
 			FileSize:    size,
 			Compression: compressTp,
+			Type:        sourceType,
+			// todo: if we support compression for physical mode, should set it to size * compressRatio to better split
+			// engines
+			RealSize: size,
 		})
 		totalSize = size
 	} else {
@@ -779,6 +781,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Path:        remotePath,
 					FileSize:    size,
 					Compression: compressTp,
+					Type:        sourceType,
+					RealSize:    size,
 				})
 				totalSize += size
 				return nil
@@ -792,6 +796,18 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
+}
+
+func (e *LoadDataController) getSourceType() mydump.SourceType {
+	switch e.Format {
+	case LoadDataFormatParquet:
+		return mydump.SourceTypeParquet
+	case LoadDataFormatDelimitedData:
+		return mydump.SourceTypeCSV
+	default:
+		// LoadDataFormatSQLDump
+		return mydump.SourceTypeSQL
+	}
 }
 
 // GetLoadDataReaderInfos returns the LoadDataReaderInfo for each data file.
@@ -916,6 +932,8 @@ type JobImportParam struct {
 	GroupCtx context.Context
 	// should be closed in the end of the job.
 	Done chan struct{}
+
+	Progress *asyncloaddata.Progress
 }
 
 // JobImporter is the interface for importing a job.
@@ -949,3 +967,6 @@ func GetMsgFromBRError(err error) string {
 	}
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
+
+// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
+var TestSyncCh = make(chan struct{})

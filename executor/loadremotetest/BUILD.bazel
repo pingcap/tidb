@@ -8,11 +8,8 @@ go_test(
         "main_test.go",
         "multi_file_test.go",
         "one_csv_test.go",
-        "one_parquet_test.go",
-        "one_sqldump_test.go",
         "util_test.go",
     ],
-    embedsrcs = ["test.parquet"],
     flaky = True,
     deps = [
         "//kv",

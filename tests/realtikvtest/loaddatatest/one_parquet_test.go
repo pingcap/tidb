@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loadremotetest
+package loaddatatest
 
 import (
 	_ "embed"
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +29,12 @@ import (
 var content []byte
 
 func (s *mockGCSSuite) TestLoadParquet() {
+	s.testLoadParquet(importer.LogicalImportMode)
+	s.testLoadParquet(importer.PhysicalImportMode)
+}
+
+func (s *mockGCSSuite) testLoadParquet(importMode string) {
+	withOptions := fmt.Sprintf("WITH DETACHED, import_mode='%s'", importMode)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("USE load_csv;")
@@ -45,7 +52,7 @@ func (s *mockGCSSuite) TestLoadParquet() {
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-parquet/p?endpoint=%s'
-		FORMAT 'parquet' INTO TABLE t WITH DETACHED;`, gcsEndpoint)
+		FORMAT 'parquet' INTO TABLE t %s;`, gcsEndpoint, withOptions)
 	rows := s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
 	jobID := rows[0][0].(string)

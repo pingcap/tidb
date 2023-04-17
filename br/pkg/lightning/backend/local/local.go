@@ -1538,6 +1538,18 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 	return firstErr.Get()
 }
 
+// GetImportedKVCount returns the number of imported KV pairs of some engine.
+func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
+	v, ok := local.engines.Load(engineUUID)
+	if !ok {
+		// we get it after import, but before clean up, so this should not happen
+		// todo: return error
+		return 0
+	}
+	e := v.(*Engine)
+	return e.importedKVCount.Load()
+}
+
 // ResetEngine reset the engine and reclaim the space.
 func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
