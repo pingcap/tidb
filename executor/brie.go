@@ -513,7 +513,6 @@ func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Next implements the Executor Next interface.
 func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
-
 	req.Reset()
 	if e.info == nil {
 		return nil
