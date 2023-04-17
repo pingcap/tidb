@@ -387,7 +387,7 @@ import (
 	disk                  "DISK"
 	do                    "DO"
 	duplicate             "DUPLICATE"
-	time_duration         "DURATION"
+	timeDuration          "DURATION"
 	dynamic               "DYNAMIC"
 	enable                "ENABLE"
 	enabled               "ENABLED"

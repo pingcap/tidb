@@ -91,9 +91,15 @@ type baseResourceCost struct {
 	writeReqCount uint64
 }
 
-const lowUsageThreshold = 10.
-const percentOfPass = 0.9
-const discardRate = 0.1
+const (
+	valuableUsageThreshold = 0.2
+	lowUsageThreshold      = 0.1
+	percentOfPass          = 0.9
+	discardRate            = 0.1
+
+	maxDuration = time.Hour * 24
+	minDuration = time.Minute * 10
+)
 
 type calibrateResourceExec struct {
 	baseExecutor
@@ -108,14 +114,15 @@ func (e *calibrateResourceExec) checkDynamicCalibrateOptions() (string, string, 
 	checkDurationFn := func() error {
 		// check the duration
 		duration := endTime.Sub(startTime)
-		if duration > time.Hour*24 {
+		if duration > maxDuration {
 			return errors.Errorf("the duration of calibration is too long")
 		}
-		if duration < time.Minute*10 {
+		if duration < minDuration {
 			return errors.Errorf("the duration of calibration is too short")
 		}
 		return nil
 	}
+
 	if len(e.optionList) == 2 {
 		if e.optionList[0].Tp != ast.CalibrateStartTime || (e.optionList[1].Tp != ast.CalibrateEndTime && e.optionList[1].Tp != ast.CalibrateDuration) {
 			return "", "", errors.Errorf("dynamic calibarate options are not matched, please input start time and end time or duration is optional")
@@ -139,7 +146,6 @@ func (e *calibrateResourceExec) checkDynamicCalibrateOptions() (string, string, 
 			}
 			endTime = startTime.Add(duration)
 		}
-
 	} else if len(e.optionList) == 1 {
 		if e.optionList[0].Tp != ast.CalibrateStartTime {
 			return "", "", errors.Errorf("dynamic calibarate options are not matched, please input start time and end time is optional")
@@ -171,116 +177,129 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	if len(e.optionList) > 0 && e.workloadType != ast.WorkloadNone {
+		return errors.Errorf("dynamic and static calibration cannot be performed at the same time")
+	}
 	if len(e.optionList) > 0 {
-		startTime, endTime, err := e.checkDynamicCalibrateOptions()
-		if err != nil {
-			return err
+		return e.dynamicCalibrate(ctx, req, exec)
+	}
+	return e.staticCalibrate(ctx, req, exec)
+}
+
+func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
+	startTime, endTime, err := e.checkDynamicCalibrateOptions()
+	if err != nil {
+		return err
+	}
+	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
+	if err != nil {
+		return err
+	}
+	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
+	if err != nil {
+		return err
+	}
+	rus, err := getRUPerSec(ctx, exec, startTime, endTime)
+	if err != nil {
+		return err
+	}
+	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, exec, "tikv", startTime, endTime)
+	if err != nil {
+		return err
+	}
+	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, exec, "tidb", startTime, endTime)
+	if err != nil {
+		return err
+	}
+	quotas := make([]float64, 0)
+	lowCount := 0
+	tidbCPULowCount := 0
+	tikvCPULowCOunt := 0
+	for idx, ru := range rus {
+		if idx >= len(tikvCPUs) || idx >= len(tidbCPUs) {
+			break
 		}
-		totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
-		if err != nil {
-			return err
-		}
-		totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
-		if err != nil {
-			return err
-		}
-		rus, err := getRUPerSec(ctx, exec, startTime, endTime)
-		if err != nil {
-			return err
-		}
-		tikvCPUs, err := getTiKVCPUUsagePerSec(ctx, exec, startTime, endTime)
-		if err != nil {
-			return err
-		}
-		tidbCPUs, err := getTiDBCPUUsagePerSec(ctx, exec, startTime, endTime)
-		if err != nil {
-			return err
-		}
-		quotas := make([]float64, 0)
-		lowCount := 0
-		tidbCPULowCount := 0
-		tikvCPULowCOunt := 0
-		for idx, ru := range rus {
-			if idx >= len(tikvCPUs) || idx >= len(tidbCPUs) {
-				break
-			}
-			tikvQuota := totalKVCPUQuota / tikvCPUs[idx]
-			tidbQuota := totalTiDBCPU / tidbCPUs[idx]
-			if tikvQuota > lowUsageThreshold {
-				lowCount++
-				tikvCPULowCOunt++
-				if tidbQuota > lowUsageThreshold {
-					tidbCPULowCount++
-				}
-			} else if tidbQuota > lowUsageThreshold {
-				lowCount++
+		tikvQuota := tikvCPUs[idx] / totalKVCPUQuota
+		tidbQuota := tidbCPUs[idx] / totalTiDBCPU
+		// If one of the two cpu usage is greater than the `valuableUsageThreshold`, we can accept it.
+		// And if both are greater than the `lowUsageThreshold`, we can also accpet it.
+		if tikvQuota > valuableUsageThreshold || tidbQuota > tidbQuota {
+			quotas = append(quotas, ru/mathutil.Max(tikvQuota, tidbQuota))
+		} else if tikvQuota < lowUsageThreshold {
+			lowCount++
+			tikvCPULowCOunt++
+			if tidbQuota < lowUsageThreshold {
 				tidbCPULowCount++
-			} else {
-				quotas = append(quotas, ru*mathutil.Min(tikvQuota, tidbQuota))
 			}
-		}
-		if len(quotas) < 5 {
-			return errors.Errorf("there are too few metrics points available")
-		}
-		if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
-			sort.Slice(quotas, func(i, j int) bool {
-				return quotas[i] > quotas[j]
-			})
-			lowerBound := int(math.Round(float64(len(quotas)) * float64(discardRate)))
-			upperBound := len(quotas) - lowerBound
-			sum := 0.
-			for i := lowerBound; i < upperBound; i++ {
-				sum += quotas[i]
-			}
-			quota := sum / float64(upperBound-lowerBound)
-			req.AppendUint64(0, uint64(quota))
+		} else if tidbQuota < lowUsageThreshold {
+			lowCount++
+			tidbCPULowCount++
 		} else {
-			if tidbCPULowCount > 0 && tikvCPULowCOunt > 0 {
-				return errors.Errorf("The CPU utilizations of TiDB and TiKV are less than one tenth in some of the time")
-			} else if tidbCPULowCount > 0 {
-				errors.Errorf("The CPU utilization of TiDB is less than one tenth in some of the time")
-			} else {
-				errors.Errorf("The CPU utilization of TiKV is less than one tenth in some of the time")
-			}
+			quotas = append(quotas, ru/mathutil.Max(tikvQuota, tidbQuota))
 		}
-
-	} else { // first fetch the ru settings config.
-		ruCfg, err := getRUSettings(ctx, exec)
-		if err != nil {
-			return err
+	}
+	if len(quotas) < 5 {
+		return errors.Errorf("there are too few metrics points available")
+	}
+	if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
+		sort.Slice(quotas, func(i, j int) bool {
+			return quotas[i] > quotas[j]
+		})
+		lowerBound := int(math.Round(float64(len(quotas)) * float64(discardRate)))
+		upperBound := len(quotas) - lowerBound
+		sum := 0.
+		for i := lowerBound; i < upperBound; i++ {
+			sum += quotas[i]
 		}
-
-		totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
-		if err != nil {
-			return err
-		}
-		totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
-		if err != nil {
-			return err
-		}
-
-		// The default workload to calculate the RU capacity.
-		if e.workloadType == ast.WorkloadNone {
-			e.workloadType = ast.TPCC
-		}
-		baseCost, ok := workloadBaseRUCostMap[e.workloadType]
-		if !ok {
-			return errors.Errorf("unknown workload '%T'", e.workloadType)
-		}
-
-		if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
-			totalKVCPUQuota = totalTiDBCPU / baseCost.tidbCPU
-		}
-		ruPerKVCPU := ruCfg.readBaseCost*float64(baseCost.readReqCount) +
-			ruCfg.readCostCPU*baseCost.kvCPU +
-			ruCfg.readCostPerByte*float64(baseCost.readBytes) +
-			ruCfg.writeBaseCost*float64(baseCost.writeReqCount) +
-			ruCfg.writeCostPerByte*float64(baseCost.writeBytes)
-		quota := totalKVCPUQuota * ruPerKVCPU
+		quota := sum / float64(upperBound-lowerBound)
 		req.AppendUint64(0, uint64(quota))
+	} else {
+		if tidbCPULowCount > 0 && tikvCPULowCOunt > 0 {
+			return errors.Errorf("The CPU utilizations of TiDB and TiKV are less than one tenth in some of the time")
+		} else if tidbCPULowCount > 0 {
+			return errors.Errorf("The CPU utilization of TiDB is less than one tenth in some of the time")
+		} else {
+			return errors.Errorf("The CPU utilization of TiKV is less than one tenth in some of the time")
+		}
+	}
+	return nil
+}
 
+func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
+	// first fetch the ru settings config.
+	ruCfg, err := getRUSettings(ctx, exec)
+	if err != nil {
+		return err
 	}
 
+	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
+	if err != nil {
+		return err
+	}
+	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
+	if err != nil {
+		return err
+	}
+
+	// The default workload to calculate the RU capacity.
+	if e.workloadType == ast.WorkloadNone {
+		e.workloadType = ast.TPCC
+	}
+	baseCost, ok := workloadBaseRUCostMap[e.workloadType]
+	if !ok {
+		return errors.Errorf("unknown workload '%T'", e.workloadType)
+	}
+
+	if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
+		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbCPU
+	}
+	ruPerKVCPU := ruCfg.readBaseCost*float64(baseCost.readReqCount) +
+		ruCfg.readCostCPU*baseCost.kvCPU +
+		ruCfg.readCostPerByte*float64(baseCost.readBytes) +
+		ruCfg.writeBaseCost*float64(baseCost.writeReqCount) +
+		ruCfg.writeCostPerByte*float64(baseCost.writeBytes)
+	quota := totalKVCPUQuota * ruPerKVCPU
+	req.AppendUint64(0, uint64(quota))
 	return nil
 }
 
@@ -350,13 +369,8 @@ func getRUPerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startT
 	return getValuesFromMetrics(ctx, exec, query, "resource_manager_resource_unit")
 }
 
-func getTiDBCPUUsagePerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) ([]float64, error) {
-	query := fmt.Sprintf("SELECT sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%tidb' GROUP BY time ORDER BY time desc", startTime, endTime)
-	return getValuesFromMetrics(ctx, exec, query, "process_cpu_usage")
-}
-
-func getTiKVCPUUsagePerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) ([]float64, error) {
-	query := fmt.Sprintf("SELECT sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%tikv' GROUP BY time ORDER BY time desc", startTime, endTime)
+func getComponentCPUUsagePerSec(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, component, startTime, endTime string) ([]float64, error) {
+	query := fmt.Sprintf("SELECT sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%%s' GROUP BY time ORDER BY time desc", startTime, endTime, component)
 	return getValuesFromMetrics(ctx, exec, query, "process_cpu_usage")
 }
 

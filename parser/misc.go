@@ -323,7 +323,7 @@ var tokenMap = map[string]int{
 	"DUAL":                     dual,
 	"DUMP":                     dump,
 	"DUPLICATE":                duplicate,
-	"DURATION":                 time_duration,
+	"DURATION":                 timeDuration,
 	"DYNAMIC":                  dynamic,
 	"ELSE":                     elseKwd,
 	"ENABLE":                   enable,

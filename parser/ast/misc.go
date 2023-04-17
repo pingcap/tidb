@@ -3795,9 +3795,6 @@ type DynamicCalibrateResourceOption struct {
 }
 
 func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
-	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
-		return nil
-	}
 	switch n.Tp {
 	case CalibrateStartTime:
 		ctx.WriteKeyWord("START_TIME ")
