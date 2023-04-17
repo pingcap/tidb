@@ -286,8 +286,6 @@ func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 	}
 }
 
-const checkpointUpdateInterval = 10 * time.Minute
-
 func (b *ingestBackfillScheduler) setupWorkers() error {
 	job := b.reorgInfo.Job
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
@@ -297,8 +295,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	}
 	b.backendCtx = bc
 	if !b.distribute {
-		mgr, err := ingest.NewCheckpointManager(b.ctx, bc, b.sessPool, job.ID,
-			b.reorgInfo.currElement.ID, checkpointUpdateInterval)
+		mgr, err := ingest.NewCheckpointManager(b.ctx, bc, b.sessPool, job.ID, b.reorgInfo.currElement.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
