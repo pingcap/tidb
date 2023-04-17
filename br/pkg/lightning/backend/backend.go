@@ -316,6 +316,10 @@ func (en engine) GetID() int32 {
 	return en.id
 }
 
+func (en engine) GetUUID() uuid.UUID {
+	return en.uuid
+}
+
 // ClosedEngine represents a closed engine, allowing ingestion into the target.
 // This type is goroutine safe: you can share an instance and execute any method
 // anywhere.

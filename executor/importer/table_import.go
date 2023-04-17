@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -74,7 +75,7 @@ func prepareSortDir(e *LoadDataController) (string, error) {
 }
 
 // NewTableImporter creates a new table importer.
-func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti JobImporter, err error) {
+func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -117,12 +118,12 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti JobImpor
 		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
 		// set to false when we fix it.
 		CheckpointEnabled:       true,
-		MemTableSize:            int(config.DefaultEngineMemCacheSize),
+		MemTableSize:            config.DefaultEngineMemCacheSize,
 		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:         true,
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
-		StoreWriteBWLimit:       0,
+		StoreWriteBWLimit:       int(e.maxWriteSpeed),
 		// todo: we can set it false when we support switch import mode.
 		ShouldCheckWriteStall: true,
 		MaxOpenFiles:          int(util.GenRLimit()),
@@ -153,7 +154,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti JobImpor
 		return nil, err
 	}
 
-	return &tableImporter{
+	return &TableImporter{
 		JobImportParam:     param,
 		LoadDataController: e,
 		backend:            localBackend,
@@ -177,7 +178,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti JobImpor
 	}, nil
 }
 
-type tableImporter struct {
+// TableImporter is a table importer.
+type TableImporter struct {
 	*JobImportParam
 	*LoadDataController
 	backend   *local.Backend
@@ -196,15 +198,15 @@ type tableImporter struct {
 	regionSplitKeys int64
 }
 
-var _ JobImporter = &tableImporter{}
+var _ JobImporter = &TableImporter{}
 
 // Param implements JobImporter.Param.
-func (ti *tableImporter) Param() *JobImportParam {
+func (ti *TableImporter) Param() *JobImportParam {
 	return ti.JobImportParam
 }
 
 // Import implements JobImporter.Import.
-func (ti *tableImporter) Import() {
+func (ti *TableImporter) Import() {
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
 		return ti.importTable(ti.GroupCtx)
@@ -212,11 +214,11 @@ func (ti *tableImporter) Import() {
 }
 
 // Result implements JobImporter.Result.
-func (ti *tableImporter) Result() string {
+func (ti *TableImporter) Result() string {
 	return ""
 }
 
-func (ti *tableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
+func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore)
@@ -231,21 +233,13 @@ func (ti *tableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	if err != nil {
 		return nil, err
 	}
-	if chunk.FileMeta.Compression == mydump.CompressionNone {
-		// todo: when support checkpoint, we should set pos too.
-		// WARN: parser.SetPos can only be set before we read anything now. should fix it before set pos.
-		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
-	} else {
-		// todo: chunk.Chunk.Offset is not set, if we ignore N lines, should set it.
-		if err := mydump.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
-			return nil, errors.Trace(err)
-		}
-		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
-	}
+	// todo: when support checkpoint, we should set pos too.
+	// WARN: parser.SetPos can only be set before we read anything now. should fix it before set pos.
+	parser.SetRowID(chunk.Chunk.PrevRowIDMax)
 	return parser, nil
 }
 
-func (ti *tableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEncoder, error) {
+func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        ti.sqlMode,
@@ -260,13 +254,13 @@ func (ti *tableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEnc
 	return newTableKVEncoder(cfg, ti.ColumnAssignments, ti.ColumnsAndUserVars, ti.FieldMappings, ti.InsertColumns)
 }
 
-func (ti *tableImporter) importTable(ctx context.Context) error {
+func (ti *TableImporter) importTable(ctx context.Context) error {
 	// todo: pause GC if we need duplicate detection
 	// todo: register task to pd?
 	// no need to pause all schedulers, since we can pause them by key range
 	// todo: if add index by sql, drop all index first
 	// todo: tikv enter into import mode
-	if err := ti.populateChunks(ctx); err != nil {
+	if _, err := ti.PopulateChunks(ctx); err != nil {
 		return err
 	}
 	if err := ti.importEngines(ctx); err != nil {
@@ -276,15 +270,16 @@ func (ti *tableImporter) importTable(ctx context.Context) error {
 	return nil
 }
 
+// PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
-func (ti *tableImporter) populateChunks(ctx context.Context) error {
+func (ti *TableImporter) PopulateChunks(ctx context.Context) (map[int32]*checkpoints.EngineCheckpoint, error) {
 	ti.logger.Info("populate chunks")
 	tableRegions, err := mydump.MakeTableRegions(ctx, ti.dataDivideCfg)
 
 	if err != nil {
 		ti.logger.Error("populate chunks failed", zap.Error(err))
-		return err
+		return nil, err
 	}
 
 	var maxRowID int64
@@ -316,21 +311,21 @@ func (ti *tableImporter) populateChunks(ctx context.Context) error {
 	if common.TableHasAutoID(ti.tableInfo.Core) {
 		// todo: the new base should be the max row id of the last Node if we support distributed import.
 		if err = common.RebaseGlobalAutoID(ctx, 0, ti.kvStore, ti.dbID, ti.tableInfo.Core); err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		newMinRowID, _, err := common.AllocGlobalAutoID(ctx, maxRowID, ti.kvStore, ti.dbID, ti.tableInfo.Core)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		ti.rebaseChunkRowID(newMinRowID)
 	}
 
 	// Add index engine checkpoint
 	ti.tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
-	return nil
+	return ti.tableCp.Engines, nil
 }
 
-func (ti *tableImporter) rebaseChunkRowID(rowIDBase int64) {
+func (ti *TableImporter) rebaseChunkRowID(rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
 	}
@@ -342,7 +337,8 @@ func (ti *tableImporter) rebaseChunkRowID(rowIDBase int64) {
 	}
 }
 
-func (ti *tableImporter) importEngines(ctx context.Context) error {
+// OpenIndexEngine opens an index engine.
+func (ti *TableImporter) OpenIndexEngine(ctx context.Context) (*backend.OpenedEngine, error) {
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
 	}
@@ -361,7 +357,25 @@ func (ti *tableImporter) importEngines(ctx context.Context) error {
 	// some return path, didn't make sure all data engine and index engine are cleaned up.
 	// maybe we can add this in upper level to clean the whole local-sort directory
 	mgr := backend.MakeEngineManager(ti.backend)
-	indexEngine, err := mgr.OpenEngine(ctx, idxEngineCfg, fullTableName, common.IndexEngineID)
+	return mgr.OpenEngine(ctx, idxEngineCfg, fullTableName, common.IndexEngineID)
+}
+
+// OpenDataEngine opens a data engine.
+func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*backend.OpenedEngine, error) {
+	dataEngineCfg := &backend.EngineConfig{
+		TableInfo: ti.tableInfo,
+	}
+	if ti.tableMeta.IsRowOrdered {
+		dataEngineCfg.Local.Compact = true
+		dataEngineCfg.Local.CompactConcurrency = 4
+		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
+	}
+	mgr := backend.MakeEngineManager(ti.backend)
+	return mgr.OpenEngine(ctx, dataEngineCfg, ti.tableMeta.FullTableName(), engineID)
+}
+
+func (ti *TableImporter) importEngines(ctx context.Context) error {
+	indexEngine, err := ti.OpenIndexEngine(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -375,30 +389,25 @@ func (ti *tableImporter) importEngines(ctx context.Context) error {
 		if err2 != nil {
 			return err2
 		}
-		if err2 = ti.importAndCleanup(ctx, dataClosedEngine); err2 != nil {
+		if err2 = ti.ImportAndCleanup(ctx, dataClosedEngine); err2 != nil {
 			return err2
 		}
+
+		failpoint.Inject("AfterImportDataEngine", nil)
+		failpoint.Inject("SyncAfterImportDataEngine", func() {
+			TestSyncCh <- struct{}{}
+			<-TestSyncCh
+		})
 	}
 
 	closedIndexEngine, err := indexEngine.Close(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return ti.importAndCleanup(ctx, closedIndexEngine)
+	return ti.ImportAndCleanup(ctx, closedIndexEngine)
 }
 
-func (ti *tableImporter) preprocessEngine(ctx context.Context, indexEngine *backend.OpenedEngine, engineID int32, chunks []*checkpoints.ChunkCheckpoint) (*backend.ClosedEngine, error) {
-	// if the key are ordered, LocalWrite can optimize the writing.
-	// table has auto-incremented _tidb_rowid must satisfy following restrictions:
-	// - clustered index disable and primary key is not number
-	// - no auto random bits (auto random or shard row id)
-	// - no partition table
-	// - no explicit _tidb_rowid field (At this time we can't determine if the source file contains _tidb_rowid field,
-	//   so we will do this check in LocalWriter when the first row is received.)
-	hasAutoIncrementAutoID := common.TableHasAutoRowID(ti.tableInfo.Core) &&
-		ti.tableInfo.Core.AutoRandomBits == 0 && ti.tableInfo.Core.ShardRowIDBits == 0 &&
-		ti.tableInfo.Core.Partition == nil
-
+func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *backend.OpenedEngine, engineID int32, chunks []*checkpoints.ChunkCheckpoint) (*backend.ClosedEngine, error) {
 	processor := engineProcessor{
 		engineID:      engineID,
 		fullTableName: ti.tableMeta.FullTableName(),
@@ -406,24 +415,29 @@ func (ti *tableImporter) preprocessEngine(ctx context.Context, indexEngine *back
 		tableInfo:     ti.tableInfo,
 		logger:        ti.logger.With(zap.Int32("engine-id", engineID)),
 		tableImporter: ti,
-		kvSorted:      hasAutoIncrementAutoID,
 		rowOrdered:    ti.tableMeta.IsRowOrdered,
 		indexEngine:   indexEngine,
 		chunks:        chunks,
-		kvStore:       ti.kvStore,
 	}
 	return processor.process(ctx)
 }
 
-func (ti *tableImporter) importAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
+// ImportAndCleanup imports the engine and cleanup the engine data.
+func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	if closedEngine.GetID() != common.IndexEngineID {
+		// todo: change to a finer-grain progress later.
+		// each row is encoded into 1 data key
+		kvCount := ti.backend.GetImportedKVCount(closedEngine.GetUUID())
+		ti.Progress.LoadedRowCnt.Add(uint64(kvCount))
+	}
 	// todo: if we need support checkpoint, engine should not be cleanup if import failed.
 	cleanupErr := closedEngine.Cleanup(ctx)
 	return multierr.Combine(importErr, cleanupErr)
 }
 
 // Close implements the io.Closer interface.
-func (ti *tableImporter) Close() error {
+func (ti *TableImporter) Close() error {
 	ti.backend.Close()
 	return nil
 }
