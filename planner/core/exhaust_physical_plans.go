@@ -2390,7 +2390,6 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		if p.children[1].statsInfo().Count() > p.children[0].statsInfo().Count() {
 			preferredBuildIndex = 0
 		}
-		fixedBuildSide = true
 	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		// TiFlash does not require that the build side must be the inner table for outer join.
