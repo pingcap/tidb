@@ -5,7 +5,6 @@ package backup
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -41,41 +40,28 @@ type schemaInfo struct {
 	stats      *handle.JSONTable
 }
 
+type iterFuncTp func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error
+
 // Schemas is task for backuping schemas.
 type Schemas struct {
-	// name -> schema
-	schemas map[string]*schemaInfo
+	iterFunc iterFuncTp
+
+	size int
 
 	// checkpoint: table id -> checksum
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 }
 
-func NewBackupSchemas() *Schemas {
+func NewBackupSchemas(iterFunc iterFuncTp, size int) *Schemas {
 	return &Schemas{
-		schemas:            make(map[string]*schemaInfo),
+		iterFunc:           iterFunc,
+		size:               size,
 		checkpointChecksum: nil,
 	}
 }
 
 func (ss *Schemas) SetCheckpointChecksum(checkpointChecksum map[int64]*checkpoint.ChecksumItem) {
 	ss.checkpointChecksum = checkpointChecksum
-}
-
-func (ss *Schemas) AddSchema(
-	dbInfo *model.DBInfo, tableInfo *model.TableInfo,
-) {
-	if tableInfo == nil {
-		ss.schemas[utils.EncloseName(dbInfo.Name.L)] = &schemaInfo{
-			dbInfo: dbInfo,
-		}
-		return
-	}
-	name := fmt.Sprintf("%s.%s",
-		utils.EncloseName(dbInfo.Name.L), utils.EncloseName(tableInfo.Name.L))
-	ss.schemas[name] = &schemaInfo{
-		tableInfo: tableInfo,
-		dbInfo:    dbInfo,
-	}
 }
 
 // BackupSchemas backups table info, including checksum and stats.
@@ -102,10 +88,15 @@ func (ss *Schemas) BackupSchemas(
 	startAll := time.Now()
 	op := metautil.AppendSchema
 	metaWriter.StartWriteMetasAsync(ctx, op)
-	for _, s := range ss.schemas {
-		schema := s
-		// Because schema.dbInfo is a pointer that many tables point to.
-		// Remove "add Temporary-prefix into dbName" from closure to prevent concurrent operations.
+	err := ss.iterFunc(store, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
+		// because the field of `dbInfo` would be modified, which affects the later iteration.
+		// so copy the `dbInfo` for each to `newDBInfo`
+		newDBInfo := *dbInfo
+		schema := &schemaInfo{
+			tableInfo: tableInfo,
+			dbInfo:    &newDBInfo,
+		}
+
 		if utils.IsSysDB(schema.dbInfo.Name.L) {
 			schema.dbInfo.Name = utils.TemporaryDBName(schema.dbInfo.Name.O)
 		}
@@ -176,6 +167,9 @@ func (ss *Schemas) BackupSchemas(
 			}
 			return nil
 		})
+	})
+	if err != nil {
+		return errors.Trace(err)
 	}
 	if err := errg.Wait(); err != nil {
 		return errors.Trace(err)
@@ -187,7 +181,7 @@ func (ss *Schemas) BackupSchemas(
 
 // Len returns the number of schemas.
 func (ss *Schemas) Len() int {
-	return len(ss.schemas)
+	return ss.size
 }
 
 func (s *schemaInfo) calculateChecksum(
