@@ -140,7 +140,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 		}
 
 		var minimalTasks []proto.MinimalTask
-		minimalTasks, err = scheduler.SplitSubtask(subtask.Meta)
+		minimalTasks, err = scheduler.SplitSubtask(context.Background(), subtask.Meta)
 		if err != nil {
 			s.onError(err)
 			if errors.Cause(err) == context.Canceled {
