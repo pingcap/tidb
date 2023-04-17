@@ -354,10 +354,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
-	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return errors.Trace(err)
+	u, packageErr := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	if packageErr != nil {
+		return errors.Trace(packageErr.ToBRError())
 	}
 	// if use noop as external storage, turn off the checkpoint mode
 	if u.GetNoop() != nil {

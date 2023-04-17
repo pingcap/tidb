@@ -212,10 +212,9 @@ func (cr *ChecksumRunner) FlushChecksum(
 		}
 
 		fname := fmt.Sprintf("%s/t%d_and__", CheckpointChecksumDir, tableID)
-		err = s.WriteFile(ctx, fname, data)
-		if err != nil {
-			err = storage.TryConvertToBRError(err)
-			cr.RecordError(err)
+		err2 := s.WriteFile(ctx, fname, data)
+		if err2 != nil {
+			cr.RecordError(err2.ToBRError())
 			return
 		}
 	})
@@ -336,8 +335,7 @@ func (r *CheckpointRunner) WaitForFinish(ctx context.Context) {
 	// remove the checkpoint lock
 	err := r.storage.DeleteFile(ctx, CheckpointLockPath)
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		log.Warn("failed to remove the checkpoint lock", zap.Error(err))
+		log.Warn("failed to remove the checkpoint lock", zap.Error(err.ToBRError()))
 	}
 }
 
@@ -524,7 +522,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 		checksumEncoded := base64.URLEncoding.EncodeToString(checksum[:])
 		path := fmt.Sprintf("%s/%s_%d.cpt", CheckpointDataDir, checksumEncoded, rand.Uint64())
 		if err := r.storage.WriteFile(ctx, path, data); err != nil {
-			return errors.Trace(storage.TryConvertToBRError(err))
+			return errors.Trace(err.ToBRError())
 		}
 	}
 	return nil
@@ -570,22 +568,20 @@ func (r *CheckpointRunner) flushLock(ctx context.Context, p int64) error {
 		return errors.Trace(err)
 	}
 
-	err = r.storage.WriteFile(ctx, CheckpointLockPath, data)
-	err = storage.TryConvertToBRError(err)
-	return errors.Trace(err)
+	err2 := r.storage.WriteFile(ctx, CheckpointLockPath, data)
+	return errors.Trace(err2.ToBRError())
 }
 
 // check whether this lock belongs to this BR
 func (r *CheckpointRunner) checkLockFile(ctx context.Context, now int64) error {
 	data, err := r.storage.ReadFile(ctx, CheckpointLockPath)
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return errors.Trace(err)
+		return errors.Trace(err.ToBRError())
 	}
 	lock := &CheckpointLock{}
-	err = json.Unmarshal(data, lock)
-	if err != nil {
-		return errors.Trace(err)
+	err2 := json.Unmarshal(data, lock)
+	if err2 != nil {
+		return errors.Trace(err2)
 	}
 	if lock.ExpireAt <= now {
 		if lock.LockId > r.lockId {
@@ -651,26 +647,25 @@ func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *
 	fn func(groupKey string, rg *rtree.Range)) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0
-	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointDataDir}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointDataDir}, func(path string, size int64) *storage.Error {
 		if strings.HasSuffix(path, ".cpt") {
 			content, err := s.ReadFile(ctx, path)
 			if err != nil {
-				err = storage.TryConvertToBRError(err)
-				return errors.Trace(err)
+				return err
 			}
 
 			checkpointData := &CheckpointData{}
-			if err = json.Unmarshal(content, checkpointData); err != nil {
-				return errors.Trace(err)
+			if err2 := json.Unmarshal(content, checkpointData); err2 != nil {
+				return storage.NewSimpleError(err2)
 			}
 
 			if checkpointData.DureTime > pastDureTime {
 				pastDureTime = checkpointData.DureTime
 			}
 			for _, meta := range checkpointData.RangeGroupMetas {
-				decryptContent, err := metautil.Decrypt(meta.RangeGroupsEncriptedData, cipher, meta.CipherIv)
-				if err != nil {
-					return errors.Trace(err)
+				decryptContent, err2 := metautil.Decrypt(meta.RangeGroupsEncriptedData, cipher, meta.CipherIv)
+				if err2 != nil {
+					return storage.NewSimpleError(err2)
 				}
 
 				checksum := sha256.Sum256(decryptContent)
@@ -683,8 +678,8 @@ func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *
 				}
 
 				group := &RangeGroups{}
-				if err = json.Unmarshal(decryptContent, group); err != nil {
-					return errors.Trace(err)
+				if err2 = json.Unmarshal(decryptContent, group); err2 != nil {
+					return storage.NewSimpleError(err2)
 				}
 
 				for _, g := range group.Groups {
@@ -694,8 +689,7 @@ func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *
 		}
 		return nil
 	})
-	err = storage.TryConvertToBRError(err)
-	return pastDureTime, errors.Trace(err)
+	return pastDureTime, errors.Trace(err.ToBRError())
 }
 
 type CheckpointMetadata struct {
@@ -712,32 +706,30 @@ type CheckpointMetadata struct {
 func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadata, error) {
 	data, err := s.ReadFile(ctx, CheckpointMetaPath)
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return nil, errors.Trace(err)
+		return nil, errors.Trace(err.ToBRError())
 	}
 	m := &CheckpointMetadata{}
-	err = json.Unmarshal(data, m)
-	if err != nil {
-		return nil, errors.Trace(err)
+	err2 := json.Unmarshal(data, m)
+	if err2 != nil {
+		return nil, errors.Trace(err2)
 	}
-	m.CheckpointChecksum, err = loadCheckpointChecksum(ctx, s)
-	return m, errors.Trace(err)
+	m.CheckpointChecksum, err2 = loadCheckpointChecksum(ctx, s)
+	return m, errors.Trace(err2)
 }
 
 // walk the whole checkpoint checksum files and retrieve checksum information of tables calculated
 func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map[int64]*ChecksumItem, error) {
 	checkpointChecksum := make(map[int64]*ChecksumItem)
 
-	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointChecksumDir}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointChecksumDir}, func(path string, size int64) *storage.Error {
 		data, err := s.ReadFile(ctx, path)
 		if err != nil {
-			err = storage.TryConvertToBRError(err)
-			return errors.Trace(err)
+			return err
 		}
 		info := &ChecksumInfo{}
-		err = json.Unmarshal(data, info)
-		if err != nil {
-			return errors.Trace(err)
+		err2 := json.Unmarshal(data, info)
+		if err2 != nil {
+			return storage.NewSimpleError(err2)
 		}
 
 		checksum := sha256.Sum256(info.Content)
@@ -750,9 +742,9 @@ func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map
 		}
 
 		items := &ChecksumItems{}
-		err = json.Unmarshal(info.Content, items)
-		if err != nil {
-			return errors.Trace(err)
+		err2 = json.Unmarshal(info.Content, items)
+		if err2 != nil {
+			return storage.NewSimpleError(err2)
 		}
 
 		for _, c := range items.Items {
@@ -760,8 +752,7 @@ func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map
 		}
 		return nil
 	})
-	err = storage.TryConvertToBRError(err)
-	return checkpointChecksum, errors.Trace(err)
+	return checkpointChecksum, errors.Trace(err.ToBRError())
 }
 
 // save the checkpoint metadata into the external storage
@@ -771,7 +762,6 @@ func SaveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta
 		return errors.Trace(err)
 	}
 
-	err = s.WriteFile(ctx, CheckpointMetaPath, data)
-	err = storage.TryConvertToBRError(err)
-	return errors.Trace(err)
+	err2 := s.WriteFile(ctx, CheckpointMetaPath, data)
+	return errors.Trace(err2.ToBRError())
 }

@@ -87,7 +87,7 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	pool := utils.NewWorkerPool(64, "read backup meta")
 	eg, egCtx := errgroup.WithContext(ctx)
-	err := s.storage.WalkDir(egCtx, opt, func(path string, size int64) error {
+	err := s.storage.WalkDir(egCtx, opt, func(path string, size int64) *storage.Error {
 		if !strings.Contains(path, stream.GetStreamBackupMetaPrefix()) {
 			return nil
 		}
@@ -96,12 +96,11 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 			m := &backuppb.Metadata{}
 			b, err := s.storage.ReadFile(egCtx, path)
 			if err != nil {
-				err = storage.TryConvertToBRError(err)
-				return errors.Trace(err)
+				return err
 			}
-			err = m.Unmarshal(b)
-			if err != nil {
-				return errors.Trace(err)
+			err2 := m.Unmarshal(b)
+			if err2 != nil {
+				return storage.NewSimpleError(err2)
 			}
 
 			s.resolveMetaData(egCtx, m, ch)
@@ -113,8 +112,7 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 	})
 
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return errors.Trace(err)
+		return errors.Trace(err.ToBRError())
 	}
 
 	return eg.Wait()
@@ -202,8 +200,7 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 func (s *StreamBackupSearch) searchFromDataFile(ctx context.Context, dataFile *backuppb.DataFileInfo, ch chan<- *StreamKVInfo) error {
 	buff, err := s.storage.ReadFile(ctx, dataFile.Path)
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return errors.Annotatef(err, "read data file error, file: %s", dataFile.Path)
+		return errors.Annotatef(err.ToBRError(), "read data file error, file: %s", dataFile.Path)
 	}
 
 	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], dataFile.GetSha256()) {

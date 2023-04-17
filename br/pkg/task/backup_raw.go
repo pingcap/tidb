@@ -132,10 +132,9 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
-	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return errors.Trace(err)
+	u, pachageErr := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	if pachageErr != nil {
+		return errors.Trace(pachageErr.ToBRError())
 	}
 	// Backup raw does not need domain.
 	needDomain := false

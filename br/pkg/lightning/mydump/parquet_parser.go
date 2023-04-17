@@ -184,9 +184,9 @@ func ReadParquetFileRowCountByFile(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	numberRows, err := readParquetFileRowCount(ctx, store, r, fileMeta.Path)
-	if err != nil {
-		return 0, errors.Trace(err)
+	numberRows, err2 := readParquetFileRowCount(ctx, store, r, fileMeta.Path)
+	if err2 != nil {
+		return 0, errors.Trace(err2)
 	}
 	return numberRows, nil
 }

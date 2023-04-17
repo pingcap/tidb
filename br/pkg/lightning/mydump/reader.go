@@ -79,9 +79,9 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage,
 		}
 		store = storage.WithCompression(store, compressType)
 	}
-	fd, err := store.Open(ctx, sqlFile.FileMeta.Path)
-	if err != nil {
-		return nil, errors.Trace(err)
+	fd, packageErr := store.Open(ctx, sqlFile.FileMeta.Path)
+	if packageErr != nil {
+		return nil, errors.Trace(packageErr)
 	}
 	defer fd.Close()
 
@@ -116,6 +116,7 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage,
 		}
 	}
 
+	var err error
 	data, err = decodeCharacterSet(data, characterSet)
 	if err != nil {
 		log.FromContext(ctx).Error("cannot decode input file, please convert to target encoding manually",

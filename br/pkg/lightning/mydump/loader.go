@@ -114,13 +114,13 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 		return "", errors.Errorf("the provided schema file (%s) for the table '%s.%s' doesn't exist",
 			schemaFilePath, m.DB, m.Name)
 	}
-	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
-	if err != nil {
+	schema, err2 := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
+	if err2 != nil {
 		log.FromContext(ctx).Error("failed to extract table schema",
 			zap.String("Path", m.SchemaFile.FileMeta.Path),
-			log.ShortError(err),
+			log.ShortError(err2),
 		)
-		return "", err
+		return "", err2
 	}
 	return string(schema), nil
 }
@@ -444,12 +444,12 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
 	totalScannedFileCount := 0
-	err := iter.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+	err := iter.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) *storage.Error {
 		totalScannedFileCount++
 		if iter.maxScanFiles > 0 && totalScannedFileCount > iter.maxScanFiles {
-			return common.ErrTooManySourceFiles
+			return storage.NewSimpleError(common.ErrTooManySourceFiles)
 		}
-		return hdl(ctx, path, size)
+		return storage.NewSimpleError(hdl(ctx, path, size))
 	})
 
 	return errors.Trace(err)

@@ -44,8 +44,8 @@ func NewErrorWithMessage(brErr *errors.Error, format string, args ...interface{}
 	}
 }
 
-// NewSimpleError wraps Error on given standard error. If the given error is
-// already a *Error, it will be returned directly.
+// NewSimpleError wraps Error and trace on given standard error. If the given
+// error is already a *Error, it will be returned directly.
 func NewSimpleError(err error) *Error {
 	if err == nil {
 		return nil
@@ -54,7 +54,7 @@ func NewSimpleError(err error) *Error {
 		return e
 	}
 	return &Error{
-		error:        err,
+		error:        errors.Trace(err),
 		brErrorClass: brerrors.ErrUnknown,
 	}
 }
@@ -69,11 +69,4 @@ func NewSimpleErrorWithMessage(format string, args ...interface{}) *Error {
 
 func (e *Error) ToBRError() error {
 	return errors.Annotate(e.brErrorClass, e.error.Error())
-}
-
-func newWrappedError(err error, format string, args ...interface{}) error {
-	return &wrappedError{
-		text:    fmt.Sprintf(format, args...),
-		brError: err,
-	}
 }

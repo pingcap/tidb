@@ -144,7 +144,7 @@ func (rc *logFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint6
 func (rc *logFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaIter, error) {
 	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
-	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
+	err := s.WalkDir(ctx, opt, func(path string, size int64) *storage.Error {
 		if !strings.HasSuffix(path, ".meta") {
 			return nil
 		}
@@ -152,19 +152,17 @@ func (rc *logFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		return nil
 	})
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return nil, err
+		return nil, err.ToBRError()
 	}
 	namesIter := iter.FromSlice(names)
 	readMeta := func(ctx context.Context, name string) (*backuppb.Metadata, error) {
 		f, err := s.ReadFile(ctx, name)
 		if err != nil {
-			err = storage.TryConvertToBRError(err)
-			return nil, errors.Annotatef(err, "failed during reading file %s", name)
+			return nil, errors.Annotatef(err.ToBRError(), "failed during reading file %s", name)
 		}
-		meta, err := rc.helper.ParseToMetadata(f)
-		if err != nil {
-			return nil, errors.Annotatef(err, "failed to parse metadata of file %s", name)
+		meta, err2 := rc.helper.ParseToMetadata(f)
+		if err2 != nil {
+			return nil, errors.Annotatef(err2, "failed to parse metadata of file %s", name)
 		}
 		return meta, nil
 	}

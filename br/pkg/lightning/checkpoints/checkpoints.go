@@ -1120,9 +1120,9 @@ func newFileCheckpointsDB(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = cpdb.checkpoints.Unmarshal(content)
-	if err != nil {
-		log.FromContext(ctx).Error("checkpoint file is broken", zap.String("path", path), zap.Error(err))
+	err2 := cpdb.checkpoints.Unmarshal(content)
+	if err2 != nil {
+		log.FromContext(ctx).Error("checkpoint file is broken", zap.String("path", path), zap.Error(err2))
 	}
 	// FIXME: patch for empty map may need initialize manually, because currently
 	// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go

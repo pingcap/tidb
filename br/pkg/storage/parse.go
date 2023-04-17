@@ -37,24 +37,24 @@ func ParseRawURL(rawURL string) (*url.URL, error) {
 
 // ParseBackendFromURL constructs a structured backend description from the
 // *url.URL.
-func ParseBackendFromURL(u *url.URL, options *BackendOptions) (*backuppb.StorageBackend, error) {
+func ParseBackendFromURL(u *url.URL, options *BackendOptions) (*backuppb.StorageBackend, *Error) {
 	return parseBackend(u, "", options)
 }
 
 // ParseBackend constructs a structured backend description from the
 // storage URL.
-func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBackend, error) {
+func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBackend, *Error) {
 	if len(rawURL) == 0 {
-		return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
+		return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
 	}
 	u, err := ParseRawURL(rawURL)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, NewSimpleError(err)
 	}
 	return parseBackend(u, rawURL, options)
 }
 
-func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb.StorageBackend, error) {
+func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb.StorageBackend, *Error) {
 	if rawURL == "" {
 		// try to handle hdfs for ParseBackendFromURL caller
 		rawURL = u.String()
@@ -63,7 +63,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 	case "":
 		absPath, err := filepath.Abs(rawURL)
 		if err != nil {
-			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "covert data-source-dir '%s' to absolute path failed", rawURL)
+			return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "covert data-source-dir '%s' to absolute path failed", rawURL)
 		}
 		local := &backuppb.Local{Path: absPath}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Local{Local: local}}, nil
@@ -82,7 +82,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "s3":
 		if u.Host == "" {
-			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", rawURL)
+			return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", rawURL)
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
@@ -91,13 +91,13 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		ExtractQueryParameters(u, &options.S3)
 		if err := options.S3.Apply(s3); err != nil {
-			return nil, errors.Trace(err)
+			return nil, NewSimpleError(err)
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}}, nil
 
 	case "gs", "gcs":
 		if u.Host == "" {
-			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", rawURL)
+			return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", rawURL)
 		}
 		prefix := strings.Trim(u.Path, "/")
 		gcs := &backuppb.GCS{Bucket: u.Host, Prefix: prefix}
@@ -106,13 +106,13 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		ExtractQueryParameters(u, &options.GCS)
 		if err := options.GCS.apply(gcs); err != nil {
-			return nil, errors.Trace(err)
+			return nil, NewSimpleError(err)
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Gcs{Gcs: gcs}}, nil
 
 	case "azure", "azblob":
 		if u.Host == "" {
-			return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", rawURL)
+			return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", rawURL)
 		}
 		prefix := strings.Trim(u.Path, "/")
 		azblob := &backuppb.AzureBlobStorage{Bucket: u.Host, Prefix: prefix}
@@ -121,11 +121,11 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		ExtractQueryParameters(u, &options.Azblob)
 		if err := options.Azblob.apply(azblob); err != nil {
-			return nil, errors.Trace(err)
+			return nil, NewSimpleError(err)
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_AzureBlobStorage{AzureBlobStorage: azblob}}, nil
 	default:
-		return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "storage %s not support yet", u.Scheme)
+		return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "storage %s not support yet", u.Scheme)
 	}
 }
 

@@ -176,9 +176,9 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 
 // SetLockFile set write lock file.
 func (bc *Client) SetLockFile(ctx context.Context) error {
-	return storage.TryConvertToBRError(bc.storage.WriteFile(ctx, metautil.LockFile,
+	return bc.storage.WriteFile(ctx, metautil.LockFile,
 		[]byte("DO NOT DELETE\n"+
-			"This file exists to remind other backup jobs won't use this path")))
+			"This file exists to remind other backup jobs won't use this path")).ToBRError()
 }
 
 // GetSafePointID get the gc-safe-point's service-id from either checkpoint or immediate generation
@@ -379,12 +379,11 @@ func (bc *Client) SetStorage(
 	backend *backuppb.StorageBackend,
 	opts *storage.ExternalStorageOptions,
 ) error {
-	var err error
+	var err *storage.Error
 
 	bc.backend = backend
 	bc.storage, err = storage.New(ctx, backend, opts)
-	err = storage.TryConvertToBRError(err)
-	return errors.Trace(err)
+	return errors.Trace(err.ToBRError())
 }
 
 // GetClusterID returns the cluster ID of the tidb cluster to backup.
@@ -424,19 +423,19 @@ func (bc *Client) BuildBackupRangeAndSchema(
 func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) error {
 	exist, err := s.FileExists(ctx, metautil.LockFile)
 	if err != nil {
-		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
+		return errors.Annotatef(err.ToBRError(), "error occurred when checking %s file", metautil.LockFile)
 	}
 	if exist {
-		err = s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+		err = s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) *storage.Error {
 			// should return error to break the walkDir when found lock file and other .sst files.
 			if strings.HasSuffix(path, ".sst") {
-				return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+
+				return storage.NewErrorWithMessage(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+
 					"there are some backup files in the path already, but hasn't checkpoint metadata, "+
 					"please specify a correct backup directory!", s.URI()+"/"+metautil.LockFile)
 			}
 			return nil
 		})
-		return storage.TryConvertToBRError(err)
+		return err.ToBRError()
 	}
 	return nil
 }

@@ -102,10 +102,9 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
-	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return errors.Trace(err)
+	backend, err2 := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	if err2 != nil {
+		return errors.Trace(err2.ToBRError())
 	}
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, false, conn.NormalVersionChecker)
 	if err != nil {
@@ -380,10 +379,9 @@ func saveMetaFile(c context.Context, backupInfo *config.EBSBasedBRMeta, external
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = externalStorage.WriteFile(c, metautil.MetaFile, data)
-	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return errors.Trace(err)
+	err2 := externalStorage.WriteFile(c, metautil.MetaFile, data)
+	if err2 != nil {
+		return errors.Trace(err2.ToBRError())
 	}
 	return nil
 }

@@ -119,13 +119,12 @@ func walkLeafMetaFile(
 	for _, node := range file.MetaFiles {
 		content, err := s.ReadFile(ctx, node.Name)
 		if err != nil {
-			err = storage.TryConvertToBRError(err)
-			return errors.Trace(err)
+			return errors.Trace(err.ToBRError())
 		}
 
-		decryptContent, err := Decrypt(content, cipher, node.CipherIv)
-		if err != nil {
-			return errors.Trace(err)
+		decryptContent, err2 := Decrypt(content, cipher, node.CipherIv)
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
 
 		checksum := sha256.Sum256(decryptContent)
@@ -135,11 +134,11 @@ func walkLeafMetaFile(
 		}
 
 		child := &backuppb.MetaFile{}
-		if err = proto.Unmarshal(decryptContent, child); err != nil {
-			return errors.Trace(err)
+		if err2 = proto.Unmarshal(decryptContent, child); err2 != nil {
+			return errors.Trace(err2)
 		}
-		if err = walkLeafMetaFile(ctx, s, child, cipher, output); err != nil {
-			return errors.Trace(err)
+		if err2 = walkLeafMetaFile(ctx, s, child, cipher, output); err2 != nil {
+			return errors.Trace(err2)
 		}
 	}
 	return nil
@@ -696,9 +695,8 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	err = writer.storage.WriteFile(ctx, writer.metaFileName, append(iv, encryptBuff...))
-	err = storage.TryConvertToBRError(err)
-	return err
+	err2 := writer.storage.WriteFile(ctx, writer.metaFileName, append(iv, encryptBuff...))
+	return err2.ToBRError()
 }
 
 // fillMetasV1 keep the compatibility for old version.
@@ -765,9 +763,8 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 		return errors.Trace(err)
 	}
 
-	if err = writer.storage.WriteFile(ctx, fname, encyptedContent); err != nil {
-		err = storage.TryConvertToBRError(err)
-		return errors.Trace(err)
+	if err2 := writer.storage.WriteFile(ctx, fname, encyptedContent); err2 != nil {
+		return errors.Trace(err2.ToBRError())
 	}
 	checksum := sha256.Sum256(content)
 	file := &backuppb.File{

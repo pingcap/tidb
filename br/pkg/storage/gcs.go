@@ -112,7 +112,7 @@ func (s *GCSStorage) GetOptions() *backuppb.GCS {
 func (s *GCSStorage) DeleteFile(ctx context.Context, name string) *Error {
 	object := s.objectName(name)
 	err := s.bucket.Object(object).Delete(ctx)
-	return NewSimpleError(errors.Trace(err))
+	return NewSimpleError(err)
 }
 
 func (s *GCSStorage) objectName(name string) string {
@@ -127,7 +127,7 @@ func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) *E
 	wc.PredefinedACL = s.gcs.PredefinedAcl
 	_, err := wc.Write(data)
 	if err != nil {
-		return NewSimpleError(errors.Trace(err))
+		return NewSimpleError(err)
 	}
 	return NewSimpleError(wc.Close())
 }
@@ -152,7 +152,7 @@ func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, *Error)
 		b = make([]byte, size)
 		_, err = io.ReadFull(rc, b)
 	}
-	return b, NewSimpleError(errors.Trace(err))
+	return b, NewSimpleError(err)
 }
 
 // FileExists return true if file exists.
@@ -163,7 +163,7 @@ func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, *Error)
 		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
 			return false, nil
 		}
-		return false, NewSimpleError(errors.Trace(err))
+		return false, NewSimpleError(err)
 	}
 	return true, nil
 }
@@ -217,7 +217,7 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	// only need each object's name and size
 	err := query.SetAttrSelection([]string{"Name", "Size"})
 	if err != nil {
-		return NewSimpleError(errors.Trace(err))
+		return NewSimpleError(err)
 	}
 	iter := s.bucket.Objects(ctx, query)
 	for {
@@ -226,7 +226,7 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			break
 		}
 		if err != nil {
-			return NewSimpleError(errors.Trace(err))
+			return NewSimpleError(err)
 		}
 		// when walk on specify directory, the result include storage.Prefix,
 		// which can not be reuse in other API(Open/Read) directly.
@@ -301,7 +301,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	}
 	client, err := storage.NewClient(ctx, clientOps...)
 	if err != nil {
-		return nil, NewSimpleError(errors.Trace(err))
+		return nil, NewSimpleError(err)
 	}
 
 	if !opts.SendCredentials {
@@ -365,7 +365,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 	if r.reader == nil {
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
 		if err != nil {
-			return 0, newWrappedError(err,
+			return 0, errors.Annotatef(err,
 				"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
 				r.storage.gcs.Bucket, r.name)
 		}
@@ -396,15 +396,15 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 		realOffset = r.pos + offset
 	case io.SeekEnd:
 		if offset > 0 {
-			return 0, newWrappedError(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
+			return 0, NewErrorWithMessage(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
 		realOffset = offset + r.totalSize
 	default:
-		return 0, newWrappedError(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+		return 0, NewErrorWithMessage(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
 
 	if realOffset < 0 {
-		return 0, newWrappedError(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'. total size is '%v'", offset, r.pos, r.totalSize)
+		return 0, NewErrorWithMessage(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'. total size is '%v'", offset, r.pos, r.totalSize)
 	}
 
 	if realOffset == r.pos {
@@ -422,7 +422,7 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
 	if err != nil {
-		return 0, newWrappedError(err,
+		return 0, errors.Annotatef(err,
 			"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
 			r.storage.gcs.Bucket, r.name)
 	}

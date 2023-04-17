@@ -129,8 +129,7 @@ type StreamConfig struct {
 func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
 	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return nil, errors.Trace(err)
+		return nil, errors.Trace(err.ToBRError())
 	}
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
@@ -138,8 +137,7 @@ func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStora
 	}
 	s, err := storage.New(ctx, u, &opts)
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return nil, errors.Trace(err)
+		return nil, errors.Trace(err.ToBRError())
 	}
 	return s, nil
 }
@@ -312,10 +310,9 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 	if isStreamStart {
 		client := backup.NewBackupClient(ctx, mgr)
 
-		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
-		if err != nil {
-			err = storage.TryConvertToBRError(err)
-			return nil, errors.Trace(err)
+		backend, err2 := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+		if err2 != nil {
+			return nil, errors.Trace(err2)
 		}
 
 		opts := storage.ExternalStorageOptions{
@@ -1370,10 +1367,9 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 		}
 	}()
 
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
-	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return nil, errors.Trace(err)
+	u, err2 := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	if err2 != nil {
+		return nil, errors.Trace(err2.ToBRError())
 	}
 
 	opts := storage.ExternalStorageOptions{
@@ -1451,10 +1447,9 @@ func getLogRange(
 	}
 
 	// logStartTS: Get log start ts from backupmeta file.
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return backupLogInfo{}, errors.Trace(err)
+	metaData, err2 := s.ReadFile(ctx, metautil.MetaFile)
+	if err2 != nil {
+		return backupLogInfo{}, errors.Trace(err2.ToBRError())
 	}
 	backupMeta := &backuppb.BackupMeta{}
 	if err = backupMeta.Unmarshal(metaData); err != nil {
@@ -1492,22 +1487,20 @@ func getLogRange(
 func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStorage) (uint64, error) {
 	var globalCheckPointTS uint64 = 0
 	opt := storage.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
-	err := s.WalkDir(ctx, &opt, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &opt, func(path string, size int64) *storage.Error {
 		if !strings.HasSuffix(path, ".ts") {
 			return nil
 		}
 
 		buff, err := s.ReadFile(ctx, path)
 		if err != nil {
-			err = storage.TryConvertToBRError(err)
-			return errors.Trace(err)
+			return err
 		}
 		ts := binary.LittleEndian.Uint64(buff)
 		globalCheckPointTS = mathutil.Max(ts, globalCheckPointTS)
 		return nil
 	})
-	err = storage.TryConvertToBRError(err)
-	return globalCheckPointTS, errors.Trace(err)
+	return globalCheckPointTS, errors.Trace(err.ToBRError())
 }
 
 // getFullBackupTS gets the snapshot-ts of full bakcup
@@ -1520,10 +1513,9 @@ func getFullBackupTS(
 		return 0, 0, errors.Trace(err)
 	}
 
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return 0, 0, errors.Trace(err)
+	metaData, err2 := s.ReadFile(ctx, metautil.MetaFile)
+	if err2 != nil {
+		return 0, 0, errors.Trace(err2.ToBRError())
 	}
 
 	backupmeta := &backuppb.BackupMeta{}
@@ -1586,10 +1578,9 @@ func initFullBackupTables(
 		return nil, errors.Trace(err)
 	}
 
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return nil, errors.Trace(err)
+	metaData, err2 := s.ReadFile(ctx, metautil.MetaFile)
+	if err2 != nil {
+		return nil, errors.Trace(err2.ToBRError())
 	}
 	backupMeta := &backuppb.BackupMeta{}
 	if err = backupMeta.Unmarshal(metaData); err != nil {

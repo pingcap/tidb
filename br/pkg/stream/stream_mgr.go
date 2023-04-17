@@ -207,7 +207,6 @@ func (m *MetadataHelper) ReadFile(
 	compressionType backuppb.CompressionType,
 	s storage.ExternalStorage,
 ) ([]byte, error) {
-	var err error
 	cref, exist := m.cache[path]
 	if !exist {
 		// Only files from metaV2 are cached,
@@ -218,23 +217,22 @@ func (m *MetadataHelper) ReadFile(
 		}
 		data, err := s.ReadFile(ctx, path)
 		if err != nil {
-			err = storage.TryConvertToBRError(err)
-			return nil, errors.Trace(err)
+			return nil, errors.Trace(err.ToBRError())
 		}
 		return m.decodeCompressedData(data, compressionType)
 	}
 
 	cref.ref -= 1
 
+	var err *storage.Error
 	if len(cref.data) == 0 {
 		cref.data, err = s.ReadFile(ctx, path)
 		if err != nil {
-			err = storage.TryConvertToBRError(err)
-			return nil, errors.Trace(err)
+			return nil, errors.Trace(err.ToBRError())
 		}
 	}
 
-	buf, err := m.decodeCompressedData(cref.data[offset:offset+length], compressionType)
+	buf, err2 := m.decodeCompressedData(cref.data[offset:offset+length], compressionType)
 
 	if cref.ref <= 0 {
 		// need reset reference information.
@@ -242,7 +240,7 @@ func (m *MetadataHelper) ReadFile(
 		cref.ref = cref.init_ref
 	}
 
-	return buf, errors.Trace(err)
+	return buf, errors.Trace(err2)
 }
 
 func (*MetadataHelper) ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error) {
@@ -319,7 +317,7 @@ func FastUnmarshalMetaData(
 	pool := utils.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
 	eg, ectx := errgroup.WithContext(ctx)
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
-	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
+	err := s.WalkDir(ectx, opt, func(path string, size int64) *storage.Error {
 		if !strings.HasSuffix(path, ".meta") {
 			return nil
 		}
@@ -327,7 +325,6 @@ func FastUnmarshalMetaData(
 		pool.ApplyOnErrorGroup(eg, func() error {
 			b, err := s.ReadFile(ectx, readPath)
 			if err != nil {
-				err = storage.TryConvertToBRError(err)
 				log.Error("failed to read file", zap.String("file", readPath))
 				return errors.Annotatef(err, "during reading meta file %s from storage", readPath)
 			}
@@ -337,12 +334,11 @@ func FastUnmarshalMetaData(
 		return nil
 	})
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
 		readErr := eg.Wait()
 		if readErr != nil {
 			return errors.Annotatef(readErr, "scanning metadata meets error %s", err)
 		}
-		return errors.Annotate(err, "scanning metadata meets error")
+		return errors.Annotate(err.ToBRError(), "scanning metadata meets error")
 	}
 	return eg.Wait()
 }

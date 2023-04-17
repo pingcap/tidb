@@ -24,7 +24,7 @@ func WithCompression(inner ExternalStorage, compressionType CompressType) Extern
 	return &withCompression{ExternalStorage: inner, compressType: compressionType}
 }
 
-func (w *withCompression) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (w *withCompression) Create(ctx context.Context, name string) (ExternalFileWriter, *Error) {
 	var (
 		writer ExternalFileWriter
 		err    error
@@ -35,49 +35,53 @@ func (w *withCompression) Create(ctx context.Context, name string) (ExternalFile
 		writer, err = w.ExternalStorage.Create(ctx, name)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, NewSimpleError(err)
 	}
 	compressedWriter := newBufferedWriter(writer, hardcodedS3ChunkSize, w.compressType)
 	return compressedWriter, nil
 }
 
-func (w *withCompression) Open(ctx context.Context, path string) (ExternalFileReader, error) {
+func (w *withCompression) Open(ctx context.Context, path string) (ExternalFileReader, *Error) {
 	fileReader, err := w.ExternalStorage.Open(ctx, path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, NewSimpleError(err)
 	}
-	uncompressReader, err := InterceptDecompressReader(fileReader, w.compressType)
-	if err != nil {
-		return nil, errors.Trace(err)
+	uncompressReader, err2 := InterceptDecompressReader(fileReader, w.compressType)
+	if err2 != nil {
+		return nil, NewSimpleError(err2)
 	}
 	return uncompressReader, nil
 }
 
-func (w *withCompression) WriteFile(ctx context.Context, name string, data []byte) error {
+func (w *withCompression) WriteFile(ctx context.Context, name string, data []byte) *Error {
 	bf := bytes.NewBuffer(make([]byte, 0, len(data)))
 	compressBf := newCompressWriter(w.compressType, bf)
 	_, err := compressBf.Write(data)
 	if err != nil {
-		return errors.Trace(err)
+		return NewSimpleError(err)
 	}
 	err = compressBf.Close()
 	if err != nil {
-		return errors.Trace(err)
+		return NewSimpleError(err)
 	}
 	return w.ExternalStorage.WriteFile(ctx, name, bf.Bytes())
 }
 
-func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, error) {
+func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, *Error) {
 	data, err := w.ExternalStorage.ReadFile(ctx, name)
 	if err != nil {
-		return data, errors.Trace(err)
+		return data, NewSimpleError(err)
 	}
 	bf := bytes.NewBuffer(data)
-	compressBf, err := newCompressReader(w.compressType, bf)
-	if err != nil {
-		return nil, err
+	compressBf, err2 := newCompressReader(w.compressType, bf)
+	if err2 != nil {
+		return nil, NewSimpleError(err2)
 	}
-	return io.ReadAll(compressBf)
+	bs, err3 := io.ReadAll(compressBf)
+	if err3 != nil {
+		return nil, NewSimpleError(err3)
+	}
+	return bs, nil
 }
 
 // compressReader is a wrapper for compress.Reader
@@ -109,7 +113,7 @@ func InterceptDecompressReader(fileReader io.ReadSeekCloser, compressType Compre
 func NewLimitedInterceptReader(fileReader ExternalFileReader, compressType CompressType, n int64) (ExternalFileReader, error) {
 	newFileReader := fileReader
 	if n < 0 {
-		return nil, newWrappedError(berrors.ErrStorageInvalidConfig, "compressReader doesn't support negative limit, n: %d", n)
+		return nil, NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "compressReader doesn't support negative limit, n: %d", n)
 	} else if n > 0 {
 		newFileReader = &compressReader{
 			Reader: io.LimitReader(fileReader, n),
@@ -125,7 +129,7 @@ func (c *compressReader) Seek(offset int64, whence int) (int64, error) {
 	if offset == 0 && whence == io.SeekCurrent {
 		return c.Seeker.Seek(offset, whence)
 	}
-	return int64(0), newWrappedError(berrors.ErrStorageInvalidConfig, "compressReader doesn't support Seek now, offset %d, whence %d", offset, whence)
+	return int64(0), NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "compressReader doesn't support Seek now, offset %d, whence %d", offset, whence)
 }
 
 func (c *compressReader) Close() error {

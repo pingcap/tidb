@@ -171,10 +171,9 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 				return cx.Err()
 			}
 
-			data, err := s.ReadFile(ctx, path)
-			if err != nil {
-				err = storage.TryConvertToBRError(err)
-				return err
+			data, packageErr := s.ReadFile(ctx, path)
+			if packageErr != nil {
+				return packageErr.ToBRError()
 			}
 
 			meta, err := ms.Helper.ParseToMetadataHard(data)
@@ -230,8 +229,8 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Contex
 	for _, f := range removed {
 		log.Debug("Deleting file", zap.String("path", f.Path))
 		if err := s.DeleteFile(ctx, f.Path); err != nil {
-			err = storage.TryConvertToBRError(err)
-			log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
+			err2 := err.ToBRError()
+			log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err2))
 			notDeleted = append(notDeleted, f.Path)
 			if len(notDeleted) > notDeletedBecameFatalThreshold {
 				return num, notDeleted, errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "too many failure when truncating")
@@ -266,8 +265,7 @@ func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.E
 	// If the metadata file contains no data file, remove it due to it is meanless.
 	if len(meta.FileGroups) == 0 {
 		if err := s.DeleteFile(ctx, path); err != nil {
-			err = storage.TryConvertToBRError(err)
-			return errors.Annotatef(err, "failed to remove the empty meta %s", path)
+			return errors.Annotatef(err.ToBRError(), "failed to remove the empty meta %s", path)
 		}
 		return nil
 	}
@@ -282,8 +280,7 @@ func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.E
 func truncateAndWrite(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {
 	// Performance hack: the `Write` implemention would truncate the file if it exists.
 	if err := s.WriteFile(ctx, path, data); err != nil {
-		err = storage.TryConvertToBRError(err)
-		return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
+		return errors.Annotatef(err.ToBRError(), "failed to save the file %s to %s", path, s.URI())
 	}
 	return nil
 }
@@ -310,11 +307,10 @@ func GetTSFromFile(
 	}
 	data, err := s.ReadFile(ctx, filename)
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return 0, err
+		return 0, err.ToBRError()
 	}
-	value, err := strconv.ParseUint(string(data), 10, 64)
-	if err != nil {
+	value, err2 := strconv.ParseUint(string(data), 10, 64)
+	if err2 != nil {
 		return 0, berrors.ErrInvalidMetaFile.GenWithStackByArgs("failed to parse the truncate safepoint")
 	}
 	return value, nil

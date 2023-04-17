@@ -170,10 +170,10 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 		options.ForcePathStyle = false
 	}
 	if options.AccessKey == "" && options.SecretAccessKey != "" {
-		return newWrappedError(berrors.ErrStorageInvalidConfig, "access_key not found")
+		return NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "access_key not found")
 	}
 	if options.AccessKey != "" && options.SecretAccessKey == "" {
-		return newWrappedError(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
+		return NewErrorWithMessage(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
 	}
 
 	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
@@ -283,7 +283,7 @@ func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 func createOssRAMCred() (*credentials.Credentials, error) {
 	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
 	if err != nil {
-		return nil, newWrappedError(err, "Alibaba RAM Provider Retrieve")
+		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
 	}
 	ncred := cred.(*alicred.StsTokenCredential)
 	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
@@ -315,7 +315,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 	cred, err := autoNewCred(&qs)
 	if err != nil {
-		return nil, NewSimpleError(errors.Trace(err))
+		return nil, NewSimpleError(err)
 	}
 	if cred != nil {
 		awsConfig.WithCredentials(cred)
@@ -326,7 +326,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 	ses, err := session.NewSessionWithOptions(awsSessionOpts)
 	if err != nil {
-		return nil, NewSimpleError(errors.Trace(err))
+		return nil, NewSimpleError(err)
 	}
 
 	if !opts.SendCredentials {
@@ -505,14 +505,14 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) *E
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
 	if err != nil {
-		return NewSimpleError(errors.Trace(err))
+		return NewSimpleError(err)
 	}
 	hinput := &s3.HeadObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 	err = rs.svc.WaitUntilObjectExistsWithContext(ctx, hinput)
-	return NewSimpleError(errors.Trace(err))
+	return NewSimpleError(err)
 }
 
 // ReadFile reads the file from the storage and returns the contents.
@@ -530,7 +530,7 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, *Error)
 	defer result.Body.Close()
 	data, err := io.ReadAll(result.Body)
 	if err != nil {
-		return nil, NewSimpleError(errors.Trace(err))
+		return nil, NewSimpleError(err)
 	}
 	return data, nil
 }
@@ -543,7 +543,7 @@ func (rs *S3Storage) DeleteFile(ctx context.Context, file string) *Error {
 	}
 
 	_, err := rs.svc.DeleteObjectWithContext(ctx, input)
-	return NewSimpleError(errors.Trace(err))
+	return NewSimpleError(err)
 }
 
 // FileExists check if file exists on s3 storage.
@@ -561,7 +561,7 @@ func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, *Error)
 				return false, nil
 			}
 		}
-		return false, NewSimpleError(errors.Trace(err))
+		return false, NewSimpleError(err)
 	}
 	return true, nil
 }
@@ -601,7 +601,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		// (as of 2020, DigitalOcean Spaces still does not support V2 - https://developers.digitalocean.com/documentation/spaces/#list-bucket-contents)
 		res, err := rs.svc.ListObjectsWithContext(ctx, req)
 		if err != nil {
-			return NewSimpleError(errors.Trace(err))
+			return NewSimpleError(err)
 		}
 		for _, r := range res.Contents {
 			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#AmazonS3-ListObjects-response-NextMarker -
@@ -629,7 +629,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 				continue
 			}
 			if err = fn(path, itemSize); err != nil {
-				return NewSimpleError(errors.Trace(err))
+				return NewSimpleError(err)
 			}
 		}
 		if !aws.BoolValue(res.IsTruncated) {
@@ -705,7 +705,7 @@ func (rs *S3Storage) open(
 	input.Range = rangeOffset
 	result, err := rs.svc.GetObjectWithContext(ctx, input)
 	if err != nil {
-		return nil, RangeInfo{}, NewSimpleError(errors.Trace(err))
+		return nil, RangeInfo{}, NewSimpleError(err)
 	}
 
 	var r RangeInfo
@@ -835,10 +835,10 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekEnd:
 		realOffset = r.rangeInfo.Size + offset
 	default:
-		return 0, newWrappedError(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+		return 0, NewErrorWithMessage(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
 	if realOffset < 0 {
-		return 0, newWrappedError(berrors.ErrStorageUnknown, "Seek in '%s': invalid offset to seek '%d'.", r.name, realOffset)
+		return 0, NewErrorWithMessage(berrors.ErrStorageUnknown, "Seek in '%s': invalid offset to seek '%d'.", r.name, realOffset)
 	}
 
 	if realOffset == r.pos {
@@ -927,14 +927,14 @@ func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWrite
 func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string) *Error {
 	content, err := rs.ReadFile(ctx, oldFileName)
 	if err != nil {
-		return NewSimpleError(errors.Trace(err))
+		return NewSimpleError(err)
 	}
 	err = rs.WriteFile(ctx, newFileName, content)
 	if err != nil {
-		return NewSimpleError(errors.Trace(err))
+		return NewSimpleError(err)
 	}
 	if err = rs.DeleteFile(ctx, oldFileName); err != nil {
-		return NewSimpleError(errors.Trace(err))
+		return NewSimpleError(err)
 	}
 	return nil
 }

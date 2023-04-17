@@ -435,9 +435,9 @@ func SplitLargeCSV(
 	var columns []string
 	var prevRowIdxMax int64
 	if cfg.CSV.Header {
-		r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path)
-		if err != nil {
-			return nil, nil, err
+		r, packageErr := cfg.Store.Open(ctx, dataFile.FileMeta.Path)
+		if packageErr != nil {
+			return nil, nil, packageErr
 		}
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 		charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
@@ -465,9 +465,9 @@ func SplitLargeCSV(
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFile.FileMeta.FileSize {
-			r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path)
-			if err != nil {
-				return nil, nil, err
+			r, packageErr := cfg.Store.Open(ctx, dataFile.FileMeta.Path)
+			if packageErr != nil {
+				return nil, nil, packageErr
 			}
 			// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 			charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)

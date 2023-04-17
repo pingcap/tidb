@@ -711,9 +711,9 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 
 // InitDataFiles initializes the data store and load data files.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
-	u, err2 := storage.ParseRawURL(e.Path)
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
+	u, err := storage.ParseRawURL(e.Path)
+	if err != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
 	}
 	path := strings.Trim(u.Path, "/")
 	u.Path = ""
@@ -725,9 +725,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
 	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
+	_, err = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
+	if err != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err.Error())
 	}
 
 	opt := &storage.ExternalStorageOptions{}
@@ -767,7 +767,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobExceptAsterisk(path)
 		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix},
-			func(remotePath string, size int64) error {
+			func(remotePath string, size int64) *storage.Error {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
 				match, _ := filepath.Match(escapedPath, remotePath)

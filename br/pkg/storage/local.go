@@ -48,17 +48,17 @@ func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) *E
 			return NewSimpleError(errors.Annotatef(err, "after failed to write file, failed to check path exists : %v", existErr))
 		}
 		if exists {
-			return NewSimpleError(errors.Trace(err))
+			return NewSimpleError(err)
 		}
 		if mkdirErr := mkdirAll(path); mkdirErr != nil {
 			return NewSimpleError(errors.Annotatef(err, "after failed to write file, failed to mkdir : %v", mkdirErr))
 		}
 		if err := os.WriteFile(tmpPath, data, localFilePerm); err != nil {
-			return NewSimpleError(errors.Trace(err))
+			return NewSimpleError(err)
 		}
 	}
 	if err := os.Rename(tmpPath, filepath.Join(l.base, name)); err != nil {
-		return NewSimpleError(errors.Trace(err))
+		return NewSimpleError(err)
 	}
 	return nil
 }
@@ -68,7 +68,7 @@ func (l *LocalStorage) ReadFile(_ context.Context, name string) ([]byte, *Error)
 	path := filepath.Join(l.base, name)
 	bs, err := os.ReadFile(path)
 	if err != nil {
-		return nil, NewSimpleError(errors.Trace(err))
+		return nil, NewSimpleError(err)
 	}
 	return bs, nil
 }
@@ -121,7 +121,7 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 		}
 		return fn(path, size)
 	})
-	return NewSimpleError(errors.Trace(err))
+	return NewSimpleError(err)
 }
 
 // URI returns the base path as an URI with a file:/// prefix.
@@ -140,7 +140,7 @@ func (l *LocalStorage) Open(_ context.Context, path string) (ExternalFileReader,
 func (l *LocalStorage) Create(_ context.Context, name string) (ExternalFileWriter, *Error) {
 	file, err := os.Create(filepath.Join(l.base, name))
 	if err != nil {
-		return nil, NewSimpleError(errors.Trace(err))
+		return nil, NewSimpleError(err)
 	}
 	buf := bufio.NewWriter(file)
 	return newFlushStorageWriter(buf, buf, file), nil
@@ -157,7 +157,7 @@ func pathExists(_path string) (bool, *Error) {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		return false, NewSimpleError(errors.Trace(err))
+		return false, NewSimpleError(err)
 	}
 	return true, nil
 }
@@ -168,12 +168,12 @@ func pathExists(_path string) (bool, *Error) {
 func NewLocalStorage(base string) (*LocalStorage, *Error) {
 	ok, err := pathExists(base)
 	if err != nil {
-		return nil, NewSimpleError(errors.Trace(err))
+		return nil, NewSimpleError(err)
 	}
 	if !ok {
 		err := mkdirAll(base)
 		if err != nil {
-			return nil, NewSimpleError(errors.Trace(err))
+			return nil, NewSimpleError(err)
 		}
 	}
 	return &LocalStorage{base: base}, nil

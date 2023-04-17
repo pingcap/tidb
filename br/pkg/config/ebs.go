@@ -122,12 +122,11 @@ func (c *EBSBasedBRMeta) ConfigFromFile(path string) error {
 
 func NewMetaFromStorage(ctx context.Context, s storage.ExternalStorage) (*EBSBasedBRMeta, error) {
 	metaInfo := &EBSBasedBRMeta{}
-	metaBytes, err := s.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return metaInfo, errors.Trace(err)
+	metaBytes, packageErr := s.ReadFile(ctx, metautil.MetaFile)
+	if packageErr != nil {
+		return metaInfo, errors.Trace(packageErr.ToBRError())
 	}
-	err = json.Unmarshal(metaBytes, metaInfo)
+	err := json.Unmarshal(metaBytes, metaInfo)
 	if err != nil {
 		return metaInfo, errors.Trace(err)
 	}

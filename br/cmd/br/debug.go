@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock/mockid"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
@@ -120,11 +119,9 @@ func newCheckSumCommand() *cobra.Command {
 						logutil.Key("endKey", file.GetEndKey()),
 					)
 
-					var data []byte
-					data, err = s.ReadFile(ctx, file.Name)
-					if err != nil {
-						err = storage.TryConvertToBRError(err)
-						return errors.Trace(err)
+					data, err2 := s.ReadFile(ctx, file.Name)
+					if err2 != nil {
+						return errors.Trace(err2.ToBRError())
 					}
 					s := sha256.Sum256(data)
 					if !bytes.Equal(s[:], file.Sha256) {
@@ -284,9 +281,9 @@ func decodeBackupMetaCommand() *cobra.Command {
 				if err != nil {
 					return errors.Trace(err)
 				}
-				err = s.WriteFile(ctx, metautil.MetaJSONFile, backupMetaJSON)
-				if err != nil {
-					return errors.Trace(storage.TryConvertToBRError(err))
+				err2 := s.WriteFile(ctx, metautil.MetaJSONFile, backupMetaJSON)
+				if err2 != nil {
+					return errors.Trace(err2.ToBRError())
 				}
 				cmd.Printf("backupmeta decoded at %s\n", path.Join(cfg.Storage, metautil.MetaJSONFile))
 				return nil
@@ -338,10 +335,9 @@ func encodeBackupMetaCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 
-			metaData, err := s.ReadFile(ctx, metautil.MetaJSONFile)
-			if err != nil {
-				err = storage.TryConvertToBRError(err)
-				return errors.Trace(err)
+			metaData, err2 := s.ReadFile(ctx, metautil.MetaJSONFile)
+			if err2 != nil {
+				return errors.Trace(err2.ToBRError())
 			}
 
 			backupMetaJSON, err := utils.UnmarshalBackupMeta(metaData)
@@ -364,9 +360,9 @@ func encodeBackupMetaCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 
-			err = s.WriteFile(ctx, fileName, append(iv, encryptedContent...))
-			if err != nil {
-				return errors.Trace(storage.TryConvertToBRError(err))
+			err2 = s.WriteFile(ctx, fileName, append(iv, encryptedContent...))
+			if err2 != nil {
+				return errors.Trace(err2.ToBRError())
 			}
 			return nil
 		},

@@ -38,8 +38,8 @@ func TestAzblob(t *testing.T) {
 		Prefix: "a/b/",
 	}
 
-	azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, &sharedKeyAzuriteClientBuilder{})
-	err = TryConvertToBRError(err)
+	azblobStorage, packageErr := newAzureBlobStorageWithClientBuilder(ctx, options, &sharedKeyAzuriteClientBuilder{})
+	err := packageErr.ToBRError()
 	if err != nil {
 		if strings.Contains(err.Error(), "connect: connection refused") {
 			t.Log("azurite is not running, skip test")
@@ -90,7 +90,7 @@ func TestAzblob(t *testing.T) {
 
 	list := ""
 	var totalSize int64 = 0
-	err = azblobStorage.WalkDir(ctx, nil, func(name string, size int64) error {
+	err = azblobStorage.WalkDir(ctx, nil, func(name string, size int64) *Error {
 		list += name
 		totalSize += size
 		return nil

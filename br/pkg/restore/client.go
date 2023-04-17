@@ -357,11 +357,10 @@ func (rc *Client) SetCurrentTS(ts uint64) {
 }
 
 func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
-	var err error
+	var err *storage.Error
 	rc.storage, err = storage.New(ctx, backend, opts)
 	if err != nil {
-		err = storage.TryConvertToBRError(err)
-		return errors.Trace(err)
+		return errors.Trace(err.ToBRError())
 	}
 	return nil
 }
