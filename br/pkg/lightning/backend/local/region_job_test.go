@@ -28,7 +28,6 @@ import (
 )
 
 func TestIsIngestRetryable(t *testing.T) {
-	ctx := context.Background()
 	region := &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
@@ -66,8 +65,6 @@ func TestIsIngestRetryable(t *testing.T) {
 			sstMeta: metas,
 		},
 	}
-	splitCli := &mockSplitClient{}
-
 	// NotLeader doesn't mean region peers are changed, so we can retry ingest.
 
 	resp := &sst.IngestResponse{
@@ -79,11 +76,10 @@ func TestIsIngestRetryable(t *testing.T) {
 	}
 
 	clone := job
-	canContinueIngest, err := (&clone).convertStageOnIngestError(ctx, resp, splitCli)
+	canContinueIngest, err := (&clone).convertStageOnIngestError(resp)
 	require.NoError(t, err)
-	require.True(t, canContinueIngest)
-	require.Equal(t, wrote, clone.stage)
-	require.Equal(t, uint64(2), clone.region.Leader.Id)
+	require.False(t, canContinueIngest)
+	require.Equal(t, needRescan, clone.stage)
 	require.Error(t, clone.lastRetryableErr)
 
 	// EpochNotMatch means region is changed, if the new region covers the old, we can restart the writing process.
@@ -106,7 +102,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, regionScanned, clone.stage)
@@ -131,7 +127,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, needRescan, clone.stage)
@@ -141,7 +137,7 @@ func TestIsIngestRetryable(t *testing.T) {
 
 	resp.Error = &errorpb.Error{Message: "raft: proposal dropped"}
 	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, needRescan, clone.stage)
@@ -155,7 +151,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, needRescan, clone.stage)
@@ -167,7 +163,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		DiskFull: &errorpb.DiskFull{},
 	}
 	clone = job
-	_, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
+	_, err = (&clone).convertStageOnIngestError(resp)
 	require.ErrorContains(t, err, "non-retryable error")
 
 	// a general error is retryable from writing
@@ -176,7 +172,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		StaleCommand: &errorpb.StaleCommand{},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(ctx, resp, splitCli)
+	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, regionScanned, clone.stage)
