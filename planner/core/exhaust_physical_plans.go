@@ -2387,7 +2387,9 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		}
 	} else if p.JoinType.IsSemiJoin() {
 		preferredBuildIndex = 1
-		if p.children[1].statsInfo().Count() > p.children[0].statsInfo().Count() {
+		// MPPOuterJoinFixedBuildSide default value is false
+		// use MPPOuterJoinFixedBuildSide here as a way to disable using left table as build side
+		if !p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide && p.children[1].statsInfo().Count() > p.children[0].statsInfo().Count() {
 			preferredBuildIndex = 0
 		}
 	}
