@@ -224,6 +224,8 @@ type LoadDataController struct {
 	TotalFileSize int64
 	// user session context. DO NOT use it if load is in DETACHED mode.
 	UserCtx sessionctx.Context
+	// used for checksum in physical mode
+	distSQLScanConcurrency int
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -330,6 +332,8 @@ func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, er
 		charset:          plan.Charset,
 		importantSysVars: plan.ImportantSysVars,
 		UserCtx:          plan.UserCtx,
+
+		distSQLScanConcurrency: plan.UserCtx.GetSessionVars().DistSQLScanConcurrency(),
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
