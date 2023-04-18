@@ -168,6 +168,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 			} else {
 				s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
 			}
+			s.onError(err)
 			break
 		}
 		s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
