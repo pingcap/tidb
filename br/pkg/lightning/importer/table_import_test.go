@@ -1165,7 +1165,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 		}))
 
 		tls := common.NewTLSFromMockServer(server)
-		template := precheck.NewSimpleTemplate()
+		template := NewSimpleTemplate()
 
 		url := strings.TrimPrefix(server.URL, "https://")
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
@@ -1313,7 +1313,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		}))
 
 		tls := common.NewTLSFromMockServer(server)
-		template := precheck.NewSimpleTemplate()
+		template := NewSimpleTemplate()
 
 		url := strings.TrimPrefix(server.URL, "https://")
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
@@ -1422,7 +1422,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	for _, ca := range cases {
-		template := precheck.NewSimpleTemplate()
+		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
 		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil)
 		rc := &Controller{

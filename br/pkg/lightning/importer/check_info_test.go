@@ -355,7 +355,7 @@ func TestCheckCSVHeader(t *testing.T) {
 	se := tmock.NewContext()
 
 	for _, ca := range cases {
-		rc.checkTemplate = precheck.NewSimpleTemplate()
+		rc.checkTemplate = NewSimpleTemplate()
 		cfg.Mydumper.IgnoreColumns = ca.ignoreColumns
 		rc.dbInfos = make(map[string]*checkpoints.TidbDBInfo)
 
@@ -499,7 +499,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	rc.checkTemplate = precheck.NewSimpleTemplate()
+	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -518,14 +518,14 @@ func TestCheckTableEmpty(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
-	rc.checkTemplate = precheck.NewSimpleTemplate()
+	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	tmpl := rc.checkTemplate.(*precheck.SimpleTemplate)
-	require.Equal(t, 1, len(tmpl.CriticalMsgs))
-	require.Equal(t, "table(s) [`test2`.`tbl1`] are not empty", tmpl.CriticalMsgs[0])
+	tmpl := rc.checkTemplate.(*SimpleTemplate)
+	require.Equal(t, 1, len(tmpl.criticalMsgs))
+	require.Equal(t, "table(s) [`test2`.`tbl1`] are not empty", tmpl.criticalMsgs[0])
 
 	// multi tables contains data
 	db, mock, err = sqlmock.New()
@@ -538,14 +538,14 @@ func TestCheckTableEmpty(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
-	rc.checkTemplate = precheck.NewSimpleTemplate()
+	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	tmpl = rc.checkTemplate.(*precheck.SimpleTemplate)
-	require.Equal(t, 1, len(tmpl.CriticalMsgs))
-	require.Equal(t, "table(s) [`test1`.`tbl1`, `test2`.`tbl1`] are not empty", tmpl.CriticalMsgs[0])
+	tmpl = rc.checkTemplate.(*SimpleTemplate)
+	require.Equal(t, 1, len(tmpl.criticalMsgs))
+	require.Equal(t, "table(s) [`test1`.`tbl1`, `test2`.`tbl1`] are not empty", tmpl.criticalMsgs[0])
 
 	// init checkpoint with only two of the three tables
 	dbInfos := map[string]*checkpoints.TidbDBInfo{
@@ -635,33 +635,33 @@ func TestLocalResource(t *testing.T) {
 	preInfoGetter.estimatedSizeCache = estimatedSizeResult
 	ctx := context.Background()
 	// 1. source-size is smaller than disk-size, won't trigger error information
-	rc.checkTemplate = precheck.NewSimpleTemplate()
+	rc.checkTemplate = NewSimpleTemplate()
 	estimatedSizeResult.SizeWithIndex = 1000
 	err = rc.localResource(ctx)
 	require.NoError(t, err)
-	tmpl := rc.checkTemplate.(*precheck.SimpleTemplate)
-	require.Equal(t, 1, tmpl.WarnFailedCount)
-	require.Equal(t, 0, tmpl.CriticalFailedCount)
-	require.Equal(t, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB", tmpl.NormalMsgs[1])
+	tmpl := rc.checkTemplate.(*SimpleTemplate)
+	require.Equal(t, 1, tmpl.warnFailedCount)
+	require.Equal(t, 0, tmpl.criticalFailedCount)
+	require.Equal(t, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB", tmpl.normalMsgs[1])
 
 	// 2. source-size is bigger than disk-size, with default disk-quota will trigger a critical error
-	rc.checkTemplate = precheck.NewSimpleTemplate()
+	rc.checkTemplate = NewSimpleTemplate()
 	estimatedSizeResult.SizeWithIndex = 4096
 	err = rc.localResource(ctx)
 	require.NoError(t, err)
-	tmpl = rc.checkTemplate.(*precheck.SimpleTemplate)
-	require.Equal(t, 1, tmpl.WarnFailedCount)
-	require.Equal(t, 1, tmpl.CriticalFailedCount)
-	require.Equal(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB, please set `tikv-importer.disk-quota` to a smaller value than 2KiB or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports", tmpl.CriticalMsgs[0])
+	tmpl = rc.checkTemplate.(*SimpleTemplate)
+	require.Equal(t, 1, tmpl.warnFailedCount)
+	require.Equal(t, 1, tmpl.criticalFailedCount)
+	require.Equal(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB, please set `tikv-importer.disk-quota` to a smaller value than 2KiB or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports", tmpl.criticalMsgs[0])
 
 	// 3. source-size is bigger than disk-size, with a vaild disk-quota will trigger a warning
-	rc.checkTemplate = precheck.NewSimpleTemplate()
+	rc.checkTemplate = NewSimpleTemplate()
 	rc.cfg.TikvImporter.DiskQuota = config.ByteSize(1024)
 	estimatedSizeResult.SizeWithIndex = 4096
 	err = rc.localResource(ctx)
 	require.NoError(t, err)
-	tmpl = rc.checkTemplate.(*precheck.SimpleTemplate)
-	require.Equal(t, 1, tmpl.WarnFailedCount)
-	require.Equal(t, 0, tmpl.CriticalFailedCount)
-	require.Equal(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota (size: 1KiB) to finish imports, which may slow down import", tmpl.NormalMsgs[1])
+	tmpl = rc.checkTemplate.(*SimpleTemplate)
+	require.Equal(t, 1, tmpl.warnFailedCount)
+	require.Equal(t, 0, tmpl.criticalFailedCount)
+	require.Equal(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota (size: 1KiB) to finish imports, which may slow down import", tmpl.normalMsgs[1])
 }

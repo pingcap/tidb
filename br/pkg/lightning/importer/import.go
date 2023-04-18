@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
@@ -210,7 +209,7 @@ type Controller struct {
 	alterTableLock sync.Mutex
 	sysVars        map[string]string
 	tls            *common.TLS
-	checkTemplate  precheck.Template
+	checkTemplate  Template
 
 	errorSummaries errorSummaries
 
@@ -442,7 +441,7 @@ func NewImportControllerWithPauser(
 		db:            db,
 		sysVars:       common.DefaultImportantVariables,
 		tls:           tls,
-		checkTemplate: precheck.NewSimpleTemplate(),
+		checkTemplate: NewSimpleTemplate(),
 
 		errorSummaries:    makeErrorSummaries(log.FromContext(ctx)),
 		checkpointsDB:     cpdb,

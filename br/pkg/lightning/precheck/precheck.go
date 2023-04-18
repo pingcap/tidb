@@ -18,6 +18,15 @@ import (
 	"context"
 )
 
+// CheckType represents the check type.
+type CheckType string
+
+// CheckType constants.
+const (
+	Critical CheckType = "critical"
+	Warn     CheckType = "performance"
+)
+
 // CheckItemID is the ID of a precheck item
 type CheckItemID string
 
@@ -37,6 +46,30 @@ const (
 	CheckLocalTempKVDir           CheckItemID = "CHECK_LOCAL_TEMP_KV_DIR"
 	CheckTargetUsingCDCPITR       CheckItemID = "CHECK_TARGET_USING_CDC_PITR"
 )
+
+var (
+	// CheckItemIDToDisplayName is a map from CheckItemID to its display name
+	checkItemIDToDisplayName = map[CheckItemID]string{
+		CheckLargeDataFile:            "Large data file",
+		CheckSourcePermission:         "Source permission",
+		CheckTargetTableEmpty:         "Target table empty",
+		CheckSourceSchemaValid:        "Source schema valid",
+		CheckCheckpoints:              "Checkpoints",
+		CheckCSVHeader:                "CSV header",
+		CheckTargetClusterSize:        "Target cluster size",
+		CheckTargetClusterEmptyRegion: "Target cluster empty region",
+		CheckTargetClusterRegionDist:  "Target cluster region dist",
+		CheckTargetClusterVersion:     "Target cluster version",
+		CheckLocalDiskPlacement:       "Local disk placement",
+		CheckLocalTempKVDir:           "Local temp KV dir",
+		CheckTargetUsingCDCPITR:       "Target using CDC/PITR",
+	}
+)
+
+// DisplayName returns display name for it.
+func (c CheckItemID) DisplayName() string {
+	return checkItemIDToDisplayName[c]
+}
 
 // CheckResult is the result of a precheck item
 type CheckResult struct {
