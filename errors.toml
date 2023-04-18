@@ -1756,6 +1756,11 @@ error = '''
 Unsupported option for LOAD DATA LOCAL INFILE: %s
 '''
 
+["executor:8173"]
+error = '''
+BRIE Job %d not found
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
