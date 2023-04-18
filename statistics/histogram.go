@@ -214,10 +214,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 		b.ID = a.ID
 		defer func() { b.ID = old }()
 	}
-	x := a.ToString(0)
-	y := b.ToString(0)
-	logutil.BgLogger().Info("compare hist", zap.String("x", x), zap.String("y", y))
-	return bytes.Equal([]byte(x), []byte(y))
+	return bytes.Equal([]byte(a.ToString(0)), []byte(b.ToString(0)))
 }
 
 // constants for stats version. These const can be used for solving compatibility issue.
