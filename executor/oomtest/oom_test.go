@@ -228,6 +228,8 @@ func (h *oomCapture) AddMessageFilter(vals ...string) {
 }
 
 func (h *oomCapture) ClearMessageFilter() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.messageFilter.Clear()
 }
 
@@ -255,7 +257,9 @@ func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		if end == -1 {
 			panic("end not found")
 		}
+		h.mu.Lock()
 		h.tracker = str[begin+len("8001]") : end]
+		h.mu.Unlock()
 		return nil
 	}
 	// They are just common background task and not related to the oom.
