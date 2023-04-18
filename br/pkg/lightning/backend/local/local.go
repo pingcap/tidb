@@ -1300,7 +1300,7 @@ func (local *Backend) executeJob(
 ) error {
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
-			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
+			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
 	})
 	if local.ShouldCheckTiKV {
 		for _, peer := range job.region.Region.GetPeers() {
@@ -1317,8 +1317,7 @@ func (local *Backend) executeJob(
 					// The available disk percent of TiKV
 					ratio := store.Status.Available * 100 / store.Status.Capacity
 					if ratio < 10 {
-						return errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d",
-							store.Store.Address, store.Status.Available, store.Status.Capacity)
+						return errors.Errorf("the remaining storage capacity of TiKV(%s) is less than 10%%; please increase the storage capacity of TiKV and try again", store.Store.Address)
 					}
 				}
 				break
