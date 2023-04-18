@@ -1168,7 +1168,7 @@ func (local *Backend) generateAndSendJob(
 	for _, r := range jobRanges {
 		select {
 		case <-egCtx.Done():
-			return nil
+			return eg.Wait()
 		case rangeCh <- r:
 		}
 	}
