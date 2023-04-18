@@ -1039,17 +1039,7 @@ func TestOrderByWithLimit(t *testing.T) {
 		require.Equal(t, len(sliceRes), len(resTableScan))
 		require.Equal(t, len(sliceRes), len(resHash))
 		require.Equal(t, len(sliceRes), len(resCommonHash))
-		/*for i := range sliceRes {
-			fmt.Print(sliceRes[i].a)
-			fmt.Print(" ")
-			fmt.Print(sliceRes[i].b)
-			fmt.Print(" ")
-			fmt.Print(sliceRes[i].c)
-			fmt.Print(" ")
-		}
-		fmt.Println()
-		fmt.Println(resCommonHash)
-		fmt.Println(queryCommonHash)*/
+
 		for i := range sliceRes {
 			expectValue := fmt.Sprintf("%v", sliceRes[i].c)
 			// Only check column `c`
