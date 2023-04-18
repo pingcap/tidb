@@ -186,6 +186,10 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 	return nil, consumer.getResult()
 }
 
+func (b *backfillSchedulerHandle) OnSubtaskFinished(_ context.Context, _ []byte) error {
+	return nil
+}
+
 // CleanupSubtaskExecEnv implements the Scheduler interface.
 func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
