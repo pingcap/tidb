@@ -854,6 +854,9 @@ const (
 	version139 = 139
 	// version 140 add column task_key to mysql.tidb_global_task
 	version140 = 140
+	// version 141 set the value of `tidb_session_plan_cache_size` to "tidb_prepared_plan_cache_size" if there is no `tidb_session_plan_cache_size`.
+	// This will only happens when we upgrade a cluster before 7.1.
+	version141 = 141
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -987,6 +990,7 @@ var (
 		upgradeToVer138,
 		upgradeToVer139,
 		upgradeToVer140,
+		upgradeToVer141,
 	}
 )
 
@@ -2437,6 +2441,30 @@ func upgradeToVer140(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `task_key` VARCHAR(256) NOT NULL AFTER `id`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD UNIQUE KEY task_key(task_key)", dbterror.ErrDupKeyName)
+}
+
+// upgradeToVer141 sets the value of `tidb_session_plan_cache_size` as `tidb_prepared_plan_cache_size` for compatibility.
+func upgradeToVer141(s Session, ver int64) {
+	if ver >= version141 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPrepPlanCacheSize)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	if err != nil || req.NumRows() == 0 {
+		return
+	}
+	row := req.GetRow(0)
+	if row.IsNull(0) {
+		return
+	}
+	val := row.GetString(0)
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBSessionPlanCacheSize, val)
 }
 
 func writeOOMAction(s Session) {
