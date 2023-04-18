@@ -3179,22 +3179,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	return buf.String()
 }
 
-func writeStatsLoadStatusItems(buf *bytes.Buffer, loadStatus map[string]string) {
-	if len(loadStatus) > 0 {
-		buf.WriteString("[")
-		firstComma := false
-		for name, status := range loadStatus {
-			if firstComma {
-				buf.WriteString("," + name + ":" + status)
-			} else {
-				buf.WriteString(name + ":" + status)
-				firstComma = true
-			}
-		}
-		buf.WriteString("]")
-	}
-}
-
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")

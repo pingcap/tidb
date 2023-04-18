@@ -1339,8 +1339,8 @@ func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
 	if len(s.ColumnStatsLoadStatus)+len(s.IndexStatsLoadStatus) > 0 {
 		fmt.Fprintf(w,
 			"[%s][%s]",
-			strings.Join(s.collectFromColOrIdxStatus(false, nil, nil), ", "),
-			strings.Join(s.collectFromColOrIdxStatus(true, nil, nil), ", "),
+			strings.Join(s.collectFromColOrIdxStatus(false, nil, nil), ","),
+			strings.Join(s.collectFromColOrIdxStatus(true, nil, nil), ","),
 		)
 	}
 }
@@ -1365,7 +1365,7 @@ func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(forColumn bool, output
 					name = s.TblInfo.FindIndexNameByID(id)
 				}
 			}
-			strs = append(strs, name+": "+status[id])
+			strs = append(strs, name+":"+status[id])
 			if outputNumsLeft != nil {
 				*outputNumsLeft--
 			}
