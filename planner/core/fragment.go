@@ -544,6 +544,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	dispatchPolicy := tiflashcompute.DispatchPolicyInvalid
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
+		ttl = time.Duration(0)
 	}
 	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy)
 	if err != nil {

@@ -188,11 +188,11 @@ func detectControlPath(cgroupFilePath string, controller string) (string, error)
 }
 
 // See http://man7.org/linux/man-pages/man5/proc.5.html for `mountinfo` format.
-func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (string, int, error) {
+func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (mount []string, version []int, err error) {
 	//nolint:gosec
 	info, err := os.Open(mountInfoPath)
 	if err != nil {
-		return "", 0, errors.Wrapf(err, "failed to read mounts info from file: %s", mountInfoPath)
+		return nil, nil, errors.Wrapf(err, "failed to read mounts info from file: %s", mountInfoPath)
 	}
 	defer func() {
 		err := info.Close()
@@ -200,6 +200,8 @@ func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (st
 			log.Error("close mountInfoPath", zap.Error(err))
 		}
 	}()
+	var foundVer1, foundVer2 = false, false
+	var mountPointVer1, mountPointVer2 string
 
 	scanner := bufio.NewScanner(info)
 	for scanner.Scan() {
@@ -212,7 +214,9 @@ func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (st
 		if ok {
 			mountPoint := string(fields[4])
 			if ver == 2 {
-				return mountPoint, ver, nil
+				foundVer2 = true
+				mountPointVer2 = mountPoint
+				continue
 			}
 			// It is possible that the controller mount and the cgroup path are not the same (both are relative to the NS root).
 			// So start with the mount and construct the relative path of the cgroup.
@@ -228,13 +232,23 @@ func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (st
 				// the best action is to ignore the line and hope that the rest of the lines
 				// will allow us to extract a valid path.
 				if relPath, err := filepath.Rel(nsRelativePath, cRoot); err == nil {
-					return filepath.Join(mountPoint, relPath), ver, nil
+					mountPointVer1 = filepath.Join(mountPoint, relPath)
+					foundVer1 = true
 				}
 			}
 		}
 	}
+	if foundVer1 && foundVer2 {
+		return []string{mountPointVer1, mountPointVer2}, []int{1, 2}, nil
+	}
+	if foundVer1 {
+		return []string{mountPointVer1}, []int{1}, nil
+	}
+	if foundVer2 {
+		return []string{mountPointVer2}, []int{2}, nil
+	}
 
-	return "", 0, fmt.Errorf("failed to detect cgroup root mount and version")
+	return nil, nil, fmt.Errorf("failed to detect cgroup root mount and version")
 }
 
 func cgroupFileToUint64(filepath, desc string) (res uint64, err error) {

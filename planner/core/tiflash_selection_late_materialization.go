@@ -178,6 +178,9 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 			return true
 		case ast.StrToDate, ast.SubDate, ast.SubTime, ast.TimeLiteral, ast.TimeFormat, ast.TimeToSec, ast.TimeDiff, ast.TimestampDiff:
 			return true
+		// regexp functions
+		case ast.Regexp, ast.RegexpLike, ast.RegexpReplace, ast.RegexpSubstr, ast.RegexpInStr:
+			return true
 			// TODO: add more heavy cost functions
 		}
 	}
@@ -203,7 +206,7 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 // @param: physicalTableScan: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
 	// When the table is small, there is no need to push down the conditions.
-	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize {
+	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize || physicalTableScan.KeepOrder {
 		return
 	}
 	conds := physicalSelection.Conditions

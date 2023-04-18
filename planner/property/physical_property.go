@@ -216,7 +216,8 @@ type PhysicalProperty struct {
 }
 
 // NewPhysicalProperty builds property from columns.
-func NewPhysicalProperty(taskTp TaskType, cols []*expression.Column, desc bool, expectCnt float64, enforced bool) *PhysicalProperty {
+func NewPhysicalProperty(taskTp TaskType, cols []*expression.Column,
+	desc bool, expectCnt float64, enforced bool) *PhysicalProperty {
 	return &PhysicalProperty{
 		SortItems:      SortItemsFromCols(cols, desc),
 		TaskTp:         taskTp,
@@ -287,7 +288,8 @@ func (p *PhysicalProperty) IsPrefix(prop *PhysicalProperty) bool {
 		return false
 	}
 	for i := range p.SortItems {
-		if !p.SortItems[i].Col.Equal(nil, prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc {
+		if !p.SortItems[i].Col.Equal(nil,
+			prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc {
 			return false
 		}
 	}
@@ -300,7 +302,8 @@ func (p *PhysicalProperty) IsSortItemAllForPartition() bool {
 		return false
 	}
 	for i := range p.SortItemsForPartition {
-		if !p.SortItemsForPartition[i].Col.Equal(nil, p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
+		if !p.SortItemsForPartition[i].Col.Equal(nil,
+			p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
 			return false
 		}
 	}

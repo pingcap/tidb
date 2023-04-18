@@ -36,6 +36,7 @@ go_test(
     embed = [":placement"],
     flaky = True,
     race = "on",
+    shard_count = 24,
     deps = [
         "//kv",
         "//meta",

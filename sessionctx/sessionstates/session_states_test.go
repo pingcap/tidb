@@ -422,6 +422,19 @@ func TestSessionCtx(t *testing.T) {
 				tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 			},
 		},
+		{
+			// check ResourceGroupName
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")
+				tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
+				tk.MustExec("SET RESOURCE GROUP `rg1`")
+				require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
+			},
+		},
 	}
 
 	for _, tt := range tests {

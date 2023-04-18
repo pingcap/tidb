@@ -1103,6 +1103,9 @@ var defaultSysVars = []*SysVar{
 			s.PreparedPlanCacheSize = uVal
 		}
 		return err
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		appendDeprecationWarning(vars, TiDBPrepPlanCacheSize, TiDBSessionPlanCacheSize)
+		return normalizedValue, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePrepPlanCacheMemoryMonitor, Value: BoolToOnOff(DefTiDBEnablePrepPlanCacheMemoryMonitor), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePreparedPlanCacheMemoryMonitor = TiDBOptOn(val)
@@ -1125,6 +1128,23 @@ var defaultSysVars = []*SysVar{
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
 			s.NonPreparedPlanCacheSize = uVal
+		}
+		return err
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		appendDeprecationWarning(vars, TiDBNonPreparedPlanCacheSize, TiDBSessionPlanCacheSize)
+		return normalizedValue, nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPlanCacheMaxPlanSize, Value: strconv.FormatUint(DefTiDBPlanCacheMaxPlanSize, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		uVal, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			s.PlanCacheMaxPlanSize = uVal
+		}
+		return err
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSessionPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBSessionPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
+		uVal, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			s.SessionPlanCacheSize = uVal
 		}
 		return err
 	}},

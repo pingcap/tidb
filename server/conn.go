@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1580,8 +1579,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	if loadDataWorker == nil {
 		return errors.New("load data info is empty")
 	}
-
-	err := cc.writeReq(ctx, loadDataWorker.GetInfilePath())
+	infile := loadDataWorker.GetInfilePath()
+	err := cc.writeReq(ctx, infile)
 	if err != nil {
 		return err
 	}
@@ -1626,10 +1625,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	}()
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
-	_, err = loadDataWorker.Load(ctx, []importer.LoadDataReaderInfo{{
-		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
-			return executor.NewSimpleSeekerOnReadCloser(r), nil
-		}}})
+	err = loadDataWorker.LoadLocal(ctx, r)
 	_ = r.Close()
 	wg.Wait()
 
@@ -1798,6 +1794,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	parserWarns := warns[len(prevWarns):]
 
 	var pointPlans []plannercore.Plan
+	cc.ctx.GetSessionVars().InMultiStmts = false
 	if len(stmts) > 1 {
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
@@ -1819,6 +1816,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				parserWarns = append(parserWarns, warn)
 			}
 		}
+		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
@@ -1942,22 +1940,28 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			if v.PartitionInfos != nil {
-				// TODO: move getting physical table ID from BatchPointGetExec.initialize to newBatchPointGetPlan
+			if v.PartitionInfos != nil && len(v.PartitionIDs) == 0 {
+				// skip when PartitionIDs is not initialized.
 				return nil
+			}
+			getPhysID := func(i int) int64 {
+				if v.PartitionInfos == nil {
+					return v.TblInfo.ID
+				}
+				return v.PartitionIDs[i]
 			}
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
-				for _, idxVals := range v.IndexValues {
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, v.TblInfo.ID)
+				for i, idxVals := range v.IndexValues {
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
 					if err1 != nil {
 						return err1
 					}
 					idxKeys = append(idxKeys, idxKey)
 				}
 			} else {
-				for _, handle := range v.Handles {
-					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(v.TblInfo.ID, handle))
+				for i, handle := range v.Handles {
+					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(getPhysID(i), handle))
 				}
 			}
 		}
@@ -1973,9 +1977,9 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			return nil, nil
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
-		// TODO: handle the PreprocessorReturn.
 		if err = plannercore.Preprocess(ctx, cc.getCtx(), stmt); err != nil {
-			return nil, err
+			// error might happen, see https://github.com/pingcap/tidb/issues/39664
+			return nil, nil
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
 		pointPlans[i] = p
@@ -2056,12 +2060,20 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	cc.audit(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
-	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
-	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
+	// - If rs is not nil, the statement tracker detachment from session tracker
+	//   is done in the `rs.Close` in most cases.
+	// - If the rs is nil and err is not nil, the detachment will be done in
+	//   the `handleNoDelay`.
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
+		// If error is returned during the planner phase or the executor.Open
+		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
+		// will not be detached. We need to detach them manually.
+		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
+			sv.StmtCtx.DetachMemDiskTracker()
+		}
 		return true, err
 	}
 

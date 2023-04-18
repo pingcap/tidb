@@ -38,7 +38,7 @@ invalid argument
 
 ["BR:Common:ErrInvalidMetaFile"]
 error = '''
-invalid metafile
+invalid metafile: %s
 '''
 
 ["BR:Common:ErrUndefinedDbOrTable"]
@@ -1753,7 +1753,7 @@ The current job status cannot perform the operation. %s
 
 ["executor:8172"]
 error = '''
-The job can not be DETACHED when LOAD DATA LOCAL INFILE
+Unsupported option for LOAD DATA LOCAL INFILE: %s
 '''
 
 ["executor:8212"]

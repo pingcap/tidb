@@ -1454,7 +1454,11 @@ func overwritePartialTableScanSchema(ds *DataSource, ts *PhysicalTableScan) {
 	for i := 0; i < hdColNum; i++ {
 		col := handleCols.GetCol(i)
 		exprCols = append(exprCols, col)
-		infoCols = append(infoCols, col.ToInfo())
+		if c := model.FindColumnInfoByID(ds.TableInfo().Columns, col.ID); c != nil {
+			infoCols = append(infoCols, c)
+		} else {
+			infoCols = append(infoCols, col.ToInfo())
+		}
 	}
 	ts.schema = expression.NewSchema(exprCols...)
 	ts.Columns = infoCols
@@ -2433,7 +2437,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
-	batchPointGetPlan := BatchPointGetPlan{
+	batchPointGetPlan := &BatchPointGetPlan{
 		ctx:              ds.ctx,
 		dbName:           ds.DBName.L,
 		AccessConditions: candidate.path.AccessConds,
@@ -2443,11 +2447,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		SinglePart:       ds.isPartition,
 		PartTblID:        ds.physicalTableID,
 		PartitionExpr:    getPartitionExpr(ds.ctx, ds.TableInfo()),
-	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
+	}
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
-	rTsk := &rootTask{p: batchPointGetPlan}
+	rTsk := &rootTask{}
 	if candidate.path.IsIntHandlePath {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
@@ -2455,6 +2459,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		batchPointGetPlan.accessCols = ds.TblCols
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
+			batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 			sel := PhysicalSelection{
 				Conditions: candidate.path.TableFilters,
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
@@ -2480,12 +2485,16 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
+			batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 			sel := PhysicalSelection{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
 			sel.SetChildren(batchPointGetPlan)
 			rTsk.p = sel
 		}
+	}
+	if rTsk.p == nil {
+		rTsk.p = batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	}
 
 	return rTsk
@@ -2552,6 +2561,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		HandleCols:      ds.handleCols,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
+		constColsByCond: path.ConstCols,
 		prop:            prop,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))

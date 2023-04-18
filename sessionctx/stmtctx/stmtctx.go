@@ -315,10 +315,14 @@ type StatementContext struct {
 	EnableOptimizeTrace bool
 	// OptimizeTracer indicates the tracer for optimize
 	OptimizeTracer *tracing.OptimizeTracer
+
 	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
 	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
 	EnableOptimizerCETrace bool
 	OptimizerCETrace       []*tracing.CETraceRecord
+
+	EnableOptimizerDebugTrace bool
+	OptimizerDebugTrace       interface{}
 
 	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
 	WaitLockLeaseTime time.Duration
@@ -1200,6 +1204,19 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 // UseDynamicPartitionPrune indicates whether dynamic partition is used during the query
 func (sc *StatementContext) UseDynamicPartitionPrune() bool {
 	return sc.UseDynamicPruneMode
+}
+
+// DetachMemDiskTracker detaches the memory and disk tracker from the sessionTracker.
+func (sc *StatementContext) DetachMemDiskTracker() {
+	if sc == nil {
+		return
+	}
+	if sc.MemTracker != nil {
+		sc.MemTracker.Detach()
+	}
+	if sc.DiskTracker != nil {
+		sc.DiskTracker.Detach()
+	}
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.

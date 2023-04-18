@@ -73,6 +73,7 @@ go_test(
     ],
     embed = [":kv"],
     flaky = True,
+    shard_count = 19,
     deps = [
         "//parser/model",
         "//parser/mysql",

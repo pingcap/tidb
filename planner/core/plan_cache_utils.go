@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
@@ -185,6 +186,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 // Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
 // At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
+// TODO: maintain a sync.pool for this structure.
 type planCacheKey struct {
 	database      string
 	connID        uint64
@@ -213,14 +215,10 @@ type planCacheKey struct {
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		var (
-			dbBytes    = hack.Slice(key.database)
-			bufferSize = len(dbBytes) + 8*6 + 3*8
-		)
 		if key.hash == nil {
-			key.hash = make([]byte, 0, bufferSize)
+			key.hash = make([]byte, 0, len(key.stmtText)*2)
 		}
-		key.hash = append(key.hash, dbBytes...)
+		key.hash = append(key.hash, hack.Slice(key.database)...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
@@ -443,11 +441,14 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 }
 
 type matchOptsExtractor struct {
+	is                infoschema.InfoSchema
+	sctx              sessionctx.Context
 	cacheable         bool // For safety considerations, check if limit count less than 10000
 	offsetAndCount    []uint64
 	unCacheableReason string
 	paramTypeErr      error
 	hasSubQuery       bool
+	statsVersionHash  uint64
 }
 
 // Enter implements Visitor interface.
@@ -485,8 +486,39 @@ func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildre
 		}
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		checker.hasSubQuery = true
+	case *ast.TableName:
+		t, err := checker.is.TableByName(node.Schema, node.Name)
+		if err != nil { // CTE in this case
+			return in, false
+		}
+		tStats := getStatsTable(checker.sctx, t.Meta(), t.Meta().ID)
+		checker.statsVersionHash += tableStatsVersionForPlanCache(tStats) // use '+' as the hash function for simplicity
+	case *ast.InsertStmt:
+		if node.Select != nil {
+			node.Select.Accept(checker)
+		}
+		// skip node.Table for performance.
+		return in, true
 	}
 	return in, false
+}
+
+func tableStatsVersionForPlanCache(tStats *statistics.Table) (tableStatsVer uint64) {
+	if tStats == nil {
+		return 0
+	}
+	// use the max version of all columns and indices as the table stats version
+	for _, col := range tStats.Columns {
+		if col.LastUpdateVersion > tableStatsVer {
+			tableStatsVer = col.LastUpdateVersion
+		}
+	}
+	for _, idx := range tStats.Indices {
+		if idx.LastUpdateVersion > tableStatsVer {
+			tableStatsVer = idx.LastUpdateVersion
+		}
+	}
+	return tableStatsVer
 }
 
 // Leave implements Visitor interface.
@@ -495,11 +527,13 @@ func (checker *matchOptsExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) (*utilpc.PlanCacheMatchOpts, error) {
+func extractMatchOptsFromAST(sctx sessionctx.Context, is infoschema.InfoSchema, node ast.Node) (*utilpc.PlanCacheMatchOpts, error) {
 	if node == nil {
 		return nil, errors.New("AST node is nil")
 	}
 	checker := matchOptsExtractor{
+		sctx:           sctx,
+		is:             is,
 		cacheable:      true,
 		offsetAndCount: []uint64{},
 		hasSubQuery:    false,
@@ -515,14 +549,16 @@ func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) (*utilpc.Pl
 	return &utilpc.PlanCacheMatchOpts{
 		LimitOffsetAndCount: checker.offsetAndCount,
 		HasSubQuery:         checker.hasSubQuery,
+		StatsVersionHash:    checker.statsVersionHash,
+		ForeignKeyChecks:    sctx.GetSessionVars().ForeignKeyChecks,
 	}, nil
 }
 
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
+func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
 	// get limit params and has sub query indicator
-	matchOpts, err := extractMatchOptsFromAST(node, sctx)
+	matchOpts, err := extractMatchOptsFromAST(sctx, is, node)
 	if err != nil {
 		return nil, err
 	}

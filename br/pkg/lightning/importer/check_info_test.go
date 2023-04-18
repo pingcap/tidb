@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -492,7 +491,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	mock.MatchExpectationsInOrder(false)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
@@ -507,7 +506,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	// single table contains data
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	mock.MatchExpectationsInOrder(false)
 	// test auto retry retryable error
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
@@ -530,7 +529,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	// multi tables contains data
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
@@ -574,7 +573,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	rc.precheckItemBuilder.checkpointsDB = rc.checkpointsDB
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	// only need to check the one that is not in checkpoint
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))

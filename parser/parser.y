@@ -99,6 +99,7 @@ import (
 	collate           "COLLATE"
 	column            "COLUMN"
 	constraint        "CONSTRAINT"
+	continueKwd       "CONTINUE"
 	convert           "CONVERT"
 	create            "CREATE"
 	cross             "CROSS"
@@ -108,6 +109,7 @@ import (
 	currentTs         "CURRENT_TIMESTAMP"
 	currentUser       "CURRENT_USER"
 	currentRole       "CURRENT_ROLE"
+	cursor            "CURSOR"
 	database          "DATABASE"
 	databases         "DATABASES"
 	dayHour           "DAY_HOUR"
@@ -127,10 +129,12 @@ import (
 	doubleType        "DOUBLE"
 	drop              "DROP"
 	dual              "DUAL"
+	elseIfKwd         "ELSEIF"
 	elseKwd           "ELSE"
 	enclosed          "ENCLOSED"
 	escaped           "ESCAPED"
 	exists            "EXISTS"
+	exit              "EXIT"
 	explain           "EXPLAIN"
 	except            "EXCEPT"
 	falseKwd          "FALSE"
@@ -157,6 +161,7 @@ import (
 	index             "INDEX"
 	infile            "INFILE"
 	inner             "INNER"
+	inout             "INOUT"
 	integerType       "INTEGER"
 	intersect         "INTERSECT"
 	interval          "INTERVAL"
@@ -170,6 +175,7 @@ import (
 	int3Type          "INT3"
 	int4Type          "INT4"
 	int8Type          "INT8"
+	iterate           "ITERATE"
 	join              "JOIN"
 	key               "KEY"
 	keys              "KEYS"
@@ -178,6 +184,7 @@ import (
 	lastValue         "LAST_VALUE"
 	lead              "LEAD"
 	leading           "LEADING"
+	leave             "LEAVE"
 	left              "LEFT"
 	like              "LIKE"
 	ilike             "ILIKE"
@@ -212,6 +219,7 @@ import (
 	optionally        "OPTIONALLY"
 	or                "OR"
 	order             "ORDER"
+	out               "OUT"
 	outer             "OUTER"
 	over              "OVER"
 	partition         "PARTITION"
@@ -248,6 +256,9 @@ import (
 	sqlBigResult      "SQL_BIG_RESULT"
 	sqlCalcFoundRows  "SQL_CALC_FOUND_ROWS"
 	sqlSmallResult    "SQL_SMALL_RESULT"
+	sqlexception      "SQLEXCEPTION"
+	sqlstate          "SQLSTATE"
+	sqlwarning        "SQLWARNING"
 	ssl               "SSL"
 	starting          "STARTING"
 	statsExtended     "STATS_EXTENDED"
@@ -269,6 +280,7 @@ import (
 	union             "UNION"
 	unlock            "UNLOCK"
 	unsigned          "UNSIGNED"
+	until             "UNTIL"
 	update            "UPDATE"
 	usage             "USAGE"
 	use               "USE"
@@ -285,6 +297,7 @@ import (
 	virtual           "VIRTUAL"
 	when              "WHEN"
 	where             "WHERE"
+	while             "WHILE"
 	write             "WRITE"
 	window            "WINDOW"
 	with              "WITH"
@@ -369,6 +382,7 @@ import (
 	csvSeparator          "CSV_SEPARATOR"
 	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
 	current               "CURRENT"
+	close                 "CLOSE"
 	cluster               "CLUSTER"
 	clustered             "CLUSTERED"
 	cycle                 "CYCLE"
@@ -377,6 +391,7 @@ import (
 	dateType              "DATE"
 	day                   "DAY"
 	deallocate            "DEALLOCATE"
+	declare               "DECLARE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
 	digest                "DIGEST"
@@ -413,6 +428,7 @@ import (
 	first                 "FIRST"
 	fixed                 "FIXED"
 	flush                 "FLUSH"
+	found                 "FOUND"
 	following             "FOLLOWING"
 	format                "FORMAT"
 	full                  "FULL"
@@ -420,6 +436,7 @@ import (
 	general               "GENERAL"
 	global                "GLOBAL"
 	grants                "GRANTS"
+	handler               "HANDLER"
 	hash                  "HASH"
 	help                  "HELP"
 	histogram             "HISTOGRAM"
@@ -493,6 +510,9 @@ import (
 	nulls                 "NULLS"
 	off                   "OFF"
 	offset                "OFFSET"
+	oltpReadOnly          "OLTP_READ_ONLY"
+	oltpReadWrite         "OLTP_READ_WRITE"
+	oltpWriteOnly         "OLTP_WRITE_ONLY"
 	onDuplicate           "ON_DUPLICATE"
 	online                "ONLINE"
 	only                  "ONLY"
@@ -511,6 +531,7 @@ import (
 	per_table             "PER_TABLE"
 	pipesAsOr
 	plugins               "PLUGINS"
+	point                 "POINT"
 	policy                "POLICY"
 	preSplitRegions       "PRE_SPLIT_REGIONS"
 	preceding             "PRECEDING"
@@ -619,6 +640,7 @@ import (
 	timeType              "TIME"
 	tokenIssuer           "TOKEN_ISSUER"
 	tp                    "TYPE"
+	tpcc                  "TPCC"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
 	transaction           "TRANSACTION"
@@ -642,6 +664,7 @@ import (
 	week                  "WEEK"
 	weightString          "WEIGHT_STRING"
 	without               "WITHOUT"
+	workload              "WORKLOAD"
 	x509                  "X509"
 	yearType              "YEAR"
 	wait                  "WAIT"
@@ -656,6 +679,7 @@ import (
 	bitOr                 "BIT_OR"
 	bitXor                "BIT_XOR"
 	bound                 "BOUND"
+	br                    "BR"
 	briefType             "BRIEF"
 	burstable             "BURSTABLE"
 	cast                  "CAST"
@@ -675,7 +699,9 @@ import (
 	follower              "FOLLOWER"
 	followerConstraints   "FOLLOWER_CONSTRAINTS"
 	followers             "FOLLOWERS"
+	fullBackupStorage     "FULL_BACKUP_STORAGE"
 	getFormat             "GET_FORMAT"
+	gcTTL                 "GC_TTL"
 	groupConcat           "GROUP_CONCAT"
 	next_row_id           "NEXT_ROW_ID"
 	inplace               "INPLACE"
@@ -690,6 +716,7 @@ import (
 	learners              "LEARNERS"
 	min                   "MIN"
 	max                   "MAX"
+	metadata              "METADATA"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
@@ -700,10 +727,12 @@ import (
 	primaryRegion         "PRIMARY_REGION"
 	recent                "RECENT"
 	replayer              "REPLAYER"
+	restoredTS            "RESTORED_TS"
 	running               "RUNNING"
 	s3                    "S3"
 	schedule              "SCHEDULE"
 	staleness             "STALENESS"
+	startTS               "START_TS"
 	std                   "STD"
 	stddev                "STDDEV"
 	stddevPop             "STDDEV_POP"
@@ -731,6 +760,7 @@ import (
 	tokudbZstd            "TOKUDB_ZSTD"
 	top                   "TOP"
 	trim                  "TRIM"
+	untilTS               "UNTIL_TS"
 	variance              "VARIANCE"
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
@@ -907,12 +937,14 @@ import (
 	CreateIndexStmt            "CREATE INDEX statement"
 	CreateBindingStmt          "CREATE BINDING  statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
+	CreateProcedureStmt        "CREATE PROCEDURE statement"
 	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt         "CREATE SEQUENCE statement"
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
 	DropDatabaseStmt           "DROP DATABASE statement"
 	DropIndexStmt              "DROP INDEX statement"
+	DropProcedureStmt          "DROP PROCEDURE statement"
 	DropResourceGroupStmt      "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt         "DROP STATISTICS statement"
 	DropStatsStmt              "DROP STATS statement"
@@ -950,6 +982,8 @@ import (
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
+	ProcedureProcStmt          "The entrance of procedure statements which contains all kinds of statements in procedure"
+	ProcedureStatementStmt     "The normal statements in procedure, such as dml, select, set ..."
 	SelectStmt                 "SELECT statement"
 	SelectStmtWithClause       "common table expression SELECT statement"
 	RenameTableStmt            "rename table statement"
@@ -989,6 +1023,28 @@ import (
 	ResumeLoadDataStmt         "RESUME LOAD DATA JOB statement"
 	CancelLoadDataStmt         "CANCEL LOAD DATA JOB statement"
 	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
+	ProcedureUnlabeledBlock    "The statement block without label in procedure"
+	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
+	SimpleWhenThen             "Procedure case when then"
+	SearchWhenThen             "Procedure search when then"
+	ProcedureIfstmt            "The if statement in procedure, expressed by if ... elseif .. else ... end if"
+	procedurceElseIfs          "The else block in procedure, expressed by elseif or else or nil"
+	ProcedureIf                "The if block in procedure, expressed by expr then statement procedurceElseIfs"
+	ProcedureUnlabelLoopBlock  "The loop block without label in procedure "
+	ProcedureUnlabelLoopStmt   "The loop statement in procedure, expressed by repeat/do while/loop"
+	ProcedureCaseStmt          "Case statement in procedure, expressed by `case ... when.. then ..`"
+	ProcedureSimpleCase        "The simpe case statement in procedure, expressed by `case expr when expr then statement ... end case`"
+	ProcedureSearchedCase      "The searched case statement in procedure, expressed by `case when expr then statement ... end case`"
+	ProcedureCursorSelectStmt  "The select stmt can used in procedure cursor."
+	ProcedureOpenCur           "The open cursor statement in procedure, expressed by `open ...`"
+	ProcedureCloseCur          "The close cursor statement in procedure, expressed by `close ...`"
+	ProcedureFetchInto         "The fetch into statement in procedure, expressed by `fetch ... into ...`"
+	ProcedureHcond             "The handler value statement in procedure, expressed by condition_value"
+	ProcedurceCond             "The handler code statement in procedure, expressed by code error num or `sqlstate ...`"
+	ProcedureLabeledBlock      "The statement block with label in procedure"
+	ProcedurelabeledLoopStmt   "The loop block with label in procedure"
+	ProcedureIterate           "The iterate statement in procedure, expressed by `iterate ...`"
+	ProcedureLeave             "The leave statement in procedure, expressed by `leave ...`"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -1382,11 +1438,29 @@ import (
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
+	CalibrateResourceWorkloadOption        "Calibrate Resource workload option"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
 	DryRunOptions                          "Dry run options"
 	OptionalShardColumn                    "Optional shard column"
+	SpOptInout                             "Optional procedure param type"
+	OptSpPdparams                          "Optional procedure param list"
+	SpPdparams                             "Procedure params"
+	SpPdparam                              "Procedure param"
+	ProcedureOptDefault                    "Optional procedure variable default value"
+	ProcedureProcStmts                     "Procedure statement list"
+	ProcedureProcStmt1s                    "One more procedure statement"
+	ProcedureDecl                          "Procedure variable statement"
+	ProcedureDecls                         "Procedure variable statements"
+	ProcedureDeclsOpt                      "Optional procedure variable statements"
+	ProcedureDeclIdents                    "Procedure variable name identifiers"
+	SimpleWhenThenList                     "Procedure case WhenThen list"
+	SearchedWhenThenList                   "Procedure search WhenThen list"
+	ElseCaseOpt                            "Optional procedure else statement, expressed by `else .../nil`"
+	ProcedureFetchList                     "Procedure fetch into variables"
+	ProcedureHandlerType                   "Procedure handler operation type"
+	ProcedureHcondList                     "Procedure handler condition value list"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1464,6 +1538,7 @@ import (
 	StringName                      "string literal or identifier"
 	StringNameOrBRIEOptionKeyword   "string literal or identifier or keyword used for BRIE options"
 	Symbol                          "Constraint Symbol"
+	ProcedurceLabelOpt              "Optional Procedure label name"
 
 %precedence empty
 %precedence as
@@ -5106,10 +5181,94 @@ BRIEStmt:
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
+|	"BACKUP" "LOGS" "TO" stringLit BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamStart
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"STOP" "BACKUP" "LOGS"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamStop
+		$$ = stmt
+	}
+|	"PAUSE" "BACKUP" "LOGS" BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamPause
+		stmt.Options = $4.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"RESUME" "BACKUP" "LOGS"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamResume
+		$$ = stmt
+	}
+|	"PURGE" "BACKUP" "LOGS" "FROM" stringLit BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamPurge
+		stmt.Storage = $5
+		stmt.Options = $6.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"SHOW" "BACKUP" "LOGS" "STATUS"
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamStatus
+		$$ = stmt
+	}
+|	"SHOW" "BACKUP" "LOGS" "METADATA" "FROM" stringLit
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindStreamMetaData
+		stmt.Storage = $6
+		$$ = stmt
+	}
+|	"SHOW" "BR" "JOB" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowJob
+		stmt.JobID = $4.(int64)
+		$$ = stmt
+	}
+|	"SHOW" "BR" "JOB" "QUERY" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowQuery
+		stmt.JobID = $5.(int64)
+		$$ = stmt
+	}
+|	"CANCEL" "BR" "JOB" Int64Num
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindCancelJob
+		stmt.JobID = $4.(int64)
+		$$ = stmt
+	}
+|	"SHOW" "BACKUP" "METADATA" "FROM" stringLit
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindShowBackupMeta
+		stmt.Storage = $5
+		$$ = stmt
+	}
 |	"RESTORE" BRIETables "FROM" stringLit BRIEOptions
 	{
 		stmt := $2.(*ast.BRIEStmt)
 		stmt.Kind = ast.BRIEKindRestore
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"RESTORE" "POINT" "FROM" stringLit BRIEOptions
+	{
+		stmt := &ast.BRIEStmt{}
+		stmt.Kind = ast.BRIEKindRestorePIT
 		stmt.Storage = $4
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
@@ -5357,6 +5516,41 @@ BRIEOption:
 		$$ = &ast.BRIEOption{
 			Tp:        ast.BRIEOptionAnalyze,
 			UintValue: uint64($3.(ast.BRIEOptionLevel)),
+		}
+	}
+|	"FULL_BACKUP_STORAGE" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionFullBackupStorage,
+			StrValue: $3,
+		}
+	}
+|	"RESTORED_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionRestoredTS,
+			StrValue: $3,
+		}
+	}
+|	"START_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionStartTS,
+			StrValue: $3,
+		}
+	}
+|	"UNTIL_TS" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionUntilTS,
+			StrValue: $3,
+		}
+	}
+|	"GC_TTL" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionGCTTL,
+			StrValue: $3,
 		}
 	}
 
@@ -5838,7 +6032,7 @@ FieldList:
 	{
 		field := $1.(*ast.SelectField)
 		field.Offset = parser.startOffset(&yyS[yypt])
-		if field.Expr != nil && field.AsName.O == "" {
+		if field.Expr != nil {
 			endOffset := parser.yylval.offset
 			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
@@ -5849,7 +6043,7 @@ FieldList:
 		fl := $1.([]*ast.SelectField)
 		field := $3.(*ast.SelectField)
 		field.Offset = parser.startOffset(&yyS[yypt])
-		if field.Expr != nil && field.AsName.O == "" {
+		if field.Expr != nil {
 			endOffset := parser.yylval.offset
 			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
@@ -6102,6 +6296,7 @@ UnReservedKeyword:
 |	"CAPTURE"
 |	"CAUSAL"
 |	"CLEANUP"
+|	"CLOSE"
 |	"CHAIN"
 |	"CHARSET"
 |	"COLUMNS"
@@ -6175,6 +6370,7 @@ UnReservedKeyword:
 |	"START"
 |	"STATUS"
 |	"OPEN"
+|	"POINT"
 |	"SUBPARTITIONS"
 |	"SUBPARTITION"
 |	"TABLES"
@@ -6429,7 +6625,15 @@ UnReservedKeyword:
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|	"DECLARE"
+|	"HANDLER"
+|	"FOUND"
 |	"CALIBRATE"
+|	"WORKLOAD"
+|	"TPCC"
+|	"OLTP_READ_WRITE"
+|	"OLTP_READ_ONLY"
+|	"OLTP_WRITE_ONLY"
 
 TiDBKeyword:
 	"ADMIN"
@@ -6575,6 +6779,13 @@ NotKeywordToken:
 |	"MEDIUM"
 |	"LOW"
 |	"BURSTABLE"
+|	"BR"
+|	"GC_TTL"
+|	"METADATA"
+|	"START_TS"
+|	"UNTIL_TS"
+|	"RESTORED_TS"
+|	"FULL_BACKUP_STORAGE"
 
 /************************************************************************************
  *
@@ -7365,6 +7576,7 @@ FunctionNameConflict:
 |	"MINUTE"
 |	"MONTH"
 |	builtinNow
+|	"POINT"
 |	"QUARTER"
 |	"REPEAT"
 |	"REPLACE"
@@ -10848,6 +11060,13 @@ ShowStmt:
 			LoadDataJobID: &v,
 		}
 	}
+|	"SHOW" "CREATE" "PROCEDURE" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:        ast.ShowCreateProcedure,
+			Procedure: $4.(*ast.TableName),
+		}
+	}
 
 ShowPlacementTarget:
 	DatabaseSym DBName
@@ -11111,7 +11330,7 @@ ShowTargetFilterable:
 		// We do not support neither stored functions nor stored procedures.
 		// So we reuse show procedure status process logic.
 		$$ = &ast.ShowStmt{
-			Tp: ast.ShowProcedureStatus,
+			Tp: ast.ShowFunctionStatus,
 		}
 	}
 |	"EVENTS" ShowDatabaseNameOpt
@@ -11424,6 +11643,7 @@ Statement:
 |	CreateRoleStmt
 |	CreateBindingStmt
 |	CreatePolicyStmt
+|	CreateProcedureStmt
 |	CreateResourceGroupStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
@@ -11431,6 +11651,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	DropProcedureStmt
 |	DropPolicyStmt
 |	DropSequenceStmt
 |	DropViewStmt
@@ -14673,6 +14894,598 @@ PlanReplayerStmt:
 		$$ = x
 	}
 
+/* Stored PROCEDURE parameter declaration list */
+OptSpPdparams:
+	/* Empty */
+	{
+		$$ = []*ast.StoreParameter{}
+	}
+|	SpPdparams
+	{
+		$$ = $1
+	}
+
+SpPdparams:
+	SpPdparams ',' SpPdparam
+	{
+		l := $1.([]*ast.StoreParameter)
+		l = append(l, $3.(*ast.StoreParameter))
+		$$ = l
+	}
+|	SpPdparam
+	{
+		$$ = []*ast.StoreParameter{$1.(*ast.StoreParameter)}
+	}
+
+SpPdparam:
+	SpOptInout Identifier Type
+	{
+		x := &ast.StoreParameter{
+			Paramstatus: $1.(int),
+			ParamType:   $3.(*types.FieldType),
+			ParamName:   $2,
+		}
+		$$ = x
+	}
+
+SpOptInout:
+	/* Empty */
+	{
+		$$ = ast.MODE_IN
+	}
+|	"IN"
+	{
+		$$ = ast.MODE_IN
+	}
+|	"OUT"
+	{
+		$$ = ast.MODE_OUT
+	}
+|	"INOUT"
+	{
+		$$ = ast.MODE_INOUT
+	}
+
+ProcedureStatementStmt:
+	SelectStmt
+|	SelectStmtWithClause
+|	SubSelect
+	{
+		var sel ast.StmtNode
+		switch x := $1.(*ast.SubqueryExpr).Query.(type) {
+		case *ast.SelectStmt:
+			x.IsInBraces = true
+			sel = x
+		case *ast.SetOprStmt:
+			x.IsInBraces = true
+			sel = x
+		}
+		$$ = sel
+	}
+|	SetStmt
+|	UpdateStmt
+|	UseStmt
+|	InsertIntoStmt
+|	ReplaceIntoStmt
+|	CommitStmt
+|	RollbackStmt
+|	ExplainStmt
+|	SetOprStmt
+|	DeleteFromStmt
+|	AnalyzeTableStmt
+|	TruncateTableStmt
+
+ProcedureCursorSelectStmt:
+	SelectStmt
+|	SelectStmtWithClause
+|	SubSelect
+	{
+		var sel ast.StmtNode
+		switch x := $1.(*ast.SubqueryExpr).Query.(type) {
+		case *ast.SelectStmt:
+			x.IsInBraces = true
+			sel = x
+		case *ast.SetOprStmt:
+			x.IsInBraces = true
+			sel = x
+		}
+		$$ = sel
+	}
+|	SetOprStmt
+
+ProcedureUnlabeledBlock:
+	ProcedureBlockContent
+	{
+		$$ = $1
+	}
+
+ProcedureDeclIdents:
+	Identifier
+	{
+		$$ = []string{strings.ToLower($1)}
+	}
+|	ProcedureDeclIdents ',' Identifier
+	{
+		l := $1.([]string)
+		l = append(l, strings.ToLower($3))
+		$$ = l
+	}
+
+ProcedureOptDefault:
+	/* Empty */
+	{
+		$$ = nil
+	}
+|	"DEFAULT" Expression
+	{
+		$$ = $2
+	}
+
+ProcedureDecl:
+	"DECLARE" ProcedureDeclIdents Type ProcedureOptDefault
+	{
+		x := &ast.ProcedureDecl{
+			DeclNames: $2.([]string),
+			DeclType:  $3.(*types.FieldType),
+		}
+		if $4 != nil {
+			x.DeclDefault = $4.(ast.ExprNode)
+		}
+		$$ = x
+	}
+|	"DECLARE" identifier "CURSOR" "FOR" ProcedureCursorSelectStmt
+	{
+		name := strings.ToLower($2)
+		$$ = &ast.ProcedureCursor{
+			CurName:      name,
+			Selectstring: $5.(ast.StmtNode),
+		}
+	}
+|	"DECLARE" ProcedureHandlerType "HANDLER" "FOR" ProcedureHcondList ProcedureProcStmt
+	{
+		$$ = &ast.ProcedureErrorControl{
+			ControlHandle: $2.(int),
+			ErrorCon:      $5.([]ast.ErrNode),
+			Operate:       $6.(ast.StmtNode),
+		}
+	}
+
+ProcedureHandlerType:
+	"CONTINUE"
+	{
+		$$ = ast.PROCEDUR_CONTINUE
+	}
+|	"EXIT"
+	{
+		$$ = ast.PROCEDUR_EXIT
+	}
+
+ProcedureHcondList:
+	ProcedureHcond
+	{
+		$$ = []ast.ErrNode{$1.(ast.ErrNode)}
+	}
+|	ProcedureHcondList ',' ProcedureHcond
+	{
+		l := $1.([]ast.ErrNode)
+		l = append(l, $3.(ast.ErrNode))
+		$$ = l
+	}
+
+ProcedureHcond:
+	ProcedurceCond
+	{
+		$$ = $1.(ast.ErrNode)
+	}
+|	"SQLWARNING"
+	/* SQLSTATEs 01??? */
+	{
+		$$ = &ast.ProcedureErrorCon{
+			ErrorCon: ast.PROCEDUR_SQLWARNING,
+		}
+	}
+|	"NOT" "FOUND"
+	/* SQLSTATEs 02??? */
+	{
+		$$ = &ast.ProcedureErrorCon{
+			ErrorCon: ast.PROCEDUR_NOT_FOUND,
+		}
+	}
+|	"SQLEXCEPTION"
+	/* All other SQLSTATEs */
+	{
+		$$ = &ast.ProcedureErrorCon{
+			ErrorCon: ast.PROCEDUR_SQLEXCEPTION,
+		}
+	}
+
+ProcedurceCond:
+	NUM
+	{
+		$$ = &ast.ProcedureErrorVal{
+			ErrorNum: getUint64FromNUM($1),
+		}
+	}
+|	"SQLSTATE" optValue stringLit
+	{
+		$$ = &ast.ProcedureErrorState{
+			CodeStatus: $3,
+		}
+	}
+
+optValue:
+	{}
+|	"VALUE"
+
+ProcedureOpenCur:
+	"OPEN" identifier
+	{
+		name := strings.ToLower($2)
+		$$ = &ast.ProcedureOpenCur{
+			CurName: name,
+		}
+	}
+
+ProcedureFetchInto:
+	"FETCH" ProcedureOptFetchNo identifier "INTO" ProcedureFetchList
+	{
+		name := strings.ToLower($3)
+		$$ = &ast.ProcedureFetchInto{
+			CurName:   name,
+			Variables: $5.([]string),
+		}
+	}
+
+ProcedureCloseCur:
+	"CLOSE" identifier
+	{
+		name := strings.ToLower($2)
+		$$ = &ast.ProcedureCloseCur{
+			CurName: name,
+		}
+	}
+
+ProcedureOptFetchNo:
+
+/* Empty */
+|	"NEXT" "FROM"
+|	"FROM"
+
+ProcedureFetchList:
+	identifier
+	{
+		$$ = []string{strings.ToLower($1)}
+	}
+|	ProcedureFetchList ',' identifier
+	{
+		l := $1.([]string)
+		l = append(l, strings.ToLower($3))
+		$$ = l
+	}
+
+ProcedureDeclsOpt:
+	/* Empty */
+	{
+		$$ = []ast.DeclNode{}
+	}
+|	ProcedureDecls
+	{
+		$$ = $1
+	}
+
+ProcedureDecls:
+	ProcedureDecl ';'
+	{
+		$$ = []ast.DeclNode{$1.(ast.DeclNode)}
+	}
+|	ProcedureDecls ProcedureDecl ';'
+	{
+		l := $1.([]ast.DeclNode)
+		l = append(l, $2.(ast.DeclNode))
+		$$ = l
+	}
+
+ProcedureProcStmts:
+	/* Empty */
+	{
+		$$ = []ast.StmtNode{}
+	}
+|	ProcedureProcStmts ProcedureProcStmt ';'
+	{
+		l := $1.([]ast.StmtNode)
+		l = append(l, $2.(ast.StmtNode))
+		$$ = l
+	}
+
+ProcedureProcStmt1s:
+	ProcedureProcStmt ';'
+	{
+		$$ = []ast.StmtNode{$1.(ast.StmtNode)}
+	}
+|	ProcedureProcStmt1s ProcedureProcStmt ';'
+	{
+		l := $1.([]ast.StmtNode)
+		l = append(l, $2.(ast.StmtNode))
+		$$ = l
+	}
+
+ProcedureBlockContent:
+	"BEGIN" ProcedureDeclsOpt ProcedureProcStmts "END"
+	{
+		x := &ast.ProcedureBlock{
+			ProcedureVars:      $2.([]ast.DeclNode),
+			ProcedureProcStmts: $3.([]ast.StmtNode),
+		}
+		$$ = x
+	}
+
+ProcedureIfstmt:
+	"IF" ProcedureIf "END" "IF"
+	{
+		$$ = &ast.ProcedureIfInfo{
+			IfBody: $2.(*ast.ProcedureIfBlock),
+		}
+	}
+
+ProcedureIf:
+	Expression "THEN" ProcedureProcStmt1s procedurceElseIfs
+	{
+		ifBlock := &ast.ProcedureIfBlock{
+			IfExpr:           $1.(ast.ExprNode),
+			ProcedureIfStmts: $3.([]ast.StmtNode),
+		}
+		if $4 != nil {
+			ifBlock.ProcedureElseStmt = $4.(ast.StmtNode)
+		}
+		$$ = ifBlock
+	}
+
+procedurceElseIfs:
+	{
+		$$ = nil
+	}
+|	"ELSEIF" ProcedureIf
+	{
+		$$ = &ast.ProcedureElseIfBlock{
+			ProcedureIfStmt: $2.(*ast.ProcedureIfBlock),
+		}
+	}
+|	"ELSE" ProcedureProcStmt1s
+	{
+		$$ = &ast.ProcedureElseBlock{
+			ProcedureIfStmts: $2.([]ast.StmtNode),
+		}
+	}
+
+ProcedureCaseStmt:
+	ProcedureSimpleCase
+	{
+		$$ = $1
+	}
+|	ProcedureSearchedCase
+	{
+		$$ = $1
+	}
+
+SimpleWhenThenList:
+	SimpleWhenThen
+	{
+		$$ = []*ast.SimpleWhenThenStmt{$1.(*ast.SimpleWhenThenStmt)}
+	}
+|	SimpleWhenThenList SimpleWhenThen
+	{
+		l := $1.([]*ast.SimpleWhenThenStmt)
+		l = append(l, $2.(*ast.SimpleWhenThenStmt))
+		$$ = l
+	}
+
+SearchedWhenThenList:
+	SearchWhenThen
+	{
+		$$ = []*ast.SearchWhenThenStmt{$1.(*ast.SearchWhenThenStmt)}
+	}
+|	SearchedWhenThenList SearchWhenThen
+	{
+		l := $1.([]*ast.SearchWhenThenStmt)
+		l = append(l, $2.(*ast.SearchWhenThenStmt))
+		$$ = l
+	}
+
+SimpleWhenThen:
+	"WHEN" Expression "THEN" ProcedureProcStmt1s
+	{
+		$$ = &ast.SimpleWhenThenStmt{
+			Expr:           $2.(ast.ExprNode),
+			ProcedureStmts: $4.([]ast.StmtNode),
+		}
+	}
+
+SearchWhenThen:
+	"WHEN" Expression "THEN" ProcedureProcStmt1s
+	{
+		$$ = &ast.SearchWhenThenStmt{
+			Expr:           $2.(ast.ExprNode),
+			ProcedureStmts: $4.([]ast.StmtNode),
+		}
+	}
+
+ElseCaseOpt:
+	{
+		$$ = nil
+	}
+|	"ELSE" ProcedureProcStmt1s
+	{
+		$$ = $2.([]ast.StmtNode)
+	}
+
+ProcedureSimpleCase:
+	"CASE" Expression SimpleWhenThenList ElseCaseOpt "END" "CASE"
+	{
+		caseStmt := &ast.SimpleCaseStmt{
+			Condition: $2.(ast.ExprNode),
+			WhenCases: $3.([]*ast.SimpleWhenThenStmt),
+		}
+		if $4 != nil {
+			caseStmt.ElseCases = $4.([]ast.StmtNode)
+		}
+		$$ = caseStmt
+	}
+
+ProcedureSearchedCase:
+	"CASE" SearchedWhenThenList ElseCaseOpt "END" "CASE"
+	{
+		caseStmt := &ast.SearchCaseStmt{
+			WhenCases: $2.([]*ast.SearchWhenThenStmt),
+		}
+		if $3 != nil {
+			caseStmt.ElseCases = $3.([]ast.StmtNode)
+		}
+		$$ = caseStmt
+	}
+
+ProcedureUnlabelLoopBlock:
+	ProcedureUnlabelLoopStmt
+	{
+		$$ = $1
+	}
+
+ProcedureUnlabelLoopStmt:
+	"WHILE" Expression "DO" ProcedureProcStmt1s "END" "WHILE"
+	{
+		$$ = &ast.ProcedureWhileStmt{
+			Condition: $2.(ast.ExprNode),
+			Body:      $4.([]ast.StmtNode),
+		}
+	}
+|	"REPEAT" ProcedureProcStmt1s "UNTIL" Expression "END" "REPEAT"
+	{
+		$$ = &ast.ProcedureRepeatStmt{
+			Body:      $2.([]ast.StmtNode),
+			Condition: $4.(ast.ExprNode),
+		}
+	}
+
+ProcedureLabeledBlock:
+	identifier ':' ProcedureBlockContent ProcedurceLabelOpt
+	{
+		labelBlock := &ast.ProcedureLabelBlock{
+			LabelName: $1,
+			Block:     $3.(*ast.ProcedureBlock),
+		}
+		if $4 != "" && ($1 != $4) {
+			labelBlock.LabelError = true
+			labelBlock.LabelEnd = $4
+		}
+		$$ = labelBlock
+	}
+
+ProcedurceLabelOpt:
+	/* Empty  */
+	{
+		$$ = ""
+	}
+|	identifier
+	{
+		$$ = $1
+	}
+
+ProcedurelabeledLoopStmt:
+	identifier ':' ProcedureUnlabelLoopStmt ProcedurceLabelOpt
+	{
+		labelLoop := &ast.ProcedureLabelLoop{
+			LabelName: $1,
+			Block:     $3.(ast.StmtNode),
+		}
+		if $4 != "" && ($1 != $4) {
+			labelLoop.LabelError = true
+			labelLoop.LabelEnd = $4
+		}
+		$$ = labelLoop
+	}
+
+ProcedureIterate:
+	"ITERATE" identifier
+	{
+		$$ = &ast.ProcedureJump{
+			Name:    $2,
+			IsLeave: false,
+		}
+	}
+
+ProcedureLeave:
+	"LEAVE" identifier
+	{
+		$$ = &ast.ProcedureJump{
+			Name:    $2,
+			IsLeave: true,
+		}
+	}
+
+ProcedureProcStmt:
+	ProcedureStatementStmt
+|	ProcedureUnlabeledBlock
+|	ProcedureIfstmt
+|	ProcedureCaseStmt
+|	ProcedureUnlabelLoopBlock
+|	ProcedureOpenCur
+|	ProcedureCloseCur
+|	ProcedureFetchInto
+|	ProcedureLabeledBlock
+|	ProcedurelabeledLoopStmt
+|	ProcedureIterate
+|	ProcedureLeave
+
+/********************************************************************************************
+ *
+ *  Create Procedure Statement
+ *
+ *  Example:
+ *	CREATE
+ *  [DEFINER = user]
+ *  PROCEDURE [IF NOT EXISTS] sp_name ([proc_parameter[,...]])
+ *  routine_body
+ *  proc_parameter:
+ *  [ IN | OUT | INOUT ] param_name type
+ *  func_parameter:
+ *  param_name type
+ *  type:
+ *  Any valid MySQL data type
+ * routine_body:
+ *  Valid SQL routine statement
+ ********************************************************************************************/
+CreateProcedureStmt:
+	"CREATE" "PROCEDURE" IfNotExists TableName '(' OptSpPdparams ')' ProcedureProcStmt
+	{
+		x := &ast.ProcedureInfo{
+			IfNotExists:    $3.(bool),
+			ProcedureName:  $4.(*ast.TableName),
+			ProcedureParam: $6.([]*ast.StoreParameter),
+			ProcedureBody:  $8,
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		originStmt := $8
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
+		startOffset = parser.startOffset(&yyS[yypt-3])
+		if parser.src[startOffset] == '(' {
+			startOffset++
+		}
+		endOffset := parser.startOffset(&yyS[yypt-1])
+		x.ProcedureParamStr = strings.TrimSpace(parser.src[startOffset:endOffset])
+		$$ = x
+	}
+
+/********************************************************************************************
+*  DROP PROCEDURE  [IF EXISTS] sp_name
+********************************************************************************************/
+DropProcedureStmt:
+	"DROP" "PROCEDURE" IfExists TableName
+	{
+		$$ = &ast.DropProcedureStmt{
+			IfExists:      $3.(bool),
+			ProcedureName: $4.(*ast.TableName),
+		}
+	}
+
 /********************************************************************
  *
  * Calibrate Resource Statement
@@ -14680,8 +15493,32 @@ PlanReplayerStmt:
  * CALIBRATE RESOURCE
  *******************************************************************/
 CalibrateResourceStmt:
-	"CALIBRATE" "RESOURCE"
+	"CALIBRATE" "RESOURCE" CalibrateResourceWorkloadOption
 	{
-		$$ = &ast.CalibrateResourceStmt{}
+		$$ = &ast.CalibrateResourceStmt{
+			Tp: $3.(ast.CalibrateResourceType),
+		}
+	}
+
+CalibrateResourceWorkloadOption:
+	/* empty */
+	{
+		$$ = ast.WorkloadNone
+	}
+|	"WORKLOAD" "TPCC"
+	{
+		$$ = ast.TPCC
+	}
+|	"WORKLOAD" "OLTP_READ_WRITE"
+	{
+		$$ = ast.OLTPREADWRITE
+	}
+|	"WORKLOAD" "OLTP_READ_ONLY"
+	{
+		$$ = ast.OLTPREADONLY
+	}
+|	"WORKLOAD" "OLTP_WRITE_ONLY"
+	{
+		$$ = ast.OLTPWRITEONLY
 	}
 %%

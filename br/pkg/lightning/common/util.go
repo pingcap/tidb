@@ -118,7 +118,8 @@ func ConnectMySQL(cfg *mysql.Config) (*sql.DB, error) {
 	// If access is denied and password is encoded by base64, try the decoded string as well.
 	if mysqlErr, ok := errors.Cause(firstErr).(*mysql.MySQLError); ok && mysqlErr.Number == tmysql.ErrAccessDenied {
 		// If password is encoded by base64, try the decoded string as well.
-		if password, decodeErr := base64.StdEncoding.DecodeString(cfg.Passwd); decodeErr == nil && string(password) != cfg.Passwd {
+		password, decodeErr := base64.StdEncoding.DecodeString(cfg.Passwd)
+		if decodeErr == nil && string(password) != cfg.Passwd {
 			cfg.Passwd = string(password)
 			db2, err := tryConnectMySQL(cfg)
 			if err == nil {
@@ -165,7 +166,7 @@ type SQLWithRetry struct {
 	HideQueryLog bool
 }
 
-func (t SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
+func (SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
 	return Retry(purpose, parentLogger, action)
 }
 
@@ -209,6 +210,43 @@ func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string
 	return t.perform(ctx, logger, purpose, func() error {
 		return t.DB.QueryRowContext(ctx, query).Scan(dest...)
 	})
+}
+
+// QueryStringRows executes a query that is expected to return multiple rows
+// whose every column is string.
+func (t SQLWithRetry) QueryStringRows(ctx context.Context, purpose string, query string) ([][]string, error) {
+	var res [][]string
+	logger := t.Logger
+	if !t.HideQueryLog {
+		logger = logger.With(zap.String("query", query))
+	}
+
+	err := t.perform(ctx, logger, purpose, func() error {
+		rows, err := t.DB.QueryContext(ctx, query)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		colNames, err := rows.Columns()
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			row := make([]string, len(colNames))
+			refs := make([]interface{}, 0, len(row))
+			for i := range row {
+				refs = append(refs, &row[i])
+			}
+			if err := rows.Scan(refs...); err != nil {
+				return err
+			}
+			res = append(res, row)
+		}
+		return rows.Err()
+	})
+
+	return res, err
 }
 
 // Transact executes an action in a transaction, and retry if the

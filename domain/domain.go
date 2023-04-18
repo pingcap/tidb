@@ -81,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -124,7 +125,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
-	m               sync.Mutex
+	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	sysSessionPool  *sessionPool
 	exit            chan struct{}
@@ -170,6 +171,7 @@ type Domain struct {
 
 	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
+	resourcePool    *pools.ResourcePool
 }
 
 type mdlCheckTableInfo struct {
@@ -730,10 +732,15 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
 		return
 	}
+	// Make sure the session is new.
+	if _, err := se.(sqlexec.SQLExecutor).ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), "rollback"); err != nil {
+		se.Close()
+		return
+	}
 	defer do.sysSessionPool.Put(se)
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
-	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
@@ -1089,6 +1096,7 @@ func (do *Domain) Init(
 		return sysExecutorFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
+	do.resourcePool = sysCtxPool
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
@@ -1106,6 +1114,7 @@ func (do *Domain) Init(
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
+
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			do.ddl = d
@@ -1155,9 +1164,6 @@ func (do *Domain) Init(
 		return err
 	}
 
-	if err = do.initDistTaskLoop(ctx); err != nil {
-		return err
-	}
 	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
 	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
@@ -1345,21 +1351,17 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	return nil
 }
 
-func (do *Domain) initDistTaskLoop(ctx context.Context) error {
+// InitDistTaskLoop initializes the distributed task framework.
+func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil)
 		}
 	})
-	se, err := do.sysExecutorFactory(do)
-	if err != nil {
-		return err
-	}
 
-	taskManager := storage.NewTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se.(sessionctx.Context))
+	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
 	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
 	if err != nil {
-		se.Close()
 		return err
 	}
 
@@ -1367,7 +1369,6 @@ func (do *Domain) initDistTaskLoop(ctx context.Context) error {
 	do.wg.Run(func() {
 		defer func() {
 			storage.SetTaskManager(nil)
-			se.Close()
 		}()
 		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
 	}, "distTaskFrameworkLoop")

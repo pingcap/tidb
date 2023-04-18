@@ -551,6 +551,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			schemaName = job.BinlogInfo.DBInfo.Name.L
 		}
 	}
+	if len(tableName) == 0 {
+		tableName = job.TableName
+	}
 	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
 	if len(schemaName) == 0 {
 		schemaName = getSchemaName(e.is, job.SchemaID)
@@ -2201,7 +2204,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.SkipUTF8Check = vars.SkipUTF8Check
 	sc.SkipASCIICheck = vars.SkipASCIICheck
 	sc.SkipUTF8MB4Check = !globalConfig.Instance.CheckMb4ValueInUTF8.Load()
-	vars.PreparedParams = vars.PreparedParams[:0]
+	vars.PlanCacheParams.Reset()
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
 	}

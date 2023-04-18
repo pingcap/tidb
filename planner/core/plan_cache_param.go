@@ -15,12 +15,13 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/sessionctx"
@@ -40,10 +41,8 @@ var (
 		return pr
 	}}
 	paramCtxPool = sync.Pool{New: func() interface{} {
-		buf := new(strings.Builder)
-		buf.Reset()
-		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
-		restoreCtx.Flags ^= format.RestoreKeyWordUppercase
+		buf := new(bytes.Buffer)
+		restoreCtx := format.NewRestoreCtx(format.RestoreForNonPrepPlanCache|format.RestoreStringWithoutCharset|format.RestoreStringSingleQuotes|format.RestoreNameBackQuotes, buf)
 		return restoreCtx
 	}}
 )
@@ -51,49 +50,51 @@ var (
 // paramReplacer is an ast.Visitor that replaces all values with `?` and collects them.
 type paramReplacer struct {
 	params []*driver.ValueExpr
-
-	// Skip all values in SelectField, e.g.
-	// `select a+1 from t where a<10 and b<23` should be parameterized to
-	// `select a+1 from t where a<? and b<?`, instead of
-	// `select a+? from t where a<? and b<?`.
-	// This is to make the output field names be corresponding to these values.
-	// Use int instead of bool to support nested SelectField.
-	selFieldsCnt int
-
-	// Skip all values in GroupByClause since them can affect the full_group_by check, e.g.
-	// `select a*2 from t group by a*?` cannot pass the full_group_by check.
-	groupByCnt int
 }
 
 func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
-	case *ast.SelectField:
-		pr.selFieldsCnt++
-	case *ast.GroupByClause:
-		pr.groupByCnt++
-	case *driver.ValueExpr:
-		if pr.selFieldsCnt == 0 && // not in SelectField
-			pr.groupByCnt == 0 { // not in GroupBy
-			pr.params = append(pr.params, n)
-			param := ast.NewParamMarkerExpr(len(pr.params) - 1)      // offset is used as order in non-prepared plan cache.
-			param.(*driver.ParamMarkerExpr).Datum = *n.Datum.Clone() // init the ParamMakerExpr's Datum
-			return param, true
+	case *ast.SelectField, *ast.GroupByClause, *ast.Limit, *ast.OrderByClause:
+		// Skip replacing values in these case:
+		// 1. SelectField: to keep the output field names be corresponding to these values.
+		// 2. GroupByClause, OrderByClause: to avoid breaking the full_group_by check.
+		// 3. Limit: to generate different plans for queries with different limit values.
+		return in, true
+	case *ast.FuncCallExpr:
+		switch n.FnName.L {
+		case ast.DateFormat, ast.StrToDate, ast.TimeFormat, ast.FromUnixTime:
+			// skip the second format argument: date_format('2020', '%Y') --> date_format(?, '%Y')
+			ret, _ := n.Args[0].Accept(pr)
+			n.Args[0] = ret.(ast.ExprNode)
+			return in, true
+		default:
+			return in, false
 		}
+	case *driver.ValueExpr:
+		pr.params = append(pr.params, n)
+		param := ast.NewParamMarkerExpr(len(pr.params) - 1)  // offset is used as order in non-prepared plan cache.
+		n.Datum.Copy(&param.(*driver.ParamMarkerExpr).Datum) // init the ParamMakerExpr's Datum
+		return param, true
 	}
 	return in, false
 }
 
 func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
-	switch in.(type) {
-	case *ast.SelectField:
-		pr.selFieldsCnt--
-	case *ast.GroupByClause:
-		pr.groupByCnt--
-	}
 	return in, true
 }
 
-func (pr *paramReplacer) Reset() { pr.params, pr.selFieldsCnt, pr.groupByCnt = nil, 0, 0 }
+func (pr *paramReplacer) Reset() { pr.params = nil }
+
+// GetParamSQLFromAST returns the parameterized SQL of this AST.
+// NOTICE: this function does not modify the original AST.
+func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
+	paramSQL, params, err = ParameterizeAST(ctx, sctx, stmt)
+	if err != nil {
+		return "", nil, err
+	}
+	err = RestoreASTWithParams(ctx, sctx, stmt, params)
+	return
+}
 
 // ParameterizeAST parameterizes this StmtNode.
 // e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23].
@@ -104,15 +105,14 @@ func ParameterizeAST(ctx context.Context, sctx sessionctx.Context, stmt ast.Stmt
 	defer func() {
 		pr.Reset()
 		paramReplacerPool.Put(pr)
-		pCtx.In.(*strings.Builder).Reset()
+		pCtx.In.(*bytes.Buffer).Reset()
 		paramCtxPool.Put(pCtx)
 	}()
 	stmt.Accept(pr)
 	if err := stmt.Restore(pCtx); err != nil {
-		err = RestoreASTWithParams(ctx, sctx, stmt, pr.params) // keep the stmt unchanged if err
 		return "", nil, err
 	}
-	paramSQL, params = pCtx.In.(*strings.Builder).String(), pr.params
+	paramSQL, params = pCtx.In.(*bytes.Buffer).String(), pr.params
 	return
 }
 
@@ -170,4 +170,22 @@ func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
 		})
 	}
 	return exprs
+}
+
+var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
+
+// ParseParameterizedSQL parse this parameterized SQL with the specified sctx.
+func ParseParameterizedSQL(sctx sessionctx.Context, paramSQL string) (ast.StmtNode, error) {
+	p := parserPool.Get().(*parser.Parser)
+	defer parserPool.Put(p)
+	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
+	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
+	tmp, _, err := p.ParseSQL(paramSQL, sctx.GetSessionVars().GetParseParams()...)
+	if err != nil {
+		return nil, err
+	}
+	if len(tmp) != 1 {
+		return nil, errors.New("unexpected multiple statements")
+	}
+	return tmp[0], nil
 }
