@@ -1001,6 +1001,8 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 	return predicates, p.self
 }
 
+// PredicatePushDown implements the LogicalPlan interface.
+// Currently, we only maintain the main query tree.
 func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression, op *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	lastIdx := len(p.children) - 1
 	remained, newLastChild := p.children[lastIdx].PredicatePushDown(predicates, op)

@@ -855,6 +855,9 @@ const (
 
 	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
 	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
+
+	// TiDBOptEnableMPPSharedCTEExecution indicates whehter the optimizer try to build shared CTE scan during MPP execution.
+	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
 )
 
 // TiDB vars that have only global scope
@@ -1256,6 +1259,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
 	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
+	DefTiDBOptEnableMPPSharedCTEExecution            = false
 )
 
 // Process global variables.

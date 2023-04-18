@@ -161,11 +161,12 @@ func GetCollateNameByIDForPartition(collateID int32) string {
 	return collate.CollationID2Name(collateID)
 }
 
-// cteConsumerStatus indicates whether we can let the current CTE consumer/reader be executed on the MPP nodes.
-type cteConsumerStatus int
+// cteProducerStatus indicates whether we can let the current CTE consumer/reader be executed on the MPP nodes.
+type cteProducerStatus int
 
+// Constants for CTE status.
 const (
-	NoCTE cteConsumerStatus = iota
+	NoCTE cteProducerStatus = iota
 	SomeCTEFailedMpp
 	AllCTECanMpp
 )
@@ -212,7 +213,7 @@ type PhysicalProperty struct {
 	// Non-MPP tasks do not care about it.
 	RejectSort bool
 
-	CTEConsumerStatus cteConsumerStatus
+	CTEConsumerStatus cteProducerStatus
 }
 
 // NewPhysicalProperty builds property from columns.

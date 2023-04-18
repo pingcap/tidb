@@ -2486,6 +2486,7 @@ func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 	})
 }
 
+// Clone implementes PhysicalPlan interface.
 func (p *PhysicalCTE) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalCTE)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -2600,6 +2601,7 @@ func (p *CTEDefinition) MemoryUsage() (sum int64) {
 	return
 }
 
+// PhysicalCTEStorage is used for representing CTE storage, or CTE producer in other words.
 type PhysicalCTEStorage PhysicalCTE
 
 // ExplainInfo overrides the ExplainInfo
@@ -2627,6 +2629,7 @@ func (p *PhysicalCTEStorage) MemoryUsage() (sum int64) {
 	return
 }
 
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalCTEStorage) Clone() (PhysicalPlan, error) {
 	cloned, err := (*PhysicalCTE)(p).Clone()
 	if err != nil {
@@ -2649,10 +2652,12 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 	op.tracer.Candidates[origin.ID()].AppendChildrenID(pp.ID())
 }
 
+// PhysicalSequence is the physical representation of LogicalSequence. Used to mark the CTE producers in the plan tree.
 type PhysicalSequence struct {
 	physicalSchemaProducer
 }
 
+// MemoryUsage returns the memory usage of the PhysicalSequence.
 func (p *PhysicalSequence) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
@@ -2663,6 +2668,7 @@ func (p *PhysicalSequence) MemoryUsage() (sum int64) {
 	return
 }
 
+// ExplainID overrides the ExplainID.
 func (p *PhysicalSequence) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
@@ -2672,12 +2678,14 @@ func (p *PhysicalSequence) ExplainID() fmt.Stringer {
 	})
 }
 
+// ExplainInfo overrides the ExplainInfo.
 func (p *PhysicalSequence) ExplainInfo() string {
 	var res string
 	res = "Sequence Node"
 	return res
 }
 
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalSequence) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSequence)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -2688,6 +2696,7 @@ func (p *PhysicalSequence) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// Schema returns its last child(which is the main query tree)'s schema.
 func (p *PhysicalSequence) Schema() *expression.Schema {
 	return p.Children()[len(p.Children())-1].Schema()
 }

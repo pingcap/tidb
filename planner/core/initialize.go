@@ -652,11 +652,13 @@ func (p FKCascade) Init(ctx sessionctx.Context) *FKCascade {
 	return &p
 }
 
+// Init initializes LogicalSequence
 func (p LogicalSequence) Init(ctx sessionctx.Context, offset int) *LogicalSequence {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSequence, &p, offset)
 	return &p
 }
 
+// Init initializes PhysicalSequence
 func (p PhysicalSequence) Init(ctx sessionctx.Context, stats *property.StatsInfo, blockOffset int, props ...*property.PhysicalProperty) *PhysicalSequence {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSequence, &p, blockOffset)
 	p.stats = stats

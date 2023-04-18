@@ -1094,6 +1094,7 @@ func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Sch
 	return p.stats, nil
 }
 
+// DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	p.stats = childStats[len(childStats)-1]
 	return p.stats, nil

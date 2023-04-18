@@ -56,7 +56,7 @@ type Fragment struct {
 	singleton bool // indicates if this is a task running on a single node.
 }
 
-type CTEGroupInFragment struct {
+type cteGroupInFragment struct {
 	CTEStorage *PhysicalCTEStorage
 	CTEReader  []*PhysicalCTE
 
@@ -99,7 +99,7 @@ type mppTaskGenerator struct {
 	frags      []*Fragment
 	cache      map[int]tasksAndFrags
 
-	CTEGroups map[int]*CTEGroupInFragment
+	CTEGroups map[int]*cteGroupInFragment
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
@@ -274,10 +274,10 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, fo
 		// except the last child, those previous ones are all cte producer. 
 		for i := 0; i < lastChildIdx; i++ {
 			if e.CTEGroups == nil {
-				e.CTEGroups = make(map[int]*CTEGroupInFragment)
+				e.CTEGroups = make(map[int]*cteGroupInFragment)
 			}
 			cteStorage := x.children[i].(*PhysicalCTEStorage)
-			e.CTEGroups[cteStorage.CTE.IDForStorage] = &CTEGroupInFragment{
+			e.CTEGroups[cteStorage.CTE.IDForStorage] = &cteGroupInFragment{
 				CTEStorage: cteStorage,
 				CTEReader:  make([]*PhysicalCTE, 0, 3),
 			}

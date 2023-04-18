@@ -673,6 +673,7 @@ func (p *LogicalCTE) PruneColumns(parentUsedCols []*expression.Column, opt *logi
 	return nil
 }
 
+// PruneColumns implements the interface of LogicalPlan.
 func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	return p.children[len(p.children)-1].PruneColumns(parentUsedCols, opt)
 }

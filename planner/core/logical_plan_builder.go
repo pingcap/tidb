@@ -4253,6 +4253,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 }
 
 func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p LogicalPlan) LogicalPlan {
+	if !b.ctx.GetSessionVars().EnableMPPSharedCTEExecution {
+		return p
+	}
 	for i := len(ctes) - 1; i >= 0; i-- {
 		if !ctes[i].nonRecursive {
 			return p

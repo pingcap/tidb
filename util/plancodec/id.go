@@ -133,7 +133,7 @@ const (
 	TypeForeignKeyCheck = "Foreign_Key_Check"
 	// TypeForeignKeyCascade is the type of FKCascade
 	TypeForeignKeyCascade = "Foreign_Key_Cascade"
-	// TypeSequence
+	// TypeSequence is the type of Sequence
 	TypeSequence = "Sequence"
 )
 
