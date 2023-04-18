@@ -1597,7 +1597,10 @@ func TestDoImport(t *testing.T) {
 
 	ctx := context.Background()
 	l := &Backend{
-		BackendConfig: BackendConfig{WorkerConcurrency: 2},
+		BackendConfig: BackendConfig{
+			RangeConcurrency:  1,
+			WorkerConcurrency: 2,
+		},
 	}
 	e := &Engine{}
 	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
