@@ -229,15 +229,15 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 		colCnt := expression.ExtractColumnSet(mergedConds...).Len()
 		income := (1 - selectivity) * tableRowCount
 		// If selectedColumnCount does not change,
-		// or the income increases after pushing down the group, push down it.
+		// or the increase of the number of filtered rows is greater than tiflashDataPackSize and the income increases, push down the conditions.
 		if colCnt == selectedColumnCount || (income > tiflashDataPackSize && income*(float64(totalColumnCount)-float64(colCnt)) > selectedIncome) {
 			selectedConds = mergedConds
 			selectedColumnCount = colCnt
 			selectedIncome = income * (float64(totalColumnCount) - float64(colCnt))
 			selectedSelectivity = selectivity
 		} else if income < tiflashDataPackSize {
-			// If the selectivity improvement is small enough, break the loop
-			// to reduce the cost of calculating selectivity.
+			// If the increase of the number of filtered rows is less than tiflashDataPackSize,
+			// break the loop to reduce the cost of calculating selectivity.
 			break
 		}
 	}
