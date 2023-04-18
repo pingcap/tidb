@@ -2231,7 +2231,7 @@ func (k planCacheStmtKey) Hash() []byte {
 // AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
 func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) {
 	if s.nonPreparedPlanCacheStmts == nil {
-		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.NonPreparedPlanCacheSize), 0, 0)
+		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
 	}
 	s.nonPreparedPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
 }
