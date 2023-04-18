@@ -154,7 +154,7 @@
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
-              "legendFormat": "go-memstat-inuse",
+              "legendFormat": "go-memstats-inuse",
               "refId": "H"
             },
             {
