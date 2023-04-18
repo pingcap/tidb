@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importer
+package precheck
 
 import (
 	"strings"
@@ -51,11 +51,12 @@ type Template interface {
 
 // SimpleTemplate is a simple template for lightning check.
 type SimpleTemplate struct {
-	count               int
-	warnFailedCount     int
-	criticalFailedCount int
-	normalMsgs          []string // only used in unit test now
-	criticalMsgs        []string
+	count int
+	// export them for test
+	WarnFailedCount     int
+	CriticalFailedCount int
+	NormalMsgs          []string // only used in unit test now
+	CriticalMsgs        []string
 	t                   table.Writer
 }
 
@@ -76,7 +77,7 @@ func NewSimpleTemplate() Template {
 
 // FailedMsg returns the error msg for the failed check.
 func (c *SimpleTemplate) FailedMsg() string {
-	return strings.Join(c.criticalMsgs, ";\n")
+	return strings.Join(c.CriticalMsgs, ";\n")
 }
 
 // Collect mainly collect performance related checks' results and critical level checks' results.
@@ -85,15 +86,15 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 	if !passed {
 		switch t {
 		case Critical:
-			c.criticalFailedCount++
+			c.CriticalFailedCount++
 		case Warn:
-			c.warnFailedCount++
+			c.WarnFailedCount++
 		}
 	}
 	if !passed && t == Critical {
-		c.criticalMsgs = append(c.criticalMsgs, msg)
+		c.CriticalMsgs = append(c.CriticalMsgs, msg)
 	} else {
-		c.normalMsgs = append(c.normalMsgs, msg)
+		c.NormalMsgs = append(c.NormalMsgs, msg)
 	}
 	c.t.AppendRow(table.Row{c.count, msg, t, passed})
 	c.t.AppendSeparator()
@@ -101,16 +102,16 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 
 // Success represents the whole check has passed or not.
 func (c *SimpleTemplate) Success() bool {
-	return c.criticalFailedCount == 0
+	return c.CriticalFailedCount == 0
 }
 
 // FailedCount represents (the warn check failed count, the critical check failed count)
 func (c *SimpleTemplate) FailedCount(t CheckType) int {
 	if t == Warn {
-		return c.warnFailedCount
+		return c.WarnFailedCount
 	}
 	if t == Critical {
-		return c.criticalFailedCount
+		return c.CriticalFailedCount
 	}
 	return 0
 }

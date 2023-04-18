@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl"
@@ -120,7 +121,7 @@ func (s *restoreSchemaSuite) SetupSuite() {
 	}
 	preInfoGetter.Init()
 	s.rc = &Controller{
-		checkTemplate: NewSimpleTemplate(),
+		checkTemplate: precheck.NewSimpleTemplate(),
 		cfg:           config,
 		store:         store,
 		dbMetas:       dbMetas,

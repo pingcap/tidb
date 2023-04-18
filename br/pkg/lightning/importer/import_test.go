@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser"
@@ -229,7 +230,7 @@ func TestPreCheckFailed(t *testing.T) {
 		saveCpCh:            make(chan saveCp),
 		checkpointsDB:       cpdb,
 		metaMgrBuilder:      failMetaMgrBuilder{},
-		checkTemplate:       NewSimpleTemplate(),
+		checkTemplate:       precheck.NewSimpleTemplate(),
 		db:                  db,
 		errorMgr:            errormanager.New(nil, cfg, log.L()),
 		preInfoGetter:       preInfoGetter,

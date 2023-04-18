@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -56,15 +57,15 @@ type clusterResourceCheckItem struct {
 }
 
 // NewClusterResourceCheckItem creates a new clusterResourceCheckItem.
-func NewClusterResourceCheckItem(preInfoGetter PreImportInfoGetter) PrecheckItem {
+func NewClusterResourceCheckItem(preInfoGetter PreImportInfoGetter) precheck.PrecheckItem {
 	return &clusterResourceCheckItem{
 		preInfoGetter: preInfoGetter,
 	}
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (*clusterResourceCheckItem) GetCheckItemID() CheckItemID {
-	return CheckTargetClusterSize
+func (*clusterResourceCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckTargetClusterSize
 }
 
 func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (tikvAvail uint64, tiflashAvail uint64, err error) {
@@ -84,10 +85,10 @@ func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (tikvAv
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, error) {
-	theResult := &CheckResult{
+func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Warn,
+		Severity: precheck.Warn,
 		Passed:   true,
 		Message:  "",
 	}
@@ -190,7 +191,7 @@ type clusterVersionCheckItem struct {
 }
 
 // NewClusterVersionCheckItem creates a new clusterVersionCheckItem.
-func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.PrecheckItem {
 	return &clusterVersionCheckItem{
 		preInfoGetter: preInfoGetter,
 		dbMetas:       dbMetas,
@@ -198,15 +199,15 @@ func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*my
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (*clusterVersionCheckItem) GetCheckItemID() CheckItemID {
-	return CheckTargetClusterVersion
+func (*clusterVersionCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckTargetClusterVersion
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *clusterVersionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
-	theResult := &CheckResult{
+func (ci *clusterVersionCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: precheck.Critical,
 		Passed:   true,
 		Message:  "Cluster version check passed",
 	}
@@ -225,7 +226,7 @@ type emptyRegionCheckItem struct {
 }
 
 // NewEmptyRegionCheckItem creates a new emptyRegionCheckItem.
-func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.PrecheckItem {
 	return &emptyRegionCheckItem{
 		preInfoGetter: preInfoGetter,
 		dbMetas:       dbMetas,
@@ -233,15 +234,15 @@ func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydum
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (*emptyRegionCheckItem) GetCheckItemID() CheckItemID {
-	return CheckTargetClusterEmptyRegion
+func (*emptyRegionCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckTargetClusterEmptyRegion
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
-	theResult := &CheckResult{
+func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Warn,
+		Severity: precheck.Warn,
 		Passed:   true,
 		Message:  "Cluster doesn't have too many empty regions",
 	}
@@ -322,7 +323,7 @@ type regionDistributionCheckItem struct {
 }
 
 // NewRegionDistributionCheckItem creates a new regionDistributionCheckItem.
-func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.PrecheckItem {
 	return &regionDistributionCheckItem{
 		preInfoGetter: preInfoGetter,
 		dbMetas:       dbMetas,
@@ -330,15 +331,15 @@ func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas [
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (*regionDistributionCheckItem) GetCheckItemID() CheckItemID {
-	return CheckTargetClusterRegionDist
+func (*regionDistributionCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckTargetClusterRegionDist
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
-	theResult := &CheckResult{
+func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: precheck.Critical,
 		Passed:   true,
 		Message:  "Cluster region distribution is balanced",
 	}
@@ -401,22 +402,22 @@ type storagePermissionCheckItem struct {
 }
 
 // NewStoragePermissionCheckItem creates a new storagePermissionCheckItem.
-func NewStoragePermissionCheckItem(cfg *config.Config) PrecheckItem {
+func NewStoragePermissionCheckItem(cfg *config.Config) precheck.PrecheckItem {
 	return &storagePermissionCheckItem{
 		cfg: cfg,
 	}
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (*storagePermissionCheckItem) GetCheckItemID() CheckItemID {
-	return CheckSourcePermission
+func (*storagePermissionCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckSourcePermission
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
-	theResult := &CheckResult{
+func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: precheck.Critical,
 		Passed:   true,
 		Message:  "Lightning has the correct storage permission",
 	}
@@ -444,7 +445,7 @@ type largeFileCheckItem struct {
 }
 
 // NewLargeFileCheckItem creates a new largeFileCheckItem.
-func NewLargeFileCheckItem(cfg *config.Config, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewLargeFileCheckItem(cfg *config.Config, dbMetas []*mydump.MDDatabaseMeta) precheck.PrecheckItem {
 	return &largeFileCheckItem{
 		cfg:     cfg,
 		dbMetas: dbMetas,
@@ -452,15 +453,15 @@ func NewLargeFileCheckItem(cfg *config.Config, dbMetas []*mydump.MDDatabaseMeta)
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (*largeFileCheckItem) GetCheckItemID() CheckItemID {
-	return CheckLargeDataFile
+func (*largeFileCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckLargeDataFile
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *largeFileCheckItem) Check(_ context.Context) (*CheckResult, error) {
-	theResult := &CheckResult{
+func (ci *largeFileCheckItem) Check(_ context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Warn,
+		Severity: precheck.Warn,
 		Passed:   true,
 		Message:  "Source csv files size is proper",
 	}
@@ -487,22 +488,22 @@ type localDiskPlacementCheckItem struct {
 }
 
 // NewLocalDiskPlacementCheckItem creates a new localDiskPlacementCheckItem.
-func NewLocalDiskPlacementCheckItem(cfg *config.Config) PrecheckItem {
+func NewLocalDiskPlacementCheckItem(cfg *config.Config) precheck.PrecheckItem {
 	return &localDiskPlacementCheckItem{
 		cfg: cfg,
 	}
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (*localDiskPlacementCheckItem) GetCheckItemID() CheckItemID {
-	return CheckLocalDiskPlacement
+func (*localDiskPlacementCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckLocalDiskPlacement
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *localDiskPlacementCheckItem) Check(_ context.Context) (*CheckResult, error) {
-	theResult := &CheckResult{
+func (ci *localDiskPlacementCheckItem) Check(_ context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Warn,
+		Severity: precheck.Warn,
 		Passed:   true,
 		Message:  "local source dir and temp-kv dir are in different disks",
 	}
@@ -526,7 +527,7 @@ type localTempKVDirCheckItem struct {
 }
 
 // NewLocalTempKVDirCheckItem creates a new localTempKVDirCheckItem.
-func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.PrecheckItem {
 	return &localTempKVDirCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -535,8 +536,8 @@ func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreImportInfoG
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (*localTempKVDirCheckItem) GetCheckItemID() CheckItemID {
-	return CheckLocalTempKVDir
+func (*localTempKVDirCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckLocalTempKVDir
 }
 
 func (ci *localTempKVDirCheckItem) hasCompressedFiles() bool {
@@ -553,13 +554,13 @@ func (ci *localTempKVDirCheckItem) hasCompressedFiles() bool {
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*CheckResult, error) {
-	severity := Critical
+func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	severity := precheck.Critical
 	// for cases that have compressed files, the estimated size may not be accurate, set severity to Warn to avoid failure
 	if ci.hasCompressedFiles() {
-		severity = Warn
+		severity = precheck.Warn
 	}
-	theResult := &CheckResult{
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
 		Severity: severity,
 	}
@@ -607,7 +608,7 @@ type checkpointCheckItem struct {
 }
 
 // NewCheckpointCheckItem creates a new checkpointCheckItem.
-func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, checkpointsDB checkpoints.DB) PrecheckItem {
+func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, checkpointsDB checkpoints.DB) precheck.PrecheckItem {
 	return &checkpointCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -617,18 +618,18 @@ func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGette
 }
 
 // GetCheckItemID implements PrecheckItem.GetCheckItemID.
-func (*checkpointCheckItem) GetCheckItemID() CheckItemID {
-	return CheckCheckpoints
+func (*checkpointCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckCheckpoints
 }
 
 // Check implements PrecheckItem.Check.
-func (ci *checkpointCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+func (ci *checkpointCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
 	if !ci.cfg.Checkpoint.Enable || ci.checkpointsDB == nil {
 		return nil, nil
 	}
-	theResult := &CheckResult{
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: precheck.Critical,
 		Passed:   true,
 		Message:  "the checkpoints are valid",
 	}
@@ -752,7 +753,7 @@ type CDCPITRCheckItem struct {
 }
 
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
-func NewCDCPITRCheckItem(cfg *config.Config) PrecheckItem {
+func NewCDCPITRCheckItem(cfg *config.Config) precheck.PrecheckItem {
 	return &CDCPITRCheckItem{
 		cfg:         cfg,
 		Instruction: "local backend is not compatible with them. Please switch to tidb backend then try again.",
@@ -760,8 +761,8 @@ func NewCDCPITRCheckItem(cfg *config.Config) PrecheckItem {
 }
 
 // GetCheckItemID implements PrecheckItem interface.
-func (*CDCPITRCheckItem) GetCheckItemID() CheckItemID {
-	return CheckTargetUsingCDCPITR
+func (*CDCPITRCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckTargetUsingCDCPITR
 }
 
 func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client, error) {
@@ -786,10 +787,10 @@ func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client,
 }
 
 // Check implements PrecheckItem interface.
-func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
-	theResult := &CheckResult{
+func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: precheck.Critical,
 	}
 
 	if ci.cfg.TikvImporter.Backend != config.BackendLocal {
@@ -856,7 +857,7 @@ type schemaCheckItem struct {
 }
 
 // NewSchemaCheckItem creates a checker to check whether the schema is valid.
-func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) PrecheckItem {
+func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) precheck.PrecheckItem {
 	return &schemaCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -866,15 +867,15 @@ func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, d
 }
 
 // GetCheckItemID implements PrecheckItem interface.
-func (*schemaCheckItem) GetCheckItemID() CheckItemID {
-	return CheckSourceSchemaValid
+func (*schemaCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckSourceSchemaValid
 }
 
 // Check implements PrecheckItem interface.
-func (ci *schemaCheckItem) Check(ctx context.Context) (*CheckResult, error) {
-	theResult := &CheckResult{
+func (ci *schemaCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: precheck.Critical,
 		Passed:   true,
 		Message:  "table schemas are valid",
 	}
@@ -1095,7 +1096,7 @@ type csvHeaderCheckItem struct {
 }
 
 // NewCSVHeaderCheckItem creates a new csvHeaderCheckItem.
-func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.PrecheckItem {
 	return &csvHeaderCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -1104,8 +1105,8 @@ func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter
 }
 
 // GetCheckItemID implements PrecheckItem interface.
-func (*csvHeaderCheckItem) GetCheckItemID() CheckItemID {
-	return CheckCSVHeader
+func (*csvHeaderCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckCSVHeader
 }
 
 // Check tries to check whether the csv header config is consistent with the source csv files by:
@@ -1113,15 +1114,15 @@ func (*csvHeaderCheckItem) GetCheckItemID() CheckItemID {
 //  2. read the first row of those two CSV files
 //  3. checks if the content of those first rows are compatible with the table schema, and whether the
 //     two rows are identical, to determine if the first rows are a header rows.
-func (ci *csvHeaderCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+func (ci *csvHeaderCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
 	// if cfg set header = true but source files actually contain not header, former SchemaCheck should
 	// return error in this situation, so we need do it again.
 	if ci.cfg.Mydumper.CSV.Header {
 		return nil, nil
 	}
-	theResult := &CheckResult{
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: precheck.Critical,
 		Passed:   true,
 		Message:  "the config [mydumper.csv.header] is set to false, and CSV header lines are really not detected in the data files",
 	}
@@ -1266,12 +1267,12 @@ outer:
 	theResult.Passed = false
 	theResult.Message = fmt.Sprintf("source csv files contains header row but `mydumper.csv.header` is false, checked table is `%s`.`%s`",
 		tableMeta.DB, tableMeta.Name)
-	theResult.Severity = Warn
+	theResult.Severity = precheck.Warn
 	if hasUniqueField && len(rows) > 1 {
-		theResult.Severity = Critical
+		theResult.Severity = precheck.Critical
 	} else if !checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx)) {
 		// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
-		theResult.Severity = Critical
+		theResult.Severity = precheck.Critical
 	}
 	return theResult, nil
 }
@@ -1312,7 +1313,7 @@ type tableEmptyCheckItem struct {
 }
 
 // NewTableEmptyCheckItem creates a new tableEmptyCheckItem
-func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) PrecheckItem {
+func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) precheck.PrecheckItem {
 	return &tableEmptyCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -1322,15 +1323,15 @@ func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGette
 }
 
 // GetCheckItemID implements PrecheckItem interface
-func (*tableEmptyCheckItem) GetCheckItemID() CheckItemID {
-	return CheckTargetTableEmpty
+func (*tableEmptyCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckTargetTableEmpty
 }
 
 // Check implements PrecheckItem interface
-func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*CheckResult, error) {
-	theResult := &CheckResult{
+func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: precheck.Critical,
 		Passed:   true,
 		Message:  "all importing tables on the target are empty",
 	}
