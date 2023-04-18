@@ -118,7 +118,7 @@ func (s *precheckImplSuite) generateMockData(
 func (s *precheckImplSuite) TestClusterResourceCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -169,7 +169,7 @@ func (s *precheckImplSuite) TestClusterResourceCheckBasic() {
 func (s *precheckImplSuite) TestClusterVersionCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -189,7 +189,7 @@ func (s *precheckImplSuite) TestClusterVersionCheckBasic() {
 func (s *precheckImplSuite) TestEmptyRegionCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -232,7 +232,7 @@ func (s *precheckImplSuite) TestEmptyRegionCheckBasic() {
 func (s *precheckImplSuite) TestRegionDistributionCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -274,7 +274,7 @@ func (s *precheckImplSuite) TestRegionDistributionCheckBasic() {
 func (s *precheckImplSuite) TestStoragePermissionCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -304,7 +304,7 @@ func (s *precheckImplSuite) TestStoragePermissionCheckBasic() {
 func (s *precheckImplSuite) TestLargeFileCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -343,7 +343,7 @@ func (s *precheckImplSuite) TestLargeFileCheckBasic() {
 func (s *precheckImplSuite) TestLocalDiskPlacementCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -375,7 +375,7 @@ func (s *precheckImplSuite) TestLocalDiskPlacementCheckBasic() {
 func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -415,7 +415,7 @@ func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 func (s *precheckImplSuite) TestCheckpointCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -437,7 +437,7 @@ func (s *precheckImplSuite) TestCheckpointCheckBasic() {
 func (s *precheckImplSuite) TestSchemaCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -494,7 +494,7 @@ func (s *precheckImplSuite) TestSchemaCheckBasic() {
 func (s *precheckImplSuite) TestCSVHeaderCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -550,7 +550,7 @@ func (s *precheckImplSuite) TestCSVHeaderCheckBasic() {
 func (s *precheckImplSuite) TestTableEmptyCheckBasic() {
 	var (
 		err    error
-		ci     precheck.PrecheckItem
+		ci     precheck.Checker
 		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())

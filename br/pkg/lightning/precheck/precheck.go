@@ -79,8 +79,8 @@ type CheckResult struct {
 	Message  string
 }
 
-// PrecheckItem is the interface for precheck items
-type PrecheckItem interface {
+// Checker is the interface for precheck items
+type Checker interface {
 	// Check checks whether it meet some prerequisites for importing
 	// If the check is skipped, the returned `CheckResult` is nil
 	Check(ctx context.Context) (*CheckResult, error)

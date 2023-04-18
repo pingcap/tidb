@@ -87,8 +87,8 @@ func NewPrecheckItemBuilder(
 	}
 }
 
-// BuildPrecheckItem builds a PrecheckItem by the given checkID
-func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (precheck.PrecheckItem, error) {
+// BuildPrecheckItem builds a Checker by the given checkID
+func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (precheck.Checker, error) {
 	switch checkID {
 	case precheck.CheckLargeDataFile:
 		return NewLargeFileCheckItem(b.cfg, b.dbMetas), nil
