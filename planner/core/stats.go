@@ -270,8 +270,7 @@ func getTblInfoForUsedStatsByPhysicalID(sctx sessionctx.Context, id int64) (full
 	fullName = tblInfo.Name.O
 	if partDef != nil {
 		fullName += " " + partDef.Name.O
-	}
-	if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+	} else if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 		fullName += " global"
 	}
 	return
