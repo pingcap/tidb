@@ -1251,7 +1251,15 @@ var defaultSysVars = []*SysVar{
 			HistoricalStatsDuration.Store(d)
 			return nil
 		}},
-
+	{Scope: ScopeGlobal, Name: TiDBSkipMissingPartitionStats, Value: BoolToOnOff(DefTiDBSkipMissingPartitionStats), Type: TypeBool,
+		SetGlobal: func(_ context.Context, vars *SessionVars, s string) error {
+			SkipMissingPartitionStats.Store(TiDBOptOn(s))
+			return nil
+		},
+		GetGlobal: func(_ context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(SkipMissingPartitionStats.Load()), nil
+		},
+	},
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {

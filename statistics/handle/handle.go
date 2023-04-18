@@ -643,13 +643,14 @@ func (h *Handle) UpdateSessionVar() error {
 // In the column statistics, the variable `num` is equal to the number of columns in the partition table.
 // In the index statistics, the variable `num` is always equal to one.
 type GlobalStats struct {
-	Num         int
-	Count       int64
-	ModifyCount int64
-	Hg          []*statistics.Histogram
-	Cms         []*statistics.CMSketch
-	TopN        []*statistics.TopN
-	Fms         []*statistics.FMSketch
+	Hg                    []*statistics.Histogram
+	Cms                   []*statistics.CMSketch
+	TopN                  []*statistics.TopN
+	Fms                   []*statistics.FMSketch
+	MissingPartitionStats []string
+	Num                   int
+	Count                 int64
+	ModifyCount           int64
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
