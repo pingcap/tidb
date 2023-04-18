@@ -366,8 +366,6 @@ type StatementContext struct {
 	// usedStatsInfo records version of stats of each table used in the query.
 	// It's a map of table physical id -> *UsedStatsInfoForTable
 	usedStatsInfo map[int64]*UsedStatsInfoForTable
-	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
-	StatsLoadStatus map[model.TableItemID]string
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
