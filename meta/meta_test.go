@@ -318,6 +318,20 @@ func TestMeta(t *testing.T) {
 	tables, err := m.ListTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
+	{
+		idx := 0
+		err := m.IterTables(1, func(info *model.TableInfo) error {
+			require.Less(t, idx, 2)
+			if idx == 0 {
+				require.Equal(t, tbInfo, info)
+				idx += 1
+			} else {
+				require.Equal(t, tbInfo2, info)
+			}
+			return nil
+		})
+		require.NoError(t, err)
+	}
 	// Generate an auto id.
 	n, err = m.GetAutoIDAccessors(1, 2).RowID().Inc(10)
 	require.NoError(t, err)
@@ -339,7 +353,16 @@ func TestMeta(t *testing.T) {
 	tables, err = m.ListTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo}, tables)
-
+	{
+		idx := 0
+		err := m.IterTables(1, func(info *model.TableInfo) error {
+			require.Less(t, idx, 1)
+			require.Equal(t, tbInfo, info)
+			idx += 1
+			return nil
+		})
+		require.NoError(t, err)
+	}
 	// Test case for drop a table without delete auto id key-value entry.
 	tid := int64(100)
 	tbInfo100 := &model.TableInfo{
