@@ -347,9 +347,9 @@ func (rc *Client) StartCheckpointRunnerForLogRestore(ctx context.Context, taskNa
 func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {
 	rc.useCheckpoint = true
 
-	// it shows that the user has modified gc-ratio, if `gcRatio` doesn't equal to "-1.0".
+	// it shows that the user has modified gc-ratio, if `gcRatio` doesn't equal to "1.1".
 	// update the `gcRatio` for checkpoint metadata.
-	if gcRatio == utils.DisableGcRatioVal {
+	if gcRatio == utils.DefaultGcRatioVal {
 		// if the checkpoint metadata exists in the external storage, the restore is not
 		// for the first time.
 		exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
@@ -367,9 +367,6 @@ func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskN
 			log.Info("reuse gc ratio from checkpoint metadata", zap.String("gc-ratio", gcRatio))
 			return meta.GcRatio, nil
 		}
-
-		log.Warn("save the diable gc ratio(-1.0) into checkpoint, adjust it into the default value(1.1)")
-		gcRatio = "1.1"
 	}
 
 	// initialize the checkpoint metadata since it is the first time to restore.
@@ -3074,7 +3071,7 @@ func (rc *Client) SaveIDMap(
 		if sr.TiflashRecorder != nil {
 			items = sr.TiflashRecorder.GetItems()
 		}
-		log.Info("save the task info with InLogRestoreAndIdMapPersist status")
+		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
 		if err := checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, rc.storage, &checkpoint.CheckpointTaskInfoForLogRestore{
 			Progress:     checkpoint.InLogRestoreAndIdMapPersist,
 			StartTS:      rc.startTS,

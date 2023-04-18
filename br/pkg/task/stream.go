@@ -491,7 +491,7 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, string, error) 
 		return nil, "", errors.Trace(err)
 	}
 
-	newRatio := utils.DisableGcRatioVal
+	newRatio := "-1.0"
 	err = utils.SetGcRatio(execCtx, newRatio)
 	if err != nil {
 		return nil, "", errors.Trace(err)
@@ -500,7 +500,7 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, string, error) 
 	// If the oldRatio is negative, which is not normal status.
 	// It should set default value "1.1" after PiTR finished.
 	if strings.HasPrefix(oldRatio, "-") {
-		oldRatio = "1.1"
+		oldRatio = utils.DefaultGcRatioVal
 	}
 
 	return func(ratio string) error {
@@ -1086,7 +1086,7 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 
 // getStreamRestoreTaskName generates the taskName for checkpoint
 func getStreamRestoreTaskName(clusterID, startTS, restoreTs uint64) string {
-	return fmt.Sprintf("%d.%d.%d", clusterID, startTS, restoreTs)
+	return fmt.Sprintf("%d/%d.%d", clusterID, startTS, restoreTs)
 }
 
 // RunStreamRestore restores stream log.
