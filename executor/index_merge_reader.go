@@ -432,7 +432,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					worker.batchSize = worker.maxBatchSize
 				}
 				if len(results) > 1 && len(e.byItems) != 0 {
-					ssr := distsql.NewSortedSelectResults(results, pids, e.byItems, e.memTracker)
+					ssr := distsql.NewSortedSelectResults(results, pids, e.Schema().Columns, e.byItems, e.memTracker)
 					results = []distsql.SelectResult{ssr}
 				}
 				ctx1, cancel := context.WithCancel(ctx)
@@ -454,7 +454,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 	ts := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan)
 
 	tbls := make([]table.Table, 0, 1)
-	if e.partitionTableMode {
+	if e.partitionTableMode && len(e.byItems) == 0 {
 		for _, p := range e.prunedPartitions {
 			tbls = append(tbls, p)
 		}
@@ -491,6 +491,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					ranges:           e.ranges[workID],
 					netDataSize:      e.partialNetDataSizes[workID],
 					keepOrder:        ts.KeepOrder,
+					byItems:          e.byItems,
 				}
 
 				worker := &partialTableWorker{
@@ -504,6 +505,16 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					partitionTableMode: e.partitionTableMode,
 					prunedPartitions:   e.prunedPartitions,
 					byItems:            e.byItems,
+				}
+
+				if len(e.prunedPartitions) != 0 && len(e.byItems) != 0 {
+					slices.SortFunc(worker.prunedPartitions, func(i, j table.PhysicalTable) bool {
+						return i.GetPhysicalID() < j.GetPhysicalID()
+					})
+					partialTableReader.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
+						sctx:       e.ctx,
+						partitions: worker.prunedPartitions,
+					}
 				}
 
 				if e.isCorColInPartialFilters[workID] {
@@ -643,11 +654,26 @@ func (w *partialTableWorker) getRetTpsForTableScan() []*types.FieldType {
 	return retTypes(w.tableReader)
 }
 
+func (w *partialTableWorker) getDatumRow(table table.Table, row chunk.Row, handleCols plannercore.HandleCols) []types.Datum {
+	ret := make([]types.Datum, len(table.Cols()))
+	for i, col := range table.Cols() {
+		for j := 0; j < handleCols.NumCols(); j++ {
+			handleCol := handleCols.GetCol(j)
+			if handleCol.ID == col.ID {
+				ret[i] = row.GetDatum(j, handleCol.GetType())
+				break
+			}
+		}
+	}
+	return ret
+}
+
 func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
 	var memUsage int64
 	defer w.memTracker.Consume(-memUsage)
+	tbl := w.tableReader.(*TableReaderExecutor).table
 	for len(handles) < w.batchSize {
 		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
 		start := time.Now()
@@ -668,13 +694,18 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
 		for i := 0; i < chk.NumRows(); i++ {
-			handle, err := handleCols.BuildHandle(chk.GetRow(i))
+			r := chk.GetRow(i)
+			handle, err := handleCols.BuildHandleFromIndexRow(r)
 			if err != nil {
 				return nil, nil, err
 			}
-			// TODO, not correct
 			if w.needPartitionHandle() {
-				handle = kv.NewPartitionHandle(chk.GetRow(i).GetInt64(chk.NumCols()-1), handle)
+				datums := w.getDatumRow(tbl, r, handleCols)
+				t, err := tbl.GetPartitionedTable().GetPartitionByRow(w.sc, datums)
+				if err != nil {
+					return nil, nil, err
+				}
+				handle = kv.NewPartitionHandle(t.GetPhysicalID(), handle)
 			}
 			handles = append(handles, handle)
 		}
@@ -951,6 +982,9 @@ func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTab
 // pruneTableWorkerTaskIdxRows prune idxRows and only keep columns that will be used in byItems.
 // e.g. the common handle is (`b`, `c`) and order by with column `c`, we should make column `c` at the first.
 func (w *indexMergeProcessWorker) pruneTableWorkerTaskIdxRows(task *indexMergeTableTask) {
+	if task.idxRows == nil {
+		return
+	}
 	// IndexScan no need to prune retChk, Columns required by byItems are always first.
 	if plan, ok := w.indexMerge.partialPlans[task.partialPlanID][0].(*plannercore.PhysicalTableScan); ok {
 		prune := make([]int, 0, len(w.indexMerge.byItems))
@@ -1655,7 +1689,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 	if w.indexMergeExec.keepOrder {
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for _, row := range task.rows {
-			handle, err := w.indexMergeExec.handleCols.BuildHandleFromIndexRow(row)
+			handle, err := w.indexMergeExec.handleCols.BuildHandle(row)
 			if err != nil {
 				return err
 			}

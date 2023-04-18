@@ -1208,23 +1208,31 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				return nil, false
 			}
 			clonedTblScan.statsInfo().ScaleByExpectCnt(float64(p.Count+p.Offset) * float64(len(copTsk.idxMergePartPlans)))
-			// TODO: This is a hack way, planner should not prune handle columns when `keepOrder` = true.
 			if tblInfo.PKIsHandle {
 				pk := tblInfo.GetPkColInfo()
-				col := expression.ColInfo2Col(tblScan.tblCols, pk)
-				tblScan.HandleCols = NewIntHandleCols(col)
-				clonedTblScan.Schema().Append(col)
-				clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, pk)
+				pkCol := expression.ColInfo2Col(tblScan.tblCols, pk)
+				if !clonedTblScan.Schema().Contains(pkCol) {
+					clonedTblScan.Schema().Append(pkCol)
+					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, pk)
+				}
 			} else if tblInfo.IsCommonHandle {
 				idxInfo := tblInfo.GetPrimaryKey()
-				tblScan.HandleCols = NewCommonHandleCols(p.SCtx().GetSessionVars().StmtCtx, tblInfo, idxInfo, tblScan.tblCols)
-				for i := 0; i < tblScan.HandleCols.NumCols(); i++ {
-					clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(i))
-					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, tblScan.HandleCols.GetCol(i).ToInfo())
+				for _, idxCol := range idxInfo.Columns {
+					c := tblScan.tblCols[idxCol.Offset]
+					if !clonedTblScan.Schema().Contains(c) {
+						clonedTblScan.Schema().Append(c)
+						clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, c.ToInfo())
+					}
 				}
 			} else {
-				clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(0))
-				clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, model.NewExtraHandleColInfo())
+				if !clonedTblScan.Schema().Contains(tblScan.HandleCols.GetCol(0)) {
+					clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(0))
+					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, model.NewExtraHandleColInfo())
+				}
+			}
+			clonedTblScan.(*PhysicalTableScan).HandleCols, err = tblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
+			if err != nil {
+				return nil, false
 			}
 			copTsk.tablePlan = clonedTblScan
 			copTsk.indexPlanFinished = true

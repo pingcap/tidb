@@ -377,7 +377,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			}
 			results = append(results, result)
 		}
-		e.result = distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
+		e.result = distsql.NewSortedSelectResults(results, nil, e.schema.Columns, e.byItems, e.memTracker)
 	}
 	return nil
 }
@@ -704,7 +704,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			worker.batchSize = worker.maxBatchSize
 		}
 		if len(results) > 1 && len(e.byItems) != 0 {
-			ssr := distsql.NewSortedSelectResults(results, pids, e.byItems, e.memTracker)
+			ssr := distsql.NewSortedSelectResults(results, pids, e.Schema().Columns, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)
