@@ -183,6 +183,9 @@ type Client struct {
 	// checkpoint information for snapshot restore
 	checkpointRunner   *checkpoint.RestoreRunner
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
+
+	// checkpoint information for log restore
+	useCheckpoint bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -342,25 +345,34 @@ func (rc *Client) StartCheckpointRunnerForLogRestore(ctx context.Context, taskNa
 }
 
 func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {
-	// if the checkpoint metadata exists in the external storage, the restore is not
-	// for the first time.
-	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
+	rc.useCheckpoint = true
 
-	if exists {
-		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, rc.storage, taskName)
+	// it shows that the user has modified gc-ratio, if `gcRatio` doesn't equal to "-1.0".
+	// update the `gcRatio` for checkpoint metadata.
+	if gcRatio == utils.DisableGcRatioVal {
+		// if the checkpoint metadata exists in the external storage, the restore is not
+		// for the first time.
+		exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
 
-		return meta.GcRatio, nil
+		if exists {
+			// load the checkpoint since this is not the first time to restore
+			meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, rc.storage, taskName)
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+
+			return meta.GcRatio, nil
+		}
+
+		log.Warn("save the diable gc ratio(-1.0) into checkpoint, adjust it into the default value(1.1)")
+		gcRatio = "1.1"
 	}
 
 	// initialize the checkpoint metadata since it is the first time to restore.
-	if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, rc.storage, &checkpoint.CheckpointMetadataForRestore{
+	if err := checkpoint.SaveCheckpointMetadataForRestore(ctx, rc.storage, &checkpoint.CheckpointMetadataForRestore{
 		GcRatio: gcRatio,
 	}, taskName); err != nil {
 		return gcRatio, errors.Trace(err)
@@ -2340,14 +2352,66 @@ func (rc *Client) CleanUpKVFiles(
 	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
+func (rc *Client) initSchemasMap(
+	ctx context.Context,
+	clusterID uint64,
+	restoreTS uint64,
+) ([]*backuppb.PitrDBMap, error) {
+	filename := metautil.PitrIDMapsFilename(clusterID, restoreTS)
+	exist, err := rc.storage.FileExists(ctx, filename)
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to check filename:%s ", filename)
+	} else if !exist {
+		log.Info("pitr id maps isn't existed", zap.String("file", filename))
+		return nil, nil
+	}
+
+	metaData, err := rc.storage.ReadFile(ctx, filename)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	backupMeta := &backuppb.BackupMeta{}
+	if err = backupMeta.Unmarshal(metaData); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return backupMeta.GetDbMaps(), nil
+}
+
 // InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
 func (rc *Client) InitSchemasReplaceForDDL(
-	dbMaps []*backuppb.PitrDBMap,
+	ctx context.Context,
+	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	tables *map[int64]*metautil.Table,
 	tableFilter filter.Filter,
+	newTask bool,
+	hasFullRestore bool,
 ) (*stream.SchemasReplace, error) {
-	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
+	var (
+		err    error
+		dbMaps []*backuppb.PitrDBMap
+
+		dbReplaces = make(map[stream.UpstreamID]*stream.DBReplace)
+	)
+
+	// not new task, load schemas map from external storage
+	if !newTask {
+		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.restoreTS)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	// a new task, but without full snapshot restore, tries to load
+	// schemas map whose `restore-ts`` is the task's `start-ts`.
+	if len(dbMaps) <= 0 && !hasFullRestore {
+		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
 	if len(dbMaps) <= 0 {
 		for _, t := range *tables {
 			dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
@@ -2402,7 +2466,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	}
 
 	rp := stream.NewSchemasReplace(
-		dbReplaces, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
+		dbReplaces, tiflashRecorder, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
 		rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
 	return rp, nil
 }
@@ -2989,7 +3053,7 @@ func (rc *Client) SaveIDMap(
 ) error {
 	idMaps := sr.TidySchemaMaps()
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := metautil.PitrIDMapsFilename(clusterID)
+	metaFileName := metautil.PitrIDMapsFilename(clusterID, rc.restoreTS)
 	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
@@ -2999,6 +3063,21 @@ func (rc *Client) SaveIDMap(
 
 	if err := metaWriter.FlushBackupMeta(ctx); err != nil {
 		return errors.Trace(err)
+	}
+	if rc.useCheckpoint {
+		var items map[int64]model.TiFlashReplicaInfo
+		if sr.TiflashRecorder != nil {
+			items = sr.TiflashRecorder.GetItems()
+		}
+		if err := checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, rc.storage, &checkpoint.CheckpointTaskInfoForLogRestore{
+			Progress:     checkpoint.InLogRestoreAndIdMapPersist,
+			StartTS:      rc.startTS,
+			RestoreTS:    rc.restoreTS,
+			RewriteTS:    rc.currentTS,
+			TiFlashItems: items,
+		}, rc.GetClusterID(ctx)); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }

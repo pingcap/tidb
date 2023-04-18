@@ -21,6 +21,7 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 type LogRestoreKeyType = string
@@ -85,4 +86,59 @@ func AppendRangeForLogRestore(
 			},
 		},
 	})
+}
+
+const (
+	CheckpointTaskInfoForLogRestorePathFormat = CheckpointDir + "/restore-%d/taskInfo.meta"
+)
+
+func getCheckpointTaskInfoPathByID(clusterID uint64) string {
+	return fmt.Sprintf(CheckpointTaskInfoForLogRestorePathFormat, clusterID)
+}
+
+type RestoreProgress int
+
+const (
+	InSnapshotRestore RestoreProgress = iota
+	// Only when the id-maps is persist, status turns into it.
+	InLogRestoreAndIdMapPersist
+)
+
+type CheckpointTaskInfoForLogRestore struct {
+	//
+	Progress RestoreProgress `json:"progress"`
+	//
+	StartTS   uint64 `json:"start-ts"`
+	RestoreTS uint64 `json:"restore-ts"`
+	// updated in the progress of `InLogRestoreAndIdMapPersist`
+	RewriteTS uint64 `json:"rewrite-ts"`
+	// tiflash recorder items with snapshot restore records
+	TiFlashItems map[int64]model.TiFlashReplicaInfo `json:"tiflash-recorder,omitempty"`
+}
+
+func LoadCheckpointTaskInfoForLogRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	clusterID uint64,
+) (*CheckpointTaskInfoForLogRestore, error) {
+	m := &CheckpointTaskInfoForLogRestore{}
+	err := loadCheckpointMeta(ctx, s, getCheckpointTaskInfoPathByID(clusterID), m)
+	return m, err
+}
+
+func SaveCheckpointTaskInfoForLogRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	meta *CheckpointTaskInfoForLogRestore,
+	clusterID uint64,
+) error {
+	return saveCheckpointMetadata(ctx, s, meta, getCheckpointTaskInfoPathByID(clusterID))
+}
+
+func ExistsCheckpointTaskInfo(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	clusterID uint64,
+) (bool, error) {
+	return s.FileExists(ctx, getCheckpointTaskInfoPathByID(clusterID))
 }

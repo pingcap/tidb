@@ -491,7 +491,7 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, string, error) 
 		return nil, "", errors.Trace(err)
 	}
 
-	newRatio := "-1.0"
+	newRatio := utils.DisableGcRatioVal
 	err = utils.SetGcRatio(execCtx, newRatio)
 	if err != nil {
 		return nil, "", errors.Trace(err)
@@ -1084,6 +1084,11 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 	return nil
 }
 
+// getStreamRestoreTaskName generates the taskName for checkpoint
+func getStreamRestoreTaskName(clusterID, startTS, restoreTs uint64) string {
+	return fmt.Sprintf("%d.%d.%d", clusterID, startTS, restoreTs)
+}
+
 // RunStreamRestore restores stream log.
 func RunStreamRestore(
 	c context.Context,
@@ -1099,8 +1104,11 @@ func RunStreamRestore(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
-	logInfo, err := getLogRange(ctx, &cfg.Config)
+	_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logInfo, err := getLogRangeWithStorage(ctx, &cfg.Config, s)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1135,13 +1143,15 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
+	curTaskInfo, doFullRestore, err := checkPiTRTaskInfo(ctx, g, s, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	recorder := tiflashrec.New()
 	cfg.tiflashRecorder = recorder
 	// restore full snapshot.
-	if len(cfg.FullBackupStorage) > 0 {
-		if err := checkPiTRRequirements(ctx, g, cfg); err != nil {
-			return errors.Trace(err)
-		}
+	if doFullRestore {
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
@@ -1149,10 +1159,12 @@ func RunStreamRestore(
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
+	} else if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
+		cfg.tiflashRecorder.Load(curTaskInfo.TiFlashItems)
 	}
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
-	if err := restoreStream(ctx, g, cfg, logInfo.logMinTS, logInfo.logMaxTS); err != nil {
+	if err := restoreStream(ctx, g, cfg, curTaskInfo, logInfo.logMinTS, logInfo.logMaxTS); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1163,6 +1175,7 @@ func restoreStream(
 	c context.Context,
 	g glue.Glue,
 	cfg *RestoreConfig,
+	taskInfo *checkpoint.CheckpointTaskInfoForLogRestore,
 	logMinTS, logMaxTS uint64,
 ) (err error) {
 	var (
@@ -1212,9 +1225,15 @@ func restoreStream(
 	}
 	defer client.Close()
 
-	currentTS, err := client.GetTSWithRetry(ctx)
-	if err != nil {
-		return errors.Trace(err)
+	var currentTS uint64
+	if taskInfo != nil && taskInfo.RewriteTS > 0 {
+		// reuse the task's rewrite ts
+		currentTS = taskInfo.RewriteTS
+	} else {
+		currentTS, err = client.GetTSWithRetry(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	client.SetCurrentTS(currentTS)
 
@@ -1247,7 +1266,7 @@ func restoreStream(
 		log.Info("finish restoring gc")
 	}()
 
-	taskName := fmt.Sprintf("%d.%d", client.GetPDClient().GetClusterID(ctx), cfg.StartTS)
+	taskName := getStreamRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
 	var checkpointRunner *checkpoint.LogRestoreRunner
 	if cfg.UseCheckpoint {
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
@@ -1277,13 +1296,13 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	dbMaps, err := InitSchemasMap(ctx, cfg, client.GetClusterID(ctx))
-	if err != nil {
-		return errors.Trace(err)
+	newTask := true
+	if taskInfo != nil && taskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist {
+		newTask = false
 	}
-
 	// get the schemas ID replace information.
-	schemasReplace, err := client.InitSchemasReplaceForDDL(dbMaps, &fullBackupTables, cfg.TableFilter)
+	schemasReplace, err := client.InitSchemasReplaceForDDL(
+		ctx, cfg.tiflashRecorder, &fullBackupTables, cfg.TableFilter, newTask, len(cfg.FullBackupStorage) > 0)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1492,7 +1511,14 @@ func getLogRange(
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
+	return getLogRangeWithStorage(ctx, cfg, s)
+}
 
+func getLogRangeWithStorage(
+	ctx context.Context,
+	cfg *Config,
+	s storage.ExternalStorage,
+) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
@@ -1669,37 +1695,6 @@ func initFullBackupTables(
 	return tables, nil
 }
 
-func InitSchemasMap(
-	ctx context.Context,
-	cfg *RestoreConfig,
-	clusterID uint64,
-) ([]*backuppb.PitrDBMap, error) {
-	_, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	filename := metautil.PitrIDMapsFilename(clusterID)
-	exist, err := s.FileExists(ctx, filename)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to check filename:%s ", filename)
-	} else if !exist {
-		log.Info("pitr id maps isn't existed", zap.String("file", filename))
-		return nil, nil
-	}
-
-	metaData, err := s.ReadFile(ctx, filename)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err = backupMeta.Unmarshal(metaData); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return backupMeta.GetDbMaps(), nil
-}
-
 func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) (map[int64]*restore.RewriteRules, error) {
 	// compare table exists in cluster and map[table]table.Info to get rewrite rules.
 	rules := make(map[int64]*restore.RewriteRules)
@@ -1809,14 +1804,7 @@ func buildPauseSafePointName(taskName string) string {
 	return fmt.Sprintf("%s_pause_safepoint", taskName)
 }
 
-func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig) error {
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true, conn.StreamVersionChecker)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer mgr.Close()
-
+func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *conn.Mgr) error {
 	userDBs := restore.GetExistedUserDBs(mgr.GetDomain())
 	if len(userDBs) > 0 {
 		userDBNames := make([]string, 0, len(userDBs))
@@ -1829,4 +1817,76 @@ func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig)
 	}
 
 	return nil
+}
+
+func checkPiTRTaskInfo(
+	ctx context.Context,
+	g glue.Glue,
+	s storage.ExternalStorage,
+	cfg *RestoreConfig,
+) (*checkpoint.CheckpointTaskInfoForLogRestore, bool, error) {
+	var (
+		doFullRestore = (len(cfg.FullBackupStorage) > 0)
+
+		curTaskInfo *checkpoint.CheckpointTaskInfoForLogRestore
+	)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, true, conn.StreamVersionChecker)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	defer mgr.Close()
+
+	clusterID := mgr.GetPDClient().GetClusterID(ctx)
+	if cfg.UseCheckpoint {
+		exists, err := checkpoint.ExistsCheckpointTaskInfo(ctx, s, clusterID)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		if exists {
+			curTaskInfo, err = checkpoint.LoadCheckpointTaskInfoForLogRestore(ctx, s, clusterID)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			// TODO: check whether user has manually modified the cluster(ddl). If so, regard the behavior
+			//       as restore from scratch. (update `curTaskInfo.RewriteTs` to 0 as an uninitial value)
+
+			// The task info is written to external storage without status `InSnapshotRestore` only when
+			// id-maps is persist into external storage, so there is no need to do snapshot restore again.
+			if curTaskInfo.StartTS == cfg.StartTS && curTaskInfo.RestoreTS == cfg.RestoreTS {
+				// the same task, check whether skip snapshot restore
+				doFullRestore = doFullRestore && (curTaskInfo.Progress == checkpoint.InSnapshotRestore)
+			} else {
+				// not the same task, so overwrite the taskInfo with a new task
+				curTaskInfo = nil
+			}
+		}
+	}
+
+	// restore full snapshot precheck.
+	if doFullRestore {
+		if !(cfg.UseCheckpoint && curTaskInfo != nil) {
+			// Only when use checkpoint and not the first execution,
+			// skip checking requirements.
+			if err := checkPiTRRequirements(ctx, g, cfg, mgr); err != nil {
+				return nil, false, errors.Trace(err)
+			}
+		}
+	}
+
+	// persist the new task info
+	if cfg.UseCheckpoint && curTaskInfo == nil {
+		if err := checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, s, &checkpoint.CheckpointTaskInfoForLogRestore{
+			Progress:  checkpoint.InSnapshotRestore,
+			StartTS:   cfg.StartTS,
+			RestoreTS: cfg.RestoreTS,
+			// updated in the stage of `InLogRestoreAndIdMapPersist`
+			RewriteTS:    0,
+			TiFlashItems: nil,
+		}, clusterID); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+	}
+
+	return curTaskInfo, doFullRestore, nil
 }
