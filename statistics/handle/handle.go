@@ -665,7 +665,24 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+	globalStats, err = h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+	if err != nil {
+		return
+	}
+	if len(globalStats.MissingPartitionStats) > 0 {
+		var item string
+		if isIndex == 0 {
+			item = "columns"
+		} else {
+			item = "index"
+			if len(histIDs) > 0 {
+				item += " " + globalTableInfo.FindIndexNameByID(histIDs[0])
+			}
+		}
+		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", globalTableInfo.Name.L),
+			zap.String("item", item), zap.Strings("missing", globalStats.MissingPartitionStats))
+	}
+	return
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -726,7 +743,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
 		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
 	}
-
+	skipMissingPartitionStats := variable.SkipMissingPartitionStats.Load()
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
 		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
@@ -741,8 +758,14 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		}
 		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
 		if allPartitionStats == nil || partitionStats == nil || !ok {
-			partitionStats, err = h.loadTablePartitionStats(tableInfo, &def)
-			if err != nil {
+			var terr error
+			partitionStats, terr = h.loadTablePartitionStats(tableInfo, &def)
+			if terr != nil {
+				if skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
+					globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
+					continue
+				}
+				err = terr
 				return
 			}
 			if allPartitionStats == nil {
@@ -750,6 +773,8 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			}
 			allPartitionStats[partitionID] = partitionStats
 		}
+		globalStats.Count += partitionStats.RealtimeCount
+		globalStats.ModifyCount += partitionStats.ModifyCount
 		for i := 0; i < globalStats.Num; i++ {
 			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			if !analyzed {
