@@ -109,6 +109,7 @@ func (h *chunkRowHeap) Pop() interface{} {
 
 // NewSortedSelectResults is only for partition table
 // When pids != nil, the pid will be set in the last column of each chunk.Rows.
+// When cols == nil, sort by first few columns.
 func NewSortedSelectResults(selectResult []SelectResult, pids []int64, cols []*expression.Column, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
 	s := &sortedSelectResults{
 		columns:      cols,
@@ -162,11 +163,16 @@ func (ssr *sortedSelectResults) initCompareFuncs() {
 
 func (ssr *sortedSelectResults) buildKeyColumns() {
 	ssr.keyColumns = make([]int, 0, len(ssr.byItems))
-	for _, by := range ssr.byItems {
+	for i, by := range ssr.byItems {
 		col := by.Expr.(*expression.Column)
-		for idx, c := range ssr.columns {
-			if c.ID == col.ID {
-				ssr.keyColumns = append(ssr.keyColumns, idx)
+		if ssr.columns == nil {
+			ssr.keyColumns = append(ssr.keyColumns, i)
+		} else {
+			for idx, c := range ssr.columns {
+				if c.ID == col.ID {
+					ssr.keyColumns = append(ssr.keyColumns, idx)
+					break
+				}
 			}
 		}
 	}

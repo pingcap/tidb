@@ -432,7 +432,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					worker.batchSize = worker.maxBatchSize
 				}
 				if len(results) > 1 && len(e.byItems) != 0 {
-					ssr := distsql.NewSortedSelectResults(results, pids, e.Schema().Columns, e.byItems, e.memTracker)
+					ssr := distsql.NewSortedSelectResults(results, pids, nil, e.byItems, e.memTracker)
 					results = []distsql.SelectResult{ssr}
 				}
 				ctx1, cancel := context.WithCancel(ctx)

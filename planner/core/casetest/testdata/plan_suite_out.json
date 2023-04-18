@@ -8472,26 +8472,24 @@
       {
         "SQL": "select * from tcommon where a = 1 or b = 1 order by c limit 2",
         "Plan": [
-          "Projection 2.00 root  test.tcommon.a, test.tcommon.b, test.tcommon.c",
-          "└─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
-          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │ └─TableRangeScan 2.00 cop[tikv] table:tcommon range:[1,1], keep order:true, stats:pseudo",
-          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:tcommon keep order:false, stats:pseudo"
+          "IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "│ └─TableRangeScan 2.00 cop[tikv] table:tcommon range:[1,1], keep order:true, stats:pseudo",
+          "├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "│ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 19.99 cop[tikv] table:tcommon keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
       {
         "SQL": "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2",
         "Plan": [
-          "Projection 2.00 root  test.tcommon.a, test.tcommon.b, test.tcommon.c",
-          "└─IndexMerge 11.00 root  type: union, limit embedded(offset:0, count:2)",
-          "  ├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
-          "  │ └─TableRangeScan 1.00 cop[tikv] table:tcommon range:[1 2,1 2], keep order:true, stats:pseudo",
-          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 11.00 cop[tikv] table:tcommon keep order:false, stats:pseudo"
+          "IndexMerge 11.00 root  type: union, limit embedded(offset:0, count:2)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
+          "│ └─TableRangeScan 1.00 cop[tikv] table:tcommon range:[1 2,1 2], keep order:true, stats:pseudo",
+          "├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "│ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 11.00 cop[tikv] table:tcommon keep order:false, stats:pseudo"
         ],
         "Warning": null
       }
