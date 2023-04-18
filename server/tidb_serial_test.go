@@ -95,7 +95,7 @@ func TestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
 	ts.runTestLoadDataAutoRandomWithSpecialTerm(t)
 }
 
-func TestLoadDataGeneratedColumns(t *testing.T) {
+func TestLoadDataForGeneratedColumns(t *testing.T) {
 	ts := createTidbTestSuite(t)
 	ts.runTestLoadDataForGeneratedColumns(t)
 }

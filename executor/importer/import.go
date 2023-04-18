@@ -583,9 +583,6 @@ func (e *LoadDataController) initFieldMappings() []string {
 	if len(e.ColumnsAndUserVars) == 0 {
 		for _, v := range tableCols {
 			// Data for generated column is generated from the other rows rather than from the parsed data.
-			if v.IsGenerated() {
-				continue
-			}
 			fieldMapping := &FieldMapping{
 				Column: v,
 			}
@@ -635,10 +632,7 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 	}
 
 	for _, col := range cols {
-		if !col.IsGenerated() {
-			// todo: should report error here, since in reorderColumns we report error if en(cols) != len(columnNames)
-			e.InsertColumns = append(e.InsertColumns, col)
-		}
+		e.InsertColumns = append(e.InsertColumns, col)
 	}
 
 	// e.InsertColumns is appended according to the original tables' column sequence.
