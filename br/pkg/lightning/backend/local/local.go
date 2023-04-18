@@ -1172,6 +1172,7 @@ func (local *Backend) generateAndSendJob(
 		case rangeCh <- r:
 		}
 	}
+	close(rangeCh)
 	return eg.Wait()
 }
 
