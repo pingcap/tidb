@@ -177,7 +177,7 @@ func (s *serverStateSyncer) GetGlobalState(ctx context.Context) (*StateInfo, err
 	}
 	err = state.Unmarshal(kvs[0].Value)
 	if err != nil {
-		logutil.BgLogger().Info("get global state failed", zap.String("key", s.etcdPath), zap.ByteString("value", kvs[0].Value), zap.Error(err))
+		logutil.BgLogger().Warn("get global state failed", zap.String("key", s.etcdPath), zap.ByteString("value", kvs[0].Value), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	s.clusterState = state
