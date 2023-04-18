@@ -631,9 +631,7 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 		return dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
 	}
 
-	for _, col := range cols {
-		e.InsertColumns = append(e.InsertColumns, col)
-	}
+	e.InsertColumns = append(e.InsertColumns, cols...)
 
 	// e.InsertColumns is appended according to the original tables' column sequence.
 	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
