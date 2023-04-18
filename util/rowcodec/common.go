@@ -259,7 +259,10 @@ func (c ColData) Encode(buf []byte) ([]byte, error) {
 
 // RowData is a list of ColData for row checksum calculation.
 type RowData struct {
+	// Cols is a list of ColData which is expected to be sorted by id before calling Encode/Checksum.
 	Cols []ColData
+	// Data stores the result of Encode. However, it mostly acts as a buffer for encoding columns on checksum
+	// calculation.
 	Data []byte
 }
 
