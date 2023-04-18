@@ -145,12 +145,12 @@ func (e *calibrateResourceExec) checkDynamicCalibrateOptions() (startTime time.T
 		}
 	}
 	// check the duration
-	dura := endTime.Sub(startTime)
-	if dura > maxDuration {
+	dur = endTime.Sub(startTime)
+	if dur > maxDuration {
 		err = errors.Errorf("the duration of calibration is too long, should be less than %s", maxDuration.String())
 		return
 	}
-	if dura < minDuration {
+	if dur < minDuration {
 		err = errors.Errorf("the duration of calibration is too short, should be greater than %s", minDuration.String())
 	}
 
@@ -174,11 +174,12 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
 	startTs, endTs, err := e.checkDynamicCalibrateOptions()
-	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
-	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
 	if err != nil {
 		return err
 	}
+	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
+	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
+
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
 		return err
@@ -200,22 +201,19 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		return err
 	}
 	quotas := make([]float64, 0)
-	lowCount := 0
-	tidbCPULowCount := 0
-	tikvCPULowCOunt := 0
+	lowCount, tidbCPULowCount, tikvCPULowCount := 0, 0, 0
 	for idx, ru := range rus {
 		if idx >= len(tikvCPUs) || idx >= len(tidbCPUs) {
 			break
 		}
-		tikvQuota := tikvCPUs[idx] / totalKVCPUQuota
-		tidbQuota := tidbCPUs[idx] / totalTiDBCPU
+		tikvQuota, tidbQuota := tikvCPUs[idx]/totalKVCPUQuota, tidbCPUs[idx]/totalTiDBCPU
 		// If one of the two cpu usage is greater than the `valuableUsageThreshold`, we can accept it.
 		// And if both are greater than the `lowUsageThreshold`, we can also accpet it.
 		if tikvQuota > valuableUsageThreshold || tidbQuota > valuableUsageThreshold {
 			quotas = append(quotas, ru/mathutil.Max(tikvQuota, tidbQuota))
 		} else if tikvQuota < lowUsageThreshold {
 			lowCount++
-			tikvCPULowCOunt++
+			tikvCPULowCount++
 			if tidbQuota < lowUsageThreshold {
 				tidbCPULowCount++
 			}
@@ -242,7 +240,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		quota := sum / float64(upperBound-lowerBound)
 		req.AppendUint64(0, uint64(quota))
 	} else {
-		if tidbCPULowCount > 0 && tikvCPULowCOunt > 0 {
+		if tidbCPULowCount > 0 && tikvCPULowCount > 0 {
 			return errors.Errorf("The CPU utilizations of TiDB and TiKV are less than one tenth in some of the time")
 		} else if tidbCPULowCount > 0 {
 			return errors.Errorf("The CPU utilization of TiDB is less than one tenth in some of the time")
