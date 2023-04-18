@@ -251,6 +251,5 @@ func (wCtx *writerContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) er
 		kvs[0].RowID = handle.Encoded()
 	}
 	row := kv.MakeRowsFromKvPairs(kvs)
-	logutil.BgLogger().Warn("write row", zap.Any("row ID", handle.String()), zap.Any("key", key), zap.Any("value", idxVal))
 	return wCtx.lWrite.AppendRows(wCtx.ctx, nil, row)
 }
