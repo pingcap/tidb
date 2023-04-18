@@ -1334,7 +1334,7 @@ func (s *UsedStatsInfoForTable) FormatForExplain() string {
 }
 
 // WriteToSlowLog format the content in the format expected to be printed to the slow log, then write to w.
-// The format is table name partition name:version[realtime row count;modify count][column load status][index load status].
+// The format is table name partition name:version[realtime row count;modify count][index load status][column load status].
 func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
 	ver := "pseudo"
 	// statistics.PseudoVersion == 0
