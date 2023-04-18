@@ -10,8 +10,8 @@ This document describes a feature that allows users to pause the execution of th
 ## Motivation or Background
 
 Since the cluster upgrade may need to deal with DDL statements(there may be some DDL statements being processed before the upgrade), and DDL itself implementation framework will also need to adjust, resulting in some versions may not be able to roll the upgrade situation. Although these cases only exist in some versions, it is not easy to describe them one by one. Therefore, when upgrading TiDB clusters, users need to confirm that there are no DDL statements being executed, otherwise there may be problems with undefined behavior.
-Now there are two questions:
-- The above rule is only described in the doc, and users may misoperate. Related instructions doc.
+Now there are two problems:
+- The above rule is only described in the doc, and users may misoperate. Related [doc](https://docs.pingcap.com/tidb/dev/upgrade-tidb-using-tiup#upgrade-tidb-using-tiup).
 - During the upgrade operation, users need to communicate and coordinate with each business to cancel DDL, then upgrade, and finally re-execute DDL. Specific scenarios such as large cluster scenarios shared across multiple systems, such as scenarios on TiDB cloud.
 
 ## Detailed Design
