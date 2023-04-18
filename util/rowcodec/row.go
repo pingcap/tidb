@@ -16,7 +16,6 @@ package rowcodec
 
 import (
 	"encoding/binary"
-	"hash/crc32"
 )
 
 const (
@@ -90,19 +89,15 @@ func (r *row) hasChecksum() bool { return r.flags&rowFlagChecksum > 0 }
 
 func (r *row) hasExtraChecksum() bool { return r.checksumHeader&checksumFlagExtra > 0 }
 
-func (r *row) checksumVersion() int { return int(r.checksumHeader & checksumMaskVersion) }
-
-func (r *row) calcChecksum() error {
-	if r.checksumVersion() != 0 {
-		return errInvalidChecksumVer
+func (r *row) setChecksums(checksums ...uint32) {
+	if len(checksums) > 0 {
+		r.flags |= rowFlagChecksum
+		r.checksum1 = checksums[0]
+		if len(checksums) > 1 {
+			r.checksumHeader |= checksumFlagExtra
+			r.checksum2 = checksums[1]
+		}
 	}
-	r.checksum1 = crc32.ChecksumIEEE(r.data)
-	return nil
-}
-
-func (r *row) setExtraChecksum(v uint32) {
-	r.checksumHeader |= checksumFlagExtra
-	r.checksum2 = v
 }
 
 func (r *row) getData(i int) []byte {
@@ -156,7 +151,7 @@ func (r *row) fromBytes(rowData []byte) error {
 
 	if r.hasChecksum() {
 		r.checksumHeader = rowData[cursor]
-		if r.checksumVersion() != 0 {
+		if r.ChecksumVersion() != 0 {
 			return errInvalidChecksumVer
 		}
 		cursor++
@@ -243,6 +238,10 @@ func (r *row) findColID(colID int64) (idx int, isNil, notFound bool) {
 	notFound = true
 	return
 }
+
+// ChecksumVersion returns the version of checksum. Note that it's valid only if checksum has been encoded in the row
+// value (callers can check it by `GetChecksum`).
+func (r *row) ChecksumVersion() int { return int(r.checksumHeader & checksumMaskVersion) }
 
 // GetChecksum returns the checksum of row data (not null columns).
 func (r *row) GetChecksum() (uint32, bool) {
