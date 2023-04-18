@@ -163,12 +163,12 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 			break
 		}
 		if err := scheduler.OnSubtaskFinished(runCtx, subtask.Meta); err != nil {
+			s.onError(err)
 			if errors.Cause(err) == context.Canceled {
 				s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
 			} else {
 				s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
 			}
-			s.onError(err)
 			break
 		}
 		s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
