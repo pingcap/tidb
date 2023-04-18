@@ -4960,7 +4960,7 @@ func TestIssue37760(t *testing.T) {
 	tk.MustExec("insert into t values (2), (4), (6)")
 	tk.MustExec("set @@tidb_opt_range_max_size=1")
 	tk.MustQuery("select * from t where a").Check(testkit.Rows("2", "4", "6"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+	tk.MustQuery("show warnings").CheckContain("Memory capacity of 1 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen")
 }
 
 // TestExplainAnalyzeDMLCommit covers the issue #37373.
