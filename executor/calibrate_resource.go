@@ -166,9 +166,6 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	if len(e.optionList) > 0 && e.workloadType != ast.WorkloadNone {
-		return errors.Errorf("dynamic and static calibration cannot be performed at the same time")
-	}
 	if len(e.optionList) > 0 {
 		return e.dynamicCalibrate(ctx, req, exec)
 	}
