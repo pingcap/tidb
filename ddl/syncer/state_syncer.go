@@ -59,8 +59,7 @@ type StateSyncer interface {
 // StateInfo is the tidb cluster state.
 // It will not be updated when the tidb cluster upgrading.
 type StateInfo struct {
-	State   string `json:"state"`
-	Version string `json:"version"`
+	State string `json:"state"`
 }
 
 // Marshal `StateInfo` into bytes.
