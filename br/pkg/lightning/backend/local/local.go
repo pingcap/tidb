@@ -1317,7 +1317,7 @@ func (local *Backend) executeJob(
 					// The available disk percent of TiKV
 					ratio := store.Status.Available * 100 / store.Status.Capacity
 					if ratio < 10 {
-						return errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again")
+						return errors.Errorf("the remaining storage capacity of TiKV(%s) is less than 10%%; please increase the storage capacity of TiKV and try again", store.Store.Address)
 					}
 				}
 				break
