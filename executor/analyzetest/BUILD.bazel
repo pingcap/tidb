@@ -8,7 +8,9 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+    race = "on",
     shard_count = 50,
+    tags = ["no-cache"],
     deps = [
         "//domain",
         "//domain/infosync",
