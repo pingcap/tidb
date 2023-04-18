@@ -16,7 +16,6 @@ package statistics
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"math"
 	"strings"
 	"sync"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
