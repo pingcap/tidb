@@ -21,7 +21,6 @@ build:race --@io_bazel_rules_go//go/config:race --test_env=GORACE=halt_on_error=
 test --test_env=TZ=Asia/Shanghai
 test --test_output=all
 test --nocache_test_results
---test_summary=testcase
 test:ci --color=yes
 test:ci --verbose_failures --test_verbose_timeout_warnings
 test:ci --test_env=GO_TEST_WRAP_TESTV=1
