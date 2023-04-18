@@ -99,6 +99,12 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 	return miniTask, nil
 }
 
+// OnSubtaskFinished implements the Scheduler.OnSubtaskFinished interface.
+func (s *ImportScheduler) OnSubtaskFinished(context.Context, []byte) error {
+	logutil.BgLogger().Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
+	return nil
+}
+
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.
 func (s *ImportScheduler) CleanupSubtaskExecEnv(ctx context.Context) (err error) {
 	defer func() {
