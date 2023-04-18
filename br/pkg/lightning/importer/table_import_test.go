@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -770,6 +772,12 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		require.NoError(s.T(), err)
 		require.Equal(s.T(), testCase.expectedPermutation, ccp.ColumnPermutation)
 	}
+}
+
+func MockDoChecksumCtx(db *sql.DB) context.Context {
+	ctx := context.Background()
+	manager := local.NewTiDBChecksumExecutor(db)
+	return context.WithValue(ctx, &checksumManagerKey, manager)
 }
 
 func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
