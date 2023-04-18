@@ -121,10 +121,7 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, bs []byte) erro
 	if err != nil {
 		return err
 	}
-	if err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
-		return err
-	}
-	return nil
+	return s.tableImporter.ImportAndCleanup(ctx, closedEngine)
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.
