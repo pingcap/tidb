@@ -104,7 +104,7 @@ go_test(
     embed = [":local"],
     flaky = True,
     race = "on",
-    shard_count = 48,
+    shard_count = 49,
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/encode",

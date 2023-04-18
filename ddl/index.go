@@ -719,13 +719,10 @@ func pickBackfillType(job *model.Job) model.ReorgType {
 	}
 	if IsEnableFastReorg() {
 		var useIngest bool
-		if ingest.LitInitialized {
-			useIngest = canUseIngest()
-			if useIngest {
-				cleanupSortPath(job.ID)
-				job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-				return model.ReorgTypeLitMerge
-			}
+		if ingest.LitInitialized && ingest.LitBackCtxMgr.Available() {
+			cleanupSortPath(job.ID)
+			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+			return model.ReorgTypeLitMerge
 		}
 		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
@@ -769,19 +766,6 @@ func cleanupSortPath(currentJobID int64) {
 			}
 		}
 	}
-}
-
-// canUseIngest indicates whether it can use ingest way to backfill index.
-func canUseIngest() bool {
-	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
-	activeJobIDs := ingest.LitBackCtxMgr.Keys()
-	if len(activeJobIDs) > 0 {
-		logutil.BgLogger().Info("[ddl-ingest] ingest backfill is already in use by another DDL job",
-			zap.Int64("job ID", activeJobIDs[0]))
-		return false
-	}
-
-	return true
 }
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
@@ -908,7 +892,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if ok && bc.Done() {
 		return true, 0, nil
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
+	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID)
 	if err != nil {
 		err = tryFallbackToTxnMerge(job, err)
 		return false, ver, errors.Trace(err)
@@ -1584,7 +1568,7 @@ type addIndexIngestWorker struct {
 
 	tbl              table.PhysicalTable
 	index            table.Index
-	writerCtx        *ingest.WriterContext
+	writer           ingest.Writer
 	copReqSenderPool *copReqSenderPool
 	checkpointMgr    *ingest.CheckpointManager
 
@@ -1593,13 +1577,13 @@ type addIndexIngestWorker struct {
 	distribute bool
 }
 
-func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.EngineInfo,
+func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei ingest.Engine,
 	resultCh chan *backfillResult, jobID int64, schemaName string, indexID int64, writerID int,
 	copReqSenderPool *copReqSenderPool, sessCtx sessionctx.Context,
 	checkpointMgr *ingest.CheckpointManager, distribute bool) (*addIndexIngestWorker, error) {
 	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	lwCtx, err := ei.NewWriterCtx(writerID, indexInfo.Unique)
+	lw, err := ei.CreateWriter(writerID, indexInfo.Unique)
 	if err != nil {
 		return nil, err
 	}
@@ -1611,7 +1595,7 @@ func newAddIndexIngestWorker(t table.PhysicalTable, d *ddlCtx, ei *ingest.Engine
 			metrics.GenerateReorgLabel("add_idx_rate", schemaName, t.Meta().Name.O)),
 		tbl:              t,
 		index:            index,
-		writerCtx:        lwCtx,
+		writer:           lw,
 		copReqSenderPool: copReqSenderPool,
 		resultCh:         resultCh,
 		jobID:            jobID,
@@ -1625,7 +1609,7 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, rs.chunk)
+	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
 	if err != nil || cnt == 0 {
 		w.copReqSenderPool.recycleChunk(rs.chunk)
 		return 0, nil, err
@@ -1637,7 +1621,7 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 	return cnt, nextKey, nil
 }
 
-func writeChunkToLocal(writerCtx *ingest.WriterContext,
+func writeChunkToLocal(writer ingest.Writer,
 	index table.Index, copCtx *copContext, vars *variable.SessionVars,
 	copChunk *chunk.Chunk) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
@@ -1655,7 +1639,7 @@ func writeChunkToLocal(writerCtx *ingest.WriterContext,
 			return 0, nil, errors.Trace(err)
 		}
 		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, handleDataBuf)
-		err = writeOneKVToLocal(writerCtx, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
+		err = writeOneKVToLocal(writer, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -1665,7 +1649,7 @@ func writeChunkToLocal(writerCtx *ingest.WriterContext,
 	return count, lastHandle, nil
 }
 
-func writeOneKVToLocal(writerCtx *ingest.WriterContext,
+func writeOneKVToLocal(writer ingest.Writer,
 	index table.Index, sCtx *stmtctx.StatementContext, writeBufs *variable.WriteStmtBufs,
 	idxDt, rsData []types.Datum, handle kv.Handle) error {
 	iter := index.GenIndexKVIter(sCtx, idxDt, handle, rsData)
@@ -1674,7 +1658,7 @@ func writeOneKVToLocal(writerCtx *ingest.WriterContext,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = writerCtx.WriteRow(key, idxVal, handle)
+		err = writer.WriteRow(key, idxVal, handle)
 		if err != nil {
 			return errors.Trace(err)
 		}

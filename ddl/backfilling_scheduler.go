@@ -268,7 +268,7 @@ type ingestBackfillScheduler struct {
 	writerPool    *workerpool.WorkerPool[idxRecResult]
 	writerMaxID   int
 	poolErr       chan error
-	backendCtx    *ingest.BackendContext
+	backendCtx    ingest.BackendCtx
 	checkpointMgr *ingest.CheckpointManager
 }
 
@@ -346,9 +346,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 	if !force {
 		jobID := b.reorgInfo.ID
 		indexID := b.reorgInfo.currElement.ID
-		if bc, ok := ingest.LitBackCtxMgr.Load(jobID); ok {
-			bc.EngMgr.ResetWorkers(bc, jobID, indexID)
-		}
+		b.backendCtx.ResetWorkers(jobID, indexID)
 	}
 	b.closed = true
 }
@@ -392,7 +390,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 		return nil
 	}
 	bcCtx := b.backendCtx
-	ei, err := bcCtx.EngMgr.Register(bcCtx, job.ID, b.reorgInfo.currElement.ID, job.SchemaName, job.TableName)
+	ei, err := bcCtx.Register(job.ID, b.reorgInfo.currElement.ID, job.SchemaName, job.TableName)
 	if err != nil {
 		// Return an error only if it is the first worker.
 		if b.writerMaxID == 0 {

@@ -2,12 +2,19 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "checkpoint",
-    srcs = ["checkpoint.go"],
+    srcs = [
+        "backup.go",
+        "checkpoint.go",
+        "log_restore.go",
+        "restore.go",
+        "ticker.go",
+    ],
     importpath = "github.com/pingcap/tidb/br/pkg/checkpoint",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",
         "//br/pkg/metautil",
+        "//br/pkg/pdutil",
         "//br/pkg/rtree",
         "//br/pkg/storage",
         "//br/pkg/summary",
@@ -26,8 +33,10 @@ go_test(
     srcs = ["checkpoint_test.go"],
     flaky = True,
     race = "on",
+    shard_count = 5,
     deps = [
         ":checkpoint",
+        "//br/pkg/pdutil",
         "//br/pkg/rtree",
         "//br/pkg/storage",
         "@com_github_pingcap_kvproto//pkg/brpb",

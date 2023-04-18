@@ -22,26 +22,56 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-type backendCtxManager struct {
-	generic.SyncMap[int64, *BackendContext]
+// BackendCtxMgr is used to manage the backend context.
+type BackendCtxMgr interface {
+	Available() bool
+	Register(ctx context.Context, unique bool, jobID int64) (BackendCtx, error)
+	Unregister(jobID int64)
+	Load(jobID int64) (BackendCtx, bool)
+}
+
+type litBackendCtxMgr struct {
+	generic.SyncMap[int64, *litBackendCtx]
 	memRoot  MemRoot
 	diskRoot DiskRoot
 }
 
-func (m *backendCtxManager) init(memRoot MemRoot, diskRoot DiskRoot) {
-	m.SyncMap = generic.NewSyncMap[int64, *BackendContext](10)
-	m.memRoot = memRoot
-	m.diskRoot = diskRoot
+func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
+	mgr := &litBackendCtxMgr{
+		SyncMap:  generic.NewSyncMap[int64, *litBackendCtx](10),
+		memRoot:  nil,
+		diskRoot: nil,
+	}
+	mgr.memRoot = NewMemRootImpl(int64(memQuota), mgr)
+	mgr.diskRoot = NewDiskRootImpl(path, mgr)
+	LitMemRoot = mgr.memRoot
+	LitDiskRoot = mgr.diskRoot
+	err := mgr.diskRoot.UpdateUsageAndQuota()
+	if err != nil {
+		logutil.BgLogger().Warn(LitErrUpdateDiskStats, zap.Error(err))
+	}
+	return mgr
+}
+
+// Available checks if the ingest backfill is available.
+func (m *litBackendCtxMgr) Available() bool {
+	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
+	activeJobIDs := m.Keys()
+	if len(activeJobIDs) > 0 {
+		logutil.BgLogger().Info("[ddl-ingest] ingest backfill is already in use by another DDL job",
+			zap.Int64("job ID", activeJobIDs[0]))
+		return false
+	}
+	return true
 }
 
 // Register creates a new backend and registers it to the backend context.
-func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int64, _ mysql.SQLMode) (*BackendContext, error) {
+func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if !exist {
 		m.memRoot.RefreshConsumption()
@@ -89,8 +119,11 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 }
 
 func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
-	cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot) *BackendContext {
-	bc := &BackendContext{
+	cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot) *litBackendCtx {
+	return &litBackendCtx{
+		SyncMap:  generic.NewSyncMap[int64, *engineInfo](10),
+		MemRoot:  memRoot,
+		DiskRoot: diskRoot,
 		jobID:    jobID,
 		backend:  be,
 		ctx:      ctx,
@@ -98,17 +131,15 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
 		sysVars:  vars,
 		diskRoot: diskRoot,
 	}
-	bc.EngMgr.init(memRoot, diskRoot)
-	return bc
 }
 
 // Unregister removes a backend context from the backend context manager.
-func (m *backendCtxManager) Unregister(jobID int64) {
-	bc, exist := m.Load(jobID)
+func (m *litBackendCtxMgr) Unregister(jobID int64) {
+	bc, exist := m.SyncMap.Load(jobID)
 	if !exist {
 		return
 	}
-	bc.EngMgr.UnregisterAll(jobID)
+	bc.unregisterAll(jobID)
 	bc.backend.Close()
 	m.memRoot.Release(StructSizeBackendCtx)
 	m.Delete(jobID)
@@ -118,11 +149,15 @@ func (m *backendCtxManager) Unregister(jobID int64) {
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()))
 }
 
+func (m *litBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
+	return m.SyncMap.Load(jobID)
+}
+
 // TotalDiskUsage returns the total disk usage of all backends.
-func (m *backendCtxManager) TotalDiskUsage() uint64 {
+func (m *litBackendCtxMgr) TotalDiskUsage() uint64 {
 	var totalDiskUsed uint64
 	for _, key := range m.Keys() {
-		bc, exists := m.Load(key)
+		bc, exists := m.SyncMap.Load(key)
 		if exists {
 			_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
 			totalDiskUsed += uint64(bcDiskUsed)
@@ -132,9 +167,9 @@ func (m *backendCtxManager) TotalDiskUsage() uint64 {
 }
 
 // UpdateMemoryUsage collects the memory usages from all the backend and updates it to the memRoot.
-func (m *backendCtxManager) UpdateMemoryUsage() {
+func (m *litBackendCtxMgr) UpdateMemoryUsage() {
 	for _, key := range m.Keys() {
-		bc, exists := m.Load(key)
+		bc, exists := m.SyncMap.Load(key)
 		if exists {
 			curSize := bc.backend.TotalMemoryConsume()
 			m.memRoot.ReleaseWithTag(EncodeBackendTag(bc.jobID))

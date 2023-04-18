@@ -102,6 +102,7 @@ go_library(
         "//br/pkg/lightning/mydump",
         "//br/pkg/storage",
         "//br/pkg/task",
+        "//br/pkg/task/show",
         "//br/pkg/utils",
         "//config",
         "//ddl",

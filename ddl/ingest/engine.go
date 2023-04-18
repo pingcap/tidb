@@ -30,9 +30,22 @@ import (
 	"go.uber.org/zap"
 )
 
-// EngineInfo is the engine for one index reorg task, each task will create several new writers under the
-// Opened Engine. Note EngineInfo is not thread safe.
-type EngineInfo struct {
+// Engine is the interface for the engine that can be used to write key-value pairs.
+type Engine interface {
+	Flush() error
+	ImportAndClean() error
+	Clean()
+	CreateWriter(id int, unique bool) (Writer, error)
+}
+
+// Writer is the interface for the writer that can be used to write key-value pairs.
+type Writer interface {
+	WriteRow(key, idxVal []byte, handle tidbkv.Handle) error
+}
+
+// engineInfo is the engine for one index reorg task, each task will create several new writers under the
+// Opened Engine. Note engineInfo is not thread safe.
+type engineInfo struct {
 	ctx          context.Context
 	jobID        int64
 	indexID      int64
@@ -47,10 +60,10 @@ type EngineInfo struct {
 	flushing     atomic.Bool
 }
 
-// NewEngineInfo create a new EngineInfo struct.
-func NewEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.EngineConfig,
-	en *backend.OpenedEngine, uuid uuid.UUID, wCnt int, memRoot MemRoot, diskRoot DiskRoot) *EngineInfo {
-	return &EngineInfo{
+// newEngineInfo create a new engineInfo struct.
+func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.EngineConfig,
+	en *backend.OpenedEngine, uuid uuid.UUID, wCnt int, memRoot MemRoot, diskRoot DiskRoot) *engineInfo {
+	return &engineInfo{
 		ctx:          ctx,
 		jobID:        jobID,
 		indexID:      indexID,
@@ -65,7 +78,7 @@ func NewEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 }
 
 // Flush imports all the key-values in engine to the storage.
-func (ei *EngineInfo) Flush() error {
+func (ei *engineInfo) Flush() error {
 	err := ei.openedEngine.Flush(ei.ctx)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.Error(err),
@@ -75,8 +88,8 @@ func (ei *EngineInfo) Flush() error {
 	return nil
 }
 
-// AcquireFlushLock acquires the flush lock of the engine.
-func (ei *EngineInfo) AcquireFlushLock() (release func()) {
+// acquireFlushLock acquires the flush lock of the engine.
+func (ei *engineInfo) acquireFlushLock() (release func()) {
 	ok := ei.flushing.CompareAndSwap(false, true)
 	if !ok {
 		return nil
@@ -87,7 +100,7 @@ func (ei *EngineInfo) AcquireFlushLock() (release func()) {
 }
 
 // Clean closes the engine and removes the local intermediate files.
-func (ei *EngineInfo) Clean() {
+func (ei *engineInfo) Clean() {
 	if ei.openedEngine == nil {
 		return
 	}
@@ -112,7 +125,7 @@ func (ei *EngineInfo) Clean() {
 }
 
 // ImportAndClean imports the engine data to TiKV and cleans up the local intermediate files.
-func (ei *EngineInfo) ImportAndClean() error {
+func (ei *engineInfo) ImportAndClean() error {
 	// Close engine and finish local tasks of lightning.
 	logutil.BgLogger().Info(LitInfoCloseEngine, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	indexEngine := ei.openedEngine
@@ -158,15 +171,15 @@ func (ei *EngineInfo) ImportAndClean() error {
 	return nil
 }
 
-// WriterContext is used to keep a lightning local writer for each backfill worker.
-type WriterContext struct {
+// writerContext is used to keep a lightning local writer for each backfill worker.
+type writerContext struct {
 	ctx    context.Context
 	unique bool
 	lWrite backend.EngineWriter
 }
 
-// NewWriterCtx creates a new WriterContext.
-func (ei *EngineInfo) NewWriterCtx(id int, unique bool) (*WriterContext, error) {
+// CreateWriter creates a new writerContext.
+func (ei *engineInfo) CreateWriter(id int, unique bool) (Writer, error) {
 	ei.memRoot.RefreshConsumption()
 	ok := ei.memRoot.CheckConsume(StructSizeWriterCtx)
 	if !ok {
@@ -194,7 +207,7 @@ func (ei *EngineInfo) NewWriterCtx(id int, unique bool) (*WriterContext, error) 
 // If local writer not exist, then create new one and store it into engine info writer cache.
 // note: operate ei.writeCache map is not thread safe please make sure there is sync mechanism to
 // make sure the safe.
-func (ei *EngineInfo) newWriterContext(workerID int, unique bool) (*WriterContext, error) {
+func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*writerContext, error) {
 	lWrite, exist := ei.writerCache.Load(workerID)
 	if !exist {
 		var err error
@@ -205,7 +218,7 @@ func (ei *EngineInfo) newWriterContext(workerID int, unique bool) (*WriterContex
 		// Cache the local writer.
 		ei.writerCache.Store(workerID, lWrite)
 	}
-	wc := &WriterContext{
+	wc := &writerContext{
 		ctx:    ei.ctx,
 		unique: unique,
 		lWrite: lWrite,
@@ -213,7 +226,7 @@ func (ei *EngineInfo) newWriterContext(workerID int, unique bool) (*WriterContex
 	return wc, nil
 }
 
-func (ei *EngineInfo) closeWriters() error {
+func (ei *engineInfo) closeWriters() error {
 	var firstErr error
 	for _, wid := range ei.writerCache.Keys() {
 		if w, ok := ei.writerCache.Load(wid); ok {
@@ -230,7 +243,7 @@ func (ei *EngineInfo) closeWriters() error {
 }
 
 // WriteRow Write one row into local writer buffer.
-func (wCtx *WriterContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) error {
+func (wCtx *writerContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) error {
 	kvs := make([]common.KvPair, 1)
 	kvs[0].Key = key
 	kvs[0].Val = idxVal

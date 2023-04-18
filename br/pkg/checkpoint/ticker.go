@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package spmc
+package checkpoint
 
-import (
-	"testing"
+import "time"
 
-	"github.com/pingcap/tidb/testkit/testsetup"
-	"go.uber.org/goleak"
-)
+type TimeTicker interface {
+	Ch() <-chan time.Time
+	Stop()
+}
 
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	goleak.VerifyTestMain(m)
+type timeTicker struct {
+	*time.Ticker
+}
+
+func (ticker timeTicker) Ch() <-chan time.Time {
+	return ticker.C
+}
+
+type manualTicker struct{}
+
+func (ticker manualTicker) Ch() <-chan time.Time {
+	return nil
+}
+
+func (ticker manualTicker) Stop() {}
+
+func dispatcherTicker(d time.Duration) TimeTicker {
+	if d > 0 {
+		return timeTicker{time.NewTicker(d)}
+	}
+	return manualTicker{}
 }

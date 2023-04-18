@@ -35,7 +35,7 @@ type backfillSchedulerHandle struct {
 	db          *model.DBInfo
 	index       *model.IndexInfo
 	job         *model.Job
-	bc          *ingest.BackendContext
+	bc          ingest.BackendCtx
 	ptbl        table.PhysicalTable
 	jc          *JobContext
 	eleTypeKey  []byte
@@ -107,7 +107,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning init subtask exec env")
 	d := b.d
 
-	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID, b.job.ReorgMeta.SQLMode)
+	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
 		return err
@@ -117,7 +117,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 }
 
 // SplitSubtask implements the Scheduler interface.
-func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalTask, error) {
+func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
 	d := b.d
@@ -195,7 +195,7 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 		return err
 	}
 
-	b.bc.EngMgr.UnregisterAll(b.job.ID)
+	b.bc.Unregister(b.job.ID, b.index.ID)
 	return nil
 }
 

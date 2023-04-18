@@ -38,7 +38,7 @@ invalid argument
 
 ["BR:Common:ErrInvalidMetaFile"]
 error = '''
-invalid metafile
+invalid metafile: %s
 '''
 
 ["BR:Common:ErrUndefinedDbOrTable"]
