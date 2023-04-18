@@ -157,12 +157,17 @@ func (l *LRUPlanCache) DeleteAll() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
-		l.updateInstanceMetric(nil, lru.Value.(*planCacheEntry))
-		l.lruList.Remove(lru)
-		l.size--
+	// update metrics
+	if l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
+		core_metrics.GetPlanCacheInstanceMemoryUsage().Sub(float64(l.memoryUsageTotal))
 	}
+	core_metrics.GetPlanCacheInstanceNumCounter().Sub(float64(l.size))
+
+	// reset all fields
+	l.size = 0
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
+	l.lruList = list.New()
+	l.memoryUsageTotal = 0
 }
 
 // Size gets the current cache size.
@@ -201,10 +206,7 @@ func (l *LRUPlanCache) Close() {
 	if l == nil {
 		return
 	}
-	if l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
-		core_metrics.GetPlanCacheInstanceMemoryUsage().Sub(float64(l.memoryUsageTotal))
-	}
-	core_metrics.GetPlanCacheInstanceNumCounter().Sub(float64(l.size))
+	l.DeleteAll()
 }
 
 // removeOldest removes the oldest element from the cache.
