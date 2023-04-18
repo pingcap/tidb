@@ -1408,6 +1408,9 @@ type SessionVars struct {
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
 
+	// EnableRowLevelChecksum indicates whether row level checksum is enabled.
+	EnableRowLevelChecksum bool
+
 	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
 	// Only for disaggregated-tiflash mode.
 	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
@@ -1605,6 +1608,12 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 // session variable, it isn't guaranteed to be used during query due to other conditions checking.
 func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
+}
+
+// IsRowLevelChecksumEnabled indicates whether row level checksum is enabled, that is tidb_enable_row_level_checksum is
+// on and tidb_row_format_version is 2.
+func (s *SessionVars) IsRowLevelChecksumEnabled() bool {
+	return s.EnableRowLevelChecksum && s.RowEncoder.Enable
 }
 
 // BuildParserConfig generate parser.ParserConfig for initial parser
@@ -1925,6 +1934,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	if !EnableLocalTxn.Load() {
 		vars.TxnScope = kv.NewGlobalTxnScopeVar()
+	}
+	if EnableRowLevelChecksum.Load() {
+		vars.EnableRowLevelChecksum = true
 	}
 	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
 	return vars

@@ -3332,6 +3332,15 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
 		}
 	}
+	if sctx.GetSessionVars().EnableRowLevelChecksum || variable.EnableRowLevelChecksum.Load() {
+		err := dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change when row level checksum is enabled")
+		if len(validSpecs) > 1 {
+			return err
+		}
+		if len(validSpecs) == 1 && len(validSpecs[0].NewColumns) > 1 && validSpecs[0].Tp == ast.AlterTableAddColumns {
+			return err
+		}
+	}
 	// set name for anonymous foreign key.
 	maxForeignKeyID := tb.Meta().MaxForeignKeyID
 	for _, spec := range validSpecs {

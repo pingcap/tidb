@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1258,6 +1260,20 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		"alter index idx_visible invisible, modify column c_3 decimal(10, 2);")
 	require.NoError(t, checkErr)
 	dom.DDL().SetHook(originHook)
+}
+
+func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	orig := variable.EnableRowLevelChecksum.Load()
+	variable.EnableRowLevelChecksum.Store(true)
+	defer variable.EnableRowLevelChecksum.Store(orig)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c int)")
+	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", mysql.ErrUnsupportedDDLOperation)
 }
 
 type cancelOnceHook struct {

@@ -59,6 +59,7 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TiDBMemQuotaQuery, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", true}, // now global only
+		{variable.TiDBEnableRowLevelChecksum, "1", true},
 	}
 
 	for _, tc := range testCases {

@@ -396,6 +396,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
 	}
 
+	// TODO(zyguan): row level checksum on update-record
 	for _, col := range t.Columns {
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
@@ -811,7 +812,11 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	sessVars := sctx.GetSessionVars()
 
-	for _, col := range t.WritableCols() {
+	// TODO(zyguan): row level checksum on add-record
+	for _, col := range t.Columns {
+		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+			continue
+		}
 		var value types.Datum
 		// In column type change, since we have set the origin default value for changing col, but
 		// for the new insert statement, we should use the casted value of relative column to insert.
