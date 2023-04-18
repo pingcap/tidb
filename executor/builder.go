@@ -839,7 +839,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 			}
 		}
 	case *ast.CalibrateResourceStmt:
-		return b.buildCalibrateResource(v.Schema())
+		return &calibrateResourceExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), 0),
+			workloadType: s.Tp,
+		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
 			baseExecutor: newBaseExecutor(b.ctx, nil, 0),
@@ -4071,6 +4074,9 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		isCorColInTableFilter:    isCorColInTableFilter,
 		isCorColInPartialAccess:  isCorColInPartialAccess,
 		isIntersection:           v.IsIntersectionType,
+		byItems:                  v.ByItems,
+		pushedLimit:              v.PushedLimit,
+		keepOrder:                v.KeepOrder,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable

@@ -1244,7 +1244,11 @@ func overwritePartialTableScanSchema(ds *DataSource, ts *PhysicalTableScan) {
 	for i := 0; i < hdColNum; i++ {
 		col := handleCols.GetCol(i)
 		exprCols = append(exprCols, col)
-		infoCols = append(infoCols, col.ToInfo())
+		if c := model.FindColumnInfoByID(ds.TableInfo().Columns, col.ID); c != nil {
+			infoCols = append(infoCols, c)
+		} else {
+			infoCols = append(infoCols, col.ToInfo())
+		}
 	}
 	ts.schema = expression.NewSchema(exprCols...)
 	ts.Columns = infoCols
@@ -2347,6 +2351,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		HandleCols:      ds.handleCols,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
+		constColsByCond: path.ConstCols,
 		prop:            prop,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))

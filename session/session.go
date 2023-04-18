@@ -221,8 +221,7 @@ type session struct {
 
 	store kv.Storage
 
-	preparedPlanCache    sessionctx.PlanCache
-	nonPreparedPlanCache sessionctx.PlanCache
+	sessionPlanCache sessionctx.PlanCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -366,7 +365,7 @@ func (s *session) cleanRetryInfo() {
 				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				s.GetPlanCache(false).Delete(cacheKey)
+				s.GetSessionPlanCache().Delete(cacheKey)
 			}
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
@@ -425,27 +424,16 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
-	if isNonPrepared { // use the non-prepared plan cache
-		if !s.GetSessionVars().EnableNonPreparedPlanCache {
-			return nil
-		}
-		if s.nonPreparedPlanCache == nil { // lazy construction
-			s.nonPreparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().NonPreparedPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, true)
-		}
-		return s.nonPreparedPlanCache
-	}
-
+func (s *session) GetSessionPlanCache() sessionctx.PlanCache {
 	// use the prepared plan cache
-	if !s.GetSessionVars().EnablePreparedPlanCache {
+	if !s.GetSessionVars().EnablePreparedPlanCache && !s.GetSessionVars().EnableNonPreparedPlanCache {
 		return nil
 	}
-	if s.preparedPlanCache == nil { // lazy construction
-		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
+	if s.sessionPlanCache == nil { // lazy construction
+		s.sessionPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
 			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, false)
 	}
-	return s.preparedPlanCache
+	return s.sessionPlanCache
 }
 
 func (s *session) SetSessionManager(sm util.SessionManager) {
@@ -2589,11 +2577,8 @@ func (s *session) Close() {
 		s.stmtStats.SetFinished()
 	}
 	s.ClearDiskFullOpt()
-	if s.preparedPlanCache != nil {
-		s.preparedPlanCache.Close()
-	}
-	if s.nonPreparedPlanCache != nil {
-		s.nonPreparedPlanCache.Close()
+	if s.sessionPlanCache != nil {
+		s.sessionPlanCache.Close()
 	}
 }
 
@@ -3560,7 +3545,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if opt != nil && opt.PreparedPlanCache != nil {
-		s.preparedPlanCache = opt.PreparedPlanCache
+		s.sessionPlanCache = opt.PreparedPlanCache
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)

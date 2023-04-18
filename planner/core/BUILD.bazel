@@ -150,6 +150,7 @@ go_library(
         "//util/sqlexec",
         "//util/stmtsummary",
         "//util/stringutil",
+        "//util/syncutil",
         "//util/texttree",
         "//util/tiflashcompute",
         "//util/tracing",

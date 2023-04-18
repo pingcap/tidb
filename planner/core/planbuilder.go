@@ -5086,7 +5086,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
-	case ast.ShowProcedureStatus:
+	case ast.ShowProcedureStatus, ast.ShowFunctionStatus:
 		return buildShowProcedureSchema()
 	case ast.ShowTriggers:
 		return buildShowTriggerSchema()
@@ -5261,11 +5261,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowLoadDataJobs:
 		names = []string{"Job_ID", "Create_Time", "Start_Time", "End_Time",
 			"Data_Source", "Target_Table", "Import_Mode", "Created_By",
-			"Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+			"Job_State", "Job_Status", "Source_File_Size", "Imported_Rows",
 			"Result_Code", "Result_Message"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
 			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
-			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeString}
 	}
 
