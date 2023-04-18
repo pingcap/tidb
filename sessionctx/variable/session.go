@@ -1318,6 +1318,9 @@ type SessionVars struct {
 	// PlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
 	PlanCacheMaxPlanSize uint64
 
+	// SessionPlanCacheSize controls the size of session plan cache.
+	SessionPlanCacheSize uint64
+
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
 	ConstraintCheckInPlacePessimistic bool
