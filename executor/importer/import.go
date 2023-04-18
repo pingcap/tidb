@@ -80,7 +80,7 @@ const (
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
 
-	// debug option, not for user
+	// test option, not for user
 	distributedOption = "__distributed"
 )
 
@@ -171,7 +171,7 @@ type Plan struct {
 	MaxRecordedErrors int64
 	Detached          bool
 
-	// debug
+	// test
 	Distributed bool `json:"-"`
 }
 
@@ -319,6 +319,9 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 		if e.ImportMode == PhysicalImportMode {
 			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("import_mode='physical'")
 		}
+		if e.Distributed {
+			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("__distributed=true")
+		}
 	}
 
 	if e.Format != LoadDataFormatDelimitedData {
@@ -368,6 +371,11 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 	if len(e.FieldsEnclosedBy) > 0 &&
 		(strings.HasPrefix(e.FieldsEnclosedBy, e.FieldsTerminatedBy) || strings.HasPrefix(e.FieldsTerminatedBy, e.FieldsEnclosedBy)) {
 		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other")
+	}
+
+	// only use for test
+	if e.Distributed && !variable.EnableDistTask.Load() {
+		return errors.Errorf("must enable %s before use distributed load data", variable.TiDBEnableDistTask)
 	}
 
 	return nil
@@ -523,7 +531,7 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		p.Detached = true
 	}
 
-	// debug
+	// test
 	if opt, ok := specifiedOptions[distributedOption]; ok {
 		var vInt int64
 		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
