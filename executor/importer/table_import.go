@@ -500,6 +500,9 @@ func (ti *TableImporter) Close() error {
 }
 
 func (ti *TableImporter) setLastInsertID(id uint64) {
+	if id == 0 {
+		return
+	}
 	if ti.lastInsertID == 0 || id < ti.lastInsertID {
 		ti.lastInsertID = id
 	}
