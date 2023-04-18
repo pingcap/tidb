@@ -64,6 +64,10 @@ func TestCalibrateResource(t *testing.T) {
 	err = rs.Next(context.Background(), rs.NewChunk(nil))
 	require.ErrorContains(t, err, "query metric error: pd unavailable")
 
+	// error sql
+	_, err = tk.Exec("CALIBRATE RESOURCE WORKLOAD tpcc START_TIME '2020-02-12 10:35:00'")
+	require.Error(t, err)
+
 	// Mock for metric table data.
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
 	require.NoError(t, failpoint.Enable(fpName, "return"))
