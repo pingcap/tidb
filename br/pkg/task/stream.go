@@ -1160,6 +1160,7 @@ func RunStreamRestore(
 		}
 		cfg.Config.Storage = logStorage
 	} else if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
+		log.Info("load tiflash records from checkpoint")
 		cfg.tiflashRecorder.Load(curTaskInfo.TiFlashItems)
 	}
 	// restore log.
@@ -1228,6 +1229,7 @@ func restoreStream(
 	var currentTS uint64
 	if taskInfo != nil && taskInfo.RewriteTS > 0 {
 		// reuse the task's rewrite ts
+		log.Info("reuse the task's rewrite ts", zap.Uint64("rewrite-ts", taskInfo.RewriteTS))
 		currentTS = taskInfo.RewriteTS
 	} else {
 		currentTS, err = client.GetTSWithRetry(ctx)
@@ -1856,8 +1858,10 @@ func checkPiTRTaskInfo(
 			if curTaskInfo.StartTS == cfg.StartTS && curTaskInfo.RestoreTS == cfg.RestoreTS {
 				// the same task, check whether skip snapshot restore
 				doFullRestore = doFullRestore && (curTaskInfo.Progress == checkpoint.InSnapshotRestore)
+				log.Info("the same task", zap.Bool("skip-snapshot-restore", !doFullRestore))
 			} else {
 				// not the same task, so overwrite the taskInfo with a new task
+				log.Info("not the same task, start to restore from scratch")
 				curTaskInfo = nil
 			}
 		}
@@ -1868,6 +1872,7 @@ func checkPiTRTaskInfo(
 		if !(cfg.UseCheckpoint && curTaskInfo != nil) {
 			// Only when use checkpoint and not the first execution,
 			// skip checking requirements.
+			log.Info("check pitr requirements for the first execution")
 			if err := checkPiTRRequirements(ctx, g, cfg, mgr); err != nil {
 				return nil, false, errors.Trace(err)
 			}
@@ -1876,6 +1881,7 @@ func checkPiTRTaskInfo(
 
 	// persist the new task info
 	if cfg.UseCheckpoint && curTaskInfo == nil {
+		log.Info("save checkpoint task info with `InSnapshotRestore` status")
 		if err := checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, s, &checkpoint.CheckpointTaskInfoForLogRestore{
 			Progress:  checkpoint.InSnapshotRestore,
 			StartTS:   cfg.StartTS,

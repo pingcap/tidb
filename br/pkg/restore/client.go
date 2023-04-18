@@ -364,6 +364,7 @@ func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskN
 				return "", errors.Trace(err)
 			}
 
+			log.Info("reuse gc ratio from checkpoint metadata", zap.String("gc-ratio", gcRatio))
 			return meta.GcRatio, nil
 		}
 
@@ -372,6 +373,7 @@ func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskN
 	}
 
 	// initialize the checkpoint metadata since it is the first time to restore.
+	log.Info("save gc ratio into checkpoint metadata", zap.String("gc-ratio", gcRatio))
 	if err := checkpoint.SaveCheckpointMetadataForRestore(ctx, rc.storage, &checkpoint.CheckpointMetadataForRestore{
 		GcRatio: gcRatio,
 	}, taskName); err != nil {
@@ -2397,6 +2399,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 
 	// not new task, load schemas map from external storage
 	if !newTask {
+		log.Info("try to load pitr id maps")
 		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.restoreTS)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -2406,6 +2409,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && !hasFullRestore {
+		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
 		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -2413,6 +2417,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	}
 
 	if len(dbMaps) <= 0 {
+		log.Info("no id maps, build the table replaces from cluster")
 		for _, t := range *tables {
 			dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
 			newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
@@ -3069,6 +3074,7 @@ func (rc *Client) SaveIDMap(
 		if sr.TiflashRecorder != nil {
 			items = sr.TiflashRecorder.GetItems()
 		}
+		log.Info("save the task info with InLogRestoreAndIdMapPersist status")
 		if err := checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, rc.storage, &checkpoint.CheckpointTaskInfoForLogRestore{
 			Progress:     checkpoint.InLogRestoreAndIdMapPersist,
 			StartTS:      rc.startTS,
