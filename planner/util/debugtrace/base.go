@@ -112,6 +112,7 @@ func GetOrInitDebugTraceRoot(sctx sessionctx.Context) *OptimizerDebugTraceRoot {
 func EncodeJSONCommon(input interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
+	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	encoder.SetEscapeHTML(false)
 	err := encoder.Encode(input)
 	if err != nil {
