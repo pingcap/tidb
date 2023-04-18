@@ -1441,6 +1441,10 @@ var GetTblInfoForUsedStatsByPhysicalID func(sctx sessionctx.Context, id int64) (
 
 // recordUsedItemStatsStatus only records un-FullLoad item load status during user query
 func recordUsedItemStatsStatus(sctx sessionctx.Context, stats interface{}, tableID, id int64) {
+	// Sometimes we try to use stats on _tidb_rowid, which must be empty, we ignore this case here.
+	if id <= 0 {
+		return
+	}
 	var isIndex, missing bool
 	var loadStatus *StatsLoadedStatus
 	switch x := stats.(type) {

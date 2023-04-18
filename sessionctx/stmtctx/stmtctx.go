@@ -1376,13 +1376,16 @@ func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(
 	strs := make([]string, 0, len(status))
 	for _, id := range keys {
 		if outputNumsLeft == nil || *outputNumsLeft > 0 {
-			name := "ID " + strconv.FormatInt(id, 10)
+			var name string
 			if s.TblInfo != nil {
 				if forColumn {
 					name = s.TblInfo.FindColumnNameByID(id)
 				} else {
 					name = s.TblInfo.FindIndexNameByID(id)
 				}
+			}
+			if len(name) == 0 {
+				name = "ID " + strconv.FormatInt(id, 10)
 			}
 			strs = append(strs, name+":"+status[id])
 			if outputNumsLeft != nil {
