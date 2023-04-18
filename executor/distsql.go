@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -303,6 +304,9 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
+		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	})
 	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
@@ -608,6 +612,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			}
 
 			// init kvReq, result and worker for this partition
+			// The key ranges should be ordered.
+			slices.SortFunc(kvRange, func(i, j kv.KeyRange) bool {
+				return bytes.Compare(i.StartKey, j.StartKey) < 0
+			})
 			kvReq, err := builder.SetKeyRanges(kvRange).Build()
 			if err != nil {
 				worker.syncErr(err)
