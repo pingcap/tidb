@@ -1779,6 +1779,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 				defer ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
 				return bc.CollectRemoteDuplicateRows(indexInfo.ID, true, t)
 			}
+			return nil
 		}
 	}
 
