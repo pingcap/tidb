@@ -50,7 +50,7 @@ type LRUPlanCache struct {
 	buckets map[string]map[*list.Element]struct{}
 	lruList *list.List
 	// lock make cache thread safe
-	lock syncutil.Mutex
+	lock syncutil.RWMutex
 	// onEvict will be called if any eviction happened, only for test use now
 	onEvict func(kvcache.Key, kvcache.Value)
 
@@ -90,8 +90,8 @@ func strHashKey(key kvcache.Key, deepCopy bool) string {
 
 // Get tries to find the corresponding value according to the given key.
 func (l *LRUPlanCache) Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool) {
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	l.lock.RLock()
+	defer l.lock.RUnlock()
 
 	bucket, bucketExist := l.buckets[strHashKey(key, false)]
 	if bucketExist {
@@ -154,6 +154,9 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 
 // DeleteAll deletes all elements from the LRU Cache.
 func (l *LRUPlanCache) DeleteAll() {
+	if l == nil {
+		return
+	}
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -172,8 +175,8 @@ func (l *LRUPlanCache) DeleteAll() {
 
 // Size gets the current cache size.
 func (l *LRUPlanCache) Size() int {
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	l.lock.RLock()
+	defer l.lock.RUnlock()
 
 	return int(l.size)
 }
@@ -198,14 +201,13 @@ func (l *LRUPlanCache) MemoryUsage() (sum int64) {
 	if l == nil {
 		return
 	}
+	l.lock.RLock()
+	defer l.lock.RUnlock()
 	return l.memoryUsageTotal
 }
 
 // Close do some clean work for LRUPlanCache when close the session
 func (l *LRUPlanCache) Close() {
-	if l == nil {
-		return
-	}
 	l.DeleteAll()
 }
 
