@@ -318,8 +318,8 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 }
 
 func (s *mockGCSSuite) TestMultiValueIndex() {
-	//s.testMultiValueIndex(importer.LogicalImportMode, false)
-	//s.testMultiValueIndex(importer.PhysicalImportMode, false)
+	s.testMultiValueIndex(importer.LogicalImportMode, false)
+	s.testMultiValueIndex(importer.PhysicalImportMode, false)
 	s.testMultiValueIndex(importer.PhysicalImportMode, true)
 }
 
@@ -355,8 +355,8 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) 
 }
 
 func (s *mockGCSSuite) TestMixedCompression() {
-	//s.testMixedCompression(importer.LogicalImportMode, false)
-	//s.testMixedCompression(importer.PhysicalImportMode, false)
+	s.testMixedCompression(importer.LogicalImportMode, false)
+	s.testMixedCompression(importer.PhysicalImportMode, false)
 	s.testMixedCompression(importer.PhysicalImportMode, true)
 }
 
@@ -418,8 +418,8 @@ func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool)
 }
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
-	//s.testLoadSQLDump(importer.LogicalImportMode, false)
-	//s.testLoadSQLDump(importer.PhysicalImportMode, false)
+	s.testLoadSQLDump(importer.LogicalImportMode, false)
+	s.testLoadSQLDump(importer.PhysicalImportMode, false)
 	s.testLoadSQLDump(importer.PhysicalImportMode, true)
 }
 
@@ -459,8 +459,8 @@ func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
 }
 
 func (s *mockGCSSuite) TestGBK() {
-	//	s.testGBK(importer.LogicalImportMode, false)
-	//	s.testGBK(importer.PhysicalImportMode, false)
+	s.testGBK(importer.LogicalImportMode, false)
+	s.testGBK(importer.PhysicalImportMode, false)
 	s.testGBK(importer.PhysicalImportMode, true)
 }
 
@@ -578,8 +578,8 @@ func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 }
 
 func (s *mockGCSSuite) TestOtherCharset() {
-	//s.testOtherCharset(importer.LogicalImportMode, false)
-	//s.testOtherCharset(importer.PhysicalImportMode, false)
+	s.testOtherCharset(importer.LogicalImportMode, false)
+	s.testOtherCharset(importer.PhysicalImportMode, false)
 	s.testOtherCharset(importer.PhysicalImportMode, true)
 }
 
