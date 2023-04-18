@@ -7,7 +7,7 @@
         "Plan": [
           "Projection_8 3333.33 root  test.t.b",
           "└─TableReader_9 3333.33 root  data:TableRangeScan_10",
-          "  └─TableRangeScan_10 3333.33 cop[tikv] table:t range:(1,+inf], keep order:false, stats:pseudo"
+          "  └─TableRangeScan_10 3333.33 cop[tikv] table:t range:(1,+inf], keep order:false"
         ],
         "Result": [
           "4",
@@ -19,7 +19,7 @@
         "Plan": [
           "Projection_8 2.00 root  test.t.b",
           "└─TableReader_9 2.00 root  data:TableRangeScan_10",
-          "  └─TableRangeScan_10 2.00 cop[tikv] table:t range:(1,3), keep order:false, stats:pseudo"
+          "  └─TableRangeScan_10 2.00 cop[tikv] table:t range:(1,3), keep order:false"
         ],
         "Result": null
       },
@@ -29,7 +29,7 @@
           "Projection_9 2666.67 root  test.t.b",
           "└─TableReader_10 2666.67 root  data:Selection_11",
           "  └─Selection_11 2666.67 cop[tikv]  lt(test.t.b, 6)",
-          "    └─TableRangeScan_12 3333.33 cop[tikv] table:t range:(1,+inf], keep order:false, stats:pseudo"
+          "    └─TableRangeScan_12 3333.33 cop[tikv] table:t range:(1,+inf], keep order:false"
         ],
         "Result": [
           "4"
@@ -40,7 +40,7 @@
         "Plan": [
           "TableReader_9 4.00 root  data:Selection_10",
           "└─Selection_10 4.00 cop[tikv]  gt(plus(mul(test.t.a, 3), 1), 9)",
-          "  └─TableRangeScan_11 5.00 cop[tikv] table:t range:[-inf,5), keep order:false, stats:pseudo"
+          "  └─TableRangeScan_11 5.00 cop[tikv] table:t range:[-inf,5), keep order:false"
         ],
         "Result": [
           "3"
@@ -52,7 +52,7 @@
           "Projection_13 8000.00 root  test.t.a",
           "└─TableReader_14 8000.00 root  data:Selection_15",
           "  └─Selection_15 8000.00 cop[tikv]  gt(cast(test.t.b, decimal(32,0) BINARY), 4)",
-          "    └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false"
         ],
         "Result": [
           "5"
@@ -1098,7 +1098,9 @@
           "Projection_3 10000.00 root  Column#2, Column#3, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9",
           "└─MemTableScan_4 10000.00 root table:PROCESSLIST "
         ],
-        "Result": ["  test Sleep 0 autocommit select USER, HOST, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist 7284ef6cf62f14bccb9fa24aff861b419e9cf59b2c098d3069c7c10bc35d0c14"]
+        "Result": [
+          "  test Sleep 0 autocommit select USER, HOST, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist 7284ef6cf62f14bccb9fa24aff861b419e9cf59b2c098d3069c7c10bc35d0c14"
+        ]
       }
     ]
   },
