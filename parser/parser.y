@@ -1442,7 +1442,7 @@ import (
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
 	DynamicCalibrateResourceOption         "Dynamic resource calibrate option"
-	DynamicCalibrateOptionListOpt          "Anomymous or direct dynamic resource calibrate option list opt"
+	CalibrateOption						   "Dynamic or static calibrate option"
 	DynamicCalibrateOptionList             "Anomymous or direct dynamic resource calibrate option list"
 	CalibrateResourceWorkloadOption        "Calibrate Resource workload option"
 	AttributesOpt                          "Attributes options"
@@ -15502,24 +15502,27 @@ DropProcedureStmt:
  * CALIBRATE RESOURCE
  *******************************************************************/
 CalibrateResourceStmt:
-	"CALIBRATE" "RESOURCE" CalibrateResourceWorkloadOption
+	"CALIBRATE" "RESOURCE" CalibrateOption
 	{
-		$$ = &ast.CalibrateResourceStmt{
-			Tp: $3.(ast.CalibrateResourceType),
-		}
-	}
-|	"CALIBRATE" "RESOURCE" DynamicCalibrateOptionListOpt
-	{
-		$$ = &ast.CalibrateResourceStmt{
-			DynamicCalibrateResourceOptionList: $3.([]*ast.DynamicCalibrateResourceOption),
-		}
+		$$ = $3.(*ast.CalibrateResourceStmt)
 	}
 
-DynamicCalibrateOptionListOpt:
+CalibrateOption:
 	{
-		$$ = []*ast.DynamicCalibrateResourceOption{}
+		$$ = &ast.CalibrateResourceStmt{}
 	}
 |	DynamicCalibrateOptionList
+	{
+		$$ = &ast.CalibrateResourceStmt{
+			DynamicCalibrateResourceOptionList: $1.([]*ast.DynamicCalibrateResourceOption),
+		}
+	}
+|	CalibrateResourceWorkloadOption
+	{
+		$$ = &ast.CalibrateResourceStmt{
+			Tp: $1.(ast.CalibrateResourceType),
+		}
+	}
 
 DynamicCalibrateOptionList:
 	DynamicCalibrateResourceOption
@@ -15557,6 +15560,7 @@ DynamicCalibrateResourceOption:
 
 CalibrateResourceWorkloadOption:
 	/* empty */
+	"WORKLOAD"
 	{
 		$$ = ast.WorkloadNone
 	}

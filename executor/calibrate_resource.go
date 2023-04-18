@@ -108,64 +108,53 @@ type calibrateResourceExec struct {
 	done         bool
 }
 
-func (e *calibrateResourceExec) checkDynamicCalibrateOptions() (string, string, error) {
-	var startTime, endTime time.Time
-	var startTimeStr, endTimeStr string
-	checkDurationFn := func() error {
-		// check the duration
-		duration := endTime.Sub(startTime)
-		if duration > maxDuration {
-			return errors.Errorf("the duration of calibration is too long")
+func (e *calibrateResourceExec) checkDynamicCalibrateOptions() (startTime time.Time, endTime time.Time, err error) {
+	var dur time.Duration
+	var ts uint64
+	for _, op := range e.optionList {
+		switch op.Tp {
+		case ast.CalibrateStartTime:
+			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, e.optionList[0].Ts)
+			if err != nil {
+				return
+			}
+			startTime = oracle.GetTimeFromTS(ts)
+		case ast.CalibrateEndTime:
+			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, e.optionList[1].Ts)
+			if err != nil {
+				return
+			}
+			endTime = oracle.GetTimeFromTS(ts)
+		case ast.CalibrateDuration:
+			dur, err = duration.ParseDuration(e.optionList[1].StrValue)
+			if err != nil {
+				return
+			}
 		}
-		if duration < minDuration {
-			return errors.Errorf("the duration of calibration is too short")
+	}
+	if startTime.IsZero() {
+		err = errors.Errorf("start time should not be 0")
+		return
+	}
+	// If endTime is set, duration will be ignored.
+	if endTime.IsZero() {
+		if dur != time.Duration(0) {
+			endTime = startTime.Add(dur)
+		} else {
+			endTime = time.Now()
 		}
-		return nil
+	}
+	// check the duration
+	dura := endTime.Sub(startTime)
+	if dura > maxDuration {
+		err = errors.Errorf("the duration of calibration is too long, should be less than %s", maxDuration.String())
+		return
+	}
+	if dura < minDuration {
+		err = errors.Errorf("the duration of calibration is too short, should be greater than %s", minDuration.String())
 	}
 
-	if len(e.optionList) == 2 {
-		if e.optionList[0].Tp != ast.CalibrateStartTime || (e.optionList[1].Tp != ast.CalibrateEndTime && e.optionList[1].Tp != ast.CalibrateDuration) {
-			return "", "", errors.Errorf("dynamic calibarate options are not matched, please input start time and end time or duration is optional")
-		}
-		// check start time and end time whether validated
-		startTs, err := staleread.CalculateAsOfTsExpr(e.ctx, e.optionList[0].Ts)
-		if err != nil {
-			return "", "", err
-		}
-		startTime = oracle.GetTimeFromTS(startTs)
-		if e.optionList[1].Tp == ast.CalibrateEndTime {
-			endTs, err := staleread.CalculateAsOfTsExpr(e.ctx, e.optionList[1].Ts)
-			if err != nil {
-				return "", "", err
-			}
-			endTime = oracle.GetTimeFromTS(endTs)
-		} else {
-			duration, err := duration.ParseDuration(e.optionList[1].StrValue)
-			if err != nil {
-				return "", "", err
-			}
-			endTime = startTime.Add(duration)
-		}
-	} else if len(e.optionList) == 1 {
-		if e.optionList[0].Tp != ast.CalibrateStartTime {
-			return "", "", errors.Errorf("dynamic calibarate options are not matched, please input start time and end time is optional")
-		}
-		// check start time whether validated
-		startTs, err := staleread.CalculateAsOfTsExpr(e.ctx, e.optionList[0].Ts)
-		if err != nil {
-			return "", "", err
-		}
-		startTime = oracle.GetTimeFromTS(startTs)
-		endTime = time.Now()
-	} else {
-		return "", "", errors.Errorf("dynamic calibarate options are too much")
-	}
-	startTimeStr = startTime.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
-	endTimeStr = endTime.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
-	if err := checkDurationFn(); err != nil {
-		return "", "", err
-	}
-	return startTimeStr, endTimeStr, nil
+	return
 }
 
 func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -187,7 +176,9 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 }
 
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
-	startTime, endTime, err := e.checkDynamicCalibrateOptions()
+	startTs, endTs, err := e.checkDynamicCalibrateOptions()
+	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
+	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
 	if err != nil {
 		return err
 	}
