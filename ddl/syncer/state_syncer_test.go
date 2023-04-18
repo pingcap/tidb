@@ -72,8 +72,6 @@ func TestStateSyncerSimple(t *testing.T) {
 	// for GetGlobalState
 	// for the initial state
 	stateInfo := &syncer.StateInfo{State: syncer.StateNormalRunning}
-	stateInfoByte, err := stateInfo.Marshal()
-	require.Nil(t, err)
 	respState, err := d.StateSyncer().GetGlobalState(ctx)
 	require.Nil(t, err)
 	require.Equal(t, stateInfo, respState)
@@ -82,7 +80,8 @@ func TestStateSyncerSimple(t *testing.T) {
 	var wg util.WaitGroupWrapper
 	var checkErr string
 	stateInfo.State = syncer.StateUpgrading
-	stateInfoByte, err = stateInfo.Marshal()
+	stateInfoByte, err := stateInfo.Marshal()
+	require.Nil(t, err)
 	checkValue := func() {
 		select {
 		case resp := <-d.StateSyncer().WatchChan():

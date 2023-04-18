@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package syncer
 
 import (
@@ -34,8 +35,10 @@ const (
 	// keyOpDefaultTimeout is the default time out for etcd store.
 	keyOpDefaultTimeout = 1 * time.Second
 	statePrompt         = "global-state-syncer"
-	StateUpgrading      = "upgrading"
-	StateNormalRunning  = ""
+	// StateUpgrading represents the cluster global state is upgrading. It is exports for testing.
+	StateUpgrading = "upgrading"
+	// StateNormalRunning represents the cluster global state is normal running. It is exports for testing.
+	StateNormalRunning = ""
 )
 
 // StateSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
