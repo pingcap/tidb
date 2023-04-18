@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "session2_test_test",
+    srcs = [
+        "main_test.go",
+        "session_test.go",
+    ],
+    deps = [
+        "//config",
+        "//domain",
+        "//parser/terror",
+        "//session",
+        "//testkit",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
