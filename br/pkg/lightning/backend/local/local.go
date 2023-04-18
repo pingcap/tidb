@@ -1133,46 +1133,36 @@ func (local *Backend) generateAndSendJob(
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
 	eg, egCtx := errgroup.WithContext(ctx)
-	rangeCh := make(chan Range, local.RangeConcurrency)
-	for i := 0; i < local.RangeConcurrency; i++ {
+	eg.SetLimit(local.RangeConcurrency)
+	for _, jobRange := range jobRanges {
+		r := jobRange
 		eg.Go(func() error {
-			for {
+			select {
+			case <-egCtx.Done():
+				return nil
+			default:
+			}
+
+			jobs, err := local.generateJobForRange(egCtx, engine, r, regionSplitSize, regionSplitKeys)
+			if err != nil {
+				return err
+			}
+			for _, job := range jobs {
+				jobWg.Add(1)
 				select {
 				case <-egCtx.Done():
+					// this job is not put into jobToWorkerCh
+					jobWg.Done()
+					// if the context is canceled, it means worker has error, the first error can be
+					// found by worker's error group LATER. if this function returns an error it will
+					// seize the "first error".
 					return nil
-				case r, ok := <-rangeCh:
-					if !ok {
-						return nil
-					}
-					jobs, err := local.generateJobForRange(egCtx, engine, r, regionSplitSize, regionSplitKeys)
-					if err != nil {
-						return err
-					}
-					for _, job := range jobs {
-						jobWg.Add(1)
-						select {
-						case <-egCtx.Done():
-							// this job is not put into jobToWorkerCh
-							jobWg.Done()
-							// if the context is canceled, it means worker has error, the first error can be
-							// found by worker's error group LATER. if this function returns an error it will
-							// seize the "first error".
-							return nil
-						case jobToWorkerCh <- job:
-						}
-					}
+				case jobToWorkerCh <- job:
 				}
 			}
+			return nil
 		})
 	}
-	for _, r := range jobRanges {
-		select {
-		case <-egCtx.Done():
-			return eg.Wait()
-		case rangeCh <- r:
-		}
-	}
-	close(rangeCh)
 	return eg.Wait()
 }
 
