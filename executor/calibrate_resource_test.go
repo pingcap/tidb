@@ -310,7 +310,7 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "The CPU utilizations of TiDB and TiKV are less than one tenth in some of the time")
+	require.ErrorContains(t, err, "The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation")
 
 	mockData["process_cpu_usage"] = [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "tidb", 3.212),
@@ -334,5 +334,5 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "there are too few metrics points available")
+	require.ErrorContains(t, err, "There are too few metrics points available in selected time window")
 }

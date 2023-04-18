@@ -147,11 +147,11 @@ func (e *calibrateResourceExec) parseCalibrateDuration() (startTime time.Time, e
 	// check the duration
 	dur = endTime.Sub(startTime)
 	if dur > maxDuration {
-		err = errors.Errorf("the duration of calibration is too long, should be less than %s", maxDuration.String())
+		err = errors.Errorf("the duration of calibration is too long, which could lead to inaccurate output. Please make the duration between %s and %s", minDuration.String(), maxDuration.String())
 		return
 	}
 	if dur < minDuration {
-		err = errors.Errorf("the duration of calibration is too short, should be greater than %s", minDuration.String())
+		err = errors.Errorf("the duration of calibration is too short, which could lead to inaccurate output. Please make the duration between %s and %s", minDuration.String(), maxDuration.String())
 	}
 
 	return
@@ -201,7 +201,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		return err
 	}
 	quotas := make([]float64, 0)
-	lowCount, tidbCPULowCount, tikvCPULowCount := 0, 0, 0
+	lowCount := 0
 	for idx, ru := range rus {
 		if idx >= len(tikvCPUs) || idx >= len(tidbCPUs) {
 			break
@@ -211,21 +211,14 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		// And if both are greater than the `lowUsageThreshold`, we can also accpet it.
 		if tikvQuota > valuableUsageThreshold || tidbQuota > valuableUsageThreshold {
 			quotas = append(quotas, ru/mathutil.Max(tikvQuota, tidbQuota))
-		} else if tikvQuota < lowUsageThreshold {
+		} else if tikvQuota < lowUsageThreshold || tidbQuota < lowUsageThreshold {
 			lowCount++
-			tikvCPULowCount++
-			if tidbQuota < lowUsageThreshold {
-				tidbCPULowCount++
-			}
-		} else if tidbQuota < lowUsageThreshold {
-			lowCount++
-			tidbCPULowCount++
 		} else {
 			quotas = append(quotas, ru/mathutil.Max(tikvQuota, tidbQuota))
 		}
 	}
 	if len(quotas) < 5 {
-		return errors.Errorf("there are too few metrics points available")
+		return errors.Errorf("There are too few metrics points available in selected time window")
 	}
 	if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
 		sort.Slice(quotas, func(i, j int) bool {
@@ -240,13 +233,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		quota := sum / float64(upperBound-lowerBound)
 		req.AppendUint64(0, uint64(quota))
 	} else {
-		if tidbCPULowCount > 0 && tikvCPULowCount > 0 {
-			return errors.Errorf("The CPU utilizations of TiDB and TiKV are less than one tenth in some of the time")
-		} else if tidbCPULowCount > 0 {
-			return errors.Errorf("The CPU utilization of TiDB is less than one tenth in some of the time")
-		} else {
-			return errors.Errorf("The CPU utilization of TiKV is less than one tenth in some of the time")
-		}
+		return errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
 	}
 	return nil
 }
