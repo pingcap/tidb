@@ -186,6 +186,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 // Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
 // At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
+// TODO: maintain a sync.pool for this structure.
 type planCacheKey struct {
 	database      string
 	connID        uint64
@@ -214,14 +215,10 @@ type planCacheKey struct {
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		var (
-			dbBytes    = hack.Slice(key.database)
-			bufferSize = len(dbBytes) + 8*6 + 3*8
-		)
 		if key.hash == nil {
-			key.hash = make([]byte, 0, bufferSize)
+			key.hash = make([]byte, 0, len(key.stmtText)*2)
 		}
-		key.hash = append(key.hash, dbBytes...)
+		key.hash = append(key.hash, hack.Slice(key.database)...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
@@ -496,6 +493,12 @@ func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildre
 		}
 		tStats := getStatsTable(checker.sctx, t.Meta(), t.Meta().ID)
 		checker.statsVersionHash += tableStatsVersionForPlanCache(tStats) // use '+' as the hash function for simplicity
+	case *ast.InsertStmt:
+		if node.Select != nil {
+			node.Select.Accept(checker)
+		}
+		// skip node.Table for performance.
+		return in, true
 	}
 	return in, false
 }

@@ -8055,12 +8055,12 @@
         "Warning": null
       },
       {
-        "SQL": "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten",
+        "SQL": "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten",
         "Plan": [
           "Projection 10000.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.f, test.t.g, test.t.h",
           "└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(test.t.a, Column#19)",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:out keep order:false, stats:pseudo",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:outTable keep order:false, stats:pseudo",
           "  └─StreamAgg(Probe) 10000.00 root  funcs:count(Column#21)->Column#19",
           "    └─TableReader 10000.00 root  data:StreamAgg",
           "      └─StreamAgg 10000.00 cop[tikv]  funcs:count(1)->Column#21",
@@ -8185,12 +8185,12 @@
         "Warning": null
       },
       {
-        "SQL": "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten for correlated sub query",
+        "SQL": "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten for correlated sub query",
         "Plan": [
           "Projection 10000.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.f, test.t.g, test.t.h",
           "└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(test.t.a, Column#19)",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tiflash] table:out keep order:false, stats:pseudo",
+          "  │ └─TableFullScan 10000.00 cop[tiflash] table:outTable keep order:false, stats:pseudo",
           "  └─HashAgg(Probe) 10000.00 root  funcs:count(Column#21)->Column#19",
           "    └─TableReader 10000.00 root  MppVersion: 1, data:ExchangeSender",
           "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -8373,8 +8373,8 @@
       {
         "SQL": "select * from t where a = 1 or b = 1 order by c limit 2",
         "Plan": [
-          "TopN 2.00 root  test.t.c, offset:0, count:2",
-          "└─IndexMerge 19.99 root  type: union",
+          "Projection 2.00 root  test.t.a, test.t.b, test.t.c",
+          "└─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
           "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
           "  │ └─IndexRangeScan 2.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:true, stats:pseudo",
           "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
@@ -8422,8 +8422,8 @@
       {
         "SQL": "select * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2",
         "Plan": [
-          "TopN 2.00 root  test.t.c, offset:0, count:2",
-          "└─IndexMerge 10.10 root  type: union",
+          "Projection 2.00 root  test.t.a, test.t.b, test.t.c",
+          "└─IndexMerge 10.10 root  type: union, limit embedded(offset:0, count:2)",
           "  ├─Limit(Build) 0.10 cop[tikv]  offset:0, count:2",
           "  │ └─IndexRangeScan 0.10 cop[tikv] table:t, index:idx(a, c) range:[1 2,1 2], keep order:true, stats:pseudo",
           "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
@@ -8476,6 +8476,32 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx2(b, c) range:[2,2], keep order:false, stats:pseudo",
           "  └─Selection(Probe) 0.06 cop[tikv]  in(test.t.c, 1, 2, 3)",
           "    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from tcommon where a = 1 or b = 1 order by c limit 2",
+        "Plan": [
+          "Projection 2.00 root  test.tcommon.a, test.tcommon.b, test.tcommon.c",
+          "└─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │ └─TableRangeScan 2.00 cop[tikv] table:tcommon range:[1,1], keep order:true, stats:pseudo",
+          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:tcommon keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2",
+        "Plan": [
+          "Projection 2.00 root  test.tcommon.a, test.tcommon.b, test.tcommon.c",
+          "└─IndexMerge 11.00 root  type: union, limit embedded(offset:0, count:2)",
+          "  ├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
+          "  │ └─TableRangeScan 1.00 cop[tikv] table:tcommon range:[1 2,1 2], keep order:true, stats:pseudo",
+          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 11.00 cop[tikv] table:tcommon keep order:false, stats:pseudo"
         ],
         "Warning": null
       }

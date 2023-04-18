@@ -21,31 +21,48 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-const (
-	// the workload name of TPC-C
-	workloadTpcc = "tpcc"
-	// the default workload to calculate the RU capacity.
-	defaultWorkload = workloadTpcc
-)
-
 // workloadBaseRUCostMap contains the base resource cost rate per 1 kv cpu within 1 second,
 // the data is calculated from benchmark result, these data might not be very accurate,
-// but is enough here because the maximum RU capacity is depend on both the cluster and
+// but is enough here because the maximum RU capacity is depended on both the cluster and
 // the workload.
-var workloadBaseRUCostMap = map[string]*baseResourceCost{
-	workloadTpcc: {
+var workloadBaseRUCostMap = map[ast.CalibrateResourceType]*baseResourceCost{
+	ast.TPCC: {
 		tidbCPU:       0.6,
 		kvCPU:         0.15,
 		readBytes:     units.MiB / 2,
 		writeBytes:    units.MiB,
 		readReqCount:  300,
 		writeReqCount: 1750,
+	},
+	ast.OLTPREADWRITE: {
+		tidbCPU:       1.25,
+		kvCPU:         0.35,
+		readBytes:     units.MiB * 4.25,
+		writeBytes:    units.MiB / 3,
+		readReqCount:  1600,
+		writeReqCount: 1400,
+	},
+	ast.OLTPREADONLY: {
+		tidbCPU:       2,
+		kvCPU:         0.52,
+		readBytes:     units.MiB * 28,
+		writeBytes:    0,
+		readReqCount:  4500,
+		writeReqCount: 0,
+	},
+	ast.OLTPWRITEONLY: {
+		tidbCPU:       1,
+		kvCPU:         0,
+		readBytes:     0,
+		writeBytes:    units.MiB,
+		readReqCount:  0,
+		writeReqCount: 3550,
 	},
 }
 
@@ -54,7 +71,7 @@ type baseResourceCost struct {
 	// the average tikv cpu time, this is used to calculate whether tikv cpu
 	// or tidb cpu is the performance bottle neck.
 	tidbCPU float64
-	// the kv CPU time for calculate RU, it's smaller than the actually cpu usage.
+	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage.
 	kvCPU float64
 	// the read bytes rate per 1 tikv cpu.
 	readBytes uint64
@@ -66,15 +83,11 @@ type baseResourceCost struct {
 	writeReqCount uint64
 }
 
-func (b *executorBuilder) buildCalibrateResource(schema *expression.Schema) Executor {
-	return &calibrateResourceExec{
-		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
-	}
-}
-
 type calibrateResourceExec struct {
 	baseExecutor
-	done bool
+
+	workloadType ast.CalibrateResourceType
+	done         bool
 }
 
 func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -102,11 +115,13 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 		return err
 	}
 
-	// we only support TPC-C currently, will support more in the future.
-	workload := defaultWorkload
-	baseCost, ok := workloadBaseRUCostMap[workload]
+	// The default workload to calculate the RU capacity.
+	if e.workloadType == ast.WorkloadNone {
+		e.workloadType = ast.TPCC
+	}
+	baseCost, ok := workloadBaseRUCostMap[e.workloadType]
 	if !ok {
-		return errors.Errorf("unknown workload '%s'", workload)
+		return errors.Errorf("unknown workload '%T'", e.workloadType)
 	}
 
 	if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
@@ -132,7 +147,7 @@ type ruConfig struct {
 }
 
 func getRUSettings(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (*ruConfig, error) {
-	rows, fields, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SHOW CONFIG WHERE TYPE = 'pd' AND  name like 'controller.request-unit.%'")
+	rows, fields, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SHOW CONFIG WHERE TYPE = 'pd' AND name like 'controller.request-unit.%'")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
