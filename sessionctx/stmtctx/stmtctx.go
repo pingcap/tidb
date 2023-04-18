@@ -319,10 +319,14 @@ type StatementContext struct {
 	EnableOptimizeTrace bool
 	// OptimizeTracer indicates the tracer for optimize
 	OptimizeTracer *tracing.OptimizeTracer
+
 	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
 	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
 	EnableOptimizerCETrace bool
 	OptimizerCETrace       []*tracing.CETraceRecord
+
+	EnableOptimizerDebugTrace bool
+	OptimizerDebugTrace       interface{}
 
 	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
 	WaitLockLeaseTime time.Duration

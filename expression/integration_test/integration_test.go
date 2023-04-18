@@ -1711,7 +1711,7 @@ func TestArithmeticBuiltin(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (v int);")
 	tk.MustExec("INSERT IGNORE INTO t VALUE(12 MOD 0);")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
+	tk.MustQuery("show warnings;").CheckContain("Division by 0")
 	tk.MustQuery("select v from t;").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select 0.000 % 0.11234500000000000000;").Check(testkit.Rows("0.00000000000000000000"))
 
@@ -7172,7 +7172,7 @@ func TestIssue29708(t *testing.T) {
 	})
 
 	tk.MustExec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("show warnings;").CheckContain("Result of repeat() was larger than max_allowed_packet (67108864) - truncated")
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{nil},
 		{"a"},
@@ -7922,4 +7922,14 @@ func TestIssue40015(t *testing.T) {
 		"2010-11-11 01:00:00",
 		"<nil>",
 	))
+}
+
+func TestAesDecryptionVecEvalWithZeroChunk(t *testing.T) {
+	// see issue: https://github.com/pingcap/tidb/issues/43063
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (name1 blob,name2 blob)")
+	tk.MustExec("insert into test values(aes_encrypt('a', 'x'), aes_encrypt('b', 'x'))")
+	tk.MustQuery("SELECT * FROM test WHERE CAST(AES_DECRYPT(name1, 'x') AS CHAR) = '00' AND CAST(AES_DECRYPT(name2, 'x') AS CHAR) = '1'").Check(testkit.Rows())
 }

@@ -377,7 +377,7 @@ func (ctx *RestoreCtx) WriteKeyWord(keyWord string) {
 	case ctx.Flags.HasKeyWordLowercaseFlag():
 		keyWord = strings.ToLower(keyWord)
 	}
-	fmt.Fprint(ctx.In, keyWord)
+	ctx.In.WriteString(keyWord)
 }
 
 // WriteWithSpecialComments writes a string with a special comment wrapped.
@@ -412,7 +412,9 @@ func (ctx *RestoreCtx) WriteString(str string) {
 		str = strings.Replace(str, `"`, `""`, -1)
 		quotes = `"`
 	}
-	fmt.Fprint(ctx.In, quotes, str, quotes)
+	ctx.In.WriteString(quotes)
+	ctx.In.WriteString(str)
+	ctx.In.WriteString(quotes)
 }
 
 // WriteName writes the name into writer
