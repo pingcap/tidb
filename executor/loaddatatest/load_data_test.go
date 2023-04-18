@@ -16,11 +16,7 @@ package loaddatatest
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/executor"
