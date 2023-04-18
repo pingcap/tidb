@@ -3488,7 +3488,7 @@ func (p *LogicalSequence) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		}
 		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType.CloneEssentialFields(), childProp})
 	} else {
-		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxInt64}, childProp})
+		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64}, childProp})
 	}
 
 	if prop.TaskTp != property.MppTaskType && prop.CTEConsumerStatus != property.SomeCTEFailedMpp &&

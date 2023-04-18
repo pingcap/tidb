@@ -271,6 +271,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, fo
 		}
 	case *PhysicalSequence:
 		lastChildIdx := len(x.children) - 1
+		// except the last child, those previous ones are all cte producer. 
 		for i := 0; i < lastChildIdx; i++ {
 			if e.CTEGroups == nil {
 				e.CTEGroups = make(map[int]*CTEGroupInFragment)

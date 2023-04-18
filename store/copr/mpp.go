@@ -491,7 +491,7 @@ func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDa
 			zap.Uint64("txnStartTS", req.StartTs),
 			zap.String("storeAddr", req.Meta.GetAddress()),
 			zap.Int64("mpp-version", m.mppVersion.ToInt64()),
-			zap.Int64("task id", req.ID),
+			zap.Int64("task-id", req.ID),
 			zap.Error(err))
 		return err
 	}
