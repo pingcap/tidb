@@ -17,8 +17,11 @@ package stmtctx
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +43,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -355,6 +359,9 @@ type StatementContext struct {
 	IsSQLAndPlanRegistered atomic2.Bool
 	// IsReadOnly uses to indicate whether the SQL is read-only.
 	IsReadOnly bool
+	// usedStatsInfo records version of stats of each table used in the query.
+	// It's a map of table physical id -> *UsedStatsInfoForTable
+	usedStatsInfo map[int64]*UsedStatsInfoForTable
 	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
 	StatsLoadStatus map[model.TableItemID]string
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
@@ -1253,6 +1260,120 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
 	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
 	return fields
+}
+
+func (sc *StatementContext) GetUsedStatsInfo(initIfNil bool) map[int64]*UsedStatsInfoForTable {
+	if sc.usedStatsInfo == nil && initIfNil {
+		sc.usedStatsInfo = make(map[int64]*UsedStatsInfoForTable)
+	}
+	return sc.usedStatsInfo
+}
+
+func (sc *StatementContext) RecordedStatsLoadStatusCnt() (cnt int) {
+	allStatus := sc.GetUsedStatsInfo(false)
+	for _, status := range allStatus {
+		if status == nil {
+			continue
+		}
+		cnt += status.RecordedColIdxCount()
+	}
+	return
+}
+
+// UsedStatsInfoForTable records stats that are used during query and their information.
+type UsedStatsInfoForTable struct {
+	Name                  string
+	TblInfo               *model.TableInfo
+	Version               uint64
+	RealtimeCount         int64
+	ModifyCount           int64
+	ColumnStatsLoadStatus map[int64]string
+	IndexStatsLoadStatus  map[int64]string
+}
+
+func (s *UsedStatsInfoForTable) FormatForExplain() string {
+	// statistics.PseudoVersion == 0
+	if s.Version == 0 {
+		return "stats:pseudo"
+	}
+	var b strings.Builder
+	if len(s.ColumnStatsLoadStatus)+len(s.IndexStatsLoadStatus) > 0 {
+		b.WriteString("stats:partial")
+	}
+	outputNumsLeft := 3
+	statusCnt := make(map[string]uint64, 1)
+	var strs []string
+	strs = append(strs, s.collectFromColOrIdxStatus(false, &outputNumsLeft, statusCnt)...)
+	strs = append(strs, s.collectFromColOrIdxStatus(true, &outputNumsLeft, statusCnt)...)
+	b.WriteString("[")
+	b.WriteString(strings.Join(strs, ", "))
+	if len(statusCnt) > 0 {
+		b.WriteString("...(more: ")
+		keys := maps.Keys(statusCnt)
+		slices.Sort(keys)
+		var cntStrs []string
+		for _, key := range keys {
+			cntStrs = append(cntStrs, strconv.FormatUint(statusCnt[key], 10)+" "+key)
+		}
+		b.WriteString(strings.Join(cntStrs, ", "))
+		b.WriteString(")")
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
+func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
+	ver := "pseudo"
+	// statistics.PseudoVersion == 0
+	if s.Version != 0 {
+		ver = strconv.FormatUint(s.Version, 10)
+	}
+	fmt.Fprintf(w, "%s:%s[%d;%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
+	if ver == "pseudo" {
+		return
+	}
+	if len(s.ColumnStatsLoadStatus)+len(s.IndexStatsLoadStatus) > 0 {
+		fmt.Fprintf(w,
+			"[%s][%s]",
+			strings.Join(s.collectFromColOrIdxStatus(false, nil, nil), ", "),
+			strings.Join(s.collectFromColOrIdxStatus(true, nil, nil), ", "),
+		)
+	}
+}
+
+func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(forColumn bool, outputNumsLeft *int, statusCnt map[string]uint64) []string {
+	var status map[int64]string
+	if forColumn {
+		status = s.ColumnStatsLoadStatus
+	} else {
+		status = s.IndexStatsLoadStatus
+	}
+	keys := maps.Keys(status)
+	slices.Sort(keys)
+	strs := make([]string, 0, len(status))
+	for _, id := range keys {
+		if outputNumsLeft == nil || *outputNumsLeft > 0 {
+			name := "ID " + strconv.FormatInt(id, 10)
+			if s.TblInfo != nil {
+				if forColumn {
+					name = s.TblInfo.FindColumnNameByID(id)
+				} else {
+					name = s.TblInfo.FindIndexNameByID(id)
+				}
+			}
+			strs = append(strs, name+": "+status[id])
+			if outputNumsLeft != nil {
+				*outputNumsLeft--
+			}
+		} else {
+			statusCnt[status[id]] = statusCnt[status[id]] + 1
+		}
+	}
+	return strs
+}
+
+func (s *UsedStatsInfoForTable) RecordedColIdxCount() int {
+	return len(s.IndexStatsLoadStatus) + len(s.ColumnStatsLoadStatus)
 }
 
 // StatsLoadResult indicates result for StatsLoad

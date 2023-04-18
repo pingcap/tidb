@@ -17,7 +17,11 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -26,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -241,6 +246,37 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	return ndvs
 }
 
+func init() {
+	// To handle cycle import, we have to define this function here.
+	statistics.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
+}
+
+// getTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.
+func getTblInfoForUsedStatsByPhysicalID(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo) {
+	fullName = "tableID " + strconv.FormatInt(id, 10)
+
+	is := domain.GetDomain(sctx).InfoSchema()
+	var tbl table.Table
+	var partDef *model.PartitionDefinition
+
+	tbl, ok := is.TableByID(id)
+	if !ok {
+		tbl, _, partDef = is.FindTableByPartitionID(id)
+	}
+	if tbl == nil || tbl.Meta() == nil {
+		return
+	}
+	tblInfo = tbl.Meta()
+	fullName = tblInfo.Name.O
+	if partDef != nil {
+		fullName += " " + partDef.Name.O
+	}
+	if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+		fullName += " global"
+	}
+	return
+}
+
 func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	if ds.tableStats != nil {
 		// Reload GroupNDVs since colGroups may have changed.
@@ -259,6 +295,17 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	if ds.statisticTable.Pseudo {
 		tableStats.StatsVersion = statistics.PseudoVersion
 	}
+
+	statsRecord := ds.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
+	name, tblInfo := getTblInfoForUsedStatsByPhysicalID(ds.ctx, ds.physicalTableID)
+	statsRecord[ds.physicalTableID] = &stmtctx.UsedStatsInfoForTable{
+		Name:          name,
+		TblInfo:       tblInfo,
+		Version:       tableStats.StatsVersion,
+		RealtimeCount: tableStats.HistColl.RealtimeCount,
+		ModifyCount:   tableStats.HistColl.ModifyCount,
+	}
+
 	for _, col := range ds.schema.Columns {
 		tableStats.ColNDVs[col.UniqueID] = ds.getColumnNDV(col.ID)
 	}

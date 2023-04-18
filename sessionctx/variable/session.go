@@ -2938,7 +2938,6 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	StatsInfos        map[string]uint64
 	CopTasks          *stmtctx.CopTasksDetails
 	ExecDetail        execdetails.ExecDetails
 	MemMax            int64
@@ -2962,8 +2961,7 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
-	// table -> name -> status
-	StatsLoadStatus   map[string]map[string]string
+	UsedStats         map[int64]*stmtctx.UsedStatsInfoForTable
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
 }
@@ -3051,26 +3049,23 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.Digest) > 0 {
 		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if len(logItems.StatsInfos) > 0 {
+	if len(logItems.UsedStats) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
-		vStr := ""
-		for k, v := range logItems.StatsInfos {
-			if v == 0 {
-				vStr = "pseudo"
-			} else {
-				vStr = strconv.FormatUint(v, 10)
+		keys := maps.Keys(logItems.UsedStats)
+		slices.Sort(keys)
+		for _, id := range keys {
+			usedStatsForTbl := logItems.UsedStats[id]
+			if usedStatsForTbl == nil {
+				continue
 			}
 			if firstComma {
-				buf.WriteString("," + k + ":" + vStr)
-			} else {
-				buf.WriteString(k + ":" + vStr)
-				firstComma = true
+				buf.WriteString(",")
 			}
-			if v != 0 && len(logItems.StatsLoadStatus[k]) > 0 {
-				writeStatsLoadStatusItems(&buf, logItems.StatsLoadStatus[k])
-			}
+			usedStatsForTbl.WriteToSlowLog(&buf)
+			firstComma = true
 		}
+
 		buf.WriteString("\n")
 	}
 	if logItems.CopTasks != nil {

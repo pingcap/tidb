@@ -169,6 +169,14 @@ func TestSlowLogFormat(t *testing.T) {
 			},
 		},
 	}
+	usedStats := &stmtctx.UsedStatsInfoForTable{
+		Name:                  "t1",
+		TblInfo:               nil,
+		Version:               123,
+		RealtimeCount:         1000,
+		ModifyCount:           0,
+		ColumnStatsLoadStatus: map[int64]string{2: "unInitialized"},
+	}
 	statsInfos := make(map[string]uint64)
 	statsInfos["t1"] = 123
 	loadStatus := make(map[string]map[string]string)
@@ -223,7 +231,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
 # Digest: 01d00e6e93b28184beae487ac05841145d2a2f6a7b16de32a763bed27967e83d
-# Stats: t1:123[col1:unInitialized]
+# Stats: t1:123[1000;0][][ID 2: unInitialized]
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
 # Cop_wait_avg: 0.01 Cop_wait_p90: 0.02 Cop_wait_max: 0.03 Cop_wait_addr: 10.6.131.79
@@ -259,7 +267,6 @@ func TestSlowLogFormat(t *testing.T) {
 		TimeOptimize:      time.Duration(10),
 		TimeWaitTS:        time.Duration(3),
 		IndexNames:        "[t1:a,t2:b]",
-		StatsInfos:        statsInfos,
 		CopTasks:          copTasks,
 		ExecDetail:        execDetail,
 		MemMax:            memMax,
@@ -283,7 +290,7 @@ func TestSlowLogFormat(t *testing.T) {
 		ExecRetryTime:     5*time.Second + time.Millisecond*100,
 		IsExplicitTxn:     true,
 		IsWriteCacheTable: true,
-		StatsLoadStatus:   loadStatus,
+		UsedStats:         map[int64]*stmtctx.UsedStatsInfoForTable{1: usedStats},
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
