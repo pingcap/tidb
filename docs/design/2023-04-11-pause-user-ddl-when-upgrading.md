@@ -4,15 +4,18 @@
 * Tracking issue: https://github.com/pingcap/tidb/issues/39751
 
 ## Abstract
-This document is designed to stop the execution of user DDL during the upgrade process. During the upgrade process, the user DDL operation is stopped first, then the system DDL operation during the upgrade process is completed, and finally, the original DDL operation is resumed (this function only considers the upgrade operation from v7.1 and later versions, that is, it does not support the upgrade from v7.1 upgrades from previous versions).
+
+This document describes a feature that allows users to pause the execution of their Data Definition Language (DDL) statements during the upgrade process of TiDB. During the upgrade process, the system stops the execution of user DDL statements, completes the system DDL operation, and finally resumes the execution of the original user DDL statements. This feature is available for upgrades from v7.1 and later versions of TiDB, and it does not support upgrades from versions prior to v7.1.
 
 ## Motivation or Background
+
 Since the cluster upgrade may need to deal with DDL statements(there may be some DDL statements being processed before the upgrade), and DDL itself implementation framework will also need to adjust, resulting in some versions may not be able to roll the upgrade situation. Although these cases only exist in some versions, it is not easy to describe them one by one. Therefore, when upgrading TiDB clusters, users need to confirm that there are no DDL statements being executed, otherwise there may be problems with undefined behavior.
 Now there are two questions:
 - The above rule is only described in the doc, and users may misoperate. Related instructions doc.
 - During the upgrade operation, users need to communicate and coordinate with each business to cancel DDL, then upgrade, and finally re-execute DDL. Specific scenarios such as large cluster scenarios shared across multiple systems, such as scenarios on TiDB cloud.
 
 ## Detailed Design
+
 Here are some roles for TiDB in the cluster (assuming upgrading from v7.1 to v7.2 here):
 - New TiDB: The new version of TiDB that will be upgraded, such as v7.2.
 - Old TiDB: Other TiDBs in the cluster that have not been upgraded, such as v7.1.
@@ -42,6 +45,7 @@ Specific upgrade process:
 In the plan, we distinguish between DDL operation types. Among them, we distinguish whether the DDL operation is a system DDL operation or a user DDL operation  by whether the DDL operation is performed on the system table. Therefore, we require users to not perform DDL operations on system tables when upgrading.
 
 ## Compatibility
+
 - TiDB
   - This feature is not supported when upgrading from v7.1 and previous versions.
 - Other components
@@ -51,6 +55,7 @@ In the plan, we distinguish between DDL operation types. Among them, we distingu
     - DM, TiCDC and Lightning (Logical Import Mode) and other components. That is, during the upgrade process, import SQL to TiDB through such components, and there are DDL operations (if there is a system DDL operation that may have latent risk), then these DDL will be set to paused, causing this import operation to block.
 
 ## Test Design
+
 - The original upgrade tests.
 - Test some of the following scenarios to check whether the upgrade is normal, and whether the DDL operation is as expected.
   - Add DDL operations before upgrading.
@@ -60,11 +65,13 @@ In the plan, we distinguish between DDL operation types. Among them, we distingu
     - The DDL owner has changed.
 
 ## Impacts & Risks
+
 Since TiDB itself has some functional roles or judgments on whether some functions are enabled or not, and there will be different versions and other factors during the upgrade process, we need to consider more scenarios, and these scenarios may have omissions in design or testing.
 Investigation & Alternatives
 The following schemes are mainly different in the way of notifying the upgrading status to the cluster and replying that the cluster status is normal. The specific schemes are as follows:
 
 ### Plan 1
+
 1. Same as step-1 in the selection plan.
 2. Notify the cluster that all TiDB enters to pause executing user DDL operations. Notification method:
    1. Same as step-2.a in the selected plan.
@@ -83,9 +90,11 @@ The following schemes are mainly different in the way of notifying the upgrading
 5. Complete the bootstrap operation.
 
 #### Foreseeable disadvantages
+
 - Step b, notify all TiDB to enter upgrading_mode mode and confirm that if all TiDBs enter this mode, the process may have more problems.
 
 ### Plan 2
+
 Difference from Scheme 1: Whether you need to notify all TiDBs to enter upgrading_mode mode.
 1. Same as step-1 and Step-2.a in plan1.
 2. Make new TiDB a DDL owner in two ways:
@@ -95,5 +104,6 @@ Difference from Scheme 1: Whether you need to notify all TiDBs to enter upgradin
 4. Complete the bootstrap operation.
 
 #### Foreseeable disadvantages
+
 - Bootstrap process, if  new TiDB encountered network and other reasons cause the owner to change.
 - You can consider exiting this bootstrap directly and starting over. However, interrupting the last execution of this upgradeToVerXXX may be a switch on. Then, the old TiDB in the cluster may not support this switch well.
