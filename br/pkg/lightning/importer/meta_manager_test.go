@@ -11,6 +11,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -343,7 +344,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 		s.mockDB.ExpectExec("\\Qupdate `test`.`table_meta` set total_kvs_base = ?, total_bytes_base = ?, checksum_base = ?, status = ? where table_id = ? and task_id = ?\\E").
 			WithArgs(checksum.SumKVS(), checksum.SumSize(), checksum.Sum(), metaStatusRestoreStarted.String(), int64(1), int64(1)).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
-		s.checksumMgr.checksum = RemoteChecksum{
+		s.checksumMgr.checksum = local.RemoteChecksum{
 			TotalBytes: checksum.SumSize(),
 			TotalKVs:   checksum.SumKVS(),
 			Checksum:   checksum.Sum(),
@@ -419,11 +420,11 @@ func TestCheckTasksExclusively(t *testing.T) {
 }
 
 type testChecksumMgr struct {
-	checksum RemoteChecksum
+	checksum local.RemoteChecksum
 	callCnt  int
 }
 
-func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
+func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*local.RemoteChecksum, error) {
 	t.callCnt++
 	return &t.checksum, nil
 }
