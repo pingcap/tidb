@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"sort"
 	"time"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/exp/slices"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -306,6 +308,9 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
+	slices.SortFunc(kvReq.KeyRanges, func(i, j kv.KeyRange) bool {
+		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	})
 	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
