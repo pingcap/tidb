@@ -1437,7 +1437,7 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 }
 
 // GetTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.
-var GetTblInfoForUsedStatsByPhysicalID func (sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo)
+var GetTblInfoForUsedStatsByPhysicalID func(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo)
 
 // recordUsedItemStatsStatus only records un-FullLoad item load status during user query
 func recordUsedItemStatsStatus(sctx sessionctx.Context, stats interface{}, tableID, id int64) {

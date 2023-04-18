@@ -114,10 +114,13 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 		buffer.WriteString(", desc")
 	}
 	if !normalized {
-		buffer.WriteString(", ")
 		usedStats := p.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 		if usedStats != nil && usedStats[p.physicalTableID] != nil {
-			buffer.WriteString(usedStats[p.physicalTableID].FormatForExplain())
+			str := usedStats[p.physicalTableID].FormatForExplain()
+			if len(str) > 0 {
+				buffer.WriteString(", ")
+				buffer.WriteString(str)
+			}
 		}
 	}
 	return buffer.String()
@@ -227,10 +230,13 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		buffer.WriteString(", desc")
 	}
 	if !normalized {
-		buffer.WriteString(", ")
 		usedStats := p.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 		if usedStats != nil && usedStats[p.physicalTableID] != nil {
-			buffer.WriteString(usedStats[p.physicalTableID].FormatForExplain())
+			str := usedStats[p.physicalTableID].FormatForExplain()
+			if len(str) > 0 {
+				buffer.WriteString(", ")
+				buffer.WriteString(str)
+			}
 		}
 	}
 	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {

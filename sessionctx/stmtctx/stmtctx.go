@@ -1266,6 +1266,8 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	return fields
 }
 
+// GetUsedStatsInfo returns the map for recording the used stats during query.
+// If initIfNil is true, it will initialize it when this map is nil.
 func (sc *StatementContext) GetUsedStatsInfo(initIfNil bool) map[int64]*UsedStatsInfoForTable {
 	if sc.usedStatsInfo == nil && initIfNil {
 		sc.usedStatsInfo = make(map[int64]*UsedStatsInfoForTable)
@@ -1273,13 +1275,14 @@ func (sc *StatementContext) GetUsedStatsInfo(initIfNil bool) map[int64]*UsedStat
 	return sc.usedStatsInfo
 }
 
+// RecordedStatsLoadStatusCnt returns the total number of recorded column/index stats status, which is not full loaded.
 func (sc *StatementContext) RecordedStatsLoadStatusCnt() (cnt int) {
 	allStatus := sc.GetUsedStatsInfo(false)
 	for _, status := range allStatus {
 		if status == nil {
 			continue
 		}
-		cnt += status.RecordedColIdxCount()
+		cnt += status.recordedColIdxCount()
 	}
 	return
 }
@@ -1295,15 +1298,21 @@ type UsedStatsInfoForTable struct {
 	IndexStatsLoadStatus  map[int64]string
 }
 
+// FormatForExplain format the content in the format expected to be printed in the execution plan.
+// case 1: if stats version is 0, print stats:pseudo.
+// case 2: if stats version is not 0, and there are column/index stats that are not full loaded,
+// print stats:partial, then print status of 3 column/index status at most. For the rest, only
+// the count will be printed, in the format like (more: 1 onlyCmsEvicted, 2 onlyHistRemained).
 func (s *UsedStatsInfoForTable) FormatForExplain() string {
 	// statistics.PseudoVersion == 0
 	if s.Version == 0 {
 		return "stats:pseudo"
 	}
 	var b strings.Builder
-	if len(s.ColumnStatsLoadStatus)+len(s.IndexStatsLoadStatus) > 0 {
-		b.WriteString("stats:partial")
+	if len(s.ColumnStatsLoadStatus)+len(s.IndexStatsLoadStatus) == 0 {
+		return ""
 	}
+	b.WriteString("stats:partial")
 	outputNumsLeft := 3
 	statusCnt := make(map[string]uint64, 1)
 	var strs []string
@@ -1326,6 +1335,8 @@ func (s *UsedStatsInfoForTable) FormatForExplain() string {
 	return b.String()
 }
 
+// WriteToSlowLog format the content in the format expected to be printed to the slow log, then write to w.
+// The format is table name partition name:version[realtime row count;modify count][column load status][index load status].
 func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
 	ver := "pseudo"
 	// statistics.PseudoVersion == 0
@@ -1345,7 +1356,15 @@ func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
 	}
 }
 
-func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(forColumn bool, outputNumsLeft *int, statusCnt map[string]uint64) []string {
+// collectFromColOrIdxStatus prints the status of column or index stats to a slice
+// of the string in the format of "col/idx name:status".
+// If outputNumsLeft is not nil, this function will output outputNumsLeft column/index
+// status at most, the rest will be counted in statusCnt, which is a map of status->count.
+func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(
+	forColumn bool,
+	outputNumsLeft *int,
+	statusCnt map[string]uint64,
+) []string {
 	var status map[int64]string
 	if forColumn {
 		status = s.ColumnStatsLoadStatus
@@ -1369,14 +1388,14 @@ func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(forColumn bool, output
 			if outputNumsLeft != nil {
 				*outputNumsLeft--
 			}
-		} else {
+		} else if statusCnt != nil {
 			statusCnt[status[id]] = statusCnt[status[id]] + 1
 		}
 	}
 	return strs
 }
 
-func (s *UsedStatsInfoForTable) RecordedColIdxCount() int {
+func (s *UsedStatsInfoForTable) recordedColIdxCount() int {
 	return len(s.IndexStatsLoadStatus) + len(s.ColumnStatsLoadStatus)
 }
 
