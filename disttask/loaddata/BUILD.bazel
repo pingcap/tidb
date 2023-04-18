@@ -26,7 +26,6 @@ go_library(
         "//executor/importer",
         "//table/tables",
         "//util/logutil",
-        "@com_github_cockroachdb_errors//:errors",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],

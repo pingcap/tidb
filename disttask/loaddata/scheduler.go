@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/cockroachdb/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/disttask/framework/proto"
