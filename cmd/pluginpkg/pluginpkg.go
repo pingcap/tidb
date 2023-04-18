@@ -23,7 +23,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"text/template"
 	"time"
 
@@ -109,10 +108,6 @@ func main() {
 	manifest["buildTime"] = time.Now().String()
 
 	pluginName := manifest["name"].(string)
-	if strings.Contains(pluginName, "-") {
-		log.Printf("plugin name should not contain '-'\n")
-		os.Exit(1)
-	}
 	if pluginName != filepath.Base(pkgDir) {
 		log.Printf("plugin package must be same with plugin name in manifest file\n")
 		os.Exit(1)
