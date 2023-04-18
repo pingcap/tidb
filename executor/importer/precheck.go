@@ -34,6 +34,9 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 		// todo: maybe we can reuse checker in lightning
 		sql := fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(e.DBName, e.Table.Meta().Name.L))
 		rs, err := conn.ExecuteInternal(ctx, sql)
+		if err != nil {
+			return err
+		}
 		defer terror.Call(rs.Close)
 		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
 		if err != nil {
