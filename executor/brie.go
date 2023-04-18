@@ -247,7 +247,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	if s.Kind == ast.BRIEKindShowBackupMeta {
 		return execOnce(&showMetaExec{
-			showConfig: buildShowMetadataConfigFrom(s),
+			baseExecutor: newBaseExecutor(b.ctx, schema, 0),
+			showConfig:   buildShowMetadataConfigFrom(s),
 		})
 	}
 
