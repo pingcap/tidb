@@ -15559,12 +15559,7 @@ DynamicCalibrateResourceOption:
 	}
 
 CalibrateResourceWorkloadOption:
-	/* empty */
-	"WORKLOAD"
-	{
-		$$ = ast.WorkloadNone
-	}
-|	"WORKLOAD" "TPCC"
+	"WORKLOAD" "TPCC"
 	{
 		$$ = ast.TPCC
 	}
