@@ -2445,7 +2445,8 @@ func upgradeToVer140(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD UNIQUE KEY task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
-// upgradeToVer141 sets the value of `tidb_session_plan_cache_size` as `tidb_prepared_plan_cache_size` for compatibility.
+// upgradeToVer141 sets the value of `tidb_session_plan_cache_size` as `tidb_prepared_plan_cache_size` for compatibility,
+// and update tidb_load_based_replica_read_threshold from 0 to 4.
 func upgradeToVer141(s Session, ver int64) {
 	if ver >= version141 {
 		return
