@@ -3503,7 +3503,6 @@ func TestFixControl(t *testing.T) {
 			output[i].Error = errStr
 			output[i].Warnings = warning
 			output[i].Variable = rows
-
 		})
 		require.Equal(t, output[i].FixControl, s.GetSessionVars().OptimizerFixControl)
 		require.Equal(t, output[i].Error, errStr)

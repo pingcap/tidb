@@ -2474,16 +2474,16 @@ var defaultSysVars = []*SysVar{
 				}
 				k := strings.TrimSpace(singleFixCtrl[0:colonIdx])
 				v := strings.TrimSpace(singleFixCtrl[colonIdx+1:])
-				kNum, err := strconv.ParseUint(k, 10, 64)
+				num, err := strconv.ParseUint(k, 10, 64)
 				if err != nil {
 					return err
 				}
-				originalV, ok := newMap[kNum]
+				originalV, ok := newMap[num]
 				if ok {
 					s.StmtCtx.AppendWarning(
 						errors.Errorf("found repeated fix control: %d:%s is overwritten with %s", kNum, originalV, v))
 				}
-				newMap[kNum] = v
+				newMap[num] = v
 			}
 			s.OptimizerFixControl = newMap
 			return nil
