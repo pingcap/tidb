@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl"
@@ -40,7 +41,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const passed CheckType = "pass"
+const passed precheck.CheckType = "pass"
 
 func TestCheckCSVHeader(t *testing.T) {
 	dir := t.TempDir()
@@ -58,7 +59,7 @@ func TestCheckCSVHeader(t *testing.T) {
 	cases := []struct {
 		ignoreColumns []*config.IgnoreColumns
 		// empty msg means check pass
-		level   CheckType
+		level   precheck.CheckType
 		Sources map[string][]*tableSource
 	}{
 
@@ -98,7 +99,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -114,7 +115,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -131,7 +132,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -147,7 +148,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -170,7 +171,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -193,7 +194,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -216,7 +217,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -233,7 +234,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		// non unique key, but data type inconsistent
 		{
 			nil,
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -256,7 +257,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -273,7 +274,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		// multiple tables, test the choose priority
 		{
 			nil,
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -296,7 +297,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		},
 		{
 			nil,
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{

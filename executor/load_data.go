@@ -192,6 +192,9 @@ func (e *LoadDataWorker) load(ctx context.Context, r io.ReadCloser) (jboID int64
 	}()
 
 	sqlExec := s.(sqlexec.SQLExecutor)
+	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
+		return 0, err2
+	}
 
 	job, err2 := asyncloaddata.CreateLoadDataJob(
 		ctx,
