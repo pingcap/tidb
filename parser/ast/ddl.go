@@ -2127,9 +2127,6 @@ const (
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
-	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
-		return nil
-	}
 	fn := func() error {
 		switch n.Tp {
 		case ResourceRURate:

@@ -1726,6 +1726,11 @@ func (local *Backend) EngineFileSizes() (res []backend.EngineFileSize) {
 	return
 }
 
+// GetPDClient returns the PD client.
+func (local *Backend) GetPDClient() pd.Client {
+	return local.pdCtl.GetPDClient()
+}
+
 var getSplitConfFromStoreFunc = getSplitConfFromStore
 
 // return region split size, region split keys, error
