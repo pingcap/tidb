@@ -258,7 +258,7 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 			break
 		}
-		if idx == nil || idx.LastUpdateVersion < histVer {
+		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
 			hg, err := HistogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
 			if err != nil {
 				return errors.Trace(err)
