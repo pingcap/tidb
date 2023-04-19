@@ -277,6 +277,7 @@ func MakeTableRegions(
 		if !ok {
 			return nil, errors.Errorf("file %s not found in MakeTableRegions", dataFile.FileMeta.Path)
 		}
+		//nolint: forcetypeassert
 		fileRegionsRes := v.(fileRegionRes)
 		for _, region := range fileRegionsRes.regions {
 			region.Chunk.PrevRowIDMax += rowIDBase
