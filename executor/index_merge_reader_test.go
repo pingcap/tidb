@@ -16,7 +16,6 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/memory"
 	"math/rand"
 	"regexp"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
