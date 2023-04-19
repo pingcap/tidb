@@ -3750,7 +3750,8 @@ func (n CalibrateResourceType) Restore(ctx *format.RestoreCtx) error {
 // CalibrateResourceStmt is a statement to fetch the cluster RU capacity
 type CalibrateResourceStmt struct {
 	stmtNode
-	Tp CalibrateResourceType
+	DynamicCalibrateResourceOptionList []*DynamicCalibrateResourceOption
+	Tp                                 CalibrateResourceType
 }
 
 // Restore implements Node interface.
@@ -3758,6 +3759,12 @@ func (n *CalibrateResourceStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CALIBRATE RESOURCE")
 	if err := n.Tp.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore CalibrateResourceStmt.CalibrateResourceType")
+	}
+	for i, option := range n.DynamicCalibrateResourceOptionList {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing DynamicCalibrateResourceOption: [%v]", i)
+		}
 	}
 	return nil
 }
@@ -3770,4 +3777,40 @@ func (n *CalibrateResourceStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*CalibrateResourceStmt)
 	return v.Leave(n)
+}
+
+type DynamicCalibrateType int
+
+const (
+	// specific time
+	CalibrateStartTime = iota
+	CalibrateEndTime
+	CalibrateDuration
+)
+
+type DynamicCalibrateResourceOption struct {
+	Tp       DynamicCalibrateType
+	Ts       ExprNode
+	StrValue string
+}
+
+func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case CalibrateStartTime:
+		ctx.WriteKeyWord("START_TIME ")
+		if err := n.Ts.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing DynamicCalibrateResourceOption StartTime")
+		}
+	case CalibrateEndTime:
+		ctx.WriteKeyWord("END_TIME ")
+		if err := n.Ts.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing DynamicCalibrateResourceOption EndTime")
+		}
+	case CalibrateDuration:
+		ctx.WriteKeyWord("DURATION ")
+		ctx.WriteString(n.StrValue)
+	default:
+		return errors.Errorf("invalid DynamicCalibrateResourceOption: %d", n.Tp)
+	}
+	return nil
 }
