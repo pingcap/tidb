@@ -1926,7 +1926,7 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	row := chk.GetRow(0)
 	require.Equal(t, 2, row.Len())
-	require.Equal(t, variable.BoolToOnOff(variable.DefTiDBEnableNonPreparedPlanCache), row.GetString(1)) // tidb_enable_non_prepared_plan_cache = off
+	require.Equal(t, "OFF", row.GetString(1)) // tidb_enable_non_prepared_plan_cache = off
 
 	res = mustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBNonPreparedPlanCacheSize))
 	chk = res.NewChunk(nil)
