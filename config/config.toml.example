@@ -280,7 +280,7 @@ max-txn-ttl = 3600000
 gogc = 100
 
 # Whether to use the lite mode of init stats.
-lite-init-stats = true
+lite-init-stats = false
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.

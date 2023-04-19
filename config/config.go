@@ -984,7 +984,7 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:          false,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
-		LiteInitStats:                     true,
+		LiteInitStats:                     false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

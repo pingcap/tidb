@@ -453,9 +453,8 @@ func TestInitStats(t *testing.T) {
 	h.SetLease(time.Millisecond)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(is))
+	require.NoError(t, h.InitStats(is))
 	table0 := h.GetTableStats(tbl.Meta())
-	checkAllEvicted(t, table0)
 	cols := table0.Columns
 	require.Equal(t, uint8(0x36), cols[1].LastAnalyzePos.GetBytes()[0])
 	require.Equal(t, uint8(0x37), cols[2].LastAnalyzePos.GetBytes()[0])
@@ -463,7 +462,6 @@ func TestInitStats(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(is))
 	table1 := h.GetTableStats(tbl.Meta())
-	checkAllEvicted(t, table1)
 	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
 }
@@ -485,9 +483,8 @@ func TestInitStatsVer2(t *testing.T) {
 	h.SetLease(time.Millisecond)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(is))
+	require.NoError(t, h.InitStats(is))
 	table0 := h.GetTableStats(tbl.Meta())
-	checkAllEvicted(t, table0)
 	cols := table0.Columns
 	require.Equal(t, uint8(0x33), cols[1].LastAnalyzePos.GetBytes()[0])
 	require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
@@ -495,7 +492,6 @@ func TestInitStatsVer2(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(is))
 	table1 := h.GetTableStats(tbl.Meta())
-	checkAllEvicted(t, table1)
 	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
 }
