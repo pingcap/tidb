@@ -138,7 +138,7 @@ func (j *regionJob) writeToTiKV(
 	}
 	if firstKey == nil {
 		j.convertStageTo(ingested)
-		log.FromContext(ctx).Info("keys within region is empty, skip doIngest",
+		log.FromContext(ctx).Debug("keys within region is empty, skip doIngest",
 			logutil.Key("start", j.keyRange.start),
 			logutil.Key("regionStart", region.StartKey),
 			logutil.Key("end", j.keyRange.end),
