@@ -721,12 +721,16 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool) (model.R
 		// Don't change the backfill type.
 		return job.ReorgMeta.ReorgTp, nil
 	}
-	if IsEnableFastReorg() {
-		if ingest.LitInitialized {
-			err := ingest.LitBackCtxMgr.CheckAvailable()
-			if err != nil {
-				return model.ReorgTypeNone, err
-			}
+	if !IsEnableFastReorg() {
+		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+		return model.ReorgTypeTxn, nil
+	}
+	if ingest.LitInitialized {
+		available, err := ingest.LitBackCtxMgr.CheckAvailable()
+		if err != nil {
+			return model.ReorgTypeNone, err
+		}
+		if available {
 			err = cleanupSortPath(job.ID)
 			if err != nil {
 				return model.ReorgTypeNone, err
@@ -738,14 +742,12 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool) (model.R
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge, nil
 		}
-		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
-		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
-			zap.Bool("lightning env initialized", ingest.LitInitialized))
-		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
-		return model.ReorgTypeTxnMerge, nil
 	}
-	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
-	return model.ReorgTypeTxn, nil
+	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
+	logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
+		zap.Bool("lightning env initialized", false))
+	job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
+	return model.ReorgTypeTxnMerge, nil
 }
 
 // cleanupSortPath is used to clean up the temp data of the previous jobs.

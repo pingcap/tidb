@@ -30,7 +30,7 @@ import (
 
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
-	CheckAvailable() error
+	CheckAvailable() (bool, error)
 	Register(ctx context.Context, unique bool, jobID int64) (BackendCtx, error)
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
@@ -57,19 +57,19 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 }
 
 // CheckAvailable checks if the ingest backfill is available.
-func (m *litBackendCtxMgr) CheckAvailable() error {
+func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
 	activeJobIDs := m.Keys()
 	if len(activeJobIDs) > 0 {
 		logutil.BgLogger().Info("[ddl-ingest] ingest backfill is already in use by another DDL job",
 			zap.Int64("job ID", activeJobIDs[0]))
-		return nil
+		return false, nil
 	}
 	if err := m.diskRoot.PreCheckUsage(); err != nil {
 		logutil.BgLogger().Info("[ddl-ingest] ingest backfill is not available", zap.Error(err))
-		return err
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 // Register creates a new backend and registers it to the backend context.
