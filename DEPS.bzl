@@ -175,8 +175,8 @@ def go_deps():
         name = "com_github_apache_thrift",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/apache/thrift",
-        sum = "h1:Jz3KVLYY5+JO7rDiX0sAuRGtuv2vG01r17Y9nLMWNUw=",
-        version = "v0.13.1-0.20201008052519-daf620915714",
+        sum = "h1:lNhK/1nqjbwbiOPDBPFJVKxgDEGSepKuTh6OLiXW8kg=",
+        version = "v0.18.1",
     )
     go_repository(
         name = "com_github_armon_circbuf",
@@ -4132,8 +4132,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:pfDrSVAnfkk2EkrOc0iOmtA4n8F6TL9oEAK8R/enC50=",
-        version = "v2.0.8-0.20230417065328-92db9f7b151f",
+        sum = "h1:fnK5vizcj3RRtT9Y4YQCTdWhwcnSmZaGDodglDlsh1I=",
+        version = "v2.0.8-0.20230419094217-a72e61dc64e2",
     )
     go_repository(
         name = "com_github_tikv_pd",

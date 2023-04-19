@@ -111,8 +111,9 @@ github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kd
 github.com/apache/skywalking-eyes v0.4.0 h1:O13kdRU6FCEZevfD01mdhTgCZLLfPZIQ0GXZrLl7FpQ=
 github.com/apache/skywalking-eyes v0.4.0/go.mod h1:WblDbBgOLsLN0FJEBa9xj6PhuUA/J6spKYVTG4/F8Ls=
 github.com/apache/thrift v0.0.0-20181112125854-24918abba929/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
-github.com/apache/thrift v0.13.1-0.20201008052519-daf620915714 h1:Jz3KVLYY5+JO7rDiX0sAuRGtuv2vG01r17Y9nLMWNUw=
 github.com/apache/thrift v0.13.1-0.20201008052519-daf620915714/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
+github.com/apache/thrift v0.18.1 h1:lNhK/1nqjbwbiOPDBPFJVKxgDEGSepKuTh6OLiXW8kg=
+github.com/apache/thrift v0.18.1/go.mod h1:rdQn/dCcDKEWjjylUeueum4vQEjG2v8v2PqriUnbr+I=
 github.com/armon/circbuf v0.0.0-20150827004946-bbbad097214e/go.mod h1:3U/XgcO3hCbHZ8TKRvWD2dDTCfh9M9ya+I9JpbB7O8o=
 github.com/armon/consul-api v0.0.0-20180202201655-eb2c6b5be1b6/go.mod h1:grANhF5doyWs3UAsr3K4I6qtAmlQcZDesFNEHPZAzj8=
 github.com/armon/go-metrics v0.0.0-20180917152333-f0300d1749da/go.mod h1:Q73ZrmVTwzkszR9V5SSuryQ31EELlFMUz1kKyl939pY=
@@ -947,8 +948,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20230417065328-92db9f7b151f h1:pfDrSVAnfkk2EkrOc0iOmtA4n8F6TL9oEAK8R/enC50=
-github.com/tikv/client-go/v2 v2.0.8-0.20230417065328-92db9f7b151f/go.mod h1:Dkqcv2dYoCOiNMiRgnEhpTa04dUaF9E3rbcz4rXxf3U=
+github.com/tikv/client-go/v2 v2.0.8-0.20230419094217-a72e61dc64e2 h1:fnK5vizcj3RRtT9Y4YQCTdWhwcnSmZaGDodglDlsh1I=
+github.com/tikv/client-go/v2 v2.0.8-0.20230419094217-a72e61dc64e2/go.mod h1:Dkqcv2dYoCOiNMiRgnEhpTa04dUaF9E3rbcz4rXxf3U=
 github.com/tikv/pd/client v0.0.0-20230418032119-e15b2116ae9b h1:mfdNoKrFuzI9u6qprPhvq6vP1AA1K/p5/NqMHQ015mY=
 github.com/tikv/pd/client v0.0.0-20230418032119-e15b2116ae9b/go.mod h1:5vgcvO020ZCdMZkTrRdS/wFZQUab82BSfKE38T61ro0=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=

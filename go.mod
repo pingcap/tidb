@@ -93,7 +93,7 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20230417065328-92db9f7b151f
+	github.com/tikv/client-go/v2 v2.0.8-0.20230419094217-a72e61dc64e2
 	github.com/tikv/pd/client v0.0.0-20230418032119-e15b2116ae9b
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
 	github.com/twmb/murmur3 v1.1.6
@@ -145,7 +145,7 @@ require (
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 // indirect
-	github.com/apache/thrift v0.13.1-0.20201008052519-daf620915714 // indirect
+	github.com/apache/thrift v0.18.1 // indirect
 	github.com/benbjohnson/clock v1.3.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bmatcuk/doublestar/v2 v2.0.4 // indirect
