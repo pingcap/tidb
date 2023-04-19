@@ -635,3 +635,58 @@ func OptionalFsp(fieldType *types.FieldType) string {
 	}
 	return "(" + strconv.Itoa(fsp) + ")"
 }
+<<<<<<< HEAD
+=======
+
+// FillVirtualColumnValue will calculate the virtual column value by evaluating generated
+// expression using rows from a chunk, and then fill this value into the chunk.
+func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
+	expCols []*expression.Column, colInfos []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
+	if len(virtualColumnIndex) == 0 {
+		return nil
+	}
+
+	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
+	iter := chunk.NewIterator4Chunk(req)
+	for i, idx := range virtualColumnIndex {
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			datum, err := expCols[idx].EvalVirtualColumn(row)
+			if err != nil {
+				return err
+			}
+			// Because the expression might return different type from
+			// the generated column, we should wrap a CAST on the result.
+			castDatum, err := CastValue(sctx, datum, colInfos[idx], false, true)
+			if err != nil {
+				return err
+			}
+
+			// Clip to zero if get negative value after cast to unsigned.
+			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && !sctx.GetSessionVars().StmtCtx.ShouldClipToZero() {
+				switch datum.Kind() {
+				case types.KindInt64:
+					if datum.GetInt64() < 0 {
+						castDatum = GetZeroValue(colInfos[idx])
+					}
+				case types.KindFloat32, types.KindFloat64:
+					if types.RoundFloat(datum.GetFloat64()) < 0 {
+						castDatum = GetZeroValue(colInfos[idx])
+					}
+				case types.KindMysqlDecimal:
+					if datum.GetMysqlDecimal().IsNegative() {
+						castDatum = GetZeroValue(colInfos[idx])
+					}
+				}
+			}
+
+			// Handle the bad null error.
+			if (mysql.HasNotNullFlag(colInfos[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(colInfos[idx].GetFlag())) && castDatum.IsNull() {
+				castDatum = GetZeroValue(colInfos[idx])
+			}
+			virCols.AppendDatum(i, &castDatum)
+		}
+		req.SetCol(idx, virCols.Column(i))
+	}
+	return nil
+}
+>>>>>>> 875e34d28a1 (executor: fix uint type overflow on generated column not compatible with mysql (#40157))
