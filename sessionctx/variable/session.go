@@ -1420,6 +1420,12 @@ type SessionVars struct {
 	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
+
+	// in call procedure status
+	inCallProcedure bool
+
+	// procedureVars    inSessionvars
+	procedureContext sessionProcedureContext
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1863,6 +1869,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
+		inCallProcedure:               false,
 	}
 	// Always disable late materialization for disaggregated TiFlash until it is supported.
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
@@ -2519,6 +2526,62 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
+}
+
+// SetInCallProcedure set in procedure flag.
+func (s *SessionVars) SetInCallProcedure() {
+	s.inCallProcedure = true
+}
+
+// OutCallProcedure out of procedure.
+func (s *SessionVars) OutCallProcedure() {
+	s.inCallProcedure = false
+}
+
+// GetCallProcedure get procedure flag.
+func (s *SessionVars) GetCallProcedure() bool {
+	return s.inCallProcedure
+}
+
+// GetProcedureVariable read procedure variable by name.
+func (s *SessionVars) GetProcedureVariable(name string) (*types.FieldType, types.Datum, bool, error) {
+	if !s.inCallProcedure {
+		return nil, types.NewDatum(""), true, nil
+	}
+	s.procedureContext.lock.Lock()
+	defer s.procedureContext.lock.Unlock()
+	varType, varVar, notFind := s.procedureContext.context.GetVariableVars(name)
+	return varType, varVar, notFind, nil
+}
+
+// CheckProcedureVariable check procedure variable if exists.
+func (s *SessionVars) CheckProcedureVariable(name string) bool {
+	if !s.inCallProcedure {
+		return false
+	}
+	_, _, noFind := s.GetVariableVars(name)
+	return noFind
+}
+
+// UpdateProcedureVariable update procedure variable in procedure.
+func (s *SessionVars) UpdateProcedureVariable(name string, datum types.Datum) error {
+	if !s.inCallProcedure {
+		return nil
+	}
+	s.procedureContext.lock.Lock()
+	defer s.procedureContext.lock.Unlock()
+	return s.procedureContext.context.UpdateVariableVars(name, datum, s.StmtCtx)
+}
+
+// SetStringUserVar set the value and collation for user defined variable.
+func (s *SessionVars) SetProcedureStringUserVar(name string, strVal string, collation string) error {
+	name = strings.ToLower(name)
+	if len(collation) > 0 {
+		return s.UpdateProcedureVariable(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
+	} else {
+		_, collation = s.GetCharsetInfo()
+		return s.UpdateProcedureVariable(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
+	}
 }
 
 // TableDelta stands for the changed count for one table or partition.

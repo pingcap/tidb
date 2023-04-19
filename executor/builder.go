@@ -298,6 +298,20 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCTETableReader(v)
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
+	case *plannercore.CreateProcedure:
+		if !variable.TiDBEnableProcedureVale.Load() {
+			b.err = errors.New("If enterprise edition, please set global tidb_enable_procedure = ON.")
+			return nil
+		}
+		return b.buildCreateProcedure(v)
+	case *plannercore.DropProcedure:
+		return b.buildDropProcedure(v)
+	case *plannercore.CallStmt:
+		if !variable.TiDBEnableProcedureVale.Load() {
+			b.err = errors.New("If enterprise edition, please set global tidb_enable_procedure = ON.")
+			return nil
+		}
+		return b.buildCallProcedure(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -783,6 +797,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		CountWarningsOrErrors: v.CountWarningsOrErrors,
 		DBName:                model.NewCIStr(v.DBName),
 		Table:                 v.Table,
+		Procedure:             v.Procedure,
 		Partition:             v.Partition,
 		Column:                v.Column,
 		IndexName:             v.IndexName,
@@ -1964,7 +1979,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
-			strings.ToLower(infoschema.TableResourceGroups):
+			strings.ToLower(infoschema.TableResourceGroups),
+			strings.ToLower(infoschema.TableRoutines):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,

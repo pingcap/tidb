@@ -55,7 +55,11 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.RowFunc:   {},
 	ast.Values:    {},
 	ast.SetVar:    {},
-	ast.GetVar:    {},
+
+	ast.SetProcedureVar: {},
+	ast.GetVar:          {},
+	ast.GetProcedureVar: {},
+
 	ast.GetParam:  {},
 	ast.Benchmark: {},
 	ast.DayName:   {},
@@ -129,7 +133,9 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.Version:          {},
 	ast.JSONMerge:        {},
 	ast.SetVar:           {},
+	ast.SetProcedureVar:  {},
 	ast.GetVar:           {},
+	ast.GetProcedureVar:  {},
 	ast.ReleaseAllLocks:  {},
 }
 
@@ -235,8 +241,11 @@ var mutableEffectsFunctions = map[string]struct{}{
 	ast.UUIDShort:   {},
 	ast.Sleep:       {},
 	ast.SetVar:      {},
-	ast.GetVar:      {},
-	ast.AnyValue:    {},
+
+	ast.SetProcedureVar: {},
+	ast.GetVar:          {},
+	ast.GetProcedureVar: {},
+	ast.AnyValue:        {},
 }
 
 // some functions do NOT have right implementations, but may have noop ones(like with any inputs, always return 1)

@@ -35,6 +35,7 @@ var (
 	_ functionClass = &inFunctionClass{}
 	_ functionClass = &rowFunctionClass{}
 	_ functionClass = &setVarFunctionClass{}
+	_ functionClass = &setProcedureVarFunctionClass{}
 	_ functionClass = &getIntVarFunctionClass{}
 	_ functionClass = &getRealVarFunctionClass{}
 	_ functionClass = &getDecimalVarFunctionClass{}
@@ -887,6 +888,178 @@ func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	return res, false, nil
 }
 
+type setProcedureVarFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *setProcedureVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTp := args[1].GetType().EvalType()
+	if argTp == types.ETTimestamp || argTp == types.ETDuration || argTp == types.ETJson {
+		argTp = types.ETString
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlenUnderLimit(args[1].GetType().GetFlen())
+	switch argTp {
+	case types.ETString:
+		sig = &builtinSetProcedureStringVarSig{bf}
+	case types.ETReal:
+		sig = &builtinSetProcedureRealVarSig{bf}
+	case types.ETDecimal:
+		sig = &builtinSetProcedureDecimalVarSig{bf}
+	case types.ETInt:
+		sig = &builtinSetProcedureIntVarSig{bf}
+	case types.ETDatetime:
+		sig = &builtinSetProcedureTimeVarSig{bf}
+	default:
+		return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
+	}
+	return sig, nil
+}
+
+type builtinSetProcedureStringVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSetProcedureStringVarSig) Clone() builtinFunc {
+	newSig := &builtinSetProcedureStringVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinSetProcedureStringVarSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
+	var varName string
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	datum, err := b.args[1].Eval(row)
+	isNull = datum.IsNull()
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	res, err = datum.ToString()
+	if err != nil {
+		return "", isNull, err
+	}
+	err = sessionVars.SetProcedureStringUserVar(varName, stringutil.Copy(res), datum.Collation())
+	return res, false, err
+}
+
+type builtinSetProcedureRealVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSetProcedureRealVarSig) Clone() builtinFunc {
+	newSig := &builtinSetProcedureRealVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinSetProcedureRealVarSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
+	var varName string
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	datum, err := b.args[1].Eval(row)
+	isNull = datum.IsNull()
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	res = datum.GetFloat64()
+	varName = strings.ToLower(varName)
+	err = sessionVars.UpdateProcedureVariable(varName, datum)
+	return res, false, err
+}
+
+type builtinSetProcedureDecimalVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSetProcedureDecimalVarSig) Clone() builtinFunc {
+	newSig := &builtinSetProcedureDecimalVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinSetProcedureDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return nil, isNull, err
+	}
+	datum, err := b.args[1].Eval(row)
+	isNull = datum.IsNull()
+	if isNull || err != nil {
+		return nil, isNull, err
+	}
+	res := datum.GetMysqlDecimal()
+	varName = strings.ToLower(varName)
+	err = sessionVars.UpdateProcedureVariable(varName, datum)
+	return res, false, err
+}
+
+type builtinSetProcedureIntVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSetProcedureIntVarSig) Clone() builtinFunc {
+	newSig := &builtinSetProcedureIntVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinSetProcedureIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	datum, err := b.args[1].Eval(row)
+	isNull = datum.IsNull()
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	res := datum.GetInt64()
+	varName = strings.ToLower(varName)
+	err = sessionVars.UpdateProcedureVariable(varName, datum)
+	return res, false, err
+}
+
+type builtinSetProcedureTimeVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSetProcedureTimeVarSig) Clone() builtinFunc {
+	newSig := &builtinSetProcedureTimeVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinSetProcedureTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, err
+	}
+	datum, err := b.args[1].Eval(row)
+	if err != nil || datum.IsNull() {
+		return types.ZeroTime, datum.IsNull(), handleInvalidTimeError(b.ctx, err)
+	}
+	res := datum.GetMysqlTime()
+	varName = strings.ToLower(varName)
+	err = sessionVars.UpdateProcedureVariable(varName, datum)
+	return res, false, err
+}
+
 // BuildGetVarFunction builds a GetVar ScalarFunction from the Expression.
 func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (Expression, error) {
 	var fc functionClass
@@ -1141,6 +1314,265 @@ func (b *builtinGetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+		return v.GetMysqlTime(), false, nil
+	}
+	return types.ZeroTime, true, nil
+}
+
+// BuildGetVarFunction builds a GetVar ScalarFunction from the Expression.
+func BuildGetProcedureVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (Expression, error) {
+	var fc functionClass
+	switch retType.EvalType() {
+	case types.ETInt:
+		fc = &getProcedureIntVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetProcedureVar, 1, 1}, retType}}
+	case types.ETDecimal:
+		fc = &getProcedureDecimalVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetProcedureVar, 1, 1}, retType}}
+	case types.ETReal:
+		fc = &getProcedureRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetProcedureVar, 1, 1}, retType}}
+	case types.ETDatetime:
+		fc = &getProcedureTimeVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetProcedureVar, 1, 1}, retType}}
+	default:
+		fc = &getProcedureStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetProcedureVar, 1, 1}, retType}}
+	}
+	f, err := fc.getFunction(ctx, []Expression{expr})
+	if err != nil {
+		return nil, err
+	}
+	if builtinRetTp := f.getRetTp(); builtinRetTp.GetType() != mysql.TypeUnspecified || retType.GetType() == mysql.TypeUnspecified {
+		retType = builtinRetTp
+	}
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(ast.GetVar),
+		RetType:  retType,
+		Function: f,
+	}, nil
+}
+
+// type getVarFunctionClass struct {
+// 	baseFunctionClass
+
+// 	tp *types.FieldType
+// }
+
+type getProcedureStringVarFunctionClass struct {
+	getVarFunctionClass
+}
+
+func (c *getProcedureStringVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(c.tp.GetFlen())
+	if len(c.tp.GetCharset()) > 0 {
+		bf.tp.SetCharset(c.tp.GetCharset())
+		bf.tp.SetCollate(c.tp.GetCollate())
+	}
+	sig = &builtinGetProcedureStringVarSig{bf}
+	return sig, nil
+}
+
+type builtinGetProcedureStringVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetProcedureStringVarSig) Clone() builtinFunc {
+	newSig := &builtinGetProcedureStringVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGetProcedureStringVarSig) evalString(row chunk.Row) (string, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	varName = strings.ToLower(varName)
+	if _, datum, ok := sessionVars.GetVariableVars(varName); !ok {
+		// We cannot use v.GetString() here, because the datum may be in KindMysqlTime, which
+		// stores the data in datum.x.
+		// This seems controversial with https://dev.mysql.com/doc/refman/8.0/en/user-variables.html:
+		// > User variables can be assigned a value from a limited set of data types: integer, decimal,
+		// > floating-point, binary or nonbinary string, or NULL value.
+		// However, MySQL actually does support query like `set @p = now()`, so we should not assume the datum stored
+		// must be of one of the following types: string, decimal, int, float.
+		res, err := datum.ToString()
+		if err != nil {
+			return "", false, err
+		}
+		return res, false, nil
+	}
+	return "", true, nil
+}
+
+type getProcedureIntVarFunctionClass struct {
+	getVarFunctionClass
+}
+
+func (c *getProcedureIntVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(c.tp.GetFlen())
+	bf.tp.SetFlag(c.tp.GetFlag())
+	sig = &builtinGetProcedureIntVarSig{bf}
+	return sig, nil
+}
+
+type builtinGetProcedureIntVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetProcedureIntVarSig) Clone() builtinFunc {
+	newSig := &builtinGetProcedureIntVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGetProcedureIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	varName = strings.ToLower(varName)
+	if _, v, ok := sessionVars.GetVariableVars(varName); ok {
+		return v.GetInt64(), false, nil
+	}
+	return 0, true, nil
+}
+
+type getProcedureRealVarFunctionClass struct {
+	getVarFunctionClass
+}
+
+func (c *getProcedureRealVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(c.tp.GetFlen())
+	sig = &builtinGetProcedureRealVarSig{bf}
+	return sig, nil
+}
+
+type builtinGetProcedureRealVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetProcedureRealVarSig) Clone() builtinFunc {
+	newSig := &builtinGetProcedureRealVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGetProcedureRealVarSig) evalReal(row chunk.Row) (float64, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	varName = strings.ToLower(varName)
+	if _, v, ok := sessionVars.GetVariableVars(varName); ok {
+		return v.GetFloat64(), false, nil
+	}
+	return 0, true, nil
+}
+
+type getProcedureDecimalVarFunctionClass struct {
+	getVarFunctionClass
+}
+
+func (c *getProcedureDecimalVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlenUnderLimit(c.tp.GetFlen())
+	sig = &builtinGetProcedureDecimalVarSig{bf}
+	return sig, nil
+}
+
+type builtinGetProcedureDecimalVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetProcedureDecimalVarSig) Clone() builtinFunc {
+	newSig := &builtinGetProcedureDecimalVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGetProcedureDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return nil, isNull, err
+	}
+	varName = strings.ToLower(varName)
+	if _, v, ok := sessionVars.GetVariableVars(varName); ok {
+		return v.GetMysqlDecimal(), false, nil
+	}
+	return nil, true, nil
+}
+
+type getProcedureTimeVarFunctionClass struct {
+	getVarFunctionClass
+}
+
+func (c *getProcedureTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	if c.tp.GetType() == mysql.TypeDatetime {
+		fsp := c.tp.GetFlen() - mysql.MaxDatetimeWidthNoFsp
+		if fsp > 0 {
+			fsp--
+		}
+		bf.setDecimalAndFlenForDatetime(fsp)
+	} else {
+		bf.setDecimalAndFlenForDate()
+	}
+	sig = &builtinGetProcedureTimeVarSig{bf}
+	return sig, nil
+}
+
+type builtinGetProcedureTimeVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetProcedureTimeVarSig) Clone() builtinFunc {
+	newSig := &builtinGetProcedureTimeVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGetProcedureTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, err
+	}
+	varName = strings.ToLower(varName)
+	if _, v, ok := sessionVars.GetVariableVars(varName); ok {
 		return v.GetMysqlTime(), false, nil
 	}
 	return types.ZeroTime, true, nil

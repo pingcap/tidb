@@ -2010,6 +2010,16 @@ func (er *expressionRewriter) toTable(v *ast.TableName) {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
+	if v.Table.String() == "" && er.sctx.GetSessionVars().GetCallProcedure() {
+		notFind, err := er.searchSpVariables(v.Name.L)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if !notFind {
+			return
+		}
+	}
 	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
 		er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
@@ -2397,4 +2407,26 @@ func datumToJSONObject(d *types.Datum) (interface{}, error) {
 		return nil, nil
 	}
 	return d.ToString()
+}
+
+func (er *expressionRewriter) searchSpVariables(name string) (bool, error) {
+	if !er.sctx.GetSessionVars().GetCallProcedure() {
+		return true, nil
+	}
+	varType, _, notFind, err := er.sctx.GetSessionVars().GetProcedureVariable(name)
+	if err != nil {
+		return false, err
+	}
+	if notFind {
+		return true, nil
+	}
+	retType := varType.Clone()
+	f, err := er.newFunction(ast.GetProcedureVar, retType, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0),
+		expression.DatumToConstant(types.NewDatum(1), mysql.TypeLong, 0))
+	if err != nil {
+		return false, err
+	}
+	f.SetCoercibility(expression.CoercibilityImplicit)
+	er.ctxStackAppend(f, types.EmptyName)
+	return false, nil
 }

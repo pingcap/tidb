@@ -69,6 +69,7 @@ go_library(
         "plan_replayer.go",
         "point_get.go",
         "prepared.go",
+        "procedure.go",
         "projection.go",
         "reload_expr_pushdown_blacklist.go",
         "replace.go",

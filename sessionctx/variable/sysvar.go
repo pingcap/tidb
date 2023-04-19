@@ -637,6 +637,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: DisconnectOnExpiredPassword, Value: On, Type: TypeBool, ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(!IsSandBoxModeEnabled.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableProcedure, Value: Off, Type: TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			TiDBEnableProcedureVale.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(TiDBEnableProcedureVale.Load()), nil
+		},
+	},
 
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,

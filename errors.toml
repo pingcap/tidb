@@ -2011,6 +2011,11 @@ error = '''
 Column '%-.192s' cannot be null
 '''
 
+["planner:1049"]
+error = '''
+Unknown database '%-.192s'
+'''
+
 ["planner:1051"]
 error = '''
 Unknown table '%-.100s'

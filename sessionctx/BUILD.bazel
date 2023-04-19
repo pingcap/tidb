@@ -9,6 +9,7 @@ go_library(
         "//extension",
         "//kv",
         "//metrics",
+        "//parser/ast",
         "//parser/model",
         "//sessionctx/sessionstates",
         "//sessionctx/variable",

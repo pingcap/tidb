@@ -974,6 +974,8 @@ const (
 	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
 	// limitation, if the storage is not TiKV).
 	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
+	// TiDBEnableProcedure if enable store procedure
+	TiDBEnableProcedure = "tidb_enable_procedure"
 )
 
 // TiDB intentional limits
@@ -1251,6 +1253,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
 	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
+	DefTiDBEnableProcedure                           = false
 )
 
 // Process global variables.
@@ -1330,7 +1333,8 @@ var (
 	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
-	EnableResourceControl = atomic.NewBool(false)
+	EnableResourceControl   = atomic.NewBool(false)
+	TiDBEnableProcedureVale = atomic.NewBool(DefTiDBEnableProcedure)
 )
 
 var (

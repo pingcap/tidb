@@ -187,6 +187,10 @@ func TestVectorizable(t *testing.T) {
 	exprs = append(exprs, sf)
 	sf = newFunction(ast.SetVal, column1, column2)
 	exprs = append(exprs, sf)
+	sf = newFunction(ast.GetProcedureVar, column0)
+	exprs = append(exprs, sf)
+	sf = newFunction(ast.SetProcedureVar, column0)
+	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 }
 

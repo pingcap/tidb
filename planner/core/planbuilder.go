@@ -852,6 +852,12 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildSplitRegion(x)
 	case *ast.CompactTableStmt:
 		return b.buildCompactTable(x)
+	case *ast.ProcedureInfo:
+		return b.buildCreateProcedure(ctx, node.(*ast.ProcedureInfo))
+	case *ast.DropProcedureStmt:
+		return b.buildDropProcedure(ctx, node.(*ast.DropProcedureStmt))
+	case *ast.CallStmt:
+		return b.buildCallProcedure(ctx, node.(*ast.CallStmt))
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -969,17 +975,36 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 			IsGlobal: vars.IsGlobal,
 			IsSystem: vars.IsSystem,
 		}
+		procedureVar := false
 		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
 			if cn, ok2 := vars.Value.(*ast.ColumnNameExpr); ok2 && cn.Name.Table.L == "" {
 				// Convert column name expression to string value expression.
 				char, col := b.ctx.GetSessionVars().GetCharsetInfo()
-				vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
+				// support set a=b in sp
+				varType, _, notFind, err := b.ctx.GetSessionVars().GetProcedureVariable(cn.Name.Name.L)
+				if err != nil {
+					return nil, err
+				}
+				if !notFind {
+					procedureVar = true
+					retType := varType.Clone()
+					procedureVars, err := expression.NewFunction(b.ctx, ast.GetProcedureVar, retType,
+						expression.DatumToConstant(types.NewStringDatum(cn.Name.Name.L), mysql.TypeString, 0))
+					if err != nil {
+						return nil, err
+					}
+					assign.Expr = procedureVars
+				} else {
+					vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
+				}
 			}
-			mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-			var err error
-			assign.Expr, _, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
-			if err != nil {
-				return nil, err
+			if !procedureVar {
+				mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+				var err error
+				assign.Expr, _, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
+				if err != nil {
+					return nil, err
+				}
 			}
 		} else {
 			assign.IsDefault = true
@@ -3225,6 +3250,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			CountWarningsOrErrors: show.CountWarningsOrErrors,
 			DBName:                show.DBName,
 			Table:                 show.Table,
+			Procedure:             show.Procedure,
 			Partition:             show.Partition,
 			Column:                show.Column,
 			IndexName:             show.IndexName,
@@ -3246,7 +3272,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	buildPattern := true
 
 	switch show.Tp {
-	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation:
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation,
+		ast.ShowProcedureStatus, ast.ShowFunctionStatus:
 		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
 			return nil, ErrNoDB
 		}
@@ -3372,7 +3399,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		proj.SetOutputNames(np.OutputNames())
 		np = proj
 	}
-	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus {
+	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus ||
+		show.Tp == ast.ShowProcedureStatus || show.Tp == ast.ShowFunctionStatus {
 		b.curClause = orderByClause
 		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
 		sort := LogicalSort{
@@ -5151,6 +5179,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		} else {
 			names = []string{"Table", "Create Table"}
 		}
+	case ast.ShowCreateProcedure:
+		names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
 	case ast.ShowCreatePlacementPolicy:
 		names = []string{"Policy", "Create Policy"}
 	case ast.ShowCreateResourceGroup:

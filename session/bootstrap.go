@@ -585,6 +585,31 @@ const (
        PRIMARY KEY (job_id),
        KEY (create_time),
        KEY (create_user));`
+
+	// CreateRouteTable is a table save routines info.
+	// To do :Make as hidden table and query through the view
+	CreateRouteTable = `CREATE TABLE IF NOT EXISTS mysql.routines (
+        route_schema varchar(64) NOT NULL,
+        name varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+        type enum('FUNCTION','PROCEDURE') COLLATE utf8mb4_bin NOT NULL,
+        definition longblob,
+        definition_utf8 longtext COLLATE utf8mb4_bin,
+        parameter_str blob,
+        is_deterministic tinyint(1) NOT NULL,
+        sql_data_access enum('CONTAINS SQL','NO SQL','READS SQL DATA','MODIFIES SQL DATA') COLLATE utf8mb4_bin NOT NULL,
+        security_type enum('DEFAULT','INVOKER','DEFINER') COLLATE utf8mb4_bin NOT NULL,
+        definer varchar(288) COLLATE utf8mb4_bin NOT NULL,
+        sql_mode set('REAL_AS_FLOAT','PIPES_AS_CONCAT','ANSI_QUOTES','IGNORE_SPACE','NOT_USED','ONLY_FULL_GROUP_BY','NO_UNSIGNED_SUBTRACTION','NO_DIR_IN_CREATE','POSTGRESQL','ORACLE','MSSQL','DB2','MAXDB','NO_KEY_OPTIONS','NO_TABLE_OPTIONS','NO_FIELD_OPTIONS','MYSQL323','MYSQL40','ANSI','NO_AUTO_VALUE_ON_ZERO','NO_BACKSLASH_ESCAPES','STRICT_TRANS_TABLES','STRICT_ALL_TABLES','NO_ZERO_IN_DATE','NO_ZERO_DATE','INVALID_DATES','ALLOW_INVALID_DATES','ERROR_FOR_DIVISION_BY_ZERO','TRADITIONAL','NO_AUTO_CREATE_USER','HIGH_NOT_PRECEDENCE','NO_ENGINE_SUBSTITUTION','PAD_CHAR_TO_FULL_LENGTH','TIME_TRUNCATE_FRACTIONAL') COLLATE utf8mb4_bin NOT NULL,
+        character_set_client varchar(100) NOT NULL,
+        connection_collation varchar(100) NOT NULL,
+        schema_collation varchar(100) NOT NULL,
+        created timestamp NOT NULL,
+        last_altered timestamp NOT NULL,
+        comment text COLLATE utf8mb4_bin NOT NULL,
+        options mediumtext COLLATE utf8mb4_bin,
+        external_language varchar(64) COLLATE utf8mb4_bin NOT NULL DEFAULT 'SQL',
+        PRIMARY KEY (route_schema, name, type)
+        ) ;`
 )
 
 // bootstrap initiates system DB for a store.
@@ -854,11 +879,13 @@ const (
 	version139 = 139
 	// version 140 add column task_key to mysql.tidb_global_task
 	version140 = 140
+	// version141 add the table mysql.routines
+	version141 = 141
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version140
+var currentBootstrapVersion int64 = version141
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -987,6 +1014,7 @@ var (
 		upgradeToVer138,
 		upgradeToVer139,
 		upgradeToVer140,
+		upgradeToVer141,
 	}
 )
 
@@ -2439,6 +2467,13 @@ func upgradeToVer140(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD UNIQUE KEY task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
+func upgradeToVer141(s Session, ver int64) {
+	if ver >= version141 {
+		return
+	}
+	doReentrantDDL(s, CreateRouteTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2553,6 +2588,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalTask)
 	// Create load_data_jobs
 	mustExecute(s, CreateLoadDataJobs)
+	// Create route table mysql.routines
+	mustExecute(s, CreateRouteTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

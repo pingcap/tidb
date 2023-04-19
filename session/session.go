@@ -167,6 +167,9 @@ type Session interface {
 
 	// SetExtensions sets the `*extension.SessionExtensions` object
 	SetExtensions(extensions *extension.SessionExtensions)
+
+	SetSessionExec(cc sessionctx.SessionExec)
+	GetSessionExec() sessionctx.SessionExec
 }
 
 func init() {
@@ -262,7 +265,16 @@ type session struct {
 
 	extensions *extension.SessionExtensions
 
-	sandBoxMode bool
+	sandBoxMode    bool
+	writeResultset sessionctx.SessionExec
+}
+
+func (s *session) SetSessionExec(cc sessionctx.SessionExec) {
+	s.writeResultset = cc
+}
+
+func (s *session) GetSessionExec() sessionctx.SessionExec {
+	return s.writeResultset
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}

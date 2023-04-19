@@ -105,6 +105,13 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
+	notFind, err := e.setSPVariable(name, v)
+	if err != nil {
+		return err
+	}
+	if !notFind {
+		return nil
+	}
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
@@ -317,4 +324,25 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 
 	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.ctx, snapInfo)
 	return nil
+}
+
+func (e *SetExecutor) setSPVariable(name string, v *expression.VarAssignment) (bool, error) {
+	if !e.ctx.GetSessionVars().GetCallProcedure() {
+		return true, nil
+	}
+	_, _, notFind, err := e.ctx.GetSessionVars().GetProcedureVariable(name)
+	if err != nil {
+		return false, err
+	}
+	if notFind {
+		return true, nil
+	}
+	datum, err := v.Expr.Eval(chunk.Row{})
+	if err != nil {
+		return false, err
+	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	sc.IgnoreTruncate.Store(false)
+	err = e.ctx.GetSessionVars().UpdateProcedureVariable(name, datum)
+	return false, err
 }

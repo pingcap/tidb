@@ -191,3 +191,8 @@ func (i InfoStoreAdaptor) TableByName(schema, table model.CIStr) (t table.Table,
 	}
 	return tables.MockTableFromMeta(tableInfo), nil
 }
+
+// CiStr2Key get name according to lower_case_table_names
+func (i *InfoStore) CiStr2Key(name model.CIStr) string {
+	return i.ciStr2Key(name)
+}

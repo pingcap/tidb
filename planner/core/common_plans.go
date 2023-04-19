@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -193,7 +194,7 @@ type Execute struct {
 // Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
 func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) (res bool) {
 	scalarFunc, ok := expr.(*expression.ScalarFunction)
-	if ok && scalarFunc.FuncName.L == ast.GetVar {
+	if ok && (scalarFunc.FuncName.L == ast.GetVar || scalarFunc.FuncName.L == ast.GetProcedureVar) {
 		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
 		if err != nil || isNull {
 			res = false
@@ -1403,4 +1404,26 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 // used for fast plan like point get
 func IsAutoCommitTxn(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
+}
+
+type CreateProcedure struct {
+	baseSchemaProducer
+	ProcedureInfo ast.StmtNode
+	is            infoschema.InfoSchema
+}
+
+type DropProcedure struct {
+	baseSchemaProducer
+	Procedure *ast.DropProcedureStmt
+	is        infoschema.InfoSchema
+}
+
+type CallStmt struct {
+	baseSchemaProducer
+	Callstmt      *ast.CallStmt
+	Is            infoschema.InfoSchema
+	OldSqlMod     string
+	IsStrictMode  bool
+	ProcedureInfo *ProcedurebodyInfo
+	Plan          *ProcedurePlan
 }

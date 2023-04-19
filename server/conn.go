@@ -1781,6 +1781,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
 	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
+	cc.ctx.SetSessionExec(&ClientConn{cc})
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		cc.onExtensionSQLParseFailed(sql, err)
 		return err
@@ -2607,4 +2608,122 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	default:
 		return ""
 	}
+}
+
+var _ sessionctx.SessionExec = &ClientConn{}
+
+// ClientConn procedure implementation interface
+type ClientConn struct {
+	*clientConn
+}
+
+// MultiHanldeNodeWithResult execute sql with result.
+func (cc *ClientConn) MultiHanldeNodeWithResult(ctx context.Context, stmt ast.StmtNode) (err error) {
+	sessVars := cc.ctx.GetSessionVars()
+	var retryable bool
+	var lastStmt ast.StmtNode
+	var expiredStmtTaskID uint64
+	lastStmt = stmt
+
+	defer func() {
+		if lastStmt != nil {
+			cc.onExtensionStmtEnd(lastStmt, sessVars.StmtCtx.TaskID != expiredStmtTaskID, err)
+		}
+	}()
+	// expiredTaskID is the task ID of the previous statement. When executing a stmt,
+	// the StmtCtx will be reinit and the TaskID will change. We can compare the StmtCtx.TaskID
+	// with the previous one to determine whether StmtCtx has been inited for the current stmt.
+	expiredStmtTaskID = sessVars.StmtCtx.TaskID
+	sc := sessVars.StmtCtx
+	prevWarns := sc.GetWarnings()
+	warns := sc.GetWarnings()
+	parserWarns := warns[len(prevWarns):]
+	retryable, err = cc.handleStmt(ctx, stmt, parserWarns, false)
+	if err != nil {
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
+		if txnErr != nil {
+			err = txnErr
+			return err
+		}
+
+		if retryable && action == sessiontxn.StmtActionRetryReady {
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+			_, err = cc.handleStmt(ctx, stmt, parserWarns, false)
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+			if err != nil {
+				return err
+			}
+		}
+		if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
+			return err
+		}
+		_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+		if !allowTiFlashFallback {
+			return err
+		}
+		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+		// server and fallback to TiKV.
+		warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
+		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+		_, err = cc.handleStmt(ctx, stmt, warns, false)
+		cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SqlParse parsing SQL
+func (cc *ClientConn) SqlParse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+	stmts, err := cc.ctx.Parse(ctx, sql)
+	if err != nil {
+		cc.onExtensionSQLParseFailed(sql, err)
+		return nil, err
+	}
+	return stmts, nil
+}
+
+// MultiHanldeNode execute sql without result.
+func (cc *ClientConn) MultiHanldeNode(ctx context.Context, stmt ast.StmtNode) (err error) {
+	sessVars := cc.ctx.GetSessionVars()
+	var retryable bool
+	var lastStmt ast.StmtNode
+	var expiredStmtTaskID uint64
+	lastStmt = stmt
+
+	defer func() {
+		if lastStmt != nil {
+			cc.onExtensionStmtEnd(lastStmt, sessVars.StmtCtx.TaskID != expiredStmtTaskID, err)
+		}
+	}()
+	// expiredTaskID is the task ID of the previous statement. When executing a stmt,
+	// the StmtCtx will be reinit and the TaskID will change. We can compare the StmtCtx.TaskID
+	// with the previous one to determine whether StmtCtx has been inited for the current stmt.
+	expiredStmtTaskID = sessVars.StmtCtx.TaskID
+	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+	if rs != nil {
+		rs.Close()
+	}
+
+	if err != nil {
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
+		if txnErr != nil {
+			err = txnErr
+			return err
+		}
+
+		if retryable && action == sessiontxn.StmtActionRetryReady {
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+			rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+			if rs != nil {
+				rs.Close()
+			}
+			return err
+		} else {
+			return err
+		}
+	}
+	return nil
 }

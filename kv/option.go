@@ -192,4 +192,6 @@ const (
 	InternalLoadData = "LoadData"
 	// InternalDistTask is the type of distributed task.
 	InternalDistTask = "DistTask"
+	// InternalTxnProcedure is the type of procedure txn.
+	InternalTxnProcedure = "TiDBProcedure"
 )
