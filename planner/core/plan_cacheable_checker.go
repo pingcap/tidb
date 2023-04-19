@@ -35,30 +35,33 @@ import (
 
 // Cacheable checks whether the input ast(query) is cacheable with empty session context, which is mainly for testing.
 func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	c, _ := CacheableWithCtx(nil, node, is)
+	c, _, _ := CacheableWithCtx(nil, node, is)
 	return c
 }
 
 // CacheableWithCtx checks whether the input ast(query) is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
-func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
+func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, *PlanCacheQueryFeatures, string) {
 	_, isSelect := node.(*ast.SelectStmt)
 	_, isUpdate := node.(*ast.UpdateStmt)
 	_, isInsert := node.(*ast.InsertStmt)
 	_, isDelete := node.(*ast.DeleteStmt)
 	_, isSetOpr := node.(*ast.SetOprStmt)
 	if !(isSelect || isUpdate || isInsert || isDelete || isSetOpr) {
-		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
+		return false, nil, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
 	}
 	checker := cacheableChecker{
 		sctx:         sctx,
 		cacheable:    true,
 		schema:       is,
 		sumInListLen: 0,
+		queryFeatures: &PlanCacheQueryFeatures{
+			tables: make([]*ast.TableName, 0, 1),
+		},
 	}
 	node.Accept(&checker)
-	return checker.cacheable, checker.reason
+	return checker.cacheable, checker.queryFeatures, checker.reason
 }
 
 // cacheableChecker checks whether a query can be cached:
@@ -67,6 +70,8 @@ type cacheableChecker struct {
 	cacheable bool
 	schema    infoschema.InfoSchema
 	reason    string // reason why cannot use plan-cache
+
+	queryFeatures *PlanCacheQueryFeatures
 
 	sumInListLen int // the accumulated number of elements in all in-lists
 }
@@ -135,6 +140,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			checker.reason = "query has sub-queries is un-cacheable"
 			return in, true
 		}
+		checker.queryFeatures.hasSubquery = true
 		return in, false
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
@@ -173,6 +179,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
+		checker.queryFeatures.limits = append(checker.queryFeatures.limits, node)
 	case *ast.FrameBound:
 		if _, ok := node.Expr.(*driver.ParamMarkerExpr); ok {
 			checker.cacheable = false
@@ -204,6 +211,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
+		checker.queryFeatures.tables = append(checker.queryFeatures.tables, node)
 	}
 	return in, false
 }
@@ -373,6 +381,7 @@ type nonPreparedPlanCacheableChecker struct {
 	schema    infoschema.InfoSchema
 
 	tableNodes []*ast.TableName // only support 2-way joins currently
+	features   *PlanCacheQueryFeatures
 
 	constCnt  int // the number of constants/parameters in this query
 	filterCnt int // the number of filters in the current node
@@ -386,6 +395,7 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, s
 	checker.tableNodes = tableNodes
 	checker.constCnt = 0
 	checker.filterCnt = 0
+	checker.features = new(PlanCacheQueryFeatures)
 }
 
 // Enter implements Visitor interface.
@@ -404,6 +414,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.cacheable = false
 			checker.reason = "query has 'limit ?' is un-cacheable"
 		}
+		checker.features.limits = append(checker.features.limits, node)
 		return in, !checker.cacheable
 	case *ast.ColumnName:
 		if checker.filterCnt > 0 {
@@ -516,6 +527,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 				return in, !checker.cacheable
 			}
 		}
+		checker.tableNodes = append(checker.tableNodes, node)
 		return in, !checker.cacheable
 	}
 
