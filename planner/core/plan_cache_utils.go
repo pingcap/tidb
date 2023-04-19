@@ -499,6 +499,8 @@ func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildre
 		}
 		// skip node.Table for performance.
 		return in, true
+	case *ast.UpdateStmt, *ast.DeleteStmt, *ast.BinaryOperationExpr, *ast.OrderByClause:
+		return in, true
 	}
 	return in, false
 }
