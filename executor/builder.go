@@ -842,6 +842,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		return &calibrateResourceExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), 0),
 			workloadType: s.Tp,
+			optionList:   s.DynamicCalibrateResourceOptionList,
 		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
