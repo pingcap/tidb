@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"math/rand"
 	"regexp"
 	"strconv"
@@ -796,7 +797,7 @@ func TestIntersectionMemQuota(t *testing.T) {
 	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("set @@tidb_mem_quota_query = 4000")
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024")
-	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
 }
 
 func setupPartitionTableHelper(tk *testkit.TestKit) {

@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -762,7 +763,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	tk.MustExec("set global tidb_mem_oom_action=CANCEL")
 	err := tk.QueryToErr("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > 1 order by a limit 2000")
 	require.Error(t, err)
-	require.Regexp(t, "Out Of Memory Quota.*", err)
+	require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err)
 	tk.MustExec(fmt.Sprintf("set session tidb_mem_quota_query=%s", originMemQuota))
 	tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action=%s", originOOMAction))
 }

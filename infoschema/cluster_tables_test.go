@@ -16,6 +16,7 @@ package infoschema_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"math/rand"
 	"net"
 	"net/http/httptest"
@@ -704,7 +705,7 @@ select * from t1;
 
 		err = tk.QueryToErr("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 		require.Error(t, err, quota)
-		require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
+		require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg, quota)
 	}
 	memQuotas := []int{128, 512, 1024, 2048, 4096}
 	for _, quota := range memQuotas {

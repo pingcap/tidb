@@ -17,6 +17,7 @@ package tiflashtest
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"math/rand"
 	"strings"
 	"sync"
@@ -1454,7 +1455,7 @@ func TestMPPMemoryTracker(t *testing.T) {
 	}()
 	err = tk.QueryToErr("select * from t")
 	require.NotNil(t, err)
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	require.True(t, strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
 }
 
 func TestTiFlashComputeDispatchPolicy(t *testing.T) {

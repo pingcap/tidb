@@ -17,6 +17,7 @@ package jointest
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"math/rand"
 	"strings"
 	"testing"
@@ -2243,14 +2244,14 @@ func TestIssue18070(t *testing.T) {
 	tk.MustExec("insert into t1 values(1),(2)")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
 	tk.MustExec("set @@tidb_mem_quota_query=1000")
-	tk.MustContainErrMsg("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
+	tk.MustContainErrMsg("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
 
 	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
+	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
 }
 
 func TestIssue18564(t *testing.T) {
@@ -2650,9 +2651,9 @@ func TestIssue30211(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-	require.True(t, strings.Contains(err, "Out Of Memory Quota"))
+	require.True(t, strings.Contains(err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
 	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-	require.True(t, strings.Contains(err, "Out Of Memory Quota"))
+	require.True(t, strings.Contains(err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
 }
 
 func TestIssue31129(t *testing.T) {
