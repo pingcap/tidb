@@ -44,6 +44,7 @@ import (
 	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -4306,28 +4307,46 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 // 3. statistics is outdated.
 func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
-
+	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
+	var statsTbl *statistics.Table
+	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ctx)
+		defer func() {
+			debugTraceGetStatsTbl(ctx,
+				tblInfo,
+				pid,
+				statsHandle == nil,
+				usePartitionStats,
+				countIs0,
+				pseudoStatsForUninitialized,
+				pseudoStatsForOutdated,
+				statsTbl,
+			)
+			debugtrace.LeaveContextCommon(ctx)
+		}()
+	}
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
 		return statistics.PseudoTable(tblInfo)
 	}
 
-	var statsTbl *statistics.Table
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetTableStats(tblInfo, handle.WithTableStatsByQuery())
 	} else {
+		usePartitionStats = true
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
 	}
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.RealtimeCount == 0 {
+		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
 		return statistics.PseudoTable(tblInfo)
 	}
 
 	// 3. statistics is uninitialized or outdated.
-	pseudoStatsForUninitialized := !statsTbl.IsInitialized()
-	pseudoStatsForOutdated := ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() && statsTbl.IsOutdated()
+	pseudoStatsForUninitialized = !statsTbl.IsInitialized()
+	pseudoStatsForOutdated = ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() && statsTbl.IsOutdated()
 	if pseudoStatsForUninitialized || pseudoStatsForOutdated {
 		tbl := *statsTbl
 		tbl.Pseudo = true
