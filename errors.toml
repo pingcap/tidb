@@ -1758,6 +1758,11 @@ Unsupported option for LOAD DATA LOCAL INFILE: %s
 
 ["executor:8173"]
 error = '''
+PreCheck failed: %s
+'''
+
+["executor:8174"]
+error = '''
 BRIE Job %d not found
 '''
 

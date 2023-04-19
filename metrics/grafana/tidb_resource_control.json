@@ -2164,7 +2164,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Seccessful KV Request Wait Duration",
+          "title": "Successful KV Request Wait Duration",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -2280,7 +2280,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Seccessful KV Request Count",
+          "title": "Successful KV Request Count",
           "tooltip": {
             "msResolution": true,
             "shared": true,

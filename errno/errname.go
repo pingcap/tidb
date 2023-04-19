@@ -945,7 +945,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDropTableOnTemporaryTable:        mysql.Message("`drop global temporary table` can only drop global temporary table", nil),
 	ErrTxnTooLarge:                      mysql.Message("Transaction is too large, size: %d", nil),
 	ErrWriteConflictInTiDB:              mysql.Message("Write conflict, txnStartTS %d is stale", nil),
-	ErrInvalidPluginID:                  mysql.Message("Wrong plugin id: %s, valid plugin id is [name]-[version], both name and version should not contain '-'", nil),
+	ErrInvalidPluginID:                  mysql.Message("Wrong plugin id: %s, valid plugin id is [name]-[version], and version should not contain '-'", nil),
 	ErrInvalidPluginManifest:            mysql.Message("Cannot read plugin %s's manifest", nil),
 	ErrInvalidPluginName:                mysql.Message("Plugin load with %s but got wrong name %s", nil),
 	ErrInvalidPluginVersion:             mysql.Message("Plugin load with %s but got %s", nil),
@@ -1055,6 +1055,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataJobNotFound:              mysql.Message("Job ID %d doesn't exist", nil),
 	ErrLoadDataInvalidOperation:         mysql.Message("The current job status cannot perform the operation. %s", nil),
 	ErrLoadDataLocalUnsupportedOption:   mysql.Message("Unsupported option for LOAD DATA LOCAL INFILE: %s", nil),
+	ErrLoadDataPreCheckFailed:           mysql.Message("PreCheck failed: %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),

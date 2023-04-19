@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -112,17 +113,18 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		LocalStoreDir:     dir,
 		MaxConnPerStore:   config.DefaultRangeConcurrency,
 		ConnCompressType:  config.CompressionNone,
+		RangeConcurrency:  config.DefaultRangeConcurrency,
 		WorkerConcurrency: config.DefaultRangeConcurrency * 2,
 		KVWriteBatchSize:  config.KVWriteBatchSize,
 		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
 		// set to false when we fix it.
 		CheckpointEnabled:       true,
-		MemTableSize:            int(config.DefaultEngineMemCacheSize),
+		MemTableSize:            config.DefaultEngineMemCacheSize,
 		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:         true,
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
-		StoreWriteBWLimit:       0,
+		StoreWriteBWLimit:       int(e.maxWriteSpeed),
 		// todo: we can set it false when we support switch import mode.
 		ShouldCheckWriteStall: true,
 		MaxOpenFiles:          int(util.GenRLimit()),
@@ -232,17 +234,9 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	if err != nil {
 		return nil, err
 	}
-	if chunk.FileMeta.Compression == mydump.CompressionNone {
-		// todo: when support checkpoint, we should set pos too.
-		// WARN: parser.SetPos can only be set before we read anything now. should fix it before set pos.
-		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
-	} else {
-		// todo: chunk.Chunk.Offset is not set, if we ignore N lines, should set it.
-		if err := mydump.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
-			return nil, errors.Trace(err)
-		}
-		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
-	}
+	// todo: when support checkpoint, we should set pos too.
+	// WARN: parser.SetPos can only be set before we read anything now. should fix it before set pos.
+	parser.SetRowID(chunk.Chunk.PrevRowIDMax)
 	return parser, nil
 }
 
@@ -399,6 +393,12 @@ func (ti *TableImporter) importEngines(ctx context.Context) error {
 		if err2 = ti.ImportAndCleanup(ctx, dataClosedEngine); err2 != nil {
 			return err2
 		}
+
+		failpoint.Inject("AfterImportDataEngine", nil)
+		failpoint.Inject("SyncAfterImportDataEngine", func() {
+			TestSyncCh <- struct{}{}
+			<-TestSyncCh
+		})
 	}
 
 	closedIndexEngine, err := indexEngine.Close(ctx)
@@ -426,6 +426,12 @@ func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *back
 // ImportAndCleanup imports the engine and cleanup the engine data.
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	if closedEngine.GetID() != common.IndexEngineID {
+		// todo: change to a finer-grain progress later.
+		// each row is encoded into 1 data key
+		kvCount := ti.backend.GetImportedKVCount(closedEngine.GetUUID())
+		ti.Progress.LoadedRowCnt.Add(uint64(kvCount))
+	}
 	// todo: if we need support checkpoint, engine should not be cleanup if import failed.
 	cleanupErr := closedEngine.Cleanup(ctx)
 	return multierr.Combine(importErr, cleanupErr)

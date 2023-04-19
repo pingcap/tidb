@@ -839,7 +839,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 			}
 		}
 	case *ast.CalibrateResourceStmt:
-		return b.buildCalibrateResource(v.Schema())
+		return &calibrateResourceExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), 0),
+			workloadType: s.Tp,
+		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
 			baseExecutor: newBaseExecutor(b.ctx, nil, 0),

@@ -1477,14 +1477,22 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	if len(paths) == 0 {
 		helpMsg := ""
 		if engineVals == "tiflash" {
-			helpMsg = ". Please check tiflash replica or ensure the query is readonly"
+			helpMsg = ". Please check tiflash replica"
+			if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+				helpMsg += " or check if the query is not readonly and sql mode is strict"
+			}
 		}
 		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
 			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
 	}
 	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-			fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
+		if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because the query is not readonly and sql mode is strict.")
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
+		}
 	}
 	return paths, err
 }
@@ -4900,6 +4908,8 @@ const (
 
 	// TracePlanTargetEstimation indicates CE trace target for optimizer trace.
 	TracePlanTargetEstimation = "estimation"
+	// TracePlanTargetDebug indicates debug trace target for optimizer trace.
+	TracePlanTargetDebug = "debug"
 )
 
 // buildTrace builds a trace plan. Inside this method, it first optimize the
@@ -4914,19 +4924,24 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	}
 	// TODO: forbid trace plan if the statement isn't select read-only statement
 	if trace.TracePlan {
-		if trace.TracePlanTarget != "" && trace.TracePlanTarget != TracePlanTargetEstimation {
-			return nil, errors.New("trace plan target should only be 'estimation'")
-		}
-		if trace.TracePlanTarget == TracePlanTargetEstimation {
-			schema := newColumnsWithNames(1)
-			schema.Append(buildColumnWithName("", "CE_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
-			p.SetSchema(schema.col2Schema())
-			p.names = schema.names
-		} else {
+		switch trace.TracePlanTarget {
+		case "":
 			schema := newColumnsWithNames(1)
 			schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
 			p.SetSchema(schema.col2Schema())
 			p.names = schema.names
+		case TracePlanTargetEstimation:
+			schema := newColumnsWithNames(1)
+			schema.Append(buildColumnWithName("", "CE_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
+			p.SetSchema(schema.col2Schema())
+			p.names = schema.names
+		case TracePlanTargetDebug:
+			schema := newColumnsWithNames(1)
+			schema.Append(buildColumnWithName("", "Debug_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
+			p.SetSchema(schema.col2Schema())
+			p.names = schema.names
+		default:
+			return nil, errors.New("trace plan target should only be 'estimation'")
 		}
 		return p, nil
 	}
@@ -5099,7 +5114,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
-	case ast.ShowProcedureStatus:
+	case ast.ShowProcedureStatus, ast.ShowFunctionStatus:
 		return buildShowProcedureSchema()
 	case ast.ShowTriggers:
 		return buildShowTriggerSchema()
@@ -5274,11 +5289,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowLoadDataJobs:
 		names = []string{"Job_ID", "Create_Time", "Start_Time", "End_Time",
 			"Data_Source", "Target_Table", "Import_Mode", "Created_By",
-			"Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+			"Job_State", "Job_Status", "Source_File_Size", "Imported_Rows",
 			"Result_Code", "Result_Message"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
 			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
-			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeString}
 	}
 

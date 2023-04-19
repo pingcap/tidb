@@ -23,7 +23,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/restore",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/backup",
+        "//br/pkg/checkpoint",
         "//br/pkg/checksum",
         "//br/pkg/common",
         "//br/pkg/conn",
@@ -155,6 +155,7 @@ go_test(
         "//testkit/testsetup",
         "//types",
         "//util/codec",
+        "//util/table-filter",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
