@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -217,84 +218,52 @@ func MakeTableRegions(
 
 	start := time.Now()
 
-	execCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	concurrency := mathutil.Max(cfg.Concurrency, 2)
-	fileChan := make(chan FileInfo, concurrency)
-	resultChan := make(chan fileRegionRes, concurrency)
-	var wg sync.WaitGroup
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for info := range fileChan {
-				var (
-					regions []*TableRegion
-					sizes   []float64
-					err     error
-				)
-				dataFileSize := info.FileMeta.FileSize
-				if info.FileMeta.Type == SourceTypeParquet {
-					regions, sizes, err = makeParquetFileRegion(ctx, cfg, info)
-				} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
-					info.FileMeta.Compression == CompressionNone &&
-					dataFileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
-					// If a csv file is overlarge, we need to split it into multiple regions.
-					// Note: We can only split a csv file whose format is strict.
-					// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
-					// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
-					// avoid split a lot of small chunks.
-					// If a csv file is compressed, we can't split it now because we can't get the exact size of a row.
-					regions, sizes, err = SplitLargeCSV(ctx, cfg, info)
-				} else {
-					regions, sizes, err = MakeSourceFileRegion(execCtx, cfg, info)
-				}
-				select {
-				case resultChan <- fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}:
-				case <-ctx.Done():
-					return
-				}
-				if err != nil {
-					log.FromContext(ctx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
-					break
-				}
-			}
-		}()
-	}
+	var fileRegionsMap sync.Map
 
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	errChan := make(chan error, 1)
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(concurrency)
 	meta := cfg.TableMeta
-	fileRegionsMap := make(map[string]fileRegionRes, len(meta.DataFiles))
-	go func() {
-		for res := range resultChan {
-			if res.err != nil {
-				errChan <- res.err
-				return
+	for _, info := range meta.DataFiles {
+		eg.Go(func() error {
+			select {
+			case <-egCtx.Done():
+				return nil
+			default:
 			}
-			fileRegionsMap[res.info.FileMeta.Path] = res
-		}
-		errChan <- nil
-	}()
 
-	for _, dataFile := range meta.DataFiles {
-		select {
-		case fileChan <- dataFile:
-		case <-ctx.Done():
-			close(fileChan)
-			return nil, ctx.Err()
-		case err := <-errChan:
-			return nil, err
-		}
+			var (
+				regions []*TableRegion
+				sizes   []float64
+				err     error
+			)
+			dataFileSize := info.FileMeta.FileSize
+			if info.FileMeta.Type == SourceTypeParquet {
+				regions, sizes, err = makeParquetFileRegion(egCtx, cfg, info)
+			} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
+				info.FileMeta.Compression == CompressionNone &&
+				dataFileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
+				// If a csv file is overlarge, we need to split it into multiple regions.
+				// Note: We can only split a csv file whose format is strict.
+				// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
+				// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
+				// avoid split a lot of small chunks.
+				// If a csv file is compressed, we can't split it now because we can't get the exact size of a row.
+				regions, sizes, err = SplitLargeCSV(egCtx, cfg, info)
+			} else {
+				regions, sizes, err = MakeSourceFileRegion(egCtx, cfg, info)
+			}
+			if err != nil {
+				log.FromContext(egCtx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
+				return err
+			}
+			result := fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}
+			fileRegionsMap.Store(info.FileMeta.Path, result)
+			return nil
+		})
 	}
-	close(fileChan)
-	err := <-errChan
-	if err != nil {
+
+	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
 
@@ -303,7 +272,11 @@ func MakeTableRegions(
 	// rebase row-id for all chunk
 	rowIDBase := int64(0)
 	for _, dataFile := range meta.DataFiles {
-		fileRegionsRes := fileRegionsMap[dataFile.FileMeta.Path]
+		v, ok := fileRegionsMap.Load(dataFile.FileMeta.Path)
+		if !ok {
+			return nil, errors.Errorf("file %s not found in MakeTableRegions", dataFile.FileMeta.Path)
+		}
+		fileRegionsRes := v.(fileRegionRes)
 		for _, region := range fileRegionsRes.regions {
 			region.Chunk.PrevRowIDMax += rowIDBase
 			region.Chunk.RowIDMax += rowIDBase
