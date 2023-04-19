@@ -52,7 +52,8 @@ type binaryParamInfo struct {
 }
 
 func (info *binaryParamInfo) MarshalJSON() ([]byte, error) {
-	infoForMarshal := new(binaryParamInfo)
+	type binaryParamInfoForMarshal binaryParamInfo
+	infoForMarshal := new(binaryParamInfoForMarshal)
 	quote := `"`
 	// We only need the escape functionality of %q, the quoting is not needed,
 	// so we trim the \" prefix and suffix here.
