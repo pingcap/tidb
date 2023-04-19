@@ -2,11 +2,11 @@ package storage
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"io"
 
-	"github.com/golang/snappy"
+	"github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"

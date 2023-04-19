@@ -8,6 +8,7 @@ go_library(
         "builder.go",
         "cmsketch.go",
         "column.go",
+        "debugtrace.go",
         "estimate.go",
         "feedback.go",
         "fmsketch.go",
@@ -24,6 +25,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/statistics",
     visibility = ["//visibility:public"],
     deps = [
+        "//config",
         "//expression",
         "//kv",
         "//metrics",
@@ -34,6 +36,7 @@ go_library(
         "//parser/mysql",
         "//parser/terror",
         "//planner/util",
+        "//planner/util/debugtrace",
         "//sessionctx",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",

@@ -442,7 +442,7 @@ func (s *session) GetSessionPlanCache() sessionctx.PlanCache {
 		return nil
 	}
 	if s.sessionPlanCache == nil { // lazy construction
-		s.sessionPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
+		s.sessionPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().SessionPlanCacheSize),
 			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, false)
 	}
 	return s.sessionPlanCache
