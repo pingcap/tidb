@@ -438,7 +438,7 @@ bazel_test: failpoint-enable bazel_prepare
 
 
 bazel_coverage_test: check-bazel-prepare failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) --jobs=8 --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) --jobs=16 --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
 		//session/sessiontest/...
 
