@@ -283,7 +283,30 @@
           ]
         }
       ],
-      null,
+      [
+        {
+          "Received Command": {
+            "Command": "Query",
+            "ExecuteStmtInfo": null,
+            "ExecutedASTText": "create session binding for select * from t where col1 = 100 using select * from t use index () where col1 = 100"
+          }
+        },
+        {
+          "github.com/pingcap/tidb/planner.Optimize": [
+            {
+              "Enable binding": true,
+              "IsStmtNode": true,
+              "Matched": false,
+              "Matched bindings": null,
+              "Scope": "",
+              "Used binding": false
+            },
+            {
+              "github.com/pingcap/tidb/planner.optimize": null
+            }
+          ]
+        }
+      ],
       [
         {
           "Received Command": {
