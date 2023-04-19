@@ -75,7 +75,7 @@ func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ 
 	return nil, nil
 }
 
-func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) ([]*SubtaskMeta, error) {
+func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
@@ -96,13 +96,17 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) ([]*SubtaskMe
 	if err != nil {
 		return nil, err
 	}
-	defer tableImporter.Close()
+	defer func() {
+		err2 := tableImporter.Close()
+		if err == nil {
+			err = err2
+		}
+	}()
 
 	engineCheckpoints, err := tableImporter.PopulateChunks(ctx)
 	if err != nil {
 		return nil, err
 	}
-	subtaskMetas := make([]*SubtaskMeta, 0, len(engineCheckpoints))
 	for id, ecp := range engineCheckpoints {
 		if id == common.IndexEngineID {
 			continue
