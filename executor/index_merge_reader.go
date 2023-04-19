@@ -427,10 +427,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						pids = append(pids, e.prunedPartitions[parTblIdx].GetPhysicalID())
 					}
 				}
-				worker.batchSize = e.maxChunkSize
-				if worker.batchSize > worker.maxBatchSize {
-					worker.batchSize = worker.maxBatchSize
-				}
+				worker.batchSize = mathutil.Min(e.maxChunkSize, worker.maxBatchSize)
 				if len(results) > 1 && len(e.byItems) != 0 {
 					ssr := distsql.NewSortedSelectResults(results, pids, nil, e.byItems, e.memTracker)
 					results = []distsql.SelectResult{ssr}

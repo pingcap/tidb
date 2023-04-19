@@ -97,7 +97,7 @@ func (cb *CommonHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, e
 	return cb.buildHandleByDatumsBuffer(datumBuf)
 }
 
-// BuildParititionHandleFromIndexRow implements the kv.HandleCols interface.
+// BuildPartitionHandleFromIndexRow implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error) {
 	datumBuf := make([]types.Datum, 0, 4)
 	for i := 0; i < cb.NumCols(); i++ {
@@ -239,7 +239,7 @@ func (*IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) 
 	return kv.IntHandle(row.GetInt64(row.Len() - 1)), nil
 }
 
-// BuildHandleFromIndexRow implements the kv.HandleCols interface.
+// BuildPartitionHandleFromIndexRow implements the kv.HandleCols interface.
 func (*IntHandleCols) BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error) {
 	return kv.NewPartitionHandle(
 		row.GetInt64(row.Len()-1),
