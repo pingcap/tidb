@@ -573,11 +573,9 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 	}
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
-	if c != nil {
-		if c.Info != nil {
-			name = c.Info.Name.O
-		}
-		recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
+	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colID)
+	if c != nil && c.Info != nil {
+		name = c.Info.Name.O
 	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		if len(intRanges) == 0 {
@@ -620,11 +618,9 @@ func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID i
 	}
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
-	if c != nil {
-		if c.Info != nil {
-			name = c.Info.Name.O
-		}
-		recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
+	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colID)
+	if c != nil && c.Info != nil {
+		name = c.Info.Name.O
 	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		result, err = GetPseudoRowCountByColumnRanges(sc, float64(coll.RealtimeCount), colRanges, 0)
@@ -669,9 +665,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 			}
 		}
 	}
-	if idx != nil {
-		recordUsedItemStatsStatus(sctx, idx.StatsLoadedStatus, coll.PhysicalID, idxID, true)
-	}
+	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
 	if !ok || idx.IsInvalid(sctx, coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
@@ -1566,17 +1560,66 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	return true
 }
 
+// GetTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.
+var GetTblInfoForUsedStatsByPhysicalID func(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo)
+
 // recordUsedItemStatsStatus only records un-FullLoad item load status during user query
-func recordUsedItemStatsStatus(sctx sessionctx.Context, loadStatus StatsLoadedStatus,
-	tableID, id int64, isIndex bool) {
-	if loadStatus.IsFullLoad() {
+func recordUsedItemStatsStatus(sctx sessionctx.Context, stats interface{}, tableID, id int64) {
+	// Sometimes we try to use stats on _tidb_rowid (id == -1), which must be empty, we ignore this case here.
+	if id <= 0 {
 		return
 	}
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	item := model.TableItemID{TableID: tableID, ID: id, IsIndex: isIndex}
-	// For some testcases, it skips ResetContextOfStmt to init StatsLoadStatus
-	if stmtCtx.StatsLoadStatus == nil {
-		stmtCtx.StatsLoadStatus = make(map[model.TableItemID]string)
+	var isIndex, missing bool
+	var loadStatus *StatsLoadedStatus
+	switch x := stats.(type) {
+	case *Column:
+		isIndex = false
+		if x == nil {
+			missing = true
+		} else {
+			loadStatus = &x.StatsLoadedStatus
+		}
+	case *Index:
+		isIndex = true
+		if x == nil {
+			missing = true
+		} else {
+			loadStatus = &x.StatsLoadedStatus
+		}
 	}
-	stmtCtx.StatsLoadStatus[item] = loadStatus.StatusToString()
+
+	// no need to record
+	if !missing && loadStatus.IsFullLoad() {
+		return
+	}
+
+	// need to record
+	statsRecord := sctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
+	if statsRecord[tableID] == nil {
+		name, tblInfo := GetTblInfoForUsedStatsByPhysicalID(sctx, tableID)
+		statsRecord[tableID] = &stmtctx.UsedStatsInfoForTable{
+			Name:    name,
+			TblInfo: tblInfo,
+		}
+	}
+	recordForTbl := statsRecord[tableID]
+
+	var recordForColOrIdx map[int64]string
+	if isIndex {
+		if recordForTbl.IndexStatsLoadStatus == nil {
+			recordForTbl.IndexStatsLoadStatus = make(map[int64]string, 1)
+		}
+		recordForColOrIdx = recordForTbl.IndexStatsLoadStatus
+	} else {
+		if recordForTbl.ColumnStatsLoadStatus == nil {
+			recordForTbl.ColumnStatsLoadStatus = make(map[int64]string, 1)
+		}
+		recordForColOrIdx = recordForTbl.ColumnStatsLoadStatus
+	}
+
+	if missing {
+		recordForColOrIdx[id] = "missing"
+		return
+	}
+	recordForColOrIdx[id] = loadStatus.StatusToString()
 }

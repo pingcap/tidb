@@ -114,8 +114,17 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString(", stats:pseudo")
+	if !normalized {
+		if p.usedStatsInfo != nil {
+			str := p.usedStatsInfo.FormatForExplain()
+			if len(str) > 0 {
+				buffer.WriteString(", ")
+				buffer.WriteString(str)
+			}
+		} else if p.stats.StatsVersion == statistics.PseudoVersion {
+			// This branch is not needed in fact, we add this to prevent test result changes under planner/cascades/
+			buffer.WriteString(", stats:pseudo")
+		}
 	}
 	return buffer.String()
 }
@@ -223,8 +232,17 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString(", stats:pseudo")
+	if !normalized {
+		if p.usedStatsInfo != nil {
+			str := p.usedStatsInfo.FormatForExplain()
+			if len(str) > 0 {
+				buffer.WriteString(", ")
+				buffer.WriteString(str)
+			}
+		} else if p.stats.StatsVersion == statistics.PseudoVersion {
+			// This branch is not needed in fact, we add this to prevent test result changes under planner/cascades/
+			buffer.WriteString(", stats:pseudo")
+		}
 	}
 	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		buffer.WriteString(", PartitionTableScan:true")
