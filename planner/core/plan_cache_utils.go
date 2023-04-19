@@ -533,11 +533,11 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 	}
 
 	return &utilpc.PlanCacheMatchOpts{
-		ParamTypes:          parseParamTypes(sctx, params),
-		HasSubQuery:         stmt.QueryFeatures.hasSubquery,
-		ForeignKeyChecks:    sctx.GetSessionVars().ForeignKeyChecks,
-		StatsVersionHash:    statsVerHash,
 		LimitOffsetAndCount: limitOffsetAndCount,
+		HasSubQuery:         stmt.QueryFeatures.hasSubquery,
+		StatsVersionHash:    statsVerHash,
+		ParamTypes:          parseParamTypes(sctx, params),
+		ForeignKeyChecks:    sctx.GetSessionVars().ForeignKeyChecks,
 	}, nil
 }
 
