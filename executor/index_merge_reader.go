@@ -359,6 +359,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					partitionTableMode: e.partitionTableMode,
 					prunedPartitions:   e.prunedPartitions,
 					byItems:            e.byItems,
+					pushedLimit:        e.pushedLimit,
 				}
 
 				if e.isCorColInPartialFilters[workID] {
@@ -503,6 +504,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					partitionTableMode: e.partitionTableMode,
 					prunedPartitions:   e.prunedPartitions,
 					byItems:            e.byItems,
+					pushedLimit:        e.pushedLimit,
 				}
 
 				if len(e.prunedPartitions) != 0 && len(e.byItems) != 0 {
@@ -612,6 +614,8 @@ type partialTableWorker struct {
 	partitionTableMode bool
 	prunedPartitions   []table.PhysicalTable
 	byItems            []*plannerutil.ByItems
+	scannedKeys        uint64
+	pushedLimit        *plannercore.PushedDownLimit
 }
 
 func (w *partialTableWorker) needPartitionHandle() bool {
@@ -673,7 +677,14 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	defer w.memTracker.Consume(-memUsage)
 	tbl := w.tableReader.(*TableReaderExecutor).table
 	for len(handles) < w.batchSize {
-		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
+		requiredRows := w.batchSize - len(handles)
+		if w.pushedLimit != nil {
+			if w.pushedLimit.Offset+w.pushedLimit.Count <= w.scannedKeys {
+				return handles, retChk, nil
+			}
+			requiredRows = mathutil.Min(int(w.pushedLimit.Offset+w.pushedLimit.Count-w.scannedKeys), requiredRows)
+		}
+		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
 		start := time.Now()
 		err = errors.Trace(w.tableReader.Next(ctx, chk))
 		if err != nil {
@@ -692,6 +703,13 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
 		for i := 0; i < chk.NumRows(); i++ {
+			w.scannedKeys++
+			if w.pushedLimit != nil {
+				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
+					// Skip the handles after Offset+Count.
+					return handles, retChk, nil
+				}
+			}
 			r := chk.GetRow(i)
 			handle, err := handleCols.BuildHandleFromIndexRow(r)
 			if err != nil {
@@ -1423,6 +1441,8 @@ type partialIndexWorker struct {
 	partitionTableMode bool
 	prunedPartitions   []table.PhysicalTable
 	byItems            []*plannerutil.ByItems
+	scannedKeys        uint64
+	pushedLimit        *plannercore.PushedDownLimit
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
@@ -1509,7 +1529,14 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	var memUsage int64
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
-		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
+		requiredRows := w.batchSize - len(handles)
+		if w.pushedLimit != nil {
+			if w.pushedLimit.Offset+w.pushedLimit.Count <= w.scannedKeys {
+				return handles, retChk, nil
+			}
+			requiredRows = mathutil.Min(int(w.pushedLimit.Offset+w.pushedLimit.Count-w.scannedKeys), requiredRows)
+		}
+		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
 		start := time.Now()
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
@@ -1528,6 +1555,13 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
 		for i := 0; i < chk.NumRows(); i++ {
+			w.scannedKeys++
+			if w.pushedLimit != nil {
+				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
+					// Skip the handles after Offset+Count.
+					return handles, retChk, nil
+				}
+			}
 			var handle kv.Handle
 			if w.hasExtralPidCol() {
 				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
