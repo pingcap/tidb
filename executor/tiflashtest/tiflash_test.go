@@ -17,7 +17,6 @@ package tiflashtest
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/util/memory"
 	"math/rand"
 	"strings"
 	"sync"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"

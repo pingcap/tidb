@@ -17,7 +17,6 @@ package jointest
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/memory"
 	"math/rand"
 	"strings"
 	"testing"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 

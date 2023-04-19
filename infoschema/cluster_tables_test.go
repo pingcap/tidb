@@ -16,7 +16,6 @@ package infoschema_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/memory"
 	"math/rand"
 	"net"
 	"net/http/httptest"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
