@@ -35,18 +35,18 @@ type MemRoot interface {
 }
 
 var (
-	// StructSizeBackendCtx is the size of BackendContext.
+	// StructSizeBackendCtx is the size of litBackendCtx.
 	StructSizeBackendCtx int64
-	// StructSizeEngineInfo is the size of EngineInfo.
+	// StructSizeEngineInfo is the size of engineInfo.
 	StructSizeEngineInfo int64
-	// StructSizeWriterCtx is the size of WriterContext.
+	// StructSizeWriterCtx is the size of writerContext.
 	StructSizeWriterCtx int64
 )
 
 func init() {
-	StructSizeBackendCtx = int64(unsafe.Sizeof(BackendContext{}))
-	StructSizeEngineInfo = int64(unsafe.Sizeof(EngineInfo{}))
-	StructSizeWriterCtx = int64(unsafe.Sizeof(WriterContext{}))
+	StructSizeBackendCtx = int64(unsafe.Sizeof(litBackendCtx{}))
+	StructSizeEngineInfo = int64(unsafe.Sizeof(engineInfo{}))
+	StructSizeWriterCtx = int64(unsafe.Sizeof(writerContext{}))
 }
 
 // memRootImpl is an implementation of MemRoot.
@@ -54,12 +54,12 @@ type memRootImpl struct {
 	maxLimit      int64
 	currUsage     int64
 	structSize    map[string]int64
-	backendCtxMgr *backendCtxManager
+	backendCtxMgr *litBackendCtxMgr
 	mu            sync.RWMutex
 }
 
 // NewMemRootImpl creates a new memRootImpl.
-func NewMemRootImpl(maxQuota int64, bcCtxMgr *backendCtxManager) *memRootImpl {
+func NewMemRootImpl(maxQuota int64, bcCtxMgr *litBackendCtxMgr) *memRootImpl {
 	return &memRootImpl{
 		maxLimit:      maxQuota,
 		currUsage:     0,

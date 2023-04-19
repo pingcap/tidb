@@ -156,6 +156,13 @@
     ]
   },
   {
+    "name": "TestMPPRightSemiJoin",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)"
+    ]
+  },
+  {
     "name": "TestIssue37520",
     "cases": [
       "select /*+ inl_join(t1@sel_2) */ a, (select b from t1 where t1.a = t2.b) from t2;",
@@ -1259,7 +1266,7 @@
       "select count(*) from t where a=1",
       "select count(*) from t_pick_row_id",
       "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- shouldn't be rewritten",
-      "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten",
+      "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten",
       "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten",
       "select count(distinct 1) from t -- shouldn't be rewritten",
       "select count(1), count(a), count(b) from t -- shouldn't be rewritten",
@@ -1275,7 +1282,7 @@
       "select count(*) from t where a=1",
       "select count(*) from t_pick_row_id",
       "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive",
-      "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten for correlated sub query",
+      "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten for correlated sub query",
       "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
       "select count(distinct 1) from t -- shouldn't be rewritten",
       "select count(1), count(a), count(b) from t -- keep count(1)",
@@ -1302,7 +1309,9 @@
       "select * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2",
       "select * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2",
       "select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2",
-      "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2"
+      "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2",
+      "select * from tcommon where a = 1 or b = 1 order by c limit 2",
+      "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2"
     ]
   }
 ]

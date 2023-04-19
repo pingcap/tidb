@@ -26,6 +26,7 @@ go_test(
     srcs = ["errormanager_test.go"],
     embed = [":errormanager"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",

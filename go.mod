@@ -27,6 +27,7 @@ require (
 	github.com/cockroachdb/pebble v0.0.0-20210719141320-8c3bd06debb5
 	github.com/coocood/freecache v1.2.1
 	github.com/coreos/go-semver v0.3.0
+	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/daixiang0/gci v0.10.1
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.1.1
@@ -93,7 +94,7 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.7-0.20230406064257-1ec0ff5bf443
+	github.com/tikv/client-go/v2 v2.0.8-0.20230417065328-92db9f7b151f
 	github.com/tikv/pd/client v0.0.0-20230329114254-1948c247c2b1
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
 	github.com/twmb/murmur3 v1.1.6
@@ -158,7 +159,6 @@ require (
 	github.com/coocood/bbloom v0.0.0-20190830030839-58deb6228d64 // indirect
 	github.com/coocood/rtutil v0.0.0-20190304133409-c84515f646f2 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
-	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect

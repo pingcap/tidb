@@ -349,16 +349,22 @@ func (rf RestoreFlags) HasRestoreForNonPrepPlanCache() bool {
 	return rf.has(RestoreForNonPrepPlanCache)
 }
 
+// RestoreWriter is the interface for `Restore` to write.
+type RestoreWriter interface {
+	io.Writer
+	io.StringWriter
+}
+
 // RestoreCtx is `Restore` context to hold flags and writer.
 type RestoreCtx struct {
 	Flags     RestoreFlags
-	In        io.Writer
+	In        RestoreWriter
 	DefaultDB string
 	CTERestorer
 }
 
 // NewRestoreCtx returns a new `RestoreCtx`.
-func NewRestoreCtx(flags RestoreFlags, in io.Writer) *RestoreCtx {
+func NewRestoreCtx(flags RestoreFlags, in RestoreWriter) *RestoreCtx {
 	return &RestoreCtx{Flags: flags, In: in, DefaultDB: ""}
 }
 
@@ -371,7 +377,7 @@ func (ctx *RestoreCtx) WriteKeyWord(keyWord string) {
 	case ctx.Flags.HasKeyWordLowercaseFlag():
 		keyWord = strings.ToLower(keyWord)
 	}
-	fmt.Fprint(ctx.In, keyWord)
+	ctx.In.WriteString(keyWord)
 }
 
 // WriteWithSpecialComments writes a string with a special comment wrapped.
@@ -406,7 +412,9 @@ func (ctx *RestoreCtx) WriteString(str string) {
 		str = strings.Replace(str, `"`, `""`, -1)
 		quotes = `"`
 	}
-	fmt.Fprint(ctx.In, quotes, str, quotes)
+	ctx.In.WriteString(quotes)
+	ctx.In.WriteString(str)
+	ctx.In.WriteString(quotes)
 }
 
 // WriteName writes the name into writer
@@ -427,12 +435,16 @@ func (ctx *RestoreCtx) WriteName(name string) {
 		name = strings.Replace(name, "`", "``", -1)
 		quotes = "`"
 	}
-	fmt.Fprint(ctx.In, quotes, name, quotes)
+
+	// use `WriteString` directly instead of `fmt.Fprint` to get a better performance.
+	ctx.In.WriteString(quotes)
+	ctx.In.WriteString(name)
+	ctx.In.WriteString(quotes)
 }
 
 // WritePlain writes the plain text into writer without any handling.
 func (ctx *RestoreCtx) WritePlain(plainText string) {
-	fmt.Fprint(ctx.In, plainText)
+	ctx.In.WriteString(plainText)
 }
 
 // WritePlainf write the plain text into writer without any handling.

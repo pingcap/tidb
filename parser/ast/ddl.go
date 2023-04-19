@@ -3691,6 +3691,7 @@ var (
 	ErrTooManyValues                        = terror.ClassDDL.NewStd(mysql.ErrTooManyValues)
 	ErrWrongPartitionTypeExpectedSystemTime = terror.ClassDDL.NewStd(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 	ErrUnknownCharacterSet                  = terror.ClassDDL.NewStd(mysql.ErrUnknownCharacterSet)
+	ErrCoalescePartitionNoPartition         = terror.ClassDDL.NewStd(mysql.ErrCoalescePartitionNoPartition)
 )
 
 type SubPartitionDefinition struct {

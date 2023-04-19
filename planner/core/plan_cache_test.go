@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,6 +101,41 @@ func TestIssue40296(t *testing.T) {
 	tk.MustQuery(`select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("aa", "aa") or col2 = -9605492323393070105 or col3 = "0005-06-22"`).Check(
 		testkit.Rows("ee -9605492323393070105 0850-03-15"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unary operator '-' is not supported now.
+}
+
+func TestNonPreparedPlanCacheDMLHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
+
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`update t set a=1`)
+	tk.MustExec(`update t set a=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`delete from t where a=1`)
+	tk.MustExec(`delete from t where a=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`insert /*+ ignore_plan_cache() */ into t values (1)`)
+	tk.MustExec(`insert /*+ ignore_plan_cache() */ into t values (1)`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`update /*+ ignore_plan_cache() */ t set a=1`)
+	tk.MustExec(`update /*+ ignore_plan_cache() */ t set a=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`delete /*+ ignore_plan_cache() */ from t where a=1`)
+	tk.MustExec(`delete /*+ ignore_plan_cache() */ from t where a=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`update t set a=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`delete from t where a=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanCachePlanString(t *testing.T) {
@@ -238,23 +274,23 @@ func TestNonPreparedPlanCacheTooManyConsts(t *testing.T) {
 	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
 
 	var x []string
-	for i := 0; i < 51; i++ {
+	for i := 0; i < 201; i++ {
 		x = append(x, fmt.Sprintf("%v", i))
 	}
-	list49 := strings.Join(x[:49], ", ")
-	list50 := strings.Join(x[:50], ", ")
-	list51 := strings.Join(x[:51], ", ")
+	list1 := strings.Join(x[:199], ", ")
+	list2 := strings.Join(x[:200], ", ")
+	list3 := strings.Join(x[:201], ", ")
 
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list49))
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list49))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list1))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list1))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list50))
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list50))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list2))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list2))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// query has more than 50 consts cannot hit
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list51))
-	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list51))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list3))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list3))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
@@ -420,6 +456,11 @@ func TestPreparedPlanCacheLargePlan(t *testing.T) {
 	tk.MustExec("execute st")
 	tk.MustExec("execute st")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // large than 2MB threshold
+
+	tk.MustExec(fmt.Sprintf("set tidb_plan_cache_max_plan_size=%v", 1*size.GB))
+	tk.MustExec("execute st")
+	tk.MustExec("execute st")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // less than 1GB threshold
 }
 
 func TestPreparedPlanCacheLongInList(t *testing.T) {
@@ -1300,7 +1341,7 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
 	tk.MustExec("set @a = 10001")
 	tk.MustExec("execute stmt using @a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: limit count more than 10000"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: limit count is too large"))
 }
 
 func TestPlanCacheMemoryTable(t *testing.T) {
@@ -1729,12 +1770,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t3 where a > 1 and full_name = 'a b'",
 		"select * from v",                // view
 		"select * from t where a = null", // null
-		"select * from t where a = 1 or a = 2 or a = 3 or a = 4 or a = 5 or a = 6 or a = 7 or a = 8 or a = 9 or a = 10 or " +
-			"a = 11 or a = 12 or a = 13 or a = 14 or a = 15 or a = 16 or a = 17 or a = 18 or a = 19 or a = 20 or " +
-			"a = 21 or a = 22 or a = 23 or a = 24 or a = 25 or a = 26 or a = 27 or a = 28 or a = 29 or a = 30 or " +
-			"a = 31 or a = 32 or a = 33 or a = 34 or a = 35 or a = 36 or a = 37 or a = 38 or a = 39 or a = 40 or " +
-			"a = 41 or a = 42 or a = 43 or a = 44 or a = 45 or a = 46 or a = 47 or a = 48 or a = 49 or a = 50 or a = 51", // more than 50 constants
-		"select * from t where false", // table dual
+		"select * from t where false",    // table dual
 	}
 
 	reasons := []string{
@@ -1756,7 +1792,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have generated columns are not supported",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
-		"skip non-prepared plan-cache: query has more than 50 constants",
 		"skip non-prepared plan-cache: get a TableDual plan",
 	}
 

@@ -385,6 +385,11 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*spli
 func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*split.RegionInfo, isRawKv bool) map[uint64][][]byte {
 	splitKeyMap := make(map[uint64][][]byte)
 	checkKeys := make([][]byte, 0)
+	if rewriteRules != nil && len(rewriteRules.NewKeyspace) == 0 {
+		for _, rule := range rewriteRules.Data {
+			checkKeys = append(checkKeys, rule.NewKeyPrefix)
+		}
+	}
 	for _, rg := range ranges {
 		checkKeys = append(checkKeys, rg.EndKey)
 	}
@@ -812,7 +817,7 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 type LogFilesIterWithSplitHelper struct {
 	iter   LogIter
 	helper *LogSplitHelper
-	buffer []*backuppb.DataFileInfo
+	buffer []*LogDataFileInfo
 	next   int
 }
 
@@ -827,15 +832,15 @@ func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules,
 	}
 }
 
-func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.IterResult[*backuppb.DataFileInfo] {
+func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.IterResult[*LogDataFileInfo] {
 	if splitIter.next >= len(splitIter.buffer) {
-		splitIter.buffer = make([]*backuppb.DataFileInfo, 0, SplitFilesBufferSize)
+		splitIter.buffer = make([]*LogDataFileInfo, 0, SplitFilesBufferSize)
 		for r := splitIter.iter.TryNext(ctx); !r.Finished; r = splitIter.iter.TryNext(ctx) {
 			if r.Err != nil {
 				return r
 			}
 			f := r.Item
-			splitIter.helper.Merge(f)
+			splitIter.helper.Merge(f.DataFileInfo)
 			splitIter.buffer = append(splitIter.buffer, f)
 			if len(splitIter.buffer) >= SplitFilesBufferSize {
 				break
@@ -843,12 +848,12 @@ func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.
 		}
 		splitIter.next = 0
 		if len(splitIter.buffer) == 0 {
-			return iter.Done[*backuppb.DataFileInfo]()
+			return iter.Done[*LogDataFileInfo]()
 		}
 		log.Info("start to split the regions")
 		startTime := time.Now()
 		if err := splitIter.helper.Split(ctx); err != nil {
-			return iter.Throw[*backuppb.DataFileInfo](errors.Trace(err))
+			return iter.Throw[*LogDataFileInfo](errors.Trace(err))
 		}
 		log.Info("end to split the regions", zap.Duration("takes", time.Since(startTime)))
 	}
