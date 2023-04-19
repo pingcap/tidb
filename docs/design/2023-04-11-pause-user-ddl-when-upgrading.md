@@ -9,8 +9,7 @@ This document describes a feature that allows users to pause the execution of th
 
 ## Motivation or Background
 
-Since the cluster upgrade may need to deal with DDL statements(there may be some DDL statements being processed before the upgrade), and DDL itself implementation framework will also need to adjust, resulting in some versions may not be able to roll the upgrade situation. Although these cases only exist in some versions, it is not easy to describe them one by one. Therefore, when upgrading TiDB clusters, users need to confirm that there are no DDL statements being executed, otherwise there may be problems with undefined behavior.
-Now there are two problems:
+Since the cluster upgrade may need to deal with DDL statements(there may be some DDL statements being processed before the upgrade), and DDL itself implementation framework will also need to adjust, resulting in some versions may not be able to roll the upgrade situation. Although above scenarios may only exist in some upgrade cases, it is not easy to describe them one by one. Therefore, when upgrading TiDB clusters, users need to first confirm that there are no DDL statements being executed, otherwise there may be problems with unexpection behavior.
 - The above rule is only described in the doc, and users may misoperate. Related [doc](https://docs.pingcap.com/tidb/dev/upgrade-tidb-using-tiup#upgrade-tidb-using-tiup).
 - During the upgrade operation, users need to communicate and coordinate with each business to cancel DDL, then upgrade, and finally re-execute DDL. Specific scenarios such as large cluster scenarios shared across multiple systems, such as scenarios on TiDB cloud.
 
@@ -68,9 +67,20 @@ In the plan, we distinguish between DDL operation types. Among them, we distingu
 
 ## Impacts & Risks
 
-Since TiDB itself has some functional roles or judgments on whether some functions are enabled or not, and there will be different versions and other factors during the upgrade process, we need to consider more scenarios, and these scenarios may have omissions in design or testing.
+1. Since TiDB itself has some functional roles or judgments on whether some functions are enabled or not, and there will be different versions and other factors during the upgrade process, we need to consider more scenarios, and these scenarios may have omissions in design or testing.
+2. For DDL jobs being executed, the current design may cause them to execute on DDL owners of different versions of TiDB. This scenario requires rolling upgrade compatibility for DDL operations.
+
+## Future Works
+
+With regard to risk 2 mentioned above, the two main issues that we need to deal with later:
+- Do not allow running DDL jobs to be processed on different versions of TiDB.
+  - Cancel the running DDL job, wait for the bootstrap to finish, and then do an orderly playback.
+  - You need to wait for all TiDB upgrades to execute DDL jobs normally, otherwise this problem will still occur.
+- Consider not letting the new version of DDL jobs be processed on the old version of TiDB, and not letting the old version of DDL jobs be processed on the new version of TiDB.
+  - A queued DDL job is best played back through its query.
 
 ## Investigation & Alternatives
+
 The following schemes are mainly different in the way of notifying the upgrading status to the cluster and replying that the cluster status is normal. The specific schemes are as follows:
 
 ### Plan 1
@@ -82,8 +92,9 @@ The following schemes are mainly different in the way of notifying the upgrading
       - You can add a field to ServerInfo to show whether it has upgrading mode turned on.
       - You can add /tidb/server/global_upgrading_all_nodes/ and all TiDB receiving notifications will have their IDs set on it.
    3. New TiDB: Check whether the upgrading mode of all surviving TiDBs is turned on, wait if it is not turned on, and enter the next process if it is turned on.
-3. Same as steps 3 to 5 in the selection plan. Where step-3.ii has another way:
+3. Same as steps 3 to 5 in the selection plan. Where step-3.ii has two ways:
    1. When the owner executes, the user DDL operations are filtered out directly. Similar to the description in step-3.b in the selection plan, but the DDL job state is not updated (ie not persisted to the storage layer). In addition, the running DDL may require special handling.
+   2. Record all user DDL operations and save them to the storage layer, and need to create a new table for storage. When restoring, put it back into the DDL job table. The advantage is that even if the DDL framework is overhauled (such as the previous KV queue changed to the DDL job table), this function is not affected.
 4. Resume normal execution of DDL mode
    1. Release the pause mode on the PD and set the `/tidb/server/global_state` to null.
    2. Restore the normal mode of the machine, which can accept user DDL requests.
