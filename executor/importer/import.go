@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
@@ -171,6 +172,7 @@ type Plan struct {
 	MaxRecordedErrors int64
 	Detached          bool
 
+	// used for checksum in physical mode
 	DistSQLScanConcurrency int
 
 	// test
@@ -208,10 +210,6 @@ type LoadDataController struct {
 	dataFiles []*mydump.SourceFileMeta
 	// total data file size in bytes, only initialized when load from remote.
 	TotalFileSize int64
-	// user session context. DO NOT use it if load is in DETACHED mode.
-	UserCtx sessionctx.Context
-	// used for checksum in physical mode
-	distSQLScanConcurrency int
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -286,7 +284,7 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 }
 
 // NewLoadDataController create new controller.
-func NewLoadDataController(userCtx sessionctx.Context, plan *Plan, tbl table.Table) (*LoadDataController, error) {
+func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, error) {
 	fullTableName := common.UniqueTable(plan.TableName.Schema.L, plan.TableName.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
@@ -296,7 +294,6 @@ func NewLoadDataController(userCtx sessionctx.Context, plan *Plan, tbl table.Tab
 		Table:          tbl,
 		LineFieldsInfo: plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
 		logger:         logger,
-		UserCtx:        userCtx,
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
@@ -931,6 +928,14 @@ type JobImportParam struct {
 	Progress *asyncloaddata.Progress
 }
 
+// JobImportResult is the result of the job import.
+type JobImportResult struct {
+	Msg          string
+	LastInsertID uint64
+	Affected     uint64
+	Warnings     []stmtctx.SQLWarn
+}
+
 // JobImporter is the interface for importing a job.
 type JobImporter interface {
 	// Param returns the param of the job import.
@@ -940,8 +945,7 @@ type JobImporter interface {
 	// during import, we should use param.GroupCtx, so this method has no context param.
 	Import()
 	// Result returns the result of the job import.
-	// todo: return a struct
-	Result() string
+	Result() JobImportResult
 	io.Closer
 }
 

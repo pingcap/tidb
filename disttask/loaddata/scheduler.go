@@ -48,8 +48,7 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// todo: use real session context
-	controller, err := importer.NewLoadDataController(nil, &s.taskMeta.Plan, tbl)
+	controller, err := importer.NewLoadDataController(&s.taskMeta.Plan, tbl)
 	if err != nil {
 		return err
 	}
@@ -60,6 +59,9 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
 		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
+		Job: &asyncloaddata.Job{
+			ID: s.taskMeta.JobID,
+		},
 	}, controller)
 	if err != nil {
 		return err

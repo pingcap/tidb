@@ -219,7 +219,7 @@ func (ti *TableImporter) Import() {
 }
 
 // Result implements JobImporter.Result.
-func (ti *TableImporter) Result() string {
+func (ti *TableImporter) Result() JobImportResult {
 	var (
 		numWarnings uint64
 		numRecords  uint64
@@ -230,13 +230,11 @@ func (ti *TableImporter) Result() string {
 	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
 	// we can have it when there's duplicate detection.
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	if !ti.Detached {
-		userStmtCtx := ti.UserCtx.GetSessionVars().StmtCtx
-		userStmtCtx.SetMessage(msg)
-		userStmtCtx.SetAffectedRows(ti.Progress.LoadedRowCnt.Load())
-		userStmtCtx.LastInsertID = ti.lastInsertID
+	return JobImportResult{
+		Msg:          msg,
+		Affected:     ti.Progress.LoadedRowCnt.Load(),
+		LastInsertID: ti.lastInsertID,
 	}
-	return msg
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -306,7 +304,7 @@ func (ti *TableImporter) checksumTable(ctx context.Context) error {
 		}
 	}
 	ti.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.distSQLScanConcurrency))
+	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.DistSQLScanConcurrency))
 	remoteChecksum, err := manager.Checksum(ctx, ti.tableInfo)
 	if err != nil {
 		return err

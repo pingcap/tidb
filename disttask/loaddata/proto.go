@@ -28,7 +28,8 @@ const (
 // TaskMeta is the task of LoadData.
 // All the field should be serializable.
 type TaskMeta struct {
-	Plan importer.Plan
+	Plan  importer.Plan
+	JobID int64
 }
 
 // SubtaskMeta is the subtask of LoadData.

@@ -761,6 +761,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 		config.DefaultBatchSize = backup
 	})
 
+	s.prepareVariables(false)
 	s.prepareAndUseDB("load_data")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")

@@ -81,8 +81,7 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 	if err != nil {
 		return nil, err
 	}
-	// todo: use real session context
-	controller, err := importer.NewLoadDataController(nil, &taskMeta.Plan, tbl)
+	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +92,9 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
 		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
+		Job: &asyncloaddata.Job{
+			ID: taskMeta.JobID,
+		},
 	}, controller)
 	if err != nil {
 		return nil, err

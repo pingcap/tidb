@@ -64,8 +64,8 @@ func (ti *DistImporter) Import() {
 }
 
 // Result implements JobImporter.Result.
-func (*DistImporter) Result() string {
-	return ""
+func (*DistImporter) Result() importer.JobImportResult {
+	return importer.JobImportResult{}
 }
 
 // Close implements the io.Closer interface.
@@ -73,9 +73,10 @@ func (*DistImporter) Close() error {
 	return nil
 }
 
-func buildDistTask(plan *importer.Plan) TaskMeta {
+func buildDistTask(plan *importer.Plan, jobID int64) TaskMeta {
 	return TaskMeta{
-		Plan: *plan,
+		Plan:  *plan,
+		JobID: jobID,
 	}
 }
 
@@ -138,7 +139,7 @@ func submitGlobalTaskAndRun(ctx context.Context, taskKey, taskType string, concu
 }
 
 func (ti *DistImporter) doImport(ctx context.Context) error {
-	task := buildDistTask(ti.plan)
+	task := buildDistTask(ti.plan, ti.Job.ID)
 	taskMeta, err := json.Marshal(task)
 	if err != nil {
 		return err
