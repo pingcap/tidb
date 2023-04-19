@@ -715,8 +715,6 @@ github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef/go.mod h1:7WjlapSfwQyo
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
 github.com/nishanths/predeclared v0.2.2 h1:V2EPdZPliZymNAn79T8RkNApBjMmVKh5XRpLm/w98Vk=
 github.com/nishanths/predeclared v0.2.2/go.mod h1:RROzoN6TnGQupbC+lqggsOlcgysk3LMK/HI84Mp280c=
-github.com/nolouch/client-go/v2 v2.0.0-alpha.0.20230419071211-40039790f0bc h1:/zGLBgUgLZs4I4OVk57p6ov9zJHx9Thujad43cSSr7o=
-github.com/nolouch/client-go/v2 v2.0.0-alpha.0.20230419071211-40039790f0bc/go.mod h1:Dkqcv2dYoCOiNMiRgnEhpTa04dUaF9E3rbcz4rXxf3U=
 github.com/nxadm/tail v1.4.4/go.mod h1:kenIhsEOeOJmVchQTgglprH7qJGnHDVpk1VPCcaMI8A=
 github.com/nxadm/tail v1.4.8 h1:nPr65rt6Y5JFSKQO7qToXr7pePgD6Gwiw05lkbyAQTE=
 github.com/oklog/run v1.0.0/go.mod h1:dlhp/R75TPv97u0XWUtDeV/lRKWPKSdTuV0TZvrmrQA=
@@ -947,6 +945,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+github.com/tikv/client-go/v2 v2.0.8-0.20230419085701-dd6caa4c0389 h1:gpCMZq6x1cNJY6dMHzYdz54+XmSeWEeiNVVpesZ7gRY=
+github.com/tikv/client-go/v2 v2.0.8-0.20230419085701-dd6caa4c0389/go.mod h1:Dkqcv2dYoCOiNMiRgnEhpTa04dUaF9E3rbcz4rXxf3U=
 github.com/tikv/pd/client v0.0.0-20230329114254-1948c247c2b1 h1:bzlSSzw+6qTwPs8pMcPI1bt27TAOhSdAEwdPCz6eBlg=
 github.com/tikv/pd/client v0.0.0-20230329114254-1948c247c2b1/go.mod h1:3cTcfo8GRA2H/uSttqA3LvMfMSHVBJaXk3IgkFXFVxo=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=
