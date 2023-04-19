@@ -2120,6 +2120,11 @@ func (cli *testServerClient) runTestStmtCount(t *testing.T) {
 }
 
 func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
+	// When run this test solely, the test can be stable.
+	// But if other tests run during this, the result can be unstable.
+	// Because the test collect some metrics before / after the test, and the metrics data are polluted.
+	t.Skip("unstable test")
+
 	cli.runTestsOnNewDB(t, nil, "DBStatementCount", func(dbt *testkit.DBTestKit) {
 		originStmtCnt := getDBStmtCnt(string(cli.getMetrics(t)), "DBStatementCount")
 

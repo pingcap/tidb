@@ -401,6 +401,8 @@ type StatementContext struct {
 	TableStats map[int64]interface{}
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
+	// Check if TiFlash read engine is removed due to strict sql mode.
+	TiFlashEngineRemovedDueToStrictSQLMode bool
 }
 
 // StmtHints are SessionVars related sql hints.

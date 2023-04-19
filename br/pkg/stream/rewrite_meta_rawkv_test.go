@@ -98,10 +98,16 @@ func TestTidySchemaMaps(t *testing.T) {
 
 	partitionMap := tableMap[0].Partitions
 	require.Equal(t, len(partitionMap), 2)
-	require.Equal(t, partitionMap[0].UpstreamId, oldPID1)
-	require.Equal(t, partitionMap[0].DownstreamId, newPID1)
-	require.Equal(t, partitionMap[1].UpstreamId, oldPID2)
-	require.Equal(t, partitionMap[1].DownstreamId, newPID2)
+
+	if partitionMap[0].UpstreamId == oldPID1 {
+		require.Equal(t, partitionMap[0].DownstreamId, newPID1)
+		require.Equal(t, partitionMap[1].UpstreamId, oldPID2)
+		require.Equal(t, partitionMap[1].DownstreamId, newPID2)
+	} else {
+		require.Equal(t, partitionMap[0].DownstreamId, newPID2)
+		require.Equal(t, partitionMap[1].UpstreamId, oldPID1)
+		require.Equal(t, partitionMap[1].DownstreamId, newPID1)
+	}
 
 	// test FromSchemaMaps()
 	drs2 := FromSchemaMaps(dbMap)

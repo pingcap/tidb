@@ -2398,8 +2398,18 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			preferredBuildIndex = 1
 		}
 	} else if p.JoinType.IsSemiJoin() {
-		preferredBuildIndex = 1
-		fixedBuildSide = true
+		if !p.isNAAJ() && len(p.EqualConditions) > 0 && (p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin) {
+			// TiFlash only supports Non-null_aware non-cross semi/anti_semi join to use both sides as build side
+			preferredBuildIndex = 1
+			// MPPOuterJoinFixedBuildSide default value is false
+			// use MPPOuterJoinFixedBuildSide here as a way to disable using left table as build side
+			if !p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide && p.children[1].statsInfo().Count() > p.children[0].statsInfo().Count() {
+				preferredBuildIndex = 0
+			}
+		} else {
+			preferredBuildIndex = 1
+			fixedBuildSide = true
+		}
 	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		// TiFlash does not require that the build side must be the inner table for outer join.
