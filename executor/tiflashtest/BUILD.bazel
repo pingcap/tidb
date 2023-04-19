@@ -23,6 +23,7 @@ go_test(
         "//testkit/external",
         "//util/dbterror/exeerrors",
         "//util/israce",
+        "//util/memory",
         "//util/tiflashcompute",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

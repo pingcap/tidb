@@ -449,6 +449,9 @@ func (t *Tracker) Consume(bs int64) {
 				currentAction = nextAction
 				nextAction = currentAction.GetFallback()
 			}
+			if action, ok := currentAction.(ActionCareInvoker); ok {
+				action.SetInvoker(Instance)
+			}
 			currentAction.Action(tracker)
 		}
 	}

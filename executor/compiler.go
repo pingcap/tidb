@@ -50,7 +50,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if r == nil {
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceed) {
+		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceedWarnMsg) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)

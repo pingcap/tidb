@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -2735,7 +2736,7 @@ func TestForeignKeyAndMemoryTracker(t *testing.T) {
 	// foreign key cascade behaviour will exceed memory quota.
 	err := tk.ExecToErr("update t1 set id=id+100000 where id=1")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
 	tk.MustQuery("select id,pid from t1 where id = 1").Check(testkit.Rows("1 <nil>"))
 	tk.MustExec("set @@foreign_key_checks=0")
 	// After disable foreign_key_checks, following DML will execute successful.

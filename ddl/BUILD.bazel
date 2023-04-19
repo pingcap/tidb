@@ -118,6 +118,7 @@ go_library(
         "//util/intest",
         "//util/logutil",
         "//util/mathutil",
+        "//util/memory",
         "//util/mock",
         "//util/ranger",
         "//util/resourcegrouptag",

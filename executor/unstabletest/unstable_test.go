@@ -40,7 +40,7 @@ func TestCartesianJoinPanic(t *testing.T) {
 		tk.MustExec("insert into t select * from t")
 	}
 	err := tk.QueryToErr("desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;")
-	require.ErrorContains(t, err, "Out Of Memory Quota!")
+	require.ErrorContains(t, err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
 }
 
 func TestGlobalMemoryControl(t *testing.T) {
@@ -86,7 +86,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		func() {
 			tracker3.Consume(1)
 		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+			require.True(t, strings.Contains(r.(string), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
 		})
 	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
 	time.Sleep(500 * time.Millisecond)
@@ -105,7 +105,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		func() {
 			tracker2.Consume(1)
 		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+			require.True(t, strings.Contains(r.(string), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
 		})
 	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
 }

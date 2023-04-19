@@ -26,6 +26,7 @@ go_test(
         "//tests/realtikvtest",
         "//types",
         "//util/dbterror/exeerrors",
+        "//util/memory",
         "//util/sqlexec",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
