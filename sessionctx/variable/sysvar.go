@@ -2481,7 +2481,7 @@ var defaultSysVars = []*SysVar{
 				originalV, ok := newMap[num]
 				if ok {
 					s.StmtCtx.AppendWarning(
-						errors.Errorf("found repeated fix control: %d:%s is overwritten with %s", kNum, originalV, v))
+						errors.Errorf("found repeated fix control: %d:%s is overwritten with %s", num, originalV, v))
 				}
 				newMap[num] = v
 			}
