@@ -22,7 +22,7 @@ Here are some roles for TiDB in the cluster (assuming upgrading from v7.1 to v7.
 - Owner TiDB: The TiDB where the DDL owner in the cluster is located.
 
 Specific upgrade process:
-1. New TiDB: Check whether the old TiDB version is greater than or equal to v7.1, if not, then exit the whole process.
+1. New TiDB: Check whether the old TiDB version is greater than or equal to v7.1, if not, then exit the whole process. That means the cluster upgrade process will follow legcy upgrade ways, that means User have to make sure there is no user issued DDL in running state.
 2. Notify the cluster that all TiDB enters to pause executing user DDL operations. Notification method:
    1. New TiDB: Set the PD path (for example: `/tidb/server/global_state` , use this path later) to the current TiDB version. In addition, in order to prevent multiple TiDB nodes from upgrading at the same time, it will check whether the value on the `/tidb/server/global_state` path is empty.
    2. All TiDBs：
@@ -52,7 +52,7 @@ In the plan, we distinguish between DDL operation types. Among them, we distingu
   - This feature is not supported when upgrading from v7.1 and previous versions.
 - Other components
   - During the upgrade process, the operation of some components is not supported, such as:
-    - BR, Lightning ( Physical Import Mode ) : The operation of this type of component cannot be processed during the upgrade process, because the DDL in the paused state may be copied to TiDB during these operations. However, the DDL in this state cannot be automatically resumed, which may lead to subsequent DDL block.
+    - Backup/Restore, Lightning ( Physical Import Mode ) : The operation of this type of component cannot be processed during the upgrade process, because the DDL in the paused state may be copied to TiDB during these operations. However, the DDL in this state cannot be automatically resumed, which may lead to subsequent DDL block.
   - During the upgrade process, the operation of some components may be blocked, such as:
     - DM, TiCDC and Lightning (Logical Import Mode) and other components. That is, during the upgrade process, import SQL to TiDB through such components, and there are DDL operations (if there is a system DDL operation that may have latent risk), then these DDL will be set to paused, causing this import operation to block.
 
