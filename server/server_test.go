@@ -630,28 +630,26 @@ func (cli *testServerClient) runTestLoadDataForGeneratedColumns(t *testing.T) {
 		// Specify the column b
 		dbt.MustExec(`delete from t_gen2`)
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t_gen2 (b)", tmpFileName))
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows,
+			"Warning 1262 Row 1 was truncated; it contained more data than there were input columns",
+			"Warning 1262 Row 2 was truncated; it contained more data than there were input columns")
+		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t_gen2")
 		cli.checkRows(t, rows, "2 1", "3 2")
 		require.NoError(t, rows.Close())
-		// TODO: should get warning here.
-		// rows = dbt.MustQuery("show warnings")
-		// cli.checkRows(t, rows,
-		// 	"Warning 1262 Row 1 was truncated; it contained more data than there were input columns",
-		// 	"Warning 1262 Row 2 was truncated; it contained more data than there were input columns")
-		// require.NoError(t, rows.Close())
 
 		// Specify the column a
 		dbt.MustExec(`delete from t_gen2`)
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t_gen2 (a)", tmpFileName))
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows,
+			"Warning 1262 Row 1 was truncated; it contained more data than there were input columns",
+			"Warning 1262 Row 2 was truncated; it contained more data than there were input columns")
+		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t_gen2")
 		cli.checkRows(t, rows, "<nil> <nil>", "<nil> <nil>")
 		require.NoError(t, rows.Close())
-		// TODO: should get warning here.
-		// rows = dbt.MustQuery("show warnings")
-		// cli.checkRows(t, rows,
-		// 	"Warning 1262 Row 1 was truncated; it contained more data than there were input columns",
-		// 	"Warning 1262 Row 2 was truncated; it contained more data than there were input columns")
-		// require.NoError(t, rows.Close())
 	})
 }
 
