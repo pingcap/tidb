@@ -78,7 +78,7 @@ go_binary(
         "github.com/pingcap/tidb/parser/mysql.TiDBReleaseVersion": "{STABLE_TiDB_RELEASE_VERSION}",
         "github.com/pingcap/tidb/util/versioninfo.TiDBBuildTS": "{STABLE_TiDB_BUILD_UTCTIME}",
         "github.com/pingcap/tidb/util/versioninfo.TiDBGitHash": "{STABLE_TIDB_GIT_HASH}",
-        "github.com/pingcap/tidb/util/versioninfo.TiDBEnterpriseExtensionVersion": "{STABLE_TIDB_ENTERPRISE_EXTENSION_GIT_HASH}",
+        "github.com/pingcap/tidb/util/versioninfo.TiDBEnterpriseExtensionGitHash": "{STABLE_TIDB_ENTERPRISE_EXTENSION_GIT_HASH}",
         "github.com/pingcap/tidb/util/versioninfo.TiDBGitBranch": "{STABLE_TIDB_GIT_BRANCH}",
         "github.com/pingcap/tidb/util/versioninfo.TiDBEdition": "{STABLE_TIDB_EDITION}",
     },

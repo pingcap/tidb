@@ -68,7 +68,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=$(TIDB_EDITI
 
 EXTENSION_FLAG =
 ifeq ($(shell if [ -a extension/enterprise/.git ]; then echo "true"; fi),true)
-	EXTENSION_FLAG += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEnterpriseExtensionVersion=$(shell cd extension/enterprise && git rev-parse HEAD)"
+	EXTENSION_FLAG += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd extension/enterprise && git rev-parse HEAD)"
 endif
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
