@@ -262,15 +262,23 @@ func TestTiFlashManager(t *testing.T) {
 	ConfigureTiFlashPDForPartitions(true, &[]model.PartitionDefinition{
 		{
 			ID:       2,
-			Name:     model.NewCIStr("p"),
+			Name:     model.NewCIStr("p1"),
+			LessThan: []string{},
+		},
+		{
+			ID:       3,
+			Name:     model.NewCIStr("p2"),
 			LessThan: []string{},
 		},
 	}, 3, &[]string{}, 100)
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
-	// Have table 1 and 2
-	require.Equal(t, 2, len(rules))
+	// Have table a and partitions p1, p2
+	require.Equal(t, 3, len(rules))
 	z, ok = tiflash.SyncStatus[2]
+	require.Equal(t, true, ok)
+	require.Equal(t, true, z.Accel)
+	z, ok = tiflash.SyncStatus[3]
 	require.Equal(t, true, ok)
 	require.Equal(t, true, z.Accel)
 
