@@ -17,6 +17,7 @@ package analyzetest
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"runtime"
 	"strconv"
 	"strings"
@@ -3170,7 +3171,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	h.HandleAutoAnalyze(dom.InfoSchema())
 	rs := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
 	failReason := rs.Rows()[0][0].(string)
-	require.True(t, strings.Contains(failReason, "Out Of Memory Quota!"))
+	require.True(t, strings.Contains(failReason, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
 
 	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 0)
