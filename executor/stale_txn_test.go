@@ -1370,3 +1370,29 @@ func TestIssue35686(t *testing.T) {
 	// This query should not panic
 	tk.MustQuery("select * from information_schema.ddl_jobs as of timestamp now()")
 }
+
+func TestStalePrepare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	stmtID, _, _, err := tk.Session().PrepareStmt("select * from t as of timestamp now(3) - interval 1000 microsecond")
+	require.Nil(t, err)
+	tk.MustExec("prepare stmt from \"select * from t as of timestamp now(3) - interval 1000 microsecond\"")
+
+	var expected [][]interface{}
+	for i := 0; i < 20; i++ {
+		tk.MustExec("insert into t values(?)", i)
+		time.Sleep(2 * time.Millisecond) // sleep 2ms to ensure staleread_ts > commit_ts.
+
+		expected = append(expected, testkit.Rows(fmt.Sprintf("%d", i))...)
+		rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+		require.Nil(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(expected)
+		rs.Close()
+		tk.MustQuery("execute stmt").Check(expected)
+	}
+}
