@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
@@ -1207,7 +1208,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 		err = rc.clusterResource(ctx)
 		require.NoError(s.T(), err)
 
-		require.Equal(s.T(), ca.expectErrorCount, template.FailedCount(Critical))
+		require.Equal(s.T(), ca.expectErrorCount, template.FailedCount(precheck.Critical))
 		require.Equal(s.T(), ca.expectResult, template.Success())
 		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
 
@@ -1345,7 +1346,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		ctx := context.Background()
 		err := rc.checkClusterRegion(ctx)
 		require.NoError(s.T(), err)
-		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(Warn), fmt.Sprintf("case %d", i))
+		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(precheck.Warn), fmt.Sprintf("case %d", i))
 
 		for _, expectMsg := range ca.expectMsgs {
 			require.Regexp(s.T(), expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
@@ -1434,7 +1435,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 			precheckItemBuilder: theCheckBuilder,
 		}
 		rc.HasLargeCSV(ctx)
-		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(Warn))
+		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(precheck.Warn))
 		require.Equal(s.T(), ca.expectResult, template.Success())
 		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
 	}
