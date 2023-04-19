@@ -144,7 +144,11 @@ func (c *copReqSender) run() {
 			if p.checkpointMgr != nil {
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
-			p.chunkSender.AddTask(idxRecResult{id: task.id, chunk: srcChk, done: done})
+			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
+			failpoint.Inject("MockCopSenderError", func() {
+				idxRs.err = errors.New("mock cop error")
+			})
+			p.chunkSender.AddTask(idxRs)
 		}
 		terror.Call(rs.Close)
 	}

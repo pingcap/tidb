@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -47,10 +48,7 @@ func injectMockBackendMgr(t *testing.T, store kv.Storage) (restore func()) {
 func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("use test;")
 	defer injectMockBackendMgr(t, store)()
 
 	assertLastNDDLUseIngest := func(n int) {
@@ -92,4 +90,27 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 	tk.MustExec("alter table t add index idx3(e);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1 2 1", "2 2 2 4 2", "3 3 3 6 3"))
 	assertLastNDDLUseIngest(4)
+}
+
+func TestIngestCopSenderErr(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer injectMockBackendMgr(t, store)()
+
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 4; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustQuery("split table t between (0) and (50000) regions 5;").Check(testkit.Rows("4 1"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockCopSenderError", "return"))
+	tk.MustExec("alter table t add index idx(a);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockCopSenderError"))
+	tk.MustExec("admin check table t;")
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	//nolint: forcetypeassert
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "txn-merge"), jobTp)
 }
