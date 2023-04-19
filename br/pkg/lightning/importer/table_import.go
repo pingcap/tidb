@@ -986,7 +986,7 @@ func (tr *TableImporter) postProcess(
 				tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
 			}
 
-			var remoteChecksum *RemoteChecksum
+			var remoteChecksum *local.RemoteChecksum
 			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
 			if err != nil {
 				return false, err
@@ -1191,7 +1191,7 @@ func (tr *TableImporter) importKV(
 }
 
 // do checksum for each table.
-func (tr *TableImporter) compareChecksum(remoteChecksum *RemoteChecksum, localChecksum verify.KVChecksum) error {
+func (tr *TableImporter) compareChecksum(remoteChecksum *local.RemoteChecksum, localChecksum verify.KVChecksum) error {
 	if remoteChecksum.Checksum != localChecksum.Sum() ||
 		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
 		remoteChecksum.TotalBytes != localChecksum.SumSize() {

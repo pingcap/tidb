@@ -2,9 +2,81 @@
   {
     "Name": "TestOptimizerDebugTrace",
     "Cases": [
+      [
+        {
+          "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+            {
+              "ID": 1,
+              "Ranges": [
+                "(100,127)"
+              ]
+            },
+            {
+              "Name": "i",
+              "Result": 250
+            }
+          ]
+        },
+        {
+          "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+            {
+              "ID": 1,
+              "Ranges": [
+                "(100,127)"
+              ]
+            },
+            {
+              "Name": "col1",
+              "Result": 250
+            }
+          ]
+        },
+        {
+          "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+            {
+              "ID": 1,
+              "Ranges": [
+                "(100,127)"
+              ]
+            },
+            {
+              "Name": "i",
+              "Result": 250
+            }
+          ]
+        }
+      ],
       null,
-      null,
-      null
+      [
+        {
+          "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+            {
+              "ID": 1,
+              "Ranges": [
+                "[100,100]"
+              ]
+            },
+            {
+              "Name": "col1",
+              "Result": 10
+            }
+          ]
+        },
+        {
+          "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+            {
+              "ID": 1,
+              "Ranges": [
+                "[100,100]"
+              ]
+            },
+            {
+              "Name": "i",
+              "Result": 10
+            }
+          ]
+        }
+      ]
     ]
   }
 ]
