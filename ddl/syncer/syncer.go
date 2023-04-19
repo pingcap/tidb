@@ -77,7 +77,7 @@ func (w *watcher) WatchChan() clientv3.WatchChan {
 	return w.wCh
 }
 
-// Rewatch implements SyncerWatch.Watch interface.
+// Watch implements SyncerWatch.Watch interface.
 func (w *watcher) Watch(ctx context.Context, etcdCli *clientv3.Client, path string) {
 	w.Lock()
 	w.wCh = etcdCli.Watch(ctx, path)
