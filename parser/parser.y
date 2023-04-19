@@ -1442,7 +1442,7 @@ import (
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
 	DynamicCalibrateResourceOption         "Dynamic resource calibrate option"
-	CalibrateOption						   "Dynamic or static calibrate option"
+	CalibrateOption                        "Dynamic or static calibrate option"
 	DynamicCalibrateOptionList             "Anomymous or direct dynamic resource calibrate option list"
 	CalibrateResourceWorkloadOption        "Calibrate Resource workload option"
 	AttributesOpt                          "Attributes options"
