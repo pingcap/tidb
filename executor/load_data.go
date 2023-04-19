@@ -139,7 +139,7 @@ func NewLoadDataWorker(
 	if err != nil {
 		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(importPlan, tbl)
+	controller, err := importer.NewLoadDataController(userSctx, importPlan, tbl)
 	if err != nil {
 		return nil, err
 	}

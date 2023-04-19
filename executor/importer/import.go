@@ -162,7 +162,7 @@ type Plan struct {
 	MaxRecordedErrors int64
 	Detached          bool
 
-	UserCtx sessionctx.Context
+	DistSQLScanConcurrency int
 }
 
 // LoadDataController load data controller.
@@ -290,7 +290,8 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		Charset:          charset,
 		ImportantSysVars: getImportantSysVars(userSctx),
-		UserCtx:          userSctx,
+
+		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 	}
 	if err := p.initOptions(userSctx, plan.Options); err != nil {
 		return nil, err
@@ -299,7 +300,7 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 }
 
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, error) {
+func NewLoadDataController(userCtx sessionctx.Context, plan *Plan, tbl table.Table) (*LoadDataController, error) {
 	fullTableName := common.UniqueTable(plan.TableName.Schema.L, plan.TableName.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
@@ -331,9 +332,9 @@ func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, er
 		sqlMode:          plan.SQLMode,
 		charset:          plan.Charset,
 		importantSysVars: plan.ImportantSysVars,
-		UserCtx:          plan.UserCtx,
+		UserCtx:          userCtx,
 
-		distSQLScanConcurrency: plan.UserCtx.GetSessionVars().DistSQLScanConcurrency(),
+		distSQLScanConcurrency: plan.DistSQLScanConcurrency,
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
