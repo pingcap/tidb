@@ -142,10 +142,7 @@ func (s *ImportScheduler) CleanupSubtaskExecEnv(ctx context.Context) (err error)
 	if err != nil {
 		return err
 	}
-	if err := s.tableImporter.ImportAndCleanup(ctx, closedIndexEngine); err != nil {
-		return err
-	}
-	return s.tableImporter.Close()
+	return s.tableImporter.ImportAndCleanup(ctx, closedIndexEngine)
 }
 
 // Rollback implements the Scheduler.Rollback interface.
