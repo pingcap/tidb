@@ -44,6 +44,21 @@ type ActionOnExceed interface {
 	IsFinished() bool
 }
 
+// ActionInvoker indicates the invoker of the Action.
+type ActionInvoker byte
+
+const (
+	// SingleQuery indicates the Action is invoked by a tidb_mem_quota_query.
+	SingleQuery ActionInvoker = iota
+	// Instance indicates the Action is invoked by a tidb_server_memory_limit.
+	Instance
+)
+
+// ActionCareInvoker is the interface for the Actions which need to be aware of the invoker.
+type ActionCareInvoker interface {
+	SetInvoker(invoker ActionInvoker)
+}
+
 // BaseOOMAction manages the fallback action for all Action.
 type BaseOOMAction struct {
 	fallbackAction ActionOnExceed
@@ -120,9 +135,10 @@ func (*LogOnExceed) GetPriority() int64 {
 type PanicOnExceed struct {
 	logHook func(uint64)
 	BaseOOMAction
-	ConnID uint64
-	mutex  sync.Mutex // For synchronization.
-	acted  bool
+	ConnID  uint64
+	mutex   sync.Mutex // For synchronization.
+	acted   bool
+	invoker ActionInvoker
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -145,7 +161,14 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 		}
 	}
 	a.acted = true
+<<<<<<< HEAD
 	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
+=======
+	if a.invoker == SingleQuery {
+		panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForSingleQuery + fmt.Sprintf("[conn=%d]", a.ConnID))
+	}
+	panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForInstance + fmt.Sprintf("[conn=%d]", a.ConnID))
+>>>>>>> bcd22339019 (*: format the error message when query/instance exceeds memory quota (#43182))
 }
 
 // GetPriority get the priority of the Action
@@ -153,11 +176,20 @@ func (*PanicOnExceed) GetPriority() int64 {
 	return DefPanicPriority
 }
 
+// SetInvoker sets the invoker of the Action.
+func (a *PanicOnExceed) SetInvoker(invoker ActionInvoker) {
+	a.invoker = invoker
+}
+
 var (
 	errMemExceedThreshold = dbterror.ClassUtil.NewStd(errno.ErrMemExceedThreshold)
 )
 
 const (
-	// PanicMemoryExceed represents the panic message when out of memory quota.
-	PanicMemoryExceed string = "Out Of Memory Quota!"
+	// PanicMemoryExceedWarnMsg represents the panic message when out of memory quota.
+	PanicMemoryExceedWarnMsg string = "Your query has been cancelled due to exceeding the allowed memory limit"
+	// WarnMsgSuffixForSingleQuery represents the suffix of the warning message when out of memory quota for a single query.
+	WarnMsgSuffixForSingleQuery string = " for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again."
+	// WarnMsgSuffixForInstance represents the suffix of the warning message when out of memory quota for the tidb-server instance.
+	WarnMsgSuffixForInstance string = " for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."
 )

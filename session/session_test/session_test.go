@@ -1787,7 +1787,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		err := tk.QueryToErr(sql)
 		require.Error(t, err)
-		require.Regexp(t, "Out Of Memory Quota.*", err)
+		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err)
 	}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockWaitMax", `return(true)`))
@@ -1834,7 +1834,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		err = tk.QueryToErr(testcase.sql)
 		require.Error(t, err)
-		require.Regexp(t, "Out Of Memory Quota.*", err)
+		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err)
 		se.Close()
 	}
 }

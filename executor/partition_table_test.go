@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -635,6 +636,20 @@ func TestOrderByandLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryPartition, "IndexMerge")) // check if indexMerge is used
 		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
+<<<<<<< HEAD
+=======
+
+	// test sql killed when memory exceed `tidb_mem_quota_query`
+	originMemQuota := tk.MustQuery("show variables like 'tidb_mem_quota_query'").Rows()[0][1].(string)
+	originOOMAction := tk.MustQuery("show variables like 'tidb_mem_oom_action'").Rows()[0][1].(string)
+	tk.MustExec("set session tidb_mem_quota_query=128")
+	tk.MustExec("set global tidb_mem_oom_action=CANCEL")
+	err := tk.QueryToErr("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > 1 order by a limit 2000")
+	require.Error(t, err)
+	require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err)
+	tk.MustExec(fmt.Sprintf("set session tidb_mem_quota_query=%s", originMemQuota))
+	tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action=%s", originOOMAction))
+>>>>>>> bcd22339019 (*: format the error message when query/instance exceeds memory quota (#43182))
 }
 
 func TestOrderByOnUnsignedPk(t *testing.T) {

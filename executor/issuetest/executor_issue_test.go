@@ -301,9 +301,9 @@ func TestIssue28650(t *testing.T) {
 		tk.MustExec("set @@tidb_mem_quota_query = 1073741824") // 1GB
 		require.Nil(t, tk.QueryToErr(sql))
 		tk.MustExec("set @@tidb_mem_quota_query = 33554432") // 32MB, out of memory during executing
-		require.True(t, strings.Contains(tk.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
+		require.True(t, strings.Contains(tk.QueryToErr(sql).Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
 		tk.MustExec("set @@tidb_mem_quota_query = 65536") // 64KB, out of memory during building the plan
-		require.True(t, strings.Contains(tk.ExecToErr(sql).Error(), "Out Of Memory Quota!"))
+		require.True(t, strings.Contains(tk.ExecToErr(sql).Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
 	}
 }
 
@@ -483,10 +483,10 @@ func TestIndexJoin31494(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
-		require.Regexp(t, "Out Of Memory Quota!.*", err.Error())
+		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err.Error())
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
-		require.Regexp(t, "Out Of Memory Quota!.*", err.Error())
+		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err.Error())
 	}
 }
 

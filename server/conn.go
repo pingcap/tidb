@@ -2267,7 +2267,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		if r == nil {
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
+		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceedWarnMsg) {
 			panic(r)
 		}
 		// TODO(jianzhang.zj: add metrics here)

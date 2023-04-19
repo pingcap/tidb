@@ -23,6 +23,11 @@ go_test(
         "//planner/core",
         "//testkit",
         "//types",
+<<<<<<< HEAD
+=======
+        "//util/dbterror/exeerrors",
+        "//util/memory",
+>>>>>>> bcd22339019 (*: format the error message when query/instance exceeds memory quota (#43182))
         "//util/sqlexec",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",

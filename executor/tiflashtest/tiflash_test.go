@@ -35,6 +35,11 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/israce"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflashcompute"
+>>>>>>> bcd22339019 (*: format the error message when query/instance exceeds memory quota (#43182))
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -1277,5 +1282,5 @@ func TestMPPMemoryTracker(t *testing.T) {
 	}()
 	err = tk.QueryToErr("select * from t")
 	require.NotNil(t, err)
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	require.True(t, strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
 }
