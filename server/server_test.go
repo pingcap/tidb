@@ -26,7 +26,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/testkit/testenv"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -62,7 +61,7 @@ type testServerClient struct {
 
 // newTestServerClient return a testServerClient with unique address
 func newTestServerClient() *testServerClient {
-	runtime.GOMAXPROCS(mathutil.Min(8, runtime.GOMAXPROCS(0)))
+	testenv.SetGOMAXPROCSForTest()
 	return &testServerClient{
 		port:         0,
 		statusPort:   0,
@@ -2120,6 +2119,11 @@ func (cli *testServerClient) runTestStmtCount(t *testing.T) {
 }
 
 func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
+	// When run this test solely, the test can be stable.
+	// But if other tests run during this, the result can be unstable.
+	// Because the test collect some metrics before / after the test, and the metrics data are polluted.
+	t.Skip("unstable test")
+
 	cli.runTestsOnNewDB(t, nil, "DBStatementCount", func(dbt *testkit.DBTestKit) {
 		originStmtCnt := getDBStmtCnt(string(cli.getMetrics(t)), "DBStatementCount")
 

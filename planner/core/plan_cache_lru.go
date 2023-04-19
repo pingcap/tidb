@@ -50,7 +50,7 @@ type LRUPlanCache struct {
 	buckets map[string]map[*list.Element]struct{}
 	lruList *list.List
 	// lock make cache thread safe
-	lock syncutil.Mutex
+	lock syncutil.RWMutex
 	// onEvict will be called if any eviction happened, only for test use now
 	onEvict func(kvcache.Key, kvcache.Value)
 
@@ -90,8 +90,8 @@ func strHashKey(key kvcache.Key, deepCopy bool) string {
 
 // Get tries to find the corresponding value according to the given key.
 func (l *LRUPlanCache) Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool) {
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	l.lock.RLock()
+	defer l.lock.RUnlock()
 
 	bucket, bucketExist := l.buckets[strHashKey(key, false)]
 	if bucketExist {
@@ -154,21 +154,29 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 
 // DeleteAll deletes all elements from the LRU Cache.
 func (l *LRUPlanCache) DeleteAll() {
+	if l == nil {
+		return
+	}
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
-		l.updateInstanceMetric(nil, lru.Value.(*planCacheEntry))
-		l.lruList.Remove(lru)
-		l.size--
+	// update metrics
+	if l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
+		core_metrics.GetPlanCacheInstanceMemoryUsage().Sub(float64(l.memoryUsageTotal))
 	}
+	core_metrics.GetPlanCacheInstanceNumCounter().Sub(float64(l.size))
+
+	// reset all fields
+	l.size = 0
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
+	l.lruList = list.New()
+	l.memoryUsageTotal = 0
 }
 
 // Size gets the current cache size.
 func (l *LRUPlanCache) Size() int {
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	l.lock.RLock()
+	defer l.lock.RUnlock()
 
 	return int(l.size)
 }
@@ -193,18 +201,14 @@ func (l *LRUPlanCache) MemoryUsage() (sum int64) {
 	if l == nil {
 		return
 	}
+	l.lock.RLock()
+	defer l.lock.RUnlock()
 	return l.memoryUsageTotal
 }
 
 // Close do some clean work for LRUPlanCache when close the session
 func (l *LRUPlanCache) Close() {
-	if l == nil {
-		return
-	}
-	if l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
-		core_metrics.GetPlanCacheInstanceMemoryUsage().Sub(float64(l.memoryUsageTotal))
-	}
-	core_metrics.GetPlanCacheInstanceNumCounter().Sub(float64(l.size))
+	l.DeleteAll()
 }
 
 // removeOldest removes the oldest element from the cache.

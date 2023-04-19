@@ -31,11 +31,16 @@ var (
 	SyncerClear   = "clear"
 	SyncerRewatch = "rewatch"
 
+	StateSyncerInit = "init_global_state"
+
 	DeploySyncerHistogram      *prometheus.HistogramVec
 	UpdateSelfVersionHistogram *prometheus.HistogramVec
 
-	OwnerUpdateGlobalVersion   = "update_global_version"
-	OwnerCheckAllVersions      = "check_all_versions"
+	OwnerUpdateGlobalVersion = "update_global_version"
+	OwnerCheckAllVersions    = "check_all_versions"
+
+	UpdateGlobalState = "update_global_state"
+
 	OwnerHandleSyncerHistogram *prometheus.HistogramVec
 
 	// Metrics for ddl_worker.go.
