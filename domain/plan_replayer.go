@@ -31,7 +31,6 @@ import (
 	domain_metrics "github.com/pingcap/tidb/domain/metrics"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -437,19 +436,19 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 	}
 	task.Zf = file
 	task.FileName = fileName
-	if task.InExecute && len(task.NormalizedSQL) > 0 {
-		p := parser.New()
-		stmts, _, err := p.ParseSQL(task.NormalizedSQL)
-		if err != nil {
-			logutil.BgLogger().Warn("[plan-replayer-capture] parse normalized sql failed",
-				zap.String("sql", task.NormalizedSQL),
-				zap.String("sqlDigest", taskKey.SQLDigest),
-				zap.String("planDigest", taskKey.PlanDigest),
-				zap.Error(err))
-			return false
-		}
-		task.ExecStmts = stmts
-	}
+	//if task.InExecute && len(task.NormalizedSQL) > 0 {
+	//	p := parser.New()
+	//	stmts, _, err := p.ParseSQL(task.NormalizedSQL)
+	//	if err != nil {
+	//		logutil.BgLogger().Warn("[plan-replayer-capture] parse normalized sql failed",
+	//			zap.String("sql", task.NormalizedSQL),
+	//			zap.String("sqlDigest", taskKey.SQLDigest),
+	//			zap.String("planDigest", taskKey.PlanDigest),
+	//			zap.Error(err))
+	//		return false
+	//	}
+	//	task.ExecStmts = stmts
+	//}
 	err = DumpPlanReplayerInfo(w.ctx, w.sctx, task)
 	if err != nil {
 		logutil.BgLogger().Warn("[plan-replayer-capture] dump task result failed",

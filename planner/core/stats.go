@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -268,6 +269,10 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 }
 
 func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
+	}
 	selectivity, nodes, err := ds.tableStats.HistColl.Selectivity(ds.ctx, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
@@ -283,6 +288,10 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 // We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
 // to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
 func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
+	}
 	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	var (
@@ -411,6 +420,10 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		ds.stats = ds.tableStats.Scale(selectivity)
 		return ds.stats, nil
 	}
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
+	}
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
@@ -436,6 +449,9 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		return nil, err
 	}
 
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugTraceAccessPaths(ds.ctx, ds.possibleAccessPaths)
+	}
 	ds.accessPathMinSelectivity = getMinSelectivityFromPaths(ds.possibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
 
 	return ds.stats, nil

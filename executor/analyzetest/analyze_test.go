@@ -440,7 +440,7 @@ func TestHashInTopN(t *testing.T) {
 		topn1 := tblStats1.Columns[col.ID].TopN.TopN
 		cm2 := tblStats2.Columns[col.ID].TopN
 		for _, topnMeta := range topn1 {
-			count2, exists := cm2.QueryTopN(topnMeta.Encoded)
+			count2, exists := cm2.QueryTopN(nil, topnMeta.Encoded)
 			require.True(t, exists)
 			require.Equal(t, topnMeta.Count, count2)
 		}
@@ -775,7 +775,7 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	tblStats := h.GetTableStats(tblInfo)
 	val, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val))
+	require.Equal(t, uint64(1), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(nil, val))
 	require.False(t, statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag))
 	require.False(t, statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag))
 
@@ -784,7 +784,7 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  a 0 2 3 1 3 3 0",
 		"test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0", "test t  idx 1 2 3 1 3 3 0"))
 	tblStats = h.GetTableStats(tblInfo)
-	require.Equal(t, uint64(1), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val))
+	require.Equal(t, uint64(1), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(nil, val))
 
 	// test analyzeIndexIncremental for global-level stats;
 	tk.MustExec("set @@session.tidb_analyze_version = 1;")
