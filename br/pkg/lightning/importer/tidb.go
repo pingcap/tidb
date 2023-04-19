@@ -234,30 +234,6 @@ func LoadSchemaInfo(
 	return result, nil
 }
 
-// ObtainGCLifeTime obtains the current GC lifetime.
-func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
-	var gcLifeTime string
-	err := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}.QueryRow(
-		ctx,
-		"obtain GC lifetime",
-		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-		&gcLifeTime,
-	)
-	return gcLifeTime, err
-}
-
-// UpdateGCLifeTime updates the current GC lifetime.
-func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
-	sql := common.SQLWithRetry{
-		DB:     db,
-		Logger: log.FromContext(ctx).With(zap.String("gcLifeTime", gcLifeTime)),
-	}
-	return sql.Exec(ctx, "update GC lifetime",
-		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-		gcLifeTime,
-	)
-}
-
 // ObtainImportantVariables obtains the important variables from TiDB.
 func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool) map[string]string {
 	var query strings.Builder
