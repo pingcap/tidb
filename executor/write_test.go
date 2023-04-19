@@ -3962,8 +3962,64 @@ func (s *testSerialSuite) TestIssueInsertPrefixIndexForNonUTF8Collation(c *C) {
 	tk.MustGetErrCode("insert into t3 select 'abc d'", 1062)
 }
 
+<<<<<<< HEAD:executor/write_test.go
 func (s *testSerialSuite) TestIssue22496(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+=======
+func TestIssue40066(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_40066")
+	defer tk.MustExec("drop database test_40066")
+	tk.MustExec("use test_40066")
+	tk.MustExec("set @orig_sql_mode = @@sql_mode;")
+	defer tk.MustExec("set @@sql_mode = @orig_sql_mode;")
+
+	tk.MustExec(`create table t_int(column1 int, column2 int unsigned generated always as(column1-100));`)
+	tk.MustExec("set @@sql_mode = DEFAULT;")
+	tk.MustGetErrMsg("insert into t_int(column1) values (99);", "[types:1264]Out of range value for column 'column2' at row 1")
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("insert into t_int(column1) values (99);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1264 Out of range value for column 'column2' at row 1"))
+	tk.MustQuery("select * from t_int;").Check(testkit.Rows("99 0"))
+
+	tk.MustExec(`create table t_float(column1 float, column2 int unsigned generated always as(column1-100));`)
+	tk.MustExec("set @@sql_mode = DEFAULT;")
+	tk.MustGetErrMsg("insert into t_float(column1) values (12.95);", "[types:1264]Out of range value for column 'column2' at row 1")
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("insert into t_float(column1) values (12.95);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1264 Out of range value for column 'column2' at row 1"))
+	tk.MustQuery("select * from t_float;").Check(testkit.Rows("12.95 0"))
+
+	tk.MustExec(`create table t_decimal(column1 decimal(20,10), column2 int unsigned generated always as(column1-100));`)
+	tk.MustExec("set @@sql_mode = DEFAULT;")
+	tk.MustGetErrMsg("insert into t_decimal(column1) values (123.456e-2);", "[types:1264]Out of range value for column 'column2' at row 1")
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("insert into t_decimal(column1) values (123.456e-2);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1264 Out of range value for column 'column2' at row 1"))
+	tk.MustQuery("select * from t_decimal;").Check(testkit.Rows("1.2345600000 0"))
+
+	tk.MustExec(`create table t_varchar(column1 varchar(10), column2 int unsigned generated always as(column1-100));`)
+	tk.MustExec("set @@sql_mode = DEFAULT;")
+	tk.MustGetErrMsg("insert into t_varchar(column1) values ('87.12');", "[types:1264]Out of range value for column 'column2' at row 1")
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("insert into t_varchar(column1) values ('87.12');")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1264 Out of range value for column 'column2' at row 1"))
+	tk.MustQuery("select * from t_varchar;").Check(testkit.Rows("87.12 0"))
+
+	tk.MustExec(`create table t_union(column1 float, column2 int unsigned generated always as(column1-100), column3 float unsigned generated always as(column1-100));`)
+	tk.MustExec("set @@sql_mode = DEFAULT;")
+	tk.MustGetErrMsg("insert into t_union(column1) values (12.95);", "[types:1264]Out of range value for column 'column2' at row 1")
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("insert into t_union(column1) values (12.95);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1264 Out of range value for column 'column2' at row 1", "Warning 1264 Out of range value for column 'column3' at row 1"))
+	tk.MustQuery("select * from t_union;").Check(testkit.Rows("12.95 0 0"))
+}
+
+func TestMutipleReplaceAndInsertInOneSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+>>>>>>> 875e34d28a1 (executor: fix uint type overflow on generated column not compatible with mysql (#40157)):executor/writetest/write_test.go
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t12")
 	tk.MustExec("create table t12(d decimal(15,2));")
