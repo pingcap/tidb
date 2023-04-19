@@ -667,7 +667,11 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Rows()
 	for _, row := range rows {
-		require.Equal(t, "allEvicted", row[10].(string))
+		if row[3] == "a" || row[3] == "idx" {
+			require.Equal(t, "allLoaded", row[10].(string))
+		} else {
+			require.Equal(t, "allEvicted", row[10].(string))
+		}
 	}
 }
 
