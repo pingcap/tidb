@@ -4147,8 +4147,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:XeTbaUB5ZpZA1wOOCMJe4MCNwbfONdx7xgsCKsCx3ko=",
-        version = "v0.0.0-20230419105719-9e7b8e8c95fd",
+        sum = "h1:177X/S43/qjxDyFq9CBB4Nts0nwLvjJFXzoav2XCUSA=",
+        version = "v0.0.0-20230419153320-f1d1a80feb95",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
