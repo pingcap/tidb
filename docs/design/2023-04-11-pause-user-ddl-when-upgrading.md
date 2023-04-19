@@ -26,9 +26,9 @@ Specific upgrade process:
 2. Notify the cluster that all TiDB enters to pause executing user DDL operations. Notification method:
    1. New TiDB: Set the PD path (for example: `/tidb/server/global_state` , use this path later) to the current TiDB version. In addition, in order to prevent multiple TiDB nodes from upgrading at the same time, it will check whether the value on the `/tidb/server/global_state` path is empty.
    2. All TiDBs：
-      1. The newly started TiDB will first check the `/tidb/server/global_state` value and whether it needs to enter upgrading_mode mode.
-      2. The running TiDB will watch `/tidb/server/global_state` , and when it receives an upgrade status notification, it will enter upgrading_mode mode.
-   3. Owner TiDB: Set upgrading in the owner value on the PD.
+      1. The newly started TiDB will first check the `/tidb/server/global_state` value and whether it needs to enter upgrading mode.
+      2. The running TiDB will watch `/tidb/server/global_state` , and when it receives an upgrade status notification, it will enter upgrading mode.
+   3. Owner TiDB: Mark the information in the owner value on the PD (that is, the value corresponding to the DDL owner key recorded on the PD) to indicate that upgrading has been received.
    4. New TiDB: Check whether the owner TiDB has received the upgrading signal. If so, enter the following process, otherwise wait.
 3. After receiving `/tidb/server/global_state` notification
    1. All TiDBs: At this time, for the newly received DDL operation, consider setting it to pause directly.
@@ -67,7 +67,8 @@ In the plan, we distinguish between DDL operation types. Among them, we distingu
 ## Impacts & Risks
 
 Since TiDB itself has some functional roles or judgments on whether some functions are enabled or not, and there will be different versions and other factors during the upgrade process, we need to consider more scenarios, and these scenarios may have omissions in design or testing.
-Investigation & Alternatives
+
+## Investigation & Alternatives
 The following schemes are mainly different in the way of notifying the upgrading status to the cluster and replying that the cluster status is normal. The specific schemes are as follows:
 
 ### Plan 1
@@ -75,10 +76,10 @@ The following schemes are mainly different in the way of notifying the upgrading
 1. Same as step-1 in the selection plan.
 2. Notify the cluster that all TiDB enters to pause executing user DDL operations. Notification method:
    1. Same as step-2.a in the selected plan.
-   2. All TiDBs: Watch /tidb/server/global_up3rading path, the TiDB that receives the notification sets the upgrading_mode to on, for example:
-      - You can add a field to ServerInfo to show whether it has upgrading_mode mode turned on.
+   2. All TiDBs: Watch /tidb/server/global_up3rading path, the TiDB that receives the notification sets the upgrading mode to on, for example:
+      - You can add a field to ServerInfo to show whether it has upgrading mode turned on.
       - You can add /tidb/server/global_upgrading_all_nodes/ and all TiDB receiving notifications will have their IDs set on it.
-   3. New TiDB: Check whether the upgrading_mode mode of all surviving TiDBs is turned on, wait if it is not turned on, and enter the next process if it is turned on.
+   3. New TiDB: Check whether the upgrading mode of all surviving TiDBs is turned on, wait if it is not turned on, and enter the next process if it is turned on.
 3. Same as steps 3 to 5 in the selection plan. Where step-3.ii has another way:
    1. When the owner executes, the user DDL operations are filtered out directly. Similar to the description in step-3.b in the selection plan, but the DDL job state is not updated (ie not persisted to the storage layer). In addition, the running DDL may require special handling.
 4. Resume normal execution of DDL mode
@@ -91,16 +92,16 @@ The following schemes are mainly different in the way of notifying the upgrading
 
 #### Foreseeable disadvantages
 
-- Step b, notify all TiDB to enter upgrading_mode mode and confirm that if all TiDBs enter this mode, the process may have more problems.
+- Step b, notify all TiDB to enter upgrading mode and confirm that if all TiDBs enter this mode, the process may have more problems.
 
 ### Plan 2
 
-Difference from Scheme 1: Whether you need to notify all TiDBs to enter upgrading_mode mode.
+Difference from Scheme 1: Whether you need to notify all TiDBs to enter upgrading mode.
 1. Same as step-1 and Step-2.a in plan1.
 2. Make new TiDB a DDL owner in two ways:
    - Old TiDB watches `/tidb/server/global_state` , receives the notification, and withdraws from the owner campaign by setting the `tidb_enable_ddl` method.
    - Through etcd'Resign 'and'Leader' and other ways to make new TiDB slowly become DDL owner.
-3. Then you can skip all the TiDB in the synchronous cluster to enter the upgrading_mode, only the TiDB where the current DDL owner is located enters this mode, and then proceed directly to steps 3 to 5 in the selection plan.
+3. Then you can skip all the TiDB in the synchronous cluster to enter the upgrading mode, only the TiDB where the current DDL owner is located enters this mode, and then proceed directly to steps 3 to 5 in the selection plan.
 4. Complete the bootstrap operation.
 
 #### Foreseeable disadvantages
