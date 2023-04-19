@@ -143,13 +143,6 @@ func (ei *engineInfo) ImportAndClean() error {
 		return err
 	}
 
-	err = ei.diskRoot.UpdateUsageAndQuota()
-	if err != nil {
-		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Error(err),
-			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-		return err
-	}
-
 	// Ingest data to TiKV.
 	logutil.BgLogger().Info(LitInfoStartImport, zap.Int64("job ID", ei.jobID),
 		zap.Int64("index ID", ei.indexID),

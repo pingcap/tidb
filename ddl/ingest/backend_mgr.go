@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -51,10 +52,7 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	mgr.diskRoot = NewDiskRootImpl(path, mgr)
 	LitMemRoot = mgr.memRoot
 	LitDiskRoot = mgr.diskRoot
-	err := mgr.diskRoot.UpdateUsageAndQuota()
-	if err != nil {
-		logutil.BgLogger().Warn(LitErrUpdateDiskStats, zap.Error(err))
-	}
+	LitDiskRoot.UpdateUsage()
 	return mgr
 }
 
@@ -118,18 +116,21 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 
+const checkpointUpdateInterval = 10 * time.Minute
+
 func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
 	cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot) *litBackendCtx {
 	return &litBackendCtx{
-		SyncMap:  generic.NewSyncMap[int64, *engineInfo](10),
-		MemRoot:  memRoot,
-		DiskRoot: diskRoot,
-		jobID:    jobID,
-		backend:  be,
-		ctx:      ctx,
-		cfg:      cfg,
-		sysVars:  vars,
-		diskRoot: diskRoot,
+		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
+		MemRoot:        memRoot,
+		DiskRoot:       diskRoot,
+		jobID:          jobID,
+		backend:        be,
+		ctx:            ctx,
+		cfg:            cfg,
+		sysVars:        vars,
+		diskRoot:       diskRoot,
+		updateInterval: checkpointUpdateInterval,
 	}
 }
 

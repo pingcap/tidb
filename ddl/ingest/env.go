@@ -67,7 +67,7 @@ func InitGlobalLightningEnv() {
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
 		zap.Uint64("memory limitation", maxMemoryQuota),
-		zap.Uint64("sort path disk quota", LitDiskRoot.MaxQuota()),
+		zap.String("disk usage info", LitDiskRoot.UsageInfo()),
 		zap.Uint64("max open file number", LitRLimit),
 		zap.Bool("lightning is initialized", LitInitialized))
 }

@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -39,7 +38,7 @@ func TestCheckpointManager(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: false}
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1, 10*time.Minute)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -92,7 +91,7 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: true}
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1, 10*time.Minute)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -141,7 +140,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: false}
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1, 10*time.Minute)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
 	require.NoError(t, err)
 	defer mgr.Close()
 	require.True(t, mgr.IsComplete([]byte{'1', '9'}))
@@ -155,6 +154,6 @@ type dummyFlushCtrl struct {
 	imported bool
 }
 
-func (d *dummyFlushCtrl) Flush(_ int64) (bool, error) {
-	return d.imported, nil
+func (d *dummyFlushCtrl) Flush(_ int64, _ bool) (bool, bool, error) {
+	return true, d.imported, nil
 }

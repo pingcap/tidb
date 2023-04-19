@@ -38,12 +38,11 @@ go_library(
         "//util",
         "//util/dbterror",
         "//util/generic",
-        "//util/intest",
         "//util/logutil",
-        "//util/mathutil",
         "//util/size",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )
