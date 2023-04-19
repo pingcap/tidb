@@ -57,7 +57,6 @@ go_library(
     ],
     deps = [
         "//br/pkg/lightning/common",
-        "//br/pkg/lightning/config",
         "//config",
         "//ddl/ingest",
         "//ddl/internal/session",
