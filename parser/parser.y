@@ -15538,24 +15538,33 @@ DynamicCalibrateOptionList:
 		}
 		$$ = append($1.([]*ast.DynamicCalibrateResourceOption), $2.(*ast.DynamicCalibrateResourceOption))
 	}
+|	DynamicCalibrateOptionList ',' DynamicCalibrateResourceOption
+	{
+		if $1.([]*ast.DynamicCalibrateResourceOption)[0].Tp == $3.(*ast.DynamicCalibrateResourceOption).Tp ||
+			(len($1.([]*ast.DynamicCalibrateResourceOption)) > 1 && $1.([]*ast.DynamicCalibrateResourceOption)[1].Tp == $3.(*ast.DynamicCalibrateResourceOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.DynamicCalibrateResourceOption), $3.(*ast.DynamicCalibrateResourceOption))
+	}
 
 DynamicCalibrateResourceOption:
-	"START_TIME" stringLit
+	"START_TIME" EqOpt stringLit
 	{
-		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateStartTime, Ts: ast.NewValueExpr($2, "", "")}
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateStartTime, Ts: ast.NewValueExpr($3, "", "")}
 	}
-|	"END_TIME" stringLit
+|	"END_TIME" EqOpt stringLit
 	{
-		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateEndTime, Ts: ast.NewValueExpr($2, "", "")}
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateEndTime, Ts: ast.NewValueExpr($3, "", "")}
 	}
-|	"DURATION" stringLit
+|	"DURATION" EqOpt stringLit
 	{
-		_, err := duration.ParseDuration($2)
+		_, err := duration.ParseDuration($3)
 		if err != nil {
 			yylex.AppendError(yylex.Errorf("The DURATION option is not a valid duration: %s", err.Error()))
 			return 1
 		}
-		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateDuration, StrValue: $2}
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateDuration, StrValue: $3}
 	}
 
 CalibrateResourceWorkloadOption:

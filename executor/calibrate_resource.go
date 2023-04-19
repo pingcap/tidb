@@ -92,11 +92,18 @@ type baseResourceCost struct {
 }
 
 const (
+	// valuableUsageThreshold is the threshold used to determine whether the CPU is high enough.
+	// The sampling point is available when the CPU utilization of tikv or tidb is higher than the valuableUsageThreshold.
 	valuableUsageThreshold = 0.2
-	lowUsageThreshold      = 0.1
-	percentOfPass          = 0.9
-	discardRate            = 0.1
+	// lowUsageThreshold is the threshold used to determine whether the CPU is too low.
+	// When the CPU utilization of tikv or tidb is lower than lowUsageThreshold, but neither is higher than valuableUsageThreshold, the sampling point is unavailable
+	lowUsageThreshold = 0.1
+	// calibration is performed only when the available time point exceeds the percentOfPass
+	percentOfPass = 0.9
+	// For quotas computed at each point in time, the maximum and minimum portions are discarded, and discardRate is the percentage discarded
+	discardRate = 0.1
 
+	// duration Indicates the supported calibration duration
 	maxDuration = time.Hour * 24
 	minDuration = time.Minute * 10
 )
