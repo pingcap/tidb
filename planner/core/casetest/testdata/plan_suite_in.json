@@ -156,6 +156,13 @@
     ]
   },
   {
+    "name": "TestMPPRightSemiJoin",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)"
+    ]
+  },
+  {
     "name": "TestIssue37520",
     "cases": [
       "select /*+ inl_join(t1@sel_2) */ a, (select b from t1 where t1.a = t2.b) from t2;",

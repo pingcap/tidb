@@ -244,7 +244,7 @@ func (s *precheckImplSuite) TestRegionDistributionCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(precheck.Critical, result.Severity)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -266,7 +266,7 @@ func (s *precheckImplSuite) TestRegionDistributionCheckBasic() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(precheck.CheckTargetClusterRegionDist, result.Item)
-	s.Require().Equal(precheck.Critical, result.Severity)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }

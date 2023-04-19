@@ -339,7 +339,7 @@ func (*regionDistributionCheckItem) GetCheckItemID() precheck.CheckItemID {
 func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
 	theResult := &precheck.CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: precheck.Critical,
+		Severity: precheck.Warn,
 		Passed:   true,
 		Message:  "Cluster region distribution is balanced",
 	}

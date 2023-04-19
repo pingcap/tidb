@@ -773,6 +773,7 @@ const (
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
+	// This variable is deprecated, use tidb_session_plan_cache_size instead.
 	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
 	// TiDBEnablePrepPlanCacheMemoryMonitor indicates whether to enable prepared plan cache monitor
 	TiDBEnablePrepPlanCacheMemoryMonitor = "tidb_enable_prepared_plan_cache_memory_monitor"
@@ -780,9 +781,12 @@ const (
 	// TiDBEnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
 	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	// This variable is deprecated, use tidb_session_plan_cache_size instead.
 	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
 	// TiDBPlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
 	TiDBPlanCacheMaxPlanSize = "tidb_plan_cache_max_plan_size"
+	// TiDBSessionPlanCacheSize controls the size of session plan cache.
+	TiDBSessionPlanCacheSize = "tidb_session_plan_cache_size"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
@@ -1174,6 +1178,7 @@ const (
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
 	DefTiDBPrepPlanCacheSize                       = 100
+	DefTiDBSessionPlanCacheSize                    = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableDistTask                          = disttask.TiDBEnableDistTask
@@ -1198,7 +1203,7 @@ const (
 	DefTiDBEnableNonPreparedPlanCache              = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
-	DefTiDBEnableTiFlashReadForWriteStmt           = false
+	DefTiDBEnableTiFlashReadForWriteStmt           = true
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
