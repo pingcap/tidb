@@ -178,7 +178,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	matchOpts, err := GetMatchOpts(sctx, is, stmt.PreparedAst.Stmt, params)
+	matchOpts, err := GetMatchOpts(sctx, is, stmt, params)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -193,6 +193,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 // parseParamTypes get parameters' types in PREPARE statement
 func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramTypes []*types.FieldType) {
+	paramTypes = make([]*types.FieldType, 0, len(params))
 	for _, param := range params {
 		if c, ok := param.(*expression.Constant); ok { // from binary protocol
 			paramTypes = append(paramTypes, c.GetType())
