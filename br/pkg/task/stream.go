@@ -31,6 +31,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -434,14 +435,14 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 		m.ClusterVersion = clusterVersion
 	})
 
-	schemas, err := backup.BuildFullSchema(s.mgr.GetStorage(), s.cfg.StartTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	schemas := backup.NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
+		return backup.BuildFullSchema(storage, s.cfg.StartTS, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
+			fn(dbInfo, tableInfo)
+		})
+	}, 0)
 
-	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
 	err = schemas.BackupSchemas(ctx, metaWriter, nil, s.mgr.GetStorage(), nil,
-		s.cfg.StartTS, schemasConcurrency, 0, true, nil)
+		s.cfg.StartTS, backup.DefaultSchemaConcurrency, 0, true, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -474,26 +475,26 @@ func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	return nil
 }
 
-type RestoreFunc func() error
+type RestoreFunc func(string) error
 
 // KeepGcDisabled keeps GC disabled and return a function that used to gc enabled.
 // gc.ratio-threshold = "-1.0", which represents disable gc in TiKV.
-func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, error) {
+func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, string, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, "", errors.Trace(err)
 	}
 
 	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
 	oldRatio, err := utils.GetGcRatio(execCtx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, "", errors.Trace(err)
 	}
 
 	newRatio := "-1.0"
 	err = utils.SetGcRatio(execCtx, newRatio)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, "", errors.Trace(err)
 	}
 
 	// If the oldRatio is negative, which is not normal status.
@@ -502,9 +503,9 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, error) {
 		oldRatio = "1.1"
 	}
 
-	return func() error {
-		return utils.SetGcRatio(execCtx, oldRatio)
-	}, nil
+	return func(ratio string) error {
+		return utils.SetGcRatio(execCtx, ratio)
+	}, oldRatio, nil
 }
 
 // RunStreamCommand run all kinds of `stream task`
@@ -1217,7 +1218,7 @@ func restoreStream(
 	}
 	client.SetCurrentTS(currentTS)
 
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr, false)
+	restoreSchedulers, _, err := restorePreWork(ctx, client, mgr, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1227,15 +1228,43 @@ func restoreStream(
 
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
-	restoreGc, err := KeepGcDisabled(g, mgr.GetStorage())
+	restoreGc, oldRatio, err := KeepGcDisabled(g, mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
+	gcDisabledRestorable := false
 	defer func() {
-		if err := restoreGc(); err != nil {
+		// don't restore the gc-ratio-threshold if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !gcDisabledRestorable {
+			log.Info("skip restore the gc-ratio-threshold for next retry")
+			return
+		}
+
+		log.Info("start to restore gc", zap.String("ratio", oldRatio))
+		if err := restoreGc(oldRatio); err != nil {
 			log.Error("failed to set gc enabled", zap.Error(err))
 		}
+		log.Info("finish restoring gc")
 	}()
+
+	taskName := fmt.Sprintf("%d.%d", client.GetPDClient().GetClusterID(ctx), cfg.StartTS)
+	var checkpointRunner *checkpoint.LogRestoreRunner
+	if cfg.UseCheckpoint {
+		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		oldRatio = oldRatioFromCheckpoint
+
+		checkpointRunner, err = client.StartCheckpointRunnerForLogRestore(ctx, taskName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer func() {
+			log.Info("wait for flush checkpoint...")
+			checkpointRunner.WaitForFinish(ctx)
+		}()
+	}
 
 	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
@@ -1301,17 +1330,33 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	logFilesIter, err := client.LoadDMLFiles(ctx)
-	if err != nil {
-		return errors.Trace(err)
+	// generate the upstream->downstream id maps for checkpoint
+	idrules := make(map[int64]int64)
+	downstreamIdset := make(map[int64]struct{})
+	for upstreamId, rule := range rewriteRules {
+		downstreamId := restore.GetRewriteTableID(upstreamId, rule)
+		idrules[upstreamId] = downstreamId
+		downstreamIdset[downstreamId] = struct{}{}
 	}
-	logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, g, mgr.GetStorage())
+
+	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIterWithSplit, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
+		if cfg.UseCheckpoint {
+			logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, taskName, updateStats, p.Inc)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, g, mgr.GetStorage())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		return client.RestoreKVFiles(ctx, rewriteRules, idrules, logFilesIterWithSplit, checkpointRunner, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
@@ -1349,6 +1394,8 @@ func restoreStream(
 		}
 	}
 
+	gcDisabledRestorable = true
+
 	return nil
 }
 
@@ -1383,7 +1430,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
-	client.InitClients(u, false)
+	client.InitClients(u, false, false)
 
 	rawKVClient, err := newRawBatchClient(ctx, cfg.PD, cfg.TLS)
 	if err != nil {

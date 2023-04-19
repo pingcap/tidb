@@ -185,7 +185,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 	}
 	ingestScheduler.close(false)
 
-	_, err = b.bc.Flush(b.index.ID)
+	_, _, err = b.bc.Flush(b.index.ID, true)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] flush error", zap.Error(err))
 		return nil, err

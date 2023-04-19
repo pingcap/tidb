@@ -662,7 +662,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 
-		if job.MultiSchemaInfo == nil {
+		if job.MultiSchemaInfo == nil && len(tblInfo.GetPartitionInfo().Definitions) > 0 {
 			initDistReorg(job.ReorgMeta)
 		}
 	case model.StateWriteReorganization:
@@ -1611,10 +1611,8 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 	vars := w.sessCtx.GetSessionVars()
 	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
 	if err != nil || cnt == 0 {
-		w.copReqSenderPool.recycleChunk(rs.chunk)
 		return 0, nil, err
 	}
-	w.copReqSenderPool.recycleChunk(rs.chunk)
 	w.metricCounter.Add(float64(cnt))
 	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
 	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
@@ -1762,7 +1760,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgIn
 func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		if t.Meta().Partition != nil && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			err := executeDistGlobalTask(reorgInfo)
 			if err != nil {
 				return err
