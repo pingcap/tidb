@@ -16,9 +16,6 @@ package loaddatatest
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
