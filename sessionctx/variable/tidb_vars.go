@@ -1253,7 +1253,7 @@ const (
 	DefTiDBEnablePlanCacheForParamLimit              = true
 	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                = true
-	DefTiDBLoadBasedReplicaReadThreshold             = 0
+	DefTiDBLoadBasedReplicaReadThreshold             = time.Second
 	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 )
