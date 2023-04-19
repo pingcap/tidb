@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/tracing"
@@ -387,6 +389,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 
 	var colIDs, binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
+	var checksumData [][]rowcodec.ColData
+	var checksums []uint32
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 	colIDs = make([]int64, 0, numColsCap)
 	row = make([]types.Datum, 0, numColsCap)
@@ -395,8 +399,14 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
 	}
+	numChecksums, origCol, err := t.checksumPrecheck(sctx)
+	if err != nil {
+		return err
+	}
+	if numChecksums > 0 {
+		checksumData = make([][]rowcodec.ColData, numChecksums)
+	}
 
-	// TODO(zyguan): row level checksum on update-record
 	for _, col := range t.Columns {
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
@@ -410,6 +420,23 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 				}
 				oldData = append(oldData, value)
 				touched = append(touched, touched[col.DependencyColumnOffset])
+				// the ddl is modify-col
+				if numChecksums > 1 {
+					// calculate the checksum with the old version of col (col.ChangeStateInfo != nil -> origCol != nil)
+					checksumData[0] = appendColForChecksum(checksumData[0], t, origCol, &newData[col.DependencyColumnOffset])
+					// calculate the extra checksum with the new version of col
+					checksumData[1] = appendColForChecksum(checksumData[1], t, col, &value)
+				}
+			} else if numChecksums > 0 {
+				// the checksum is needed and the ddl is not modify-col, calculate the checksum with the default value
+				// of this col. the extra checksum must be required too because not all cols are public (this col is
+				// not), however, since the extra checksum shall be calculated without this non-public col, nothing to
+				// do here for calculating the extra checksum.
+				v, err := table.GetColOriginDefaultValue(sctx, col.ToInfo())
+				if err != nil {
+					return err
+				}
+				checksumData[0] = appendColForChecksum(checksumData[0], t, col, &v)
 			}
 			continue
 		}
@@ -426,9 +453,29 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 				}
 				newData[col.Offset] = value
 				touched[col.Offset] = touched[col.DependencyColumnOffset]
+				// the ddl is modify-col
+				if numChecksums > 1 {
+					// calculate the checksum with the old version of col (col.ChangeStateInfo != nil -> origCol != nil)
+					checksumData[0] = appendColForChecksum(checksumData[0], t, origCol, &newData[col.DependencyColumnOffset])
+					// calculate the extra checksum with the new version of col
+					checksumData[1] = appendColForChecksum(checksumData[1], t, col, &value)
+				}
+			} else if numChecksums > 0 {
+				// the checksum is needed and the ddl is not modify-col, calculate the checksum with the original (or
+				// default) value of this col. the extra checksum must be required too because not all cols are public
+				// (this col is not), however, since the extra checksum shall be calculated without this non-public col,
+				// nothing to do here for calculating the extra checksum.
+				checksumData[0] = appendColForChecksum(checksumData[0], t, col, &value)
 			}
 		} else {
 			value = newData[col.Offset]
+			if numChecksums > 0 && (origCol == nil || origCol.ID != col.ID) {
+				// col is public and is not the original col of modify-col ddl, append it as needed
+				checksumData[0] = appendColForChecksum(checksumData[0], t, col, &value)
+				if numChecksums > 1 {
+					checksumData[1] = appendColForChecksum(checksumData[1], t, col, &value)
+				}
+			}
 		}
 		if !t.canSkip(col, &value) {
 			colIDs = append(colIDs, col.ID)
@@ -459,13 +506,16 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
+	writeBufs := sessVars.GetWriteStmtBufs()
+	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, rd)
+	checksums, writeBufs.RowValBuf = t.calcChecksums(checksumData, writeBufs.RowValBuf)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	if err != nil {
 		return err
 	}
-	if err = memBuffer.Set(key, value); err != nil {
+	if err = memBuffer.Set(key, writeBufs.RowValBuf); err != nil {
 		return err
 	}
 
@@ -581,6 +631,76 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 		}
 	}
 	return nil
+}
+
+// checksumPrecheck checks if we need/can write row with checksums. The first returned int indicates the number of
+// checksums we need, the second returned column (when it's not nil) is the original column of modify-column ddl.
+func (t *TableCommon) checksumPrecheck(sctx sessionctx.Context) (int, *table.Column, error) {
+	var (
+		origCol    *table.Column
+		nonPubCols []*model.ColumnInfo
+	)
+	if !sctx.GetSessionVars().IsRowLevelChecksumEnabled() {
+		return 0, origCol, nil
+	}
+	for _, col := range t.Columns {
+		if col.State != model.StatePublic {
+			nonPubCols = append(nonPubCols, col.ToInfo())
+			if origCol == nil && col.ChangeStateInfo != nil {
+				// find out the original column
+				for _, c := range t.Columns {
+					if c.Offset == col.ChangeStateInfo.DependencyColumnOffset {
+						origCol = c
+						break
+					}
+				}
+				if origCol == nil {
+					logutil.BgLogger().Warn("skip checksum since the original column is not found",
+						zap.Int64("tblID", t.meta.ID), zap.Any("cols", t.meta.Columns),
+						zap.Int("origColID", col.ChangeStateInfo.DependencyColumnOffset))
+					return 0, origCol, errors.New("cannot find the original column by change-state-info")
+				}
+			}
+		}
+	}
+	if n := len(nonPubCols); n > 1 {
+		logutil.BgLogger().Warn("skip checksum since the number of non-public columns is greater than 1",
+			zap.Int64("tblID", t.meta.ID), zap.Any("nonPubCols", nonPubCols))
+		return 0, origCol, nil
+	} else {
+		return 1 + n, origCol, nil
+	}
+}
+
+func (t *TableCommon) calcChecksums(data [][]rowcodec.ColData, buf []byte) ([]uint32, []byte) {
+	if len(data) == 0 {
+		return nil, buf
+	}
+	checksums := make([]uint32, len(data))
+	for i, cols := range data {
+		row := rowcodec.RowData{Cols: cols, Data: buf}
+		if !sort.IsSorted(row) {
+			sort.Sort(row)
+		}
+		checksum, err := row.Checksum()
+		buf = row.Data
+		if err != nil {
+			logutil.BgLogger().Warn("skip checksum due to encode error", zap.Int64("tblID", t.meta.ID), zap.Error(err))
+			return nil, buf
+		}
+		checksums[i] = checksum
+	}
+	return checksums, buf
+}
+
+func appendColForChecksum(dst []rowcodec.ColData, t *TableCommon, c *table.Column, d *types.Datum) []rowcodec.ColData {
+	if t.canSkip(c, d) {
+		return dst
+	}
+	if dst == nil {
+		dst = make([]rowcodec.ColData, 0, len(t.Columns))
+	}
+	return append(dst, rowcodec.ColData{ColumnInfo: c.ToInfo(), Datum: d})
 }
 
 // adjustRowValuesBuf adjust writeBufs.AddRowValues length, AddRowValues stores the inserting values that is used
@@ -799,6 +919,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	var colIDs, binlogColIDs []int64
 	var row, binlogRow []types.Datum
+	var checksumData [][]rowcodec.ColData
+	var checksums []uint32
 	if recordCtx, ok := sctx.Value(addRecordCtxKey).(*CommonAddRecordCtx); ok {
 		colIDs = recordCtx.colIDs[:0]
 		row = recordCtx.row[:0]
@@ -811,13 +933,42 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	defer memBuffer.Cleanup(sh)
 
 	sessVars := sctx.GetSessionVars()
+	numChecksums, origCol, err := t.checksumPrecheck(sctx)
+	if err != nil {
+		return nil, err
+	}
+	if numChecksums > 0 {
+		checksumData = make([][]rowcodec.ColData, numChecksums)
+	}
 
-	// TODO(zyguan): row level checksum on add-record
 	for _, col := range t.Columns {
+		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+			if numChecksums > 1 {
+				if col.ChangeStateInfo != nil {
+					// TODO: Check overflow or ignoreTruncate.
+					v, err := table.CastValue(sctx, r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+					if err != nil {
+						return nil, err
+					}
+					// calculate the checksum with the old version of col (col.ChangeStateInfo != nil -> origCol != nil)
+					checksumData[0] = appendColForChecksum(checksumData[0], t, origCol, &r[col.DependencyColumnOffset])
+					// calculate the extra checksum with the new version of col
+					checksumData[1] = appendColForChecksum(checksumData[1], t, col, &v)
+				} else {
+					// the checksum is needed and the ddl is not modify-col, calculate the checksum with the default value
+					// of this col. the extra checksum must be required too because not all cols are public (this col is
+					// not), however, since the extra checksum shall be calculated without this non-public col, nothing to
+					// do here for calculating the extra checksum.
+					v, err := table.GetColOriginDefaultValue(sctx, col.ToInfo())
+					if err != nil {
+						return nil, err
+					}
+					checksumData[0] = appendColForChecksum(checksumData[0], t, col, &v)
+				}
+			}
 			continue
 		}
-		var value types.Datum
 		// In column type change, since we have set the origin default value for changing col, but
 		// for the new insert statement, we should use the casted value of relative column to insert.
 		if col.ChangeStateInfo != nil && col.State != model.StatePublic {
@@ -833,26 +984,54 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			}
 			row = append(row, value)
 			colIDs = append(colIDs, col.ID)
+			// the ddl is modify-col and the col is write-only or write-reorg
+			if numChecksums > 1 {
+				// calculate the checksum with the old version of col (col.ChangeStateInfo != nil -> origCol != nil)
+				checksumData[0] = appendColForChecksum(checksumData[0], t, origCol, &r[col.DependencyColumnOffset])
+				// calculate the extra checksum with the new version of col
+				checksumData[1] = appendColForChecksum(checksumData[1], t, col, &value)
+			}
 			continue
 		}
-		if col.State != model.StatePublic &&
-			// Update call `AddRecord` will already handle the write only column default value.
-			// Only insert should add default value for write only column.
-			!opt.IsUpdate {
-			// If col is in write only or write reorganization state, we must add it with its default value.
-			value, err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
-			if err != nil {
-				return nil, err
-			}
-			// add value to `r` for dirty db in transaction.
-			// Otherwise when update will panic cause by get value of column in write only state from dirty db.
-			if col.Offset < len(r) {
-				r[col.Offset] = value
-			} else {
-				r = append(r, value)
+		if col.State == model.StatePublic {
+			value = r[col.Offset]
+			if numChecksums > 0 {
+				// col is public and is not the original col of modify-col ddl, append it as needed
+				checksumData[0] = appendColForChecksum(checksumData[0], t, col, &value)
+				if numChecksums > 1 {
+					checksumData[1] = appendColForChecksum(checksumData[1], t, col, &value)
+				}
 			}
 		} else {
-			value = r[col.Offset]
+			// col.ChangeStateInfo must be nil here.
+			// because `col.State != model.StatePublic` is true here, if col.ChangeStateInfo is not nil, the col should
+			// be handle by the previous if-block.
+
+			if opt.IsUpdate {
+				// If `AddRecord` is called by an update, the default value should be handled the update.
+				value = r[col.Offset]
+			} else {
+				// If `AddRecord` is called by an insert and the col is in write only or write reorganization state, we must
+				// add it with its default value.
+				value, err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
+				if err != nil {
+					return nil, err
+				}
+				// add value to `r` for dirty db in transaction.
+				// Otherwise when update will panic cause by get value of column in write only state from dirty db.
+				if col.Offset < len(r) {
+					r[col.Offset] = value
+				} else {
+					r = append(r, value)
+				}
+			}
+			if numChecksums > 0 {
+				// the checksum is needed and the ddl is not modify-col, calculate the checksum with the default value
+				// of this col. the extra checksum must be required too because not all cols are public (this col is
+				// not), however, since the extra checksum shall be calculated without this non-public col, nothing to
+				// do here for calculating the extra checksum.
+				checksumData[0] = appendColForChecksum(checksumData[0], t, col, &value)
+			}
 		}
 		if !t.canSkip(col, &value) {
 			colIDs = append(colIDs, col.ID)
@@ -866,7 +1045,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	logutil.BgLogger().Debug("addRecord",
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd)
+	checksums, writeBufs.RowValBuf = t.calcChecksums(checksumData, writeBufs.RowValBuf)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	if err != nil {
 		return nil, err
 	}
