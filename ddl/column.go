@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/bits"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -1180,6 +1182,9 @@ type updateColumnWorker struct {
 	rowDecoder *decoder.RowDecoder
 
 	rowMap map[int64]types.Datum
+
+	checksumBuffer rowcodec.RowData
+	checksumNeeded bool
 }
 
 func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
@@ -1189,7 +1194,14 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 		return nil
 	}
 	var oldCol, newCol *model.ColumnInfo
-	for _, col := range t.WritableCols() {
+	var numNonPubCols int
+	for _, col := range t.Cols() {
+		if col.State != model.StatePublic {
+			numNonPubCols++
+		}
+		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+			continue
+		}
 		if col.ID == reorgInfo.currElement.ID {
 			newCol = col.ColumnInfo
 			oldCol = table.FindCol(t.Cols(), getChangingColumnOriginName(newCol)).ColumnInfo
@@ -1197,12 +1209,26 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 		}
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
+	needChecksum := false
+	if variable.EnableRowLevelChecksum.Load() {
+		if numNonPubCols > 1 {
+			var cols []*model.ColumnInfo
+			for _, col := range t.Cols() {
+				cols = append(cols, col.ToInfo())
+			}
+			logutil.BgLogger().Warn("skip checksum in update-column backfill since the number of non-public columns is greater than 1",
+				zap.String("jobQuery", reorgInfo.Query), zap.String("reorgInfo", reorgInfo.String()), zap.Any("cols", cols))
+		} else {
+			needChecksum = true
+		}
+	}
 	return &updateColumnWorker{
-		backfillCtx: newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.SchemaName, t, jc, "update_col_rate", false),
-		oldColInfo:  oldCol,
-		newColInfo:  newCol,
-		rowDecoder:  rowDecoder,
-		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
+		backfillCtx:    newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.SchemaName, t, jc, "update_col_rate", false),
+		oldColInfo:     oldCol,
+		newColInfo:     newCol,
+		rowDecoder:     rowDecoder,
+		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
+		checksumNeeded: needChecksum,
 	}
 }
 
@@ -1332,15 +1358,15 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// TODO(zyguan): row level checksum on backfill
 	newColumnIDs := make([]int64, 0, len(w.rowMap))
 	newRow := make([]types.Datum, 0, len(w.rowMap))
 	for colID, val := range w.rowMap {
 		newColumnIDs = append(newColumnIDs, colID)
 		newRow = append(newRow, val)
 	}
+	checksums := w.calcChecksums()
 	sctx, rd := w.sessCtx.GetSessionVars().StmtCtx, &w.sessCtx.GetSessionVars().RowEncoder
-	newRowVal, err := tablecodec.EncodeRow(sctx, newRow, newColumnIDs, nil, nil, rd)
+	newRowVal, err := tablecodec.EncodeRow(sctx, newRow, newColumnIDs, nil, nil, rd, checksums...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1348,6 +1374,35 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal, warning: recordWarning})
 	w.cleanRowMap()
 	return nil
+}
+
+func (w *updateColumnWorker) calcChecksums() []uint32 {
+	if !w.checksumNeeded {
+		return nil
+	}
+	var checksums [2]uint32
+	for i, id := range []int64{w.newColInfo.ID, w.oldColInfo.ID} {
+		if len(w.checksumBuffer.Cols) > 0 {
+			w.checksumBuffer.Cols = w.checksumBuffer.Cols[:0]
+		}
+		for _, col := range w.table.Cols() {
+			if col.ID == id || (col.IsGenerated() && !col.GeneratedStored) {
+				continue
+			}
+			d := w.rowMap[col.ID]
+			w.checksumBuffer.Cols = append(w.checksumBuffer.Cols, rowcodec.ColData{ColumnInfo: col.ToInfo(), Datum: &d})
+		}
+		if !sort.IsSorted(w.checksumBuffer) {
+			sort.Sort(w.checksumBuffer)
+		}
+		checksum, err := w.checksumBuffer.Checksum()
+		if err != nil {
+			logutil.BgLogger().Warn("skip checksum in update-column backfill due to encode error", zap.Error(err))
+			return nil
+		}
+		checksums[i] = checksum
+	}
+	return checksums[:]
 }
 
 // reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
