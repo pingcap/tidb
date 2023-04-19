@@ -25,15 +25,10 @@ import (
 )
 
 // selectivity = (row count after filter) / (row count before filter), smaller is better
-// income = (1 - selectivity) * restColumnCount, greater is better
-// We use income is avoid the following case:
-// selectivity is 0.7, restColumnCount is 10, income is 3
-// after push down a predicate, selectivity becomes 0.6, restColumnCount becomes 7, income becomes 2.8, which is smaller than 3
-// but the predicate should not be pushed down.
+// income = (1 - selectivity) * restColumnCount * tableRowCount, greater is better
 
 const (
-	selectivityThreshold        = 0.7
-	selectivityImproveThreshold = 0.1
+	selectivityThreshold = 0.7
 	// The default now of number of rows in a pack of TiFlash
 	tiflashDataPackSize  = 8192
 	columnCountThreshold = 3
@@ -222,6 +217,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	selectedColumnCount := 0
 	selectedSelectivity := 1.0
 	totalColumnCount := len(physicalTableScan.Columns)
+	tableRowCount := physicalTableScan.stats.RowCount
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)
@@ -231,18 +227,17 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 			continue
 		}
 		colCnt := expression.ExtractColumnSet(mergedConds...).Len()
-		income := (1 - selectivity) * (float64(totalColumnCount) - float64(colCnt))
+		income := (1 - selectivity) * tableRowCount
 		// If selectedColumnCount does not change,
-		// or the income increases after pushing down the group, push down it.
-		if colCnt == selectedColumnCount || income > selectedIncome {
+		// or the increase of the number of filtered rows is greater than tiflashDataPackSize and the income increases, push down the conditions.
+		if colCnt == selectedColumnCount || (income > tiflashDataPackSize && income*(float64(totalColumnCount)-float64(colCnt)) > selectedIncome) {
 			selectedConds = mergedConds
 			selectedColumnCount = colCnt
-			selectedIncome = income
+			selectedIncome = income * (float64(totalColumnCount) - float64(colCnt))
 			selectedSelectivity = selectivity
-		}
-		// If the selectivity improvement is small enough, break the loop
-		// to reduce the cost of calculating selectivity.
-		if selectedSelectivity-selectivity < selectivityImproveThreshold {
+		} else if income < tiflashDataPackSize {
+			// If the increase of the number of filtered rows is less than tiflashDataPackSize,
+			// break the loop to reduce the cost of calculating selectivity.
 			break
 		}
 	}
