@@ -186,7 +186,8 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 	return nil, consumer.getResult()
 }
 
-func (b *backfillSchedulerHandle) OnSubtaskFinished(_ context.Context, _ []byte) error {
+// OnSubtaskFinished implements the Scheduler interface.
+func (*backfillSchedulerHandle) OnSubtaskFinished(context.Context, []byte) error {
 	return nil
 }
 
