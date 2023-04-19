@@ -38,7 +38,7 @@ type BackendCtx interface {
 	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
 	Unregister(jobID, indexID int64)
 
-	CollectRemoteDuplicateRows(indexID int64, unique bool, tbl table.Table) error
+	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	UnsafeImportAndReset(ctx context.Context, indexID int64, regionSplitSize, regionSplitKeys int64) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	ResetWorkers(jobID, indexID int64)
@@ -65,11 +65,7 @@ type litBackendCtx struct {
 }
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
-func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, unique bool, tbl table.Table) error {
-	if !unique {
-		return nil
-	}
-
+func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
 	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
 	// backend must be a local backend.
 	// todo: when we can separate local backend completely from tidb backend, will remove this cast.

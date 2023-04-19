@@ -1775,7 +1775,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 					return err
 				}
 				defer ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
-				return bc.CollectRemoteDuplicateRows(indexInfo.ID, true, t)
+				return bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
 			}
 			return nil
 		}
@@ -1880,7 +1880,7 @@ func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		}
 
 		// TODO: get the original error message.
-		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
+		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled {
 			return errors.Errorf("ddl task stopped with state %s, err %s", found.State, found.Error)
 		}
 	}

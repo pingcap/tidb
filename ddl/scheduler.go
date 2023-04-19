@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
@@ -187,15 +186,10 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 
 	_, _, err = b.bc.Flush(b.index.ID, true)
 	if err != nil {
-		logutil.BgLogger().Error("[ddl] flush error", zap.Error(err))
-		return nil, err
-	}
-	err = b.bc.UnsafeImportAndReset(b.d.ctx, b.index.ID, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
-	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
 		}
-		logutil.BgLogger().Error("[ddl] unsafe import and reset error", zap.Error(err))
+		logutil.BgLogger().Error("[ddl] flush error", zap.Error(err))
 		return nil, err
 	}
 	return nil, consumer.getResult()

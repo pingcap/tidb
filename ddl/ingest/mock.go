@@ -96,7 +96,7 @@ func (*MockBackendCtx) Unregister(jobID, indexID int64) {
 }
 
 // CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
-func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ bool, _ table.Table) error {
+func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
 	logutil.BgLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
 	return nil
 }
