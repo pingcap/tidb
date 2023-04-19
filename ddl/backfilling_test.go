@@ -16,9 +16,14 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,4 +47,36 @@ func TestDoneTaskKeeper(t *testing.T) {
 
 	n.updateNextKey(6, kv.Key("h"))
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
+}
+
+func TestPickBackfillType(t *testing.T) {
+	mockMgr := ingest.NewMockBackendCtxMgr(
+		func() sessionctx.Context {
+			return nil
+		})
+	ingest.LitBackCtxMgr = mockMgr
+	mockCtx := context.Background()
+	const uk = false
+	mockJob := &model.Job{
+		ID: 1,
+		ReorgMeta: &model.DDLReorgMeta{
+			ReorgTp: model.ReorgTypeTxn,
+		},
+	}
+	variable.EnableFastReorg.Store(true)
+	tp, err := pickBackfillType(mockJob, mockCtx, uk)
+	require.NoError(t, err)
+	require.Equal(t, tp, model.ReorgTypeTxn)
+
+	mockJob.ReorgMeta.ReorgTp = model.ReorgTypeNone
+	ingest.LitInitialized = false
+	tp, err = pickBackfillType(mockJob, mockCtx, uk)
+	require.NoError(t, err)
+	require.Equal(t, tp, model.ReorgTypeTxnMerge)
+
+	mockJob.ReorgMeta.ReorgTp = model.ReorgTypeNone
+	ingest.LitInitialized = true
+	tp, err = pickBackfillType(mockJob, mockCtx, uk)
+	require.NoError(t, err)
+	require.Equal(t, tp, model.ReorgTypeLitMerge)
 }

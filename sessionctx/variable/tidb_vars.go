@@ -1199,6 +1199,7 @@ const (
 	DefMemoryUsageAlarmKeepRecordNum               = 5
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
+	MinTiDBDDLDiskQuota                            = 1 * 1024 * 1024 * 1024   // 1GB
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableNonPreparedPlanCache              = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
