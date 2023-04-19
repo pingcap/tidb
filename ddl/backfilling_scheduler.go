@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
@@ -343,6 +345,9 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		}
 	}
 	close(b.resultCh)
+	if intest.InTest && len(b.copReqSenderPool.srcChkPool) != copReadChunkPoolSize() {
+		panic(fmt.Sprintf("unexpected chunk size %d", len(b.copReqSenderPool.srcChkPool)))
+	}
 	if !force {
 		jobID := b.reorgInfo.ID
 		indexID := b.reorgInfo.currElement.ID
@@ -450,13 +455,13 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
 		w.resultCh <- &backfillResult{taskID: rs.id, err: dbterror.ErrReorgPanic}
 	}, false)
-
+	defer w.copReqSenderPool.recycleChunk(rs.chunk)
 	result := &backfillResult{
 		taskID: rs.id,
 		err:    rs.err,
 	}
 	if result.err != nil {
-		logutil.BgLogger().Error("[ddl-ingest] finish a cop-request task with error",
+		logutil.BgLogger().Error("[ddl-ingest] encounter error when handle index chunk",
 			zap.Int("id", rs.id), zap.Error(rs.err))
 		w.resultCh <- result
 		return
