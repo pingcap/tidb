@@ -556,13 +556,15 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 	phyTbl := t.(table.PhysicalTable)
 	jobCtx := reorgInfo.d.jobContext(job.ID)
 	for i, keyRange := range kvRanges {
+		taskID := taskIDAlloc.alloc()
 		startKey := keyRange.StartKey
 		endKey := keyRange.EndKey
 		endK, err := getRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, keyRange.StartKey, endKey)
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] get backfill range task, get reverse key failed", zap.Error(err))
 		} else {
-			logutil.BgLogger().Info("[ddl] get backfill range task, change end key", zap.Int64("pTbl", phyTbl.GetPhysicalID()),
+			logutil.BgLogger().Info("[ddl] get backfill range task, change end key",
+				zap.Int("id", taskID), zap.Int64("pTbl", phyTbl.GetPhysicalID()),
 				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
 			endKey = endK
 		}
@@ -574,7 +576,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 		}
 
 		task := &reorgBackfillTask{
-			id:            taskIDAlloc.alloc(),
+			id:            taskID,
 			jobID:         reorgInfo.Job.ID,
 			physicalTable: phyTbl,
 			priority:      reorgInfo.Priority,
