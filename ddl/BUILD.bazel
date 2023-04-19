@@ -219,6 +219,7 @@ go_test(
     deps = [
         "//autoid_service",
         "//config",
+        "//ddl/ingest",
         "//ddl/internal/callback",
         "//ddl/placement",
         "//ddl/schematracker",

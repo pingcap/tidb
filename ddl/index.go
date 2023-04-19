@@ -623,7 +623,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateNone:
 		// none -> delete only
 		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(job, w.ctx, indexInfo.Unique)
+		reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique)
 		if err != nil {
 			break
 		}
@@ -715,7 +715,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 // pickBackfillType determines which backfill process will be used.
-func pickBackfillType(job *model.Job, ctx context.Context, unique bool) (model.ReorgType, error) {
+func pickBackfillType(ctx context.Context, job *model.Job, unique bool) (model.ReorgType, error) {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't change the backfill type.
@@ -839,7 +839,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
-	reorgTp, err = pickBackfillType(job, w.ctx, indexInfo.Unique)
+	reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique)
 	if err != nil {
 		return false, ver, err
 	}
