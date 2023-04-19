@@ -179,7 +179,8 @@ func Row2KvPairs(row encode.Row) []common.KvPair {
 //
 // See comments in `(*TableRestore).initializeColumns` for the meaning of the
 // `columnPermutation` parameter.
-func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, _ int64) (encode.Row, error) {
+func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
+	rowID int64, columnPermutation []int, _ int64) (encode.Row, error) {
 	var value types.Datum
 	var err error
 
@@ -202,7 +203,8 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPerm
 		rowValue := rowID
 		j := columnPermutation[len(kvcodec.Columns)]
 		if j >= 0 && j < len(row) {
-			value, err = table.CastValue(kvcodec.SessionCtx, row[j], ExtraHandleColumnInfo, false, false)
+			value, err = table.CastValue(kvcodec.SessionCtx, row[j],
+				ExtraHandleColumnInfo, false, false)
 			rowValue = value.GetInt64()
 		} else {
 			rowID := kvcodec.AutoIDFn(rowID)
@@ -243,14 +245,17 @@ func GetEncoderSe(encoder encode.Encoder) *Session {
 }
 
 // GetActualDatum export getActualDatum function.
-func GetActualDatum(encoder encode.Encoder, col *table.Column, rowID int64, inputDatum *types.Datum) (types.Datum, error) {
+func GetActualDatum(encoder encode.Encoder, col *table.Column, rowID int64,
+	inputDatum *types.Datum) (types.Datum, error) {
 	return encoder.(*tableKVEncoder).getActualDatum(col, rowID, inputDatum)
 }
 
 // GetAutoRecordID returns the record ID for an auto-increment field.
 // get record value for auto-increment field
 //
-// See: https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
+// See:
+//
+//	https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
 func GetAutoRecordID(d types.Datum, target *types.FieldType) int64 {
 	switch target.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble:

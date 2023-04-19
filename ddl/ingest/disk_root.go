@@ -15,69 +15,75 @@
 package ingest
 
 import (
+	"fmt"
 	"sync"
 
 	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 )
 
 // DiskRoot is used to track the disk usage for the lightning backfill process.
 type DiskRoot interface {
-	CurrentUsage() uint64
-	MaxQuota() uint64
-	UpdateUsageAndQuota() error
+	UpdateUsage()
+	ShouldImport() bool
+	UsageInfo() string
 }
 
 const capacityThreshold = 0.9
 
 // diskRootImpl implements DiskRoot interface.
 type diskRootImpl struct {
-	path         string
-	currentUsage uint64
-	maxQuota     uint64
-	bcCtx        *backendCtxManager
-	mu           sync.RWMutex
+	path     string
+	capacity uint64
+	used     uint64
+	bcUsed   uint64
+	bcCtx    *litBackendCtxMgr
+	mu       sync.RWMutex
 }
 
 // NewDiskRootImpl creates a new DiskRoot.
-func NewDiskRootImpl(path string, bcCtx *backendCtxManager) DiskRoot {
+func NewDiskRootImpl(path string, bcCtx *litBackendCtxMgr) DiskRoot {
 	return &diskRootImpl{
 		path:  path,
 		bcCtx: bcCtx,
 	}
 }
 
-// CurrentUsage implements DiskRoot interface.
-func (d *diskRootImpl) CurrentUsage() uint64 {
-	d.mu.RLock()
-	usage := d.currentUsage
-	d.mu.RUnlock()
-	return usage
-}
-
-// MaxQuota implements DiskRoot interface.
-func (d *diskRootImpl) MaxQuota() uint64 {
-	d.mu.RLock()
-	quota := d.maxQuota
-	d.mu.RUnlock()
-	return quota
-}
-
-// UpdateUsageAndQuota implements DiskRoot interface.
-func (d *diskRootImpl) UpdateUsageAndQuota() error {
-	totalDiskUsage := d.bcCtx.TotalDiskUsage()
+// UpdateUsage implements DiskRoot interface.
+func (d *diskRootImpl) UpdateUsage() {
+	bcUsed := d.bcCtx.TotalDiskUsage()
+	var capacity, used uint64
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrGetStorageQuota, zap.Error(err))
-		return err
+	} else {
+		capacity, used = sz.Capacity, sz.Capacity-sz.Available
 	}
-	maxQuota := mathutil.Min(variable.DDLDiskQuota.Load(), uint64(capacityThreshold*float64(sz.Capacity)))
 	d.mu.Lock()
-	d.currentUsage = totalDiskUsage
-	d.maxQuota = maxQuota
+	d.bcUsed = bcUsed
+	d.capacity = capacity
+	d.used = used
 	d.mu.Unlock()
-	return nil
+}
+
+// ShouldImport implements DiskRoot interface.
+func (d *diskRootImpl) ShouldImport() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.bcUsed > variable.DDLDiskQuota.Load() {
+		return true
+	}
+	if d.used == 0 && d.capacity == 0 {
+		return false
+	}
+	return float64(d.used) >= float64(d.capacity)*capacityThreshold
+}
+
+// UsageInfo implements DiskRoot interface.
+func (d *diskRootImpl) UsageInfo() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return fmt.Sprintf("disk usage: %d/%d, backend usage: %d", d.used, d.capacity, d.bcUsed)
 }

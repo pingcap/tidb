@@ -31,69 +31,74 @@ func TestParameterize(t *testing.T) {
 	}{
 		{
 			"select * from t where a<10",
-			"SELECT * FROM t WHERE a<?",
+			"SELECT * FROM `t` WHERE `a`<?",
 			[]interface{}{int64(10)},
 		},
 		{
 			"select * from t",
-			"SELECT * FROM t",
+			"SELECT * FROM `t`",
 			[]interface{}{},
 		},
 		{
 			"select * from t where a<10 and b<20 and c=30 and d>40",
-			"SELECT * FROM t WHERE a<? AND b<? AND c=? AND d>?",
+			"SELECT * FROM `t` WHERE `a`<? AND `b`<? AND `c`=? AND `d`>?",
 			[]interface{}{int64(10), int64(20), int64(30), int64(40)},
 		},
 		{
 			"select * from t where a='a' and b='bbbbbbbbbbbbbbbbbbbbbbbb'",
-			"SELECT * FROM t WHERE a=? AND b=?",
+			"SELECT * FROM `t` WHERE `a`=? AND `b`=?",
 			[]interface{}{"a", "bbbbbbbbbbbbbbbbbbbbbbbb"},
 		},
 		{
 			"select 1, 2, 3 from t where a<10",
-			"SELECT 1,2,3 FROM t WHERE a<?",
+			"SELECT 1,2,3 FROM `t` WHERE `a`<?",
 			[]interface{}{int64(10)},
 		},
 		{
 			"select a+1 from t where a<10",
-			"SELECT a+1 FROM t WHERE a<?",
-			[]interface{}{int64(10)},
-		},
-		{
-			"select a+1, sum(b) from t where a<10 group by a+1",
-			"SELECT a+1,sum(b) FROM t WHERE a<? GROUP BY a+1",
+			"SELECT a+1 FROM `t` WHERE `a`<?",
 			[]interface{}{int64(10)},
 		},
 		{
 			`select a+ "a b c" from t`,
-			`SELECT a+ "a b c" FROM t`,
+			"SELECT a+ \"a b c\" FROM `t`",
 			[]interface{}{},
 		},
 		{
 			`select a + 'a b c'+"x" from t`,
-			`SELECT a + 'a b c'+"x" FROM t`, // keep the original format for select fields
+			"SELECT a + 'a b c'+\"x\" FROM `t`", // keep the original format for select fields
 			[]interface{}{},
 		},
 		{
 			`select a + 'a b c'+"x" as 'xxx' from t`,
-			`SELECT a + 'a b c'+"x" as 'xxx' FROM t`, // keep the original format for select fields
+			"SELECT a + 'a b c'+\"x\" as 'xxx' FROM `t`", // keep the original format for select fields
 			[]interface{}{},
 		},
 		{
 			`insert into t (a, B, c) values (1, 2, 3), (4, 5, 6)`,
-			`INSERT INTO t (a,B,c) VALUES (?,?,?),(?,?,?)`,
+			"INSERT INTO `t` (`a`,`B`,`c`) VALUES (?,?,?),(?,?,?)",
 			[]interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6)},
+		},
+		{
+			`select * from t where a < date_format('2020-02-02', '%Y-%m-%d')`,
+			"SELECT * FROM `t` WHERE `a`<date_format(?, '%Y-%m-%d')",
+			[]interface{}{"2020-02-02"},
+		},
+		{
+			"select * from `txu#p#p1`",
+			"SELECT * FROM `txu#p#p1`",
+			[]interface{}{},
 		},
 
 		// keep the original format for limit clauses
 		{
 			`select * from t limit 10`,
-			`SELECT * FROM t LIMIT 10`,
+			"SELECT * FROM `t` LIMIT 10",
 			[]interface{}{},
 		},
 		{
 			`select * from t limit 10, 20`,
-			`SELECT * FROM t LIMIT 10,20`,
+			"SELECT * FROM `t` LIMIT 10,20",
 			[]interface{}{},
 		},
 		// TODO: more test cases
@@ -138,5 +143,17 @@ func BenchmarkParameterizeInsert(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ParameterizeAST(context.Background(), sctx, stmt)
+	}
+}
+
+func BenchmarkGetParamSQL(b *testing.B) {
+	paymentInsertHistory := `INSERT INTO history (h_c_d_id, h_c_w_id, h_c_id, h_d_id, h_w_id, h_date, h_amount, h_data) VALUES (1, 2, 3, 4, 5, 6, 7, 8)`
+	stmt, err := parser.New().ParseOneStmt(paymentInsertHistory, "", "")
+	require.Nil(b, err)
+	sctx := MockContext()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		GetParamSQLFromAST(context.Background(), sctx, stmt)
 	}
 }

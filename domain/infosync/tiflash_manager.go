@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -455,7 +456,7 @@ func (m *mockTiFlashTableInfo) String() string {
 
 // MockTiFlash mocks a TiFlash, with necessary Pd support.
 type MockTiFlash struct {
-	sync.Mutex
+	syncutil.Mutex
 	groupIndex                  int
 	StatusAddr                  string
 	StatusServer                *httptest.Server

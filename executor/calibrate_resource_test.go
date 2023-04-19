@@ -16,46 +16,60 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 func TestCalibrateResource(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	var confItems [][]types.Datum
-	var confErr error
-	var confFunc executor.TestShowClusterConfigFunc = func() ([][]types.Datum, error) {
-		return confItems, confErr
-	}
-	tk.Session().SetValue(executor.TestShowClusterConfigKey, confFunc)
-	strs2Items := func(strs ...string) []types.Datum {
-		items := make([]types.Datum, 0, len(strs))
-		for _, s := range strs {
-			items = append(items, types.NewStringDatum(s))
-		}
-		return items
-	}
-
-	// empty requet-unit config error
+	// first test resource_control flag
+	tk.MustExec("SET GLOBAL tidb_enable_resource_control='OFF';")
 	rs, err := tk.Exec("CALIBRATE RESOURCE")
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(context.Background(), rs.NewChunk(nil))
-	require.ErrorContains(t, err, "PD request-unit config not found")
+	require.ErrorContains(t, err, "Resource control feature is disabled")
 
-	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "controller.request-unit.read-base-cost", "0.25"))
-	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "controller.request-unit.read-cost-per-byte", "0.0000152587890625"))
-	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "controller.request-unit.read-cpu-ms-cost", "0.3333333333333333"))
-	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "controller.request-unit.write-base-cost", "1"))
-	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "controller.request-unit.write-cost-per-byte", "0.0009765625"))
+	tk.MustExec("SET GLOBAL tidb_enable_resource_control='ON';")
+
+	// resource group controller is not inited.
+	rs, err = tk.Exec("CALIBRATE RESOURCE")
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	err = rs.Next(context.Background(), rs.NewChunk(nil))
+	require.ErrorContains(t, err, "resource group controller is not initialized")
+
+	oldResourceCtl := executor.GetResourceGroupController()
+	defer func() {
+		executor.SetResourceGroupController(oldResourceCtl)
+	}()
+
+	mockPrivider := &mockResourceGroupProvider{
+		cfg: rmclient.ControllerConfig{
+			RequestUnit: rmclient.RequestUnitConfig{
+				ReadBaseCost:     0.25,
+				ReadCostPerByte:  0.0000152587890625,
+				WriteBaseCost:    1.0,
+				WriteCostPerByte: 0.0009765625,
+				CPUMsCost:        0.3333333333333333,
+			},
+		},
+	}
+	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil)
+	require.NoError(t, err)
+	executor.SetResourceGroupController(resourceCtl)
 
 	// empty metrics error
 	rs, err = tk.Exec("CALIBRATE RESOURCE")
@@ -96,10 +110,30 @@ func TestCalibrateResource(t *testing.T) {
 		return fpName == fpname
 	})
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("68569"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD TPCC").Check(testkit.Rows("68569"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE").Check(testkit.Rows("53026"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY").Check(testkit.Rows("31463"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY").Check(testkit.Rows("109776"))
 
 	// change total tidb cpu to less than tikv_cpu_quota
 	mockData["tidb_server_maxprocs"] = [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", 8.0),
 	}
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("38094"))
+}
+
+type mockResourceGroupProvider struct {
+	rmclient.ResourceGroupProvider
+	cfg rmclient.ControllerConfig
+}
+
+func (p *mockResourceGroupProvider) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {
+	if configPath != "resource_group/controller" {
+		return nil, 0, errors.New("unsupported configPath")
+	}
+	payload, _ := json.Marshal(&p.cfg)
+	item := pd.GlobalConfigItem{
+		PayLoad: payload,
+	}
+	return []pd.GlobalConfigItem{item}, 0, nil
 }

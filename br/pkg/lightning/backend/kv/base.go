@@ -116,6 +116,9 @@ type BaseKVEncoder struct {
 
 	logger      *zap.Logger
 	recordCache []types.Datum
+	// the first auto-generated ID in the current encoder.
+	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
+	LastInsertID uint64
 }
 
 // NewBaseKVEncoder creates a new BaseKVEncoder.
@@ -239,7 +242,11 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	switch {
 	case IsAutoIncCol(col.ToInfo()):
 		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
-		value, err = table.CastValue(e.SessionCtx, types.NewIntDatum(rowID), col.ToInfo(), false, false)
+		value, err = table.CastValue(e.SessionCtx,
+			types.NewIntDatum(rowID), col.ToInfo(), false, false)
+		if err == nil && e.LastInsertID == 0 {
+			e.LastInsertID = value.GetUint64()
+		}
 	case e.IsAutoRandomCol(col.ToInfo()):
 		var val types.Datum
 		realRowID := e.AutoIDFn(rowID)
@@ -249,6 +256,9 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 			val = types.NewIntDatum(realRowID)
 		}
 		value, err = table.CastValue(e.SessionCtx, val, col.ToInfo(), false, false)
+		if err == nil && e.LastInsertID == 0 {
+			e.LastInsertID = value.GetUint64()
+		}
 	case col.IsGenerated():
 		// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
@@ -267,7 +277,8 @@ func (e *BaseKVEncoder) IsAutoRandomCol(col *model.ColumnInfo) bool {
 }
 
 // EvalGeneratedColumns evaluates the generated columns.
-func (e *BaseKVEncoder) EvalGeneratedColumns(record []types.Datum, cols []*table.Column) (errCol *model.ColumnInfo, err error) {
+func (e *BaseKVEncoder) EvalGeneratedColumns(record []types.Datum,
+	cols []*table.Column) (errCol *model.ColumnInfo, err error) {
 	return evalGeneratedColumns(e.SessionCtx, record, cols, e.GenCols)
 }
 
@@ -311,7 +322,8 @@ func (e *BaseKVEncoder) LogEvalGenExprFailed(row []types.Datum, colInfo *model.C
 	)
 }
 
-func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column, genCols []GeneratedCol) (errCol *model.ColumnInfo, err error) {
+func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column,
+	genCols []GeneratedCol) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.Index].ToInfo()

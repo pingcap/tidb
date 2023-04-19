@@ -30,4 +30,7 @@ type PlanCacheMatchOpts struct {
 	HasSubQuery bool
 	// StatsVersionHash is the hash value of the statistics version
 	StatsVersionHash uint64
+
+	// Below are some variables that can affect the plan
+	ForeignKeyChecks bool
 }

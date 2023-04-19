@@ -16,10 +16,12 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -65,8 +67,9 @@ type chunkSender interface {
 }
 
 type copReqSenderPool struct {
-	tasksCh     chan *reorgBackfillTask
-	chunkSender chunkSender
+	tasksCh       chan *reorgBackfillTask
+	chunkSender   chunkSender
+	checkpointMgr *ingest.CheckpointManager
 
 	ctx    context.Context
 	copCtx *copContext
@@ -101,6 +104,12 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
+		if p.checkpointMgr != nil && p.checkpointMgr.IsComplete(task.endKey) {
+			logutil.BgLogger().Info("[ddl-ingest] checkpoint detected, skip a cop-request task",
+				zap.Int("task ID", task.id),
+				zap.String("task end key", hex.EncodeToString(task.endKey)))
+			continue
+		}
 		curTaskID = task.id
 		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
 			zap.Int("id", task.id), zap.String("task", task.String()))
@@ -119,6 +128,9 @@ func (c *copReqSender) run() {
 				panic("mock panic")
 			}
 		})
+		if p.checkpointMgr != nil {
+			p.checkpointMgr.Register(task.id, task.endKey)
+		}
 		var done bool
 		for !done {
 			srcChk := p.getChunk()
@@ -129,27 +141,35 @@ func (c *copReqSender) run() {
 				terror.Call(rs.Close)
 				return
 			}
-			p.chunkSender.AddTask(idxRecResult{id: task.id, chunk: srcChk, done: done})
+			if p.checkpointMgr != nil {
+				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
+			}
+			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
+			failpoint.Inject("MockCopSenderError", func() {
+				idxRs.err = errors.New("mock cop error")
+			})
+			p.chunkSender.AddTask(idxRs)
 		}
 		terror.Call(rs.Close)
 	}
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
-	taskCh chan *reorgBackfillTask) *copReqSenderPool {
+	taskCh chan *reorgBackfillTask, checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
 	}
 	return &copReqSenderPool{
-		tasksCh:    taskCh,
-		ctx:        ctx,
-		copCtx:     copCtx,
-		store:      store,
-		senders:    make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
-		wg:         sync.WaitGroup{},
-		srcChkPool: srcChkPool,
+		tasksCh:       taskCh,
+		ctx:           ctx,
+		copCtx:        copCtx,
+		store:         store,
+		senders:       make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
+		wg:            sync.WaitGroup{},
+		srcChkPool:    srcChkPool,
+		checkpointMgr: checkpointMgr,
 	}
 }
 
