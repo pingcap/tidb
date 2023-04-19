@@ -3117,7 +3117,7 @@ func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {
 	for i := range names {
 		fLen, _ := mysql.GetDefaultFieldLengthAndDecimal(ftypes[i])
 		if ftypes[i] == mysql.TypeVarchar {
-			// the default varchar value is `5`, which might be too short for us.
+			// the default varchar length is `5`, which might be too short for us.
 			fLen = 255
 		}
 		schema.Append(buildColumnWithName("", names[i], ftypes[i], fLen))
