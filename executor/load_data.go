@@ -141,7 +141,7 @@ func NewLoadDataWorker(
 	if err != nil {
 		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(importPlan, tbl)
+	controller, err := importer.NewLoadDataController(userSctx, importPlan, tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -586,23 +586,31 @@ func (ji *logicalJobImporter) mergeAndSetMessage() string {
 
 		warns := make([]stmtctx.SQLWarn, numWarnings)
 		n := 0
-		lastInsertID := uint64(0)
 		for _, w := range ji.encodeWorkers {
 			n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
-			if w.lastInsertID > lastInsertID {
-				lastInsertID = w.lastInsertID
-			}
 		}
 		for _, w := range ji.commitWorkers {
 			n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
-			if w.lastInsertID > lastInsertID {
-				lastInsertID = w.lastInsertID
-			}
 		}
 		userStmtCtx.SetWarnings(warns)
-		userStmtCtx.LastInsertID = lastInsertID
+		userStmtCtx.LastInsertID = ji.getLastInsertID()
 	}
 	return msg
+}
+
+func (ji *logicalJobImporter) getLastInsertID() uint64 {
+	lastInsertID := uint64(0)
+	for _, w := range ji.encodeWorkers {
+		if w.lastInsertID != 0 && (lastInsertID == 0 || w.lastInsertID < lastInsertID) {
+			lastInsertID = w.lastInsertID
+		}
+	}
+	for _, w := range ji.commitWorkers {
+		if w.lastInsertID != 0 && (lastInsertID == 0 || w.lastInsertID < lastInsertID) {
+			lastInsertID = w.lastInsertID
+		}
+	}
+	return lastInsertID
 }
 
 // Close implements the importer.JobImporter interface.

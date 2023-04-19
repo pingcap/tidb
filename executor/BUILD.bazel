@@ -311,6 +311,7 @@ go_test(
         "join_pkg_test.go",
         "join_test.go",
         "joiner_test.go",
+        "load_data_test.go",
         "main_test.go",
         "memtable_reader_test.go",
         "merge_join_test.go",
