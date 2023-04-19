@@ -77,6 +77,26 @@ func runBackupRawCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
+func runBackupTxnCommand(command *cobra.Command, cmdName string) error {
+	cfg := task.TxnKvConfig{Config: task.Config{LogProgress: HasLogFile()}}
+	if err := cfg.ParseBackupConfigFromFlags(command.Flags()); err != nil {
+		command.SilenceUsage = false
+		return errors.Trace(err)
+	}
+
+	ctx := GetDefaultContext()
+	if cfg.EnableOpenTracing {
+		var store *appdash.MemoryStore
+		ctx, store = trace.TracerStartSpan(ctx)
+		defer trace.TracerFinishSpan(ctx, store)
+	}
+	if err := task.RunBackupTxn(ctx, gluetikv.Glue{}, cmdName, &cfg); err != nil {
+		log.Error("failed to backup txn kv", zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // NewBackupCommand return a full backup subcommand.
 func NewBackupCommand() *cobra.Command {
 	command := &cobra.Command{
@@ -103,6 +123,7 @@ func NewBackupCommand() *cobra.Command {
 		newDBBackupCommand(),
 		newTableBackupCommand(),
 		newRawBackupCommand(),
+		newTxnBackupCommand(),
 	)
 
 	task.DefineBackupFlags(command.PersistentFlags())
@@ -168,5 +189,20 @@ func newRawBackupCommand() *cobra.Command {
 	}
 
 	task.DefineRawBackupFlags(command)
+	return command
+}
+
+// newTxnBackupCommand return a txn kv range backup subcommand.
+func newTxnBackupCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "txn",
+		Short: "(experimental) backup a txn kv range from TiKV cluster",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runBackupTxnCommand(command, task.TxnBackupCmd)
+		},
+	}
+
+	task.DefineTxnBackupFlags(command)
 	return command
 }

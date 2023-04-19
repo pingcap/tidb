@@ -64,6 +64,7 @@ const (
 	DBBackupCmd    = "Database Backup"
 	TableBackupCmd = "Table Backup"
 	RawBackupCmd   = "Raw Backup"
+	TxnBackupCmd   = "Txn Backup"
 	EBSBackupCmd   = "EBS Backup"
 )
 

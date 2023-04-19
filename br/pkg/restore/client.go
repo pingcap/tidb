@@ -495,14 +495,18 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 	return nil
 }
 
-func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
+func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
 	rc.rawKVClient = c
+}
+
+func (rc *Client) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
+	return !(backupMeta.IsRawKv || backupMeta.IsTxnKv)
 }
 
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
@@ -511,7 +515,7 @@ func (rc *Client) InitBackupMeta(
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader) error {
-	if !backupMeta.IsRawKv {
+	if rc.needLoadSchemas(backupMeta) {
 		databases, err := utils.LoadBackupTables(c, reader)
 		if err != nil {
 			return errors.Trace(err)
@@ -534,7 +538,7 @@ func (rc *Client) InitBackupMeta(
 	}
 	rc.backupMeta = backupMeta
 
-	rc.InitClients(backend, backupMeta.IsRawKv)
+	rc.InitClients(backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
 }
@@ -1194,7 +1198,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, RewriteModeLegacy)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, rc.rewriteMode)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1399,6 +1403,25 @@ func (rc *Client) RestoreSSTFiles(
 	return ctx.Err()
 }
 
+func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.File, updateCh glue.Progress) error {
+	errCh := make(chan error, len(files))
+	eg, ectx := errgroup.WithContext(ctx)
+	defer close(errCh)
+
+	for _, file := range files {
+		fileReplica := file
+		rc.workerPool.ApplyOnErrorGroup(eg,
+			func() error {
+				defer updateCh.Inc()
+				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
+			})
+	}
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // RestoreRaw tries to restore raw keys in the specified range.
 func (rc *Client) RestoreRaw(
 	ctx context.Context, startKey []byte, endKey []byte, files []*backuppb.File, updateCh glue.Progress,
@@ -1411,30 +1434,13 @@ func (rc *Client) RestoreRaw(
 			logutil.Key("endKey", endKey),
 			zap.Duration("take", elapsed))
 	}()
-	errCh := make(chan error, len(files))
-	eg, ectx := errgroup.WithContext(ctx)
-	defer close(errCh)
-
 	err := rc.fileImporter.SetRawRange(startKey, endKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	for _, file := range files {
-		fileReplica := file
-		rc.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
-				defer updateCh.Inc()
-				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
-			})
-	}
-	if err := eg.Wait(); err != nil {
-		log.Error(
-			"restore raw range failed",
-			logutil.Key("startKey", startKey),
-			logutil.Key("endKey", endKey),
-			zap.Error(err),
-		)
+	err = rc.WaitForFilesRestored(ctx, files, updateCh)
+	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Info(
