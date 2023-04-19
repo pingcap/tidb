@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -219,7 +220,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int6
 	return table, nil
 }
 
-func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
+func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -236,7 +237,31 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 		if histID != idxInfo.ID {
 			continue
 		}
-		if idx == nil || idx.LastUpdateVersion < histVer {
+		// We will not load buckets, topn and cmsketch if:
+		// 1. lease > 0, and:
+		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
+		// 3. loadAll is false.
+		// 4. lite-init-stats is true(remove the condition when lite init stats is GA).
+		notNeedLoad := lease > 0 &&
+			(idx == nil || ((!idx.IsStatsInitialized() || idx.IsAllEvicted()) && idx.LastUpdateVersion < histVer)) &&
+			!loadAll &&
+			config.GetGlobalConfig().Performance.LiteInitStats
+		if notNeedLoad {
+			idx = &Index{
+				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0),
+				ErrorRate:  errorRate,
+				StatsVer:   statsVer,
+				Info:       idxInfo,
+				Flag:       flag,
+				PhysicalID: table.PhysicalID,
+			}
+			if idx.IsAnalyzed() {
+				idx.StatsLoadedStatus = NewStatsAllEvictedStatus()
+			}
+			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
+			break
+		}
+		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
 			hg, err := HistogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
 			if err != nil {
 				return errors.Trace(err)
@@ -300,10 +325,10 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 			continue
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
-		// We will not load buckets if:
+		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
-		// 2. this column is not handle, and:
-		// 3. the column doesn't has any statistics before, and:
+		// 2. this column is not handle or lite-init-stats is true(remove the condition when lite init stats is GA), and:
+		// 3. the column doesn't have any of buckets, topn, cmsketch in memory before, and:
 		// 4. loadAll is false.
 		//
 		// Here is the explanation of the condition `!col.IsStatsInitialized() || col.IsAllEvicted()`.
@@ -317,11 +342,9 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		// 3. If some parts(Histogram/TopN/CMSketch) of stats for it exist in TiDB memory currently, we choose to load all of
 		//    its new stats once we find stats version is updated.
 		notNeedLoad := lease > 0 &&
-			!isHandle &&
+			(!isHandle || config.GetGlobalConfig().Performance.LiteInitStats) &&
 			(col == nil || ((!col.IsStatsInitialized() || col.IsAllEvicted()) && col.LastUpdateVersion < histVer)) &&
 			!loadAll
-		// Here is
-		//For one column, if there is no stats for it in the storage(analyze is never)
 		if notNeedLoad {
 			col = &Column{
 				PhysicalID: table.PhysicalID,
@@ -427,7 +450,7 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			err = indexStatsFromStorage(reader, row, table, tableInfo, loadAll)
+			err = indexStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
 		} else {
 			err = columnStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
 		}
