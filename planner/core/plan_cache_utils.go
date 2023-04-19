@@ -45,6 +45,11 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+const (
+	// MaxCacheableLimitCount is the max limit count for cacheable query.
+	MaxCacheableLimitCount = 10000
+)
+
 var (
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
@@ -512,8 +517,8 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
 						break
 					}
-					if val > 10000 {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("limit count more than 10000"))
+					if val > MaxCacheableLimitCount {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("limit count is too large"))
 						break
 					}
 					limitOffsetAndCount = append(limitOffsetAndCount, val)
