@@ -379,7 +379,8 @@
       "ttl/": "only for ttl code",
       "planner/": "only for planner code",
       "parser/": "only for parser code",
-      "dumpling/": "only for dumpling code"
+      "dumpling/": "only for dumpling code",
+      "disttask":"disttask code"
     }
   },
   "makezero": {
