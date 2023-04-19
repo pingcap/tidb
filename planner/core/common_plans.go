@@ -1406,23 +1406,26 @@ func IsAutoCommitTxn(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
 }
 
+// CreateProcedure create tidb_procedure exec plan.
 type CreateProcedure struct {
 	baseSchemaProducer
 	ProcedureInfo ast.StmtNode
 	is            infoschema.InfoSchema
 }
 
+// DropProcedure drop tidb_procedure exec plan.
 type DropProcedure struct {
 	baseSchemaProducer
 	Procedure *ast.DropProcedureStmt
 	is        infoschema.InfoSchema
 }
 
+// CallStmt execute tidb_procedure plan.
 type CallStmt struct {
 	baseSchemaProducer
 	Callstmt      *ast.CallStmt
 	Is            infoschema.InfoSchema
-	OldSqlMod     string
+	OldSQLMod     string
 	IsStrictMode  bool
 	ProcedureInfo *ProcedurebodyInfo
 	Plan          *ProcedurePlan

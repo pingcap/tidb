@@ -1319,7 +1319,7 @@ func (b *builtinGetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	return types.ZeroTime, true, nil
 }
 
-// BuildGetVarFunction builds a GetVar ScalarFunction from the Expression.
+// BuildGetProcedureVarFunction builds a GetProcedureVar ScalarFunction from the Expression.
 func BuildGetProcedureVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (Expression, error) {
 	var fc functionClass
 	switch retType.EvalType() {
@@ -1347,12 +1347,6 @@ func BuildGetProcedureVarFunction(ctx sessionctx.Context, expr Expression, retTy
 		Function: f,
 	}, nil
 }
-
-// type getVarFunctionClass struct {
-// 	baseFunctionClass
-
-// 	tp *types.FieldType
-// }
 
 type getProcedureStringVarFunctionClass struct {
 	getVarFunctionClass

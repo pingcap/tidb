@@ -541,8 +541,8 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
-// SqlParse for parse procedure.
-func (tk *TestKit) SqlParse(_ context.Context, sql string) ([]ast.StmtNode, error) {
+// SQLParse for parse procedure.
+func (tk *TestKit) SQLParse(_ context.Context, sql string) ([]ast.StmtNode, error) {
 	return tk.session.Parse(context.Background(), sql)
 }
 

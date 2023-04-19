@@ -13,7 +13,7 @@ import (
 type ProcedurebodyInfo struct {
 	Name                string
 	Procedurebody       string
-	SqlMode             string
+	SQLMode             string
 	CharacterSetClient  string
 	CollationConnection string
 	ShemaCollation      string
@@ -31,6 +31,7 @@ type ProcedureParameterVal struct {
 type ProcedureBaseBody interface {
 }
 
+// ProcedureExecPlan tidb procedure execute interface.
 type ProcedureExecPlan interface {
 	Execute(ctx context.Context, sctx sessionctx.Context, id *uint) error
 	GetContext() *variable.ProcedureContext

@@ -25,7 +25,7 @@ type ProcedureExec struct {
 	flag          int
 	is            infoschema.InfoSchema
 	Statement     ast.StmtNode
-	oldSqlMod     string
+	oldSQLMode    string
 	procedureInfo *plannercore.ProcedurebodyInfo
 	Plan          *plannercore.ProcedurePlan
 	warnings      []error
@@ -82,7 +82,7 @@ func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 		return err
 	}
 	//names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
-	e.appendRow([]interface{}{procedureInfo.Name, procedureInfo.SqlMode, procedureInfo.Procedurebody, procedureInfo.CharacterSetClient,
+	e.appendRow([]interface{}{procedureInfo.Name, procedureInfo.SQLMode, procedureInfo.Procedurebody, procedureInfo.CharacterSetClient,
 		procedureInfo.CollationConnection, procedureInfo.ShemaCollation})
 	return nil
 }
@@ -114,7 +114,7 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	procedurebodyInfo := &plannercore.ProcedurebodyInfo{}
 	procedurebodyInfo.Name = rows[0].GetString(0)
 	procedurebodyInfo.Procedurebody = " CREATE PROCEDURE `" + rows[0].GetString(0) + "`(" + rows[0].GetString(3) + ") " + rows[0].GetString(2)
-	procedurebodyInfo.SqlMode = rows[0].GetSet(1).String()
+	procedurebodyInfo.SQLMode = rows[0].GetSet(1).String()
 	procedurebodyInfo.CharacterSetClient = rows[0].GetString(4)
 	procedurebodyInfo.CollationConnection = rows[0].GetString(5)
 	procedurebodyInfo.ShemaCollation = rows[0].GetString(6)
@@ -188,7 +188,7 @@ func (b *executorBuilder) buildCallProcedure(v *plannercore.CallStmt) Executor {
 		flag:          0,
 		is:            b.is,
 		done:          false,
-		oldSqlMod:     v.OldSqlMod,
+		oldSQLMode:    v.OldSQLMod,
 		procedureInfo: v.ProcedureInfo,
 		Plan:          v.Plan,
 		outParam:      make(map[string]string, 10),

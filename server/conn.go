@@ -2674,8 +2674,8 @@ func (cc *ClientConn) MultiHanldeNodeWithResult(ctx context.Context, stmt ast.St
 	return nil
 }
 
-// SqlParse parsing SQL
-func (cc *ClientConn) SqlParse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+// SQLParse parsing SQL
+func (cc *ClientConn) SQLParse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
 		cc.onExtensionSQLParseFailed(sql, err)
@@ -2721,9 +2721,8 @@ func (cc *ClientConn) MultiHanldeNode(ctx context.Context, stmt ast.StmtNode) (e
 				rs.Close()
 			}
 			return err
-		} else {
-			return err
 		}
+		return err
 	}
 	return nil
 }

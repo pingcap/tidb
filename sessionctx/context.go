@@ -276,6 +276,6 @@ type SysProcTracker interface {
 // SessionExec procedure implementation interface
 type SessionExec interface {
 	MultiHanldeNodeWithResult(ctx context.Context, stmt ast.StmtNode) error
-	SqlParse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+	SQLParse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	MultiHanldeNode(ctx context.Context, stmt ast.StmtNode) error
 }

@@ -2576,15 +2576,15 @@ func (s *SessionVars) UpdateProcedureVariable(name string, datum types.Datum) er
 	return s.procedureContext.context.UpdateVariableVars(name, datum, s.StmtCtx)
 }
 
-// SetStringUserVar set the value and collation for user defined variable.
+// SetProcedureStringUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetProcedureStringUserVar(name string, strVal string, collation string) error {
 	name = strings.ToLower(name)
 	if len(collation) > 0 {
 		return s.UpdateProcedureVariable(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
-	} else {
-		_, collation = s.GetCharsetInfo()
-		return s.UpdateProcedureVariable(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
 	}
+	_, collation = s.GetCharsetInfo()
+	return s.UpdateProcedureVariable(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
+
 }
 
 // TableDelta stands for the changed count for one table or partition.
