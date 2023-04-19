@@ -717,6 +717,8 @@ type Performance struct {
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
+
+	LiteInitStats bool `toml:"lite-init-stats" json:"lite-init-stats"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -982,6 +984,7 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:          false,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
+		LiteInitStats:                     false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
