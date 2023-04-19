@@ -2487,8 +2487,7 @@ func upgradeToVer142(s Session, ver int64) {
 	}
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache, "0")
-
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache, variable.Off)
 }
 
 func writeOOMAction(s Session) {
