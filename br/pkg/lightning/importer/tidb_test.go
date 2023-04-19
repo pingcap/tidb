@@ -273,36 +273,6 @@ func TestLoadSchemaInfoMissing(t *testing.T) {
 	require.Regexp(t, ".*Unknown database.*", err.Error())
 }
 
-func TestGetGCLifetime(t *testing.T) {
-	s := newTiDBSuite(t)
-	ctx := context.Background()
-
-	s.mockDB.
-		ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
-	s.mockDB.
-		ExpectClose()
-
-	res, err := ObtainGCLifeTime(ctx, s.timgr.db)
-	require.NoError(t, err)
-	require.Equal(t, "10m", res)
-}
-
-func TestSetGCLifetime(t *testing.T) {
-	s := newTiDBSuite(t)
-	ctx := context.Background()
-
-	s.mockDB.
-		ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WithArgs("12m").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	s.mockDB.
-		ExpectClose()
-
-	err := UpdateGCLifeTime(ctx, s.timgr.db, "12m")
-	require.NoError(t, err)
-}
-
 func TestAlterAutoInc(t *testing.T) {
 	s := newTiDBSuite(t)
 	ctx := context.Background()

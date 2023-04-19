@@ -78,10 +78,6 @@ const (
 )
 
 const (
-	defaultGCLifeTime = 100 * time.Hour
-)
-
-const (
 	compactStateIdle int32 = iota
 	compactStateDoing
 )
@@ -1552,7 +1548,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		manager, err := newChecksumManager(ctx, rc, kvStore)
+		manager, err := NewChecksumManager(ctx, rc, kvStore)
 		if err != nil {
 			return errors.Trace(err)
 		}

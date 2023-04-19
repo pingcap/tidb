@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -772,6 +774,12 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 	}
 }
 
+func MockDoChecksumCtx(db *sql.DB) context.Context {
+	ctx := context.Background()
+	manager := local.NewTiDBChecksumExecutor(db)
+	return context.WithValue(ctx, &checksumManagerKey, manager)
+}
+
 func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
 	db, mock, err := sqlmock.New()
 	require.NoError(s.T(), err)
@@ -1226,7 +1234,6 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		stores         pdtypes.StoresInfo
 		emptyRegions   pdtypes.RegionsInfo
 		expectMsgs     []string
-		expectResult   bool
 		expectErrorCnt int
 	}
 
@@ -1247,7 +1254,6 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				Regions: append([]pdtypes.RegionInfo(nil), makeRegions(100, 1)...),
 			},
 			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
-			expectResult:   true,
 			expectErrorCnt: 0,
 		},
 		{
@@ -1267,8 +1273,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				".*TiKV stores \\(1\\) contains more than 500 empty regions respectively.*",
 				".*Region distribution is unbalanced.*but we expect it should not be less than 0.75.*",
 			},
-			expectResult:   true,
-			expectErrorCnt: 0,
+			expectErrorCnt: 1, // empty region too large
 		},
 		{
 			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
@@ -1277,7 +1282,6 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
-			expectResult:   false,
 			expectErrorCnt: 1,
 		},
 		{
@@ -1287,7 +1291,6 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
-			expectResult:   false,
 			expectErrorCnt: 1,
 		},
 	}
@@ -1298,7 +1301,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		return data
 	}
 
-	for _, ca := range testCases {
+	for i, ca := range testCases {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			var err error
 			if req.URL.Path == pdStores {
@@ -1342,8 +1345,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		ctx := context.Background()
 		err := rc.checkClusterRegion(ctx)
 		require.NoError(s.T(), err)
-		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(Critical))
-		require.Equal(s.T(), ca.expectResult, template.Success())
+		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(Warn), fmt.Sprintf("case %d", i))
 
 		for _, expectMsg := range ca.expectMsgs {
 			require.Regexp(s.T(), expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
