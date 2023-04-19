@@ -690,6 +690,8 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
@@ -697,8 +699,15 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo(), false, false)
-		if err != nil {
+		if err = e.handleErr(gCol, &val, rowIdx, err); err != nil {
 			return nil, err
+		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				newWarnings[k].Err = completeInsertErr(gCol.ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
 		}
 		// Handle the bad null error.
 		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
