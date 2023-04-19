@@ -770,6 +770,7 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	diskQuota := GetSysVar(TiDBDDLDiskQuota)
 	var (
+		mb  int64 = 1024 * 1024
 		gb  int64 = 1024 * 1024 * 1024
 		pb  int64 = 1024 * 1024 * 1024 * 1024 * 1024
 		err error
@@ -778,12 +779,12 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 	// Default 100 GB
 	require.Equal(t, diskQuota.Value, strconv.FormatInt(100*gb, 10))
 
-	// MinValue is 100 GB, set to 50 Gb is not allowed
-	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLDiskQuota, strconv.FormatInt(50*gb, 10))
+	// MinValue is 1 GB, set to 500 MB is not allowed
+	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLDiskQuota, strconv.FormatInt(500*mb, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatInt(100*gb, 10), val)
+	require.Equal(t, strconv.FormatInt(1*gb, 10), val)
 
 	// Set to 100 GB
 	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLDiskQuota, strconv.FormatInt(100*gb, 10))
