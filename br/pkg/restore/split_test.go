@@ -696,7 +696,7 @@ func TestRestoreFailed(t *testing.T) {
 		fakeRanges("bcy", "cad", "xxy"),
 	}
 	r := &fakeRestorer{}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, nil)
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -718,7 +718,7 @@ func TestSplitFailed(t *testing.T) {
 		fakeRanges("bcy", "cad", "xxy"),
 	}
 	r := &fakeRestorer{errorInSplit: true}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, nil)
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -965,15 +965,17 @@ type mockLogIter struct {
 	next int
 }
 
-func (m *mockLogIter) TryNext(ctx context.Context) iter.IterResult[*backuppb.DataFileInfo] {
+func (m *mockLogIter) TryNext(ctx context.Context) iter.IterResult[*restore.LogDataFileInfo] {
 	if m.next > 10000 {
-		return iter.Done[*backuppb.DataFileInfo]()
+		return iter.Done[*restore.LogDataFileInfo]()
 	}
 	m.next += 1
-	return iter.Emit(&backuppb.DataFileInfo{
-		StartKey: []byte(fmt.Sprintf("a%d", m.next)),
-		EndKey:   []byte("b"),
-		Length:   1024, // 1 KB
+	return iter.Emit(&restore.LogDataFileInfo{
+		DataFileInfo: &backuppb.DataFileInfo{
+			StartKey: []byte(fmt.Sprintf("a%d", m.next)),
+			EndKey:   []byte("b"),
+			Length:   1024, // 1 KB
+		},
 	})
 }
 

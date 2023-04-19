@@ -1318,6 +1318,9 @@ type SessionVars struct {
 	// PlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
 	PlanCacheMaxPlanSize uint64
 
+	// SessionPlanCacheSize controls the size of session plan cache.
+	SessionPlanCacheSize uint64
+
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
 	ConstraintCheckInPlacePessimistic bool
@@ -1338,6 +1341,10 @@ type SessionVars struct {
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
+
+	// InPlanReplayer means we are now executing a statement for a PLAN REPLAYER SQL.
+	// Note that PLAN REPLAYER CAPTURE is not included here.
+	InPlanReplayer bool
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
@@ -2224,7 +2231,7 @@ func (k planCacheStmtKey) Hash() []byte {
 // AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
 func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) {
 	if s.nonPreparedPlanCacheStmts == nil {
-		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.NonPreparedPlanCacheSize), 0, 0)
+		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
 	}
 	s.nonPreparedPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
 }

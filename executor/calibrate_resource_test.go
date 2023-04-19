@@ -44,7 +44,7 @@ func TestCalibrateResource(t *testing.T) {
 		return items
 	}
 
-	// empty requet-unit config error
+	// empty request-unit config error
 	rs, err := tk.Exec("CALIBRATE RESOURCE")
 	require.NoError(t, err)
 	require.NotNil(t, rs)
@@ -96,6 +96,10 @@ func TestCalibrateResource(t *testing.T) {
 		return fpName == fpname
 	})
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("68569"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD TPCC").Check(testkit.Rows("68569"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE").Check(testkit.Rows("53026"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY").Check(testkit.Rows("31463"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY").Check(testkit.Rows("109776"))
 
 	// change total tidb cpu to less than tikv_cpu_quota
 	mockData["tidb_server_maxprocs"] = [][]types.Datum{

@@ -20,6 +20,7 @@ go_library(
     deps = [
         "//br/pkg/aws",
         "//br/pkg/backup",
+        "//br/pkg/checkpoint",
         "//br/pkg/checksum",
         "//br/pkg/common",
         "//br/pkg/config",

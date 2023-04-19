@@ -34,52 +34,19 @@ type Encoder struct {
 	values     []*types.Datum
 	// Enable indicates whether this encoder should be use.
 	Enable bool
-	// WithChecksum indicates whether to append checksum to the encoded row data.
-	WithChecksum bool
 }
 
 // Encode encodes a row from a datums slice.
-func (encoder *Encoder) Encode(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum, buf []byte) ([]byte, error) {
+func (encoder *Encoder) Encode(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum, buf []byte, checksums ...uint32) ([]byte, error) {
 	encoder.reset()
-	err := encoder.encodeDatums(sc, colIDs, values)
-	if err != nil {
-		return nil, err
-	}
-	return encoder.row.toBytes(buf[:0]), nil
-}
-
-// EncodeWithExtraChecksum likes Encode but also appends an extra checksum if checksum is enabled.
-func (encoder *Encoder) EncodeWithExtraChecksum(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum, checksum uint32, buf []byte) ([]byte, error) {
-	encoder.reset()
-	if encoder.hasChecksum() {
-		encoder.setExtraChecksum(checksum)
-	}
-	err := encoder.encodeDatums(sc, colIDs, values)
-	if err != nil {
-		return nil, err
-	}
-	return encoder.row.toBytes(buf[:0]), nil
-}
-
-// Checksum caclulates the checksum of datumns.
-func (encoder *Encoder) Checksum(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum) (uint32, error) {
-	encoder.reset()
-	encoder.flags |= rowFlagChecksum
-	err := encoder.encodeDatums(sc, colIDs, values)
-	if err != nil {
-		return 0, err
-	}
-	return encoder.checksum1, nil
-}
-
-func (encoder *Encoder) encodeDatums(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum) error {
 	encoder.appendColVals(colIDs, values)
 	numCols, notNullIdx := encoder.reformatCols()
 	err := encoder.encodeRowCols(sc, numCols, notNullIdx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	encoder.setChecksums(checksums...)
+	return encoder.row.toBytes(buf[:0]), nil
 }
 
 func (encoder *Encoder) reset() {
@@ -94,9 +61,6 @@ func (encoder *Encoder) reset() {
 	encoder.checksumHeader = 0
 	encoder.checksum1 = 0
 	encoder.checksum2 = 0
-	if encoder.WithChecksum {
-		encoder.flags |= rowFlagChecksum
-	}
 }
 
 func (encoder *Encoder) appendColVals(colIDs []int64, values []types.Datum) {
@@ -192,9 +156,6 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 		} else {
 			r.offsets[i] = uint16(len(r.data))
 		}
-	}
-	if r.hasChecksum() {
-		return r.calcChecksum()
 	}
 	return nil
 }
