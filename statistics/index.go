@@ -467,6 +467,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 }
 
 func (idx *Index) checkStats() {
+	// When we are using stats from PseudoTable(), all column/index ID will be -1.
 	if idx.IsFullLoad() || idx.PhysicalID <= 0 {
 		return
 	}
