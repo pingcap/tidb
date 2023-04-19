@@ -2584,7 +2584,6 @@ func (s *SessionVars) SetProcedureStringUserVar(name string, strVal string, coll
 	}
 	_, collation = s.GetCharsetInfo()
 	return s.UpdateProcedureVariable(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
-
 }
 
 // TableDelta stands for the changed count for one table or partition.
