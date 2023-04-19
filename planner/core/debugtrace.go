@@ -51,7 +51,7 @@ type binaryParamInfo struct {
 	Value string
 }
 
-func (info *binaryParamInfo) MarshalSON() ([]byte, error) {
+func (info *binaryParamInfo) MarshalJSON() ([]byte, error) {
 	infoForMarshal := new(binaryParamInfo)
 	quote := `"`
 	// We only need the escape functionality of %q, the quoting is not needed,
