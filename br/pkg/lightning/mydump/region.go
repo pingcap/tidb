@@ -225,6 +225,7 @@ func MakeTableRegions(
 	eg.SetLimit(concurrency)
 	meta := cfg.TableMeta
 	for _, info := range meta.DataFiles {
+		info := info
 		eg.Go(func() error {
 			select {
 			case <-egCtx.Done():
