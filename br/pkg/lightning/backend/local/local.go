@@ -393,6 +393,8 @@ type BackendConfig struct {
 	MaxConnPerStore int
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
+	// concurrency of generateJobForRange.
+	RangeConcurrency int
 	// number of import(write & ingest) workers
 	WorkerConcurrency int
 	KVWriteBatchSize  int
@@ -425,6 +427,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		LocalStoreDir:           cfg.TikvImporter.SortedKVDir,
 		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
+		RangeConcurrency:        cfg.TikvImporter.RangeConcurrency,
 		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
 		KVWriteBatchSize:        cfg.TikvImporter.SendKVPairs,
 		CheckpointEnabled:       cfg.Checkpoint.Enable,
@@ -1129,26 +1132,38 @@ func (local *Backend) generateAndSendJob(
 	}
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
-	for _, r := range jobRanges {
-		jobs, err := local.generateJobForRange(ctx, engine, r, regionSplitSize, regionSplitKeys)
-		if err != nil {
-			return err
-		}
-		for _, job := range jobs {
-			jobWg.Add(1)
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(local.RangeConcurrency)
+	for _, jobRange := range jobRanges {
+		r := jobRange
+		eg.Go(func() error {
 			select {
-			case <-ctx.Done():
-				// this job is not put into jobToWorkerCh
-				jobWg.Done()
-				// if the context is canceled, it means worker has error, the first error can be
-				// found by worker's error group LATER. if this function returns an error it will
-				// seize the "first error".
+			case <-egCtx.Done():
 				return nil
-			case jobToWorkerCh <- job:
+			default:
 			}
-		}
+
+			jobs, err := local.generateJobForRange(egCtx, engine, r, regionSplitSize, regionSplitKeys)
+			if err != nil {
+				return err
+			}
+			for _, job := range jobs {
+				jobWg.Add(1)
+				select {
+				case <-egCtx.Done():
+					// this job is not put into jobToWorkerCh
+					jobWg.Done()
+					// if the context is canceled, it means worker has error, the first error can be
+					// found by worker's error group LATER. if this function returns an error it will
+					// seize the "first error".
+					return nil
+				case jobToWorkerCh <- job:
+				}
+			}
+			return nil
+		})
 	}
-	return nil
+	return eg.Wait()
 }
 
 // fakeRegionJobs is used in test , the injected job can be found by (startKey, endKey).
@@ -1300,7 +1315,7 @@ func (local *Backend) executeJob(
 ) error {
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
-			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
+			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
 	})
 	if local.ShouldCheckTiKV {
 		for _, peer := range job.region.Region.GetPeers() {
@@ -1317,8 +1332,7 @@ func (local *Backend) executeJob(
 					// The available disk percent of TiKV
 					ratio := store.Status.Available * 100 / store.Status.Capacity
 					if ratio < 10 {
-						return errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d",
-							store.Store.Address, store.Status.Available, store.Status.Capacity)
+						return errors.Errorf("the remaining storage capacity of TiKV(%s) is less than 10%%; please increase the storage capacity of TiKV and try again", store.Store.Address)
 					}
 				}
 				break
