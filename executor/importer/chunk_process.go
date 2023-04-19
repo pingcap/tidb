@@ -230,6 +230,7 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 				return err
 			}
 
+			p.progress.ReadRowCnt.Inc()
 			rowBatch = append(rowBatch, deliveredRow{kvs: kvs, offset: newOffset})
 			kvSize += kvs.Size()
 			// pebble cannot allow > 4.0G kv in one batch.
@@ -299,8 +300,8 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 		p.progress.EncodeFileSize.Add(currOffset - prevOffset)
 		prevOffset = currOffset
 
-		p.checksum.Add(kvBatch.dataChecksum)
-		p.checksum.Add(kvBatch.indexChecksum)
+		p.chunkInfo.Checksum.Add(kvBatch.dataChecksum)
+		p.chunkInfo.Checksum.Add(kvBatch.indexChecksum)
 
 		kvBatch.reset()
 	}
