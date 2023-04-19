@@ -3473,3 +3473,41 @@ func TestIndexJoinRangeFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestFixControl(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	s := tk.Session()
+	var input []string
+	var output []struct {
+		SQL        string
+		FixControl map[uint64]string
+		Error      string
+		Warnings   [][]interface{}
+		Variable   []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		err := tk.ExecToErr(tt)
+		var errStr string
+		if err != nil {
+			errStr = err.Error()
+		}
+		warning := tk.MustQuery("show warnings").Sort().Rows()
+		rows := testdata.ConvertRowsToStrings(tk.MustQuery("select @@tidb_opt_fix_control").Sort().Rows())
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].FixControl = s.GetSessionVars().OptimizerFixControl
+			output[i].Error = errStr
+			output[i].Warnings = warning
+			output[i].Variable = rows
+
+		})
+		require.Equal(t, output[i].FixControl, s.GetSessionVars().OptimizerFixControl)
+		require.Equal(t, output[i].Error, errStr)
+		require.Equal(t, output[i].Warnings, warning)
+		require.Equal(t, output[i].Variable, rows)
+	}
+}

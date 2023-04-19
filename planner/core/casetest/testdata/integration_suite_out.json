@@ -11178,5 +11178,56 @@
         "Result": null
       }
     ]
+  },
+  {
+    "Name": "TestFixControl",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"1000:'on', 10000:1\"",
+        "FixControl": {
+          "1000": "'on'",
+          "10000": "1"
+        },
+        "Error": "",
+        "Warnings": [],
+        "Variable": [
+          "1000:'on', 10000:1"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"100:'on', 100:1\"",
+        "FixControl": {
+          "100": "1"
+        },
+        "Error": "",
+        "Warnings": [
+          [
+            "Warning",
+            "1105",
+            "found repeated fix control: 100:'on' is overwritten with 1"
+          ]
+        ],
+        "Variable": [
+          "100:'on', 100:1"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"100, 100\"",
+        "FixControl": {
+          "100": "1"
+        },
+        "Error": "invalid fix control: colon not found",
+        "Warnings": [
+          [
+            "Error",
+            "1105",
+            "invalid fix control: colon not found"
+          ]
+        ],
+        "Variable": [
+          "100:'on', 100:1"
+        ]
+      }
+    ]
   }
 ]

@@ -855,6 +855,9 @@ const (
 
 	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
 	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
+
+	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
+	TiDBOptFixControl = "tidb_opt_fix_control"
 )
 
 // TiDB vars that have only global scope
