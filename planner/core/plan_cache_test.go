@@ -1341,7 +1341,7 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
 	tk.MustExec("set @a = 10001")
 	tk.MustExec("execute stmt using @a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: limit count more than 10000"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: limit count is too large"))
 }
 
 func TestPlanCacheMemoryTable(t *testing.T) {
