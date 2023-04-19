@@ -3614,7 +3614,7 @@ func TestOOMPanicAction(t *testing.T) {
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
 	require.Error(t, err)
-	require.Regexp(t, "Out Of Memory Quota!.*", err.Error())
+	require.Regexp(t, memory.PanicMemoryExceedWarnMsg, err.Error())
 
 	// Test insert from select oom panic.
 	tk.MustExec("drop table if exists t,t1")
