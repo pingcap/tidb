@@ -109,10 +109,10 @@ func (h *chunkRowHeap) Pop() interface{} {
 
 // NewSortedSelectResults is only for partition table
 // When pids != nil, the pid will be set in the last column of each chunk.Rows.
-// When cols == nil, sort by first few columns.
-func NewSortedSelectResults(selectResult []SelectResult, pids []int64, cols []*expression.Column, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
+// When schema == nil, sort by first few columns.
+func NewSortedSelectResults(selectResult []SelectResult, pids []int64, schema *expression.Schema, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
 	s := &sortedSelectResults{
-		columns:      cols,
+		schema:       schema,
 		selectResult: selectResult,
 		byItems:      byitems,
 		memTracker:   memTracker,
@@ -126,7 +126,7 @@ func NewSortedSelectResults(selectResult []SelectResult, pids []int64, cols []*e
 }
 
 type sortedSelectResults struct {
-	columns      []*expression.Column
+	schema       *expression.Schema
 	selectResult []SelectResult
 	compareFuncs []chunk.CompareFunc
 	byItems      []*util.ByItems
@@ -165,15 +165,10 @@ func (ssr *sortedSelectResults) buildKeyColumns() {
 	ssr.keyColumns = make([]int, 0, len(ssr.byItems))
 	for i, by := range ssr.byItems {
 		col := by.Expr.(*expression.Column)
-		if ssr.columns == nil {
+		if ssr.schema == nil {
 			ssr.keyColumns = append(ssr.keyColumns, i)
 		} else {
-			for idx, c := range ssr.columns {
-				if c.ID == col.ID {
-					ssr.keyColumns = append(ssr.keyColumns, idx)
-					break
-				}
-			}
+			ssr.keyColumns = append(ssr.keyColumns, ssr.schema.ColumnIndex(col))
 		}
 	}
 }
