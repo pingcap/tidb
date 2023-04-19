@@ -40,6 +40,8 @@ Specific upgrade process:
    2. All TiDBs: watch `/tidb/server/global_state` , receive this notification, and enter normal mode.
 7. Complete the bootstrap operation.
 
+![Figure 1: step 2 flow chart](./imgs/pause-user-ddl-when-upgrading-step-2.png)
+
 ### Limitations
 
 In the plan, we distinguish between DDL operation types. Among them, we distinguish whether the DDL operation is a system DDL operation or a user DDL operation  by whether the DDL operation is performed on the system table. Therefore, we require users to not perform DDL operations on system tables when upgrading.
