@@ -1076,11 +1076,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(11,11,11),(12,12,12),(13,13,13),(14,14,14)")
 
 	h := dom.StatsHandle()
-	oriLease := h.Lease()
-	h.SetLease(1)
-	defer func() {
-		h.SetLease(oriLease)
-	}()
+
 	// analyze partition only sets options of partition
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
 	is := dom.InfoSchema()
