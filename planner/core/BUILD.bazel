@@ -6,7 +6,7 @@ go_library(
         "access_object.go",
         "collect_column_stats_usage.go",
         "common_plans.go",
-        "debug_trace.go",
+        "debugtrace.go",
         "encode.go",
         "errors.go",
         "exhaust_physical_plans.go",
