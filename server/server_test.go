@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -589,67 +588,6 @@ func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(t *testing
 		res = res + " "
 		res = res + strconv.Itoa(cksum2)
 		cli.checkRows(t, rows, res)
-	})
-}
-
-func (cli *testServerClient) runTestLoadDataForGeneratedColumns(t *testing.T) {
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
-		config.AllowAllFiles = true
-		config.Params["sql_mode"] = "''"
-	}, "load_data_generated_columns", func(dbt *testkit.DBTestKit) {
-		dbt.MustExec(`create table t_gen (a int, b int generated ALWAYS AS (a+1));`)
-		dbt.MustExec("insert into t_gen (a) values (1);")
-		dbt.MustExec("insert into t_gen (a) values (2);")
-
-		// Dump a table with generated column, read it back.
-		// For issue https://github.com/pingcap/tidb/issues/39885
-		tmpFileName := path.Join(os.TempDir(), "load_data_generated_columns.csv")
-		dbt.MustExec(fmt.Sprintf("select * from t_gen into outfile '%s'", tmpFileName))
-		defer os.Remove(tmpFileName)
-		dbt.MustExec("delete from t_gen")
-
-		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t_gen", tmpFileName))
-		rows := dbt.MustQuery("select * from t_gen")
-		cli.checkRows(t, rows, "1 2", "2 3")
-		require.NoError(t, rows.Close())
-
-		// Specify the column, this should also work.
-		dbt.MustExec("delete from t_gen")
-		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t_gen (a)", tmpFileName))
-		rows = dbt.MustQuery("select * from t_gen")
-		cli.checkRows(t, rows, "1 2", "2 3")
-		require.NoError(t, rows.Close())
-
-		// Swap the column and test again.
-		dbt.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
-		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t_gen2", tmpFileName))
-		rows = dbt.MustQuery("select * from t_gen2")
-		cli.checkRows(t, rows, "3 2", "4 3")
-		require.NoError(t, rows.Close())
-
-		// Specify the column b
-		dbt.MustExec(`delete from t_gen2`)
-		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t_gen2 (b)", tmpFileName))
-		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows,
-			"Warning 1262 Row 1 was truncated; it contained more data than there were input columns",
-			"Warning 1262 Row 2 was truncated; it contained more data than there were input columns")
-		require.NoError(t, rows.Close())
-		rows = dbt.MustQuery("select * from t_gen2")
-		cli.checkRows(t, rows, "2 1", "3 2")
-		require.NoError(t, rows.Close())
-
-		// Specify the column a
-		dbt.MustExec(`delete from t_gen2`)
-		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t_gen2 (a)", tmpFileName))
-		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows,
-			"Warning 1262 Row 1 was truncated; it contained more data than there were input columns",
-			"Warning 1262 Row 2 was truncated; it contained more data than there were input columns")
-		require.NoError(t, rows.Close())
-		rows = dbt.MustQuery("select * from t_gen2")
-		cli.checkRows(t, rows, "<nil> <nil>", "<nil> <nil>")
-		require.NoError(t, rows.Close())
 	})
 }
 
@@ -2184,6 +2122,7 @@ func (cli *testServerClient) runTestStmtCount(t *testing.T) {
 func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "DBStatementCount", func(dbt *testkit.DBTestKit) {
 		originStmtCnt := getDBStmtCnt(string(cli.getMetrics(t)), "DBStatementCount")
+
 		dbt.MustExec("create table test (a int)")
 
 		dbt.MustExec("insert into test values(1)")
@@ -2218,15 +2157,15 @@ func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 		dbt.MustExec("drop table t2;")
 
 		currentStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
-		require.Equal(t, originStmtCnt["CreateTable"]+2, currentStmtCnt["CreateTable"])
+		require.Equal(t, originStmtCnt["CreateTable"]+3, currentStmtCnt["CreateTable"])
 		require.Equal(t, originStmtCnt["Insert"]+5, currentStmtCnt["Insert"])
 		require.Equal(t, originStmtCnt["Delete"]+1, currentStmtCnt["Delete"])
 		require.Equal(t, originStmtCnt["Update"]+2, currentStmtCnt["Update"])
-		require.Equal(t, originStmtCnt["Select"]+4, currentStmtCnt["Select"])
+		require.Equal(t, originStmtCnt["Select"]+5, currentStmtCnt["Select"])
 		require.Equal(t, originStmtCnt["Prepare"]+2, currentStmtCnt["Prepare"])
 		require.Equal(t, originStmtCnt["Execute"]+0, currentStmtCnt["Execute"])
 		require.Equal(t, originStmtCnt["Replace"]+1, currentStmtCnt["Replace"])
-		// require.Equal(t, originStmtCnt["Use"]+3, currentStmtCnt["Use"])  unstable
+		require.Equal(t, originStmtCnt["Use"]+6, currentStmtCnt["Use"])
 		require.Equal(t, originStmtCnt["TruncateTable"]+1, currentStmtCnt["TruncateTable"])
 		require.Equal(t, originStmtCnt["Show"]+2, currentStmtCnt["Show"])
 		require.Equal(t, originStmtCnt["AnalyzeTable"]+2, currentStmtCnt["AnalyzeTable"])

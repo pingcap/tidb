@@ -266,3 +266,49 @@ mynull,"mynull"
 		LINES TERMINATED BY '\n';`, gcsEndpoint)
 	s.tk.MustMatchErrMsg(sql, `must specify FIELDS \[OPTIONALLY\] ENCLOSED BY`)
 }
+
+func (s *mockGCSSuite) TestLoadDataForGeneratedColumns() {
+	// For issue https://github.com/pingcap/tidb/issues/39885
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec("USE load_csv;")
+	s.tk.MustExec("set @@sql_mode = ''")
+	s.tk.MustExec(`CREATE TABLE load_csv.t_gen1 (a int, b int generated ALWAYS AS (a+1));`)
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-bucket",
+			Name:       "generated_columns.csv",
+		},
+		Content: []byte("1	2\n2	3"),
+	})
+
+	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s' INTO TABLE load_csv.t_gen1", gcsEndpoint))
+	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
+	s.tk.MustExec("delete from t_gen1")
+
+	// Specify the column, this should also work.
+	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s' INTO TABLE load_csv.t_gen1 (a)", gcsEndpoint))
+	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
+
+	// Swap the column and test again.
+	s.tk.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
+	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s' INTO TABLE load_csv.t_gen2", gcsEndpoint))
+	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
+	s.tk.MustExec(`delete from t_gen2`)
+
+	// Specify the column b
+	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s' INTO TABLE load_csv.t_gen2 (b)", gcsEndpoint))
+	s.tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1262 Row 1 was truncated; it contained more data than there were input columns",
+		"Warning 1262 Row 2 was truncated; it contained more data than there were input columns"))
+	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
+	s.tk.MustExec(`delete from t_gen2`)
+
+	// Specify the column a
+	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s' INTO TABLE load_csv.t_gen2 (a)", gcsEndpoint))
+	s.tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1262 Row 1 was truncated; it contained more data than there were input columns",
+		"Warning 1262 Row 2 was truncated; it contained more data than there were input columns"))
+	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("<nil> <nil>", "<nil> <nil>"))
+}

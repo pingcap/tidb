@@ -15,6 +15,9 @@
 package loaddatatest
 
 import (
+	"fmt"
+	"path"
+	"os"
 	"context"
 	"testing"
 
@@ -497,4 +500,20 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	deleteSQL := "delete from range_t"
 	selectSQL := "select * from range_t order by a;"
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+}
+
+func TestLoadDataForGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_gen (a int, b int generated ALWAYS AS (a+1));")
+	tk.MustExec("insert into t_gen (a) values (1);")
+	tk.MustExec("insert into t_gen (a) values (2);")
+	tmpFileName := path.Join(os.TempDir(), "tidb_test_loaddata_generated_column.txt")
+	tk.MustExec(fmt.Sprintf("select * from t_gen into outfile '%s'", tmpFileName))
+	defer os.Remove(tmpFileName)
+	tk.MustExec("delete from t_gen")
+	tk.MustExec(fmt.Sprintf("load data infile '%s' into table t_gen", tmpFileName))
+
+	tk.MustQuery("select * from t_gen").Check(testkit.Rows("1 2", "2 3"))
 }
