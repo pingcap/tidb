@@ -26,6 +26,7 @@ go_library(
         "//br/pkg/lightning/verification",
         "//br/pkg/storage",
         "//config",
+        "//executor/asyncloaddata",
         "//expression",
         "//kv",
         "//meta/autoid",

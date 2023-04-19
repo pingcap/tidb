@@ -37,15 +37,6 @@ go_test(
     race = "on",
     shard_count = 6,
     deps = [
-<<<<<<< HEAD
-        "//br/pkg/lightning/config",
-        "//executor",
-        "//executor/importer",
-        "//kv",
-        "//parser/auth",
-        "//store/mockstore",
-=======
->>>>>>> master
         "//testkit",
         "//util/sqlexec",
         "@com_github_stretchr_testify//require",

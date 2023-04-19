@@ -1231,6 +1231,11 @@ func (SchemaTracker) SchemaSyncer() syncer.SchemaSyncer {
 	return nil
 }
 
+// StateSyncer implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) StateSyncer() syncer.StateSyncer {
+	return nil
+}
+
 // OwnerManager implements the DDL interface, it's no-op in DM's case.
 func (SchemaTracker) OwnerManager() owner.Manager {
 	return nil
