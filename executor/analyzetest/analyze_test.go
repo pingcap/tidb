@@ -17,7 +17,6 @@ package analyzetest
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/memory"
 	"runtime"
 	"strconv"
 	"strings"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
