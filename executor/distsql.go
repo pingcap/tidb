@@ -699,10 +699,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				pids = append(pids, e.prunedPartitions[partTblIdx].GetPhysicalID())
 			}
 		}
-		worker.batchSize = initBatchSize
-		if worker.batchSize > worker.maxBatchSize {
-			worker.batchSize = worker.maxBatchSize
-		}
+		worker.batchSize = mathutil.Min(initBatchSize, worker.maxBatchSize)
 		if len(results) > 1 && len(e.byItems) != 0 {
 			ssr := distsql.NewSortedSelectResults(results, pids, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
