@@ -96,6 +96,29 @@ func getCheckpointTaskInfoPathByID(clusterID uint64) string {
 	return fmt.Sprintf(CheckpointTaskInfoForLogRestorePathFormat, clusterID)
 }
 
+// A progress type for snapshot + log restore.
+//
+// Before the id-maps is persist into external storage, the snapshot restore and
+// id-maps constructure can be repeated. So if the progress is in `InSnapshotRestore`,
+// it can retry from snapshot restore.
+//
+// After the id-maps is persist into external storage, there are some meta-kvs has
+// been restored into the cluster, such as `rename ddl`. Where would be a situation:
+//
+// the first execution:
+//
+//	table A created in snapshot restore is renamed to table B in log restore
+//	     table A (id 80)       -------------->        table B (id 80)
+//	  ( snapshot restore )                            ( log restore )
+//
+// the second execution if don't skip snasphot restore:
+//
+//	table A is created again in snapshot restore, because there is no table named A
+//	     table A (id 81)       -------------->   [not in id-maps, so ignored]
+//	  ( snapshot restore )                            ( log restore )
+//
+// Finally, there is a duplicated table A in the cluster.
+// Therefore, need to skip snapshot restore when the progress is `InLogRestoreAndIdMapPersist`.
 type RestoreProgress int
 
 const (
@@ -104,10 +127,12 @@ const (
 	InLogRestoreAndIdMapPersist
 )
 
+// CheckpointTaskInfo is unique information within the same cluster id. It represents the last
+// restore task executed for this cluster.
 type CheckpointTaskInfoForLogRestore struct {
-	//
+	// the progress for this task
 	Progress RestoreProgress `json:"progress"`
-	//
+	// a task marker to distinguish the different tasks
 	StartTS   uint64 `json:"start-ts"`
 	RestoreTS uint64 `json:"restore-ts"`
 	// updated in the progress of `InLogRestoreAndIdMapPersist`

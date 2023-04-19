@@ -2377,15 +2377,22 @@ func (rc *Client) initSchemasMap(
 	return backupMeta.GetDbMaps(), nil
 }
 
+type InitSchemaConfig struct {
+	// required
+	IsNewTask      bool
+	HasFullRestore bool
+	TableFilter    filter.Filter
+
+	// optional
+	TiFlashRecorder *tiflashrec.TiFlashRecorder
+	Tables          map[int64]*metautil.Table
+}
+
 // InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
 func (rc *Client) InitSchemasReplaceForDDL(
 	ctx context.Context,
-	tiflashRecorder *tiflashrec.TiFlashRecorder,
-	tables *map[int64]*metautil.Table,
-	tableFilter filter.Filter,
-	newTask bool,
-	hasFullRestore bool,
+	cfg *InitSchemaConfig,
 ) (*stream.SchemasReplace, error) {
 	var (
 		err    error
@@ -2395,7 +2402,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	)
 
 	// not new task, load schemas map from external storage
-	if !newTask {
+	if !cfg.IsNewTask {
 		log.Info("try to load pitr id maps")
 		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.restoreTS)
 		if err != nil {
@@ -2405,7 +2412,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
-	if len(dbMaps) <= 0 && !hasFullRestore {
+	if len(dbMaps) <= 0 && !cfg.HasFullRestore {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
 		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
 		if err != nil {
@@ -2415,7 +2422,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster")
-		for _, t := range *tables {
+		for _, t := range cfg.Tables {
 			dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
 			newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
 			if !exist {
@@ -2468,7 +2475,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	}
 
 	rp := stream.NewSchemasReplace(
-		dbReplaces, tiflashRecorder, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
+		dbReplaces, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
 		rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
 	return rp, nil
 }

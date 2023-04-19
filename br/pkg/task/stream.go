@@ -1303,8 +1303,13 @@ func restoreStream(
 		newTask = false
 	}
 	// get the schemas ID replace information.
-	schemasReplace, err := client.InitSchemasReplaceForDDL(
-		ctx, cfg.tiflashRecorder, &fullBackupTables, cfg.TableFilter, newTask, len(cfg.FullBackupStorage) > 0)
+	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &restore.InitSchemaConfig{
+		IsNewTask:       newTask,
+		HasFullRestore:  len(cfg.FullBackupStorage) > 0,
+		TableFilter:     cfg.TableFilter,
+		TiFlashRecorder: cfg.tiflashRecorder,
+		Tables:          fullBackupTables,
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
