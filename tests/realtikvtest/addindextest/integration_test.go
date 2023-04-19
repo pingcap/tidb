@@ -395,7 +395,8 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
 	require.True(t, cancelled)
 	dom.DDL().SetHook(defHook)
-	require.True(t, ingest.LitBackCtxMgr.Available())
+	err := ingest.LitBackCtxMgr.CheckAvailable()
+	require.NoError(t, err)
 }
 
 func TestAddIndexSplitTableRanges(t *testing.T) {

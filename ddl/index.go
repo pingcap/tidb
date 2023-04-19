@@ -622,7 +622,11 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
-		reorgTp := pickBackfillType(job)
+		var reorgTp model.ReorgType
+		reorgTp, err = pickBackfillType(job, w.ctx, indexInfo.Unique)
+		if err != nil {
+			break
+		}
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
 			telemetryAddIndexIngestUsage.Inc()
@@ -711,39 +715,48 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 // pickBackfillType determines which backfill process will be used.
-func pickBackfillType(job *model.Job) model.ReorgType {
+func pickBackfillType(job *model.Job, ctx context.Context, unique bool) (model.ReorgType, error) {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
-		// Don't switch the backfill process.
-		return job.ReorgMeta.ReorgTp
+		// Don't change the backfill type.
+		return job.ReorgMeta.ReorgTp, nil
 	}
 	if IsEnableFastReorg() {
-		var useIngest bool
-		if ingest.LitInitialized && ingest.LitBackCtxMgr.Available() {
-			cleanupSortPath(job.ID)
+		if ingest.LitInitialized {
+			err := ingest.LitBackCtxMgr.CheckAvailable()
+			if err != nil {
+				return model.ReorgTypeNone, err
+			}
+			err = cleanupSortPath(job.ID)
+			if err != nil {
+				return model.ReorgTypeNone, err
+			}
+			_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID)
+			if err != nil {
+				return model.ReorgTypeNone, err
+			}
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge
+			return model.ReorgTypeLitMerge, nil
 		}
 		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
-			zap.Bool("lightning env initialized", ingest.LitInitialized),
-			zap.Bool("can use ingest", useIngest))
+			zap.Bool("lightning env initialized", ingest.LitInitialized))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
-		return model.ReorgTypeTxnMerge
+		return model.ReorgTypeTxnMerge, nil
 	}
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
-	return model.ReorgTypeTxn
+	return model.ReorgTypeTxn, nil
 }
 
 // cleanupSortPath is used to clean up the temp data of the previous jobs.
 // Because we don't remove all the files after the support of checkpoint,
 // there maybe some stale files in the sort path if TiDB is killed during the backfill process.
-func cleanupSortPath(currentJobID int64) {
+func cleanupSortPath(currentJobID int64) error {
 	sortPath := ingest.ConfigSortPath()
 	entries, err := os.ReadDir(sortPath)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
-		return
+		logutil.BgLogger().Warn("[ddl-ingest] cannot read sort path", zap.Error(err))
+		return errors.Trace(err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -762,10 +775,11 @@ func cleanupSortPath(currentJobID int64) {
 			err := os.RemoveAll(filepath.Join(sortPath, entry.Name()))
 			if err != nil {
 				logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
-				return
+				return nil
 			}
 		}
 	}
+	return nil
 }
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
@@ -824,17 +838,21 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	bfProcess := pickBackfillType(job)
-	if !bfProcess.NeedMergeProcess() {
+	var reorgTp model.ReorgType
+	reorgTp, err = pickBackfillType(job, w.ctx, indexInfo.Unique)
+	if err != nil {
+		return false, ver, err
+	}
+	if !reorgTp.NeedMergeProcess() {
 		return runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	}
 	switch indexInfo.BackfillState {
 	case model.BackfillStateRunning:
 		logutil.BgLogger().Info("[ddl] index backfill state running",
 			zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
-			zap.Bool("ingest mode", bfProcess == model.ReorgTypeLitMerge),
+			zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
 			zap.String("index", indexInfo.Name.O))
-		switch bfProcess {
+		switch reorgTp {
 		case model.ReorgTypeLitMerge:
 			if job.ReorgMeta.IsDistReorg {
 				done, ver, err = runIngestReorgJobDist(w, d, t, job, tbl, indexInfo)
@@ -854,7 +872,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		logutil.BgLogger().Info("[ddl] index backfill state ready to merge", zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
 		indexInfo.BackfillState = model.BackfillStateMerging
-		if bfProcess == model.ReorgTypeLitMerge {
+		if reorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.

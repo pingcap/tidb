@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/pingcap/errors"
 	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
@@ -29,6 +30,7 @@ type DiskRoot interface {
 	UpdateUsage()
 	ShouldImport() bool
 	UsageInfo() string
+	PreCheckUsage() error
 }
 
 const capacityThreshold = 0.9
@@ -86,4 +88,16 @@ func (d *diskRootImpl) UsageInfo() string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return fmt.Sprintf("disk usage: %d/%d, backend usage: %d", d.used, d.capacity, d.bcUsed)
+}
+
+// PreCheckUsage implements DiskRoot interface.
+func (d *diskRootImpl) PreCheckUsage() error {
+	sz, err := lcom.GetStorageSize(d.path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if float64(sz.Available) < (1-capacityThreshold)*float64(sz.Capacity) {
+		return errors.Errorf("%s, please clean up the disk and retry", d.UsageInfo())
+	}
+	return nil
 }
