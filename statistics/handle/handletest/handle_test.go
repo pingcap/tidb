@@ -3545,7 +3545,6 @@ func TestInitStatsLite(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	//colAID := tblInfo.Columns[0].ID
 	colBID := tblInfo.Columns[1].ID
 	colCID := tblInfo.Columns[2].ID
 	idxBID := tblInfo.Indices[0].ID
