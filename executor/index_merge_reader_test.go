@@ -975,6 +975,7 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec("create table tcommon(a int, b int, c int, d int auto_increment, primary key(a, c, d), index idx_ac(a, c), index idx_bc(b, c))")
 	tk.MustExec("create table thash(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c)) PARTITION BY HASH (`a`) PARTITIONS 4")
 	tk.MustExec("create table tcommonhash(a int, b int, c int, d int auto_increment, primary key(a, c, d), index idx_bc(b, c)) PARTITION BY HASH (`c`) PARTITIONS 4")
+	tk.MustExec("create table tpkhash(a int, b int, c int, d int auto_increment, primary key(d), index idx_ac(a, c), index idx_bc(b, c)) PARTITION BY HASH (`d`) PARTITIONS 4")
 
 	valueSlice := make([]*valueStruct, 0, 2000)
 	for i := 0; i < 2000; i++ {
@@ -986,6 +987,7 @@ func TestOrderByWithLimit(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into tcommon(a,b,c) values (%v, %v, %v)", a, b, c))
 		tk.MustExec(fmt.Sprintf("insert into thash(a,b,c) values (%v, %v, %v)", a, b, c))
 		tk.MustExec(fmt.Sprintf("insert into tcommonhash(a,b,c) values (%v, %v, %v)", a, b, c))
+		tk.MustExec(fmt.Sprintf("insert into tpkhash(a,b,c) values (%v, %v, %v)", a, b, c))
 		valueSlice = append(valueSlice, &valueStruct{a, b, c})
 	}
 
@@ -994,6 +996,7 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec("analyze table tcommon")
 	tk.MustExec("analyze table thash")
 	tk.MustExec("analyze table tcommonhash")
+	tk.MustExec("analyze table tpkhash")
 
 	for i := 0; i < 100; i++ {
 		a := rand.Intn(32)
@@ -1030,6 +1033,11 @@ func TestOrderByWithLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryCommonHash, "IndexMerge"))
 		require.False(t, tk.HasPlan(queryCommonHash, "TopN"))
 
+		queryPKHash := fmt.Sprintf("select /*+ use_index_merge(tpkhash, idx_ac, idx_bc) */ * from tpkhash where a = %v or b = %v order by c limit %v", a, b, limit)
+		resPKHash := tk.MustQuery(queryPKHash).Rows()
+		require.True(t, tk.HasPlan(queryPKHash, "IndexMerge"))
+		require.False(t, tk.HasPlan(queryPKHash, "TopN"))
+
 		sliceRes := getResult(valueSlice, a, b, limit, false)
 
 		require.Equal(t, len(sliceRes), len(resHandle))
@@ -1038,6 +1046,7 @@ func TestOrderByWithLimit(t *testing.T) {
 		require.Equal(t, len(sliceRes), len(resTableScan))
 		require.Equal(t, len(sliceRes), len(resHash))
 		require.Equal(t, len(sliceRes), len(resCommonHash))
+		require.Equal(t, len(sliceRes), len(resPKHash))
 
 		for i := range sliceRes {
 			expectValue := fmt.Sprintf("%v", sliceRes[i].c)
@@ -1048,6 +1057,7 @@ func TestOrderByWithLimit(t *testing.T) {
 			require.Equal(t, expectValue, resTableScan[i][2])
 			require.Equal(t, expectValue, resHash[i][2])
 			require.Equal(t, expectValue, resCommonHash[i][2])
+			require.Equal(t, expectValue, resPKHash[i][2])
 		}
 	}
 }
