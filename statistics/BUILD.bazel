@@ -24,6 +24,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/statistics",
     visibility = ["//visibility:public"],
     deps = [
+        "//config",
         "//expression",
         "//kv",
         "//metrics",
