@@ -16,12 +16,16 @@ package rowcodec
 
 import (
 	"encoding/binary"
+	"hash/crc32"
+	"math"
 	"reflect"
 	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
+	data "github.com/pingcap/tidb/types"
 )
 
 // CodecVer is the constant number that represent the new row format.
@@ -30,6 +34,7 @@ const CodecVer = 128
 var (
 	errInvalidCodecVer    = errors.New("invalid codec version")
 	errInvalidChecksumVer = errors.New("invalid checksum version")
+	errInvalidChecksumTyp = errors.New("invalid type for checksum")
 )
 
 // First byte in the encoded value which specifies the encoding type.
@@ -239,4 +244,113 @@ func IsNewFormat(rowData []byte) bool {
 // export for test case and CDC.
 func FieldTypeFromModelColumn(col *model.ColumnInfo) *types.FieldType {
 	return col.FieldType.Clone()
+}
+
+// ColData combines the column info as well as its datum. It's used to calculate checksum.
+type ColData struct {
+	*model.ColumnInfo
+	Datum *data.Datum
+}
+
+// Encode encodes the column datum into bytes for checksum. If buf provided, append encoded data to it.
+func (c ColData) Encode(buf []byte) ([]byte, error) {
+	return appendDatumForChecksum(buf, c.Datum, c.GetType())
+}
+
+// RowData is a list of ColData for row checksum calculation.
+type RowData struct {
+	// Cols is a list of ColData which is expected to be sorted by id before calling Encode/Checksum.
+	Cols []ColData
+	// Data stores the result of Encode. However, it mostly acts as a buffer for encoding columns on checksum
+	// calculation.
+	Data []byte
+}
+
+// Len implements sort.Interface for RowData.
+func (r RowData) Len() int { return len(r.Cols) }
+
+// Less implements sort.Interface for RowData.
+func (r RowData) Less(i int, j int) bool { return r.Cols[i].ID < r.Cols[j].ID }
+
+// Swap implements sort.Interface for RowData.
+func (r RowData) Swap(i int, j int) { r.Cols[i], r.Cols[j] = r.Cols[j], r.Cols[i] }
+
+// Encode encodes all columns into bytes (for test purpose).
+func (r *RowData) Encode() ([]byte, error) {
+	var err error
+	if len(r.Data) > 0 {
+		r.Data = r.Data[:0]
+	}
+	for _, col := range r.Cols {
+		r.Data, err = col.Encode(r.Data)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r.Data, nil
+}
+
+// Checksum calculates the checksum of columns. Callers should make sure columns are sorted by id.
+func (r *RowData) Checksum() (checksum uint32, err error) {
+	for _, col := range r.Cols {
+		if len(r.Data) > 0 {
+			r.Data = r.Data[:0]
+		}
+		r.Data, err = col.Encode(r.Data)
+		if err != nil {
+			return 0, err
+		}
+		checksum = crc32.Update(checksum, crc32.IEEETable, r.Data)
+	}
+	return checksum, nil
+}
+
+func appendDatumForChecksum(buf []byte, dat *data.Datum, typ byte) (out []byte, err error) {
+	defer func() {
+		if x := recover(); x != nil {
+			// catch panic when datum and type mismatch
+			err = errors.Annotate(x.(error), "encode datum for checksum")
+		}
+	}()
+	if dat.IsNull() {
+		return buf, nil
+	}
+	switch typ {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeInt24, mysql.TypeYear:
+		out = binary.LittleEndian.AppendUint64(buf, dat.GetUint64())
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		out = appendLengthValue(buf, dat.GetBytes())
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate:
+		out = appendLengthValue(buf, []byte(dat.GetMysqlTime().String()))
+	case mysql.TypeDuration:
+		out = appendLengthValue(buf, []byte(dat.GetMysqlDuration().String()))
+	case mysql.TypeFloat, mysql.TypeDouble:
+		v := dat.GetFloat64()
+		if math.IsInf(v, 0) || math.IsNaN(v) {
+			v = 0 // because ticdc has such a transform
+		}
+		out = binary.LittleEndian.AppendUint64(buf, math.Float64bits(v))
+	case mysql.TypeNewDecimal:
+		out = appendLengthValue(buf, []byte(dat.GetMysqlDecimal().String()))
+	case mysql.TypeEnum:
+		out = binary.LittleEndian.AppendUint64(buf, dat.GetMysqlEnum().Value)
+	case mysql.TypeSet:
+		out = binary.LittleEndian.AppendUint64(buf, dat.GetMysqlSet().Value)
+	case mysql.TypeBit:
+		// ticdc transforms a bit value as the following way, no need to handle truncate error here.
+		v, _ := dat.GetBinaryLiteral().ToInt(nil)
+		out = binary.LittleEndian.AppendUint64(buf, v)
+	case mysql.TypeJSON:
+		out = appendLengthValue(buf, []byte(dat.GetMysqlJSON().String()))
+	case mysql.TypeNull, mysql.TypeGeometry:
+		out = buf
+	default:
+		return buf, errInvalidChecksumTyp
+	}
+	return
+}
+
+func appendLengthValue(buf []byte, val []byte) []byte {
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(val)))
+	return append(buf, val...)
 }

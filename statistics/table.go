@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -561,9 +562,21 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
 func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (result float64, err error) {
+	var name string
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		debugTraceGetRowCountInput(sctx, colID, intRanges)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
 	if c != nil {
+		if c.Info != nil {
+			name = c.Info.Name.O
+		}
 		recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
 	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
@@ -588,10 +601,22 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
-func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID int64, colRanges []*ranger.Range) (float64, error) {
+func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID int64, colRanges []*ranger.Range) (result float64, err error) {
+	var name string
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		debugTraceGetRowCountInput(sctx, colID, colRanges)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
 	if c != nil {
+		if c.Info != nil {
+			name = c.Info.Name.O
+		}
 		recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
 	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
@@ -601,7 +626,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID i
 		}
 		return result, err
 	}
-	result, err := c.GetColumnRowCount(sctx, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
+	result, err = c.GetColumnRowCount(sctx, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
 	}
@@ -609,13 +634,25 @@ func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID i
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
-func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID int64, indexRanges []*ranger.Range) (float64, error) {
+func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID int64, indexRanges []*ranger.Range) (result float64, err error) {
+	var name string
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		debugTraceGetRowCountInput(sctx, idxID, indexRanges)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	sc := sctx.GetSessionVars().StmtCtx
 	idx, ok := coll.Indices[idxID]
 	colNames := make([]string, 0, 8)
 	if ok {
-		for _, col := range idx.Info.Columns {
-			colNames = append(colNames, col.Name.O)
+		if idx.Info != nil {
+			name = idx.Info.Name.O
+			for _, col := range idx.Info.Columns {
+				colNames = append(colNames, col.Name.O)
+			}
 		}
 	}
 	if idx != nil {
@@ -626,14 +663,12 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
 		}
-		result, err := getPseudoRowCountByIndexRanges(sc, indexRanges, float64(coll.RealtimeCount), colsLen)
+		result, err = getPseudoRowCountByIndexRanges(sc, indexRanges, float64(coll.RealtimeCount), colsLen)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
 			CETraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
 		}
 		return result, err
 	}
-	var result float64
-	var err error
 	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sctx, idxID, indexRanges)
 	} else {

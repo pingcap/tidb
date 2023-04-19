@@ -1,8 +1,7 @@
-package importer
+package local
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,25 +13,18 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/ddl"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	pmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 )
-
-func MockDoChecksumCtx(db *sql.DB) context.Context {
-	ctx := context.Background()
-	manager := newTiDBChecksumExecutor(db)
-	return context.WithValue(ctx, &checksumManagerKey, manager)
-}
 
 func TestDoChecksum(t *testing.T) {
 	db, mock, err := sqlmock.New()
@@ -57,8 +49,8 @@ func TestDoChecksum(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx(db)
-	checksum, err := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
+	manager := NewTiDBChecksumExecutor(db)
+	checksum, err := manager.Checksum(context.Background(), &TidbTableInfo{DB: "test", Name: "t"})
 	require.NoError(t, err)
 	require.Equal(t, RemoteChecksum{
 		Schema:     "test",
@@ -95,14 +87,14 @@ func TestDoChecksumParallel(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx(db)
+	manager := NewTiDBChecksumExecutor(db)
 
 	// db.Close() will close all connections from its idle pool, set it 1 to expect one close
 	db.SetMaxIdleConns(1)
 	var wg util.WaitGroupWrapper
 	for i := 0; i < 5; i++ {
 		wg.Run(func() {
-			checksum, err := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
+			checksum, err := manager.Checksum(context.Background(), &TidbTableInfo{DB: "test", Name: "t"})
 			require.NoError(t, err)
 			require.Equal(t, RemoteChecksum{
 				Schema:     "test",
@@ -137,12 +129,12 @@ func TestIncreaseGCLifeTimeFail(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx(db)
+	manager := NewTiDBChecksumExecutor(db)
 	var wg util.WaitGroupWrapper
 
 	for i := 0; i < 5; i++ {
 		wg.Run(func() {
-			_, errChecksum := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
+			_, errChecksum := manager.Checksum(context.Background(), &TidbTableInfo{DB: "test", Name: "t"})
 			require.Equal(t, "update GC lifetime failed: update gc error: context canceled", errChecksum.Error())
 		})
 	}
@@ -158,13 +150,22 @@ func TestDoChecksumWithTikv(t *testing.T) {
 	resp := tipb.ChecksumResponse{Checksum: 123, TotalKvs: 10, TotalBytes: 1000}
 	kvClient := &mockChecksumKVClient{checksum: resp, respDur: time.Millisecond * 200}
 
-	// mock a table info
-	p := parser.New()
-	se := tmock.NewContext()
-	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", "utf8mb4", "utf8mb4_bin")
-	require.NoError(t, err)
-	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 999)
-	require.NoError(t, err)
+	fieldType := types.NewFieldType(pmysql.TypeString)
+	fieldType.SetFlag(pmysql.NotNullFlag)
+
+	tableInfo := &model.TableInfo{
+		ID:   999,
+		Name: model.NewCIStr("t1"),
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      model.NewCIStr("c1"),
+				FieldType: *fieldType,
+			},
+		},
+		Charset: "utf8mb4",
+		Collate: "utf8mb4_bin",
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -176,11 +177,10 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		kvClient.onSendReq = func(req *kv.Request) {
 			checksumTS = req.StartTs
 		}
-		checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
+		checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
 		physicalTS, logicalTS, err := pdClient.GetTS(ctx)
 		require.NoError(t, err)
-		subCtx := context.WithValue(ctx, &checksumManagerKey, checksumExec)
-		_, err = DoChecksum(subCtx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
+		_, err = checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
 			continue
@@ -216,9 +216,41 @@ func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx(db)
-	_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
+	manager := NewTiDBChecksumExecutor(db)
+	_, err = manager.Checksum(context.Background(), &TidbTableInfo{DB: "test", Name: "t"})
 	require.Regexp(t, "compute remote checksum failed: mock syntax error.*", err.Error())
+}
+
+func TestGetGCLifetime(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	mock.
+		ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
+	mock.
+		ExpectClose()
+
+	res, err := obtainGCLifeTime(ctx, db)
+	require.NoError(t, err)
+	require.Equal(t, "10m", res)
+}
+
+func TestSetGCLifetime(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	mock.
+		ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
+		WithArgs("12m").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.
+		ExpectClose()
+
+	err = updateGCLifeTime(ctx, db, "12m")
+	require.NoError(t, err)
 }
 
 type safePointTTL struct {
