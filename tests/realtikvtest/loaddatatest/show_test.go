@@ -96,7 +96,6 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 	withOptions := "WITH DETACHED"
 	if importMode == importer.PhysicalImportMode {
 		withOptions = "WITH DETACHED, import_mode='PHYSICAL'"
-		resultMessage = ""
 	}
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
@@ -260,9 +259,8 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	progressAfterAll := `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
 	if importMode == importer.PhysicalImportMode {
 		withOptions = fmt.Sprintf("WITH DETACHED, import_mode='%s'", importMode)
-		resultMessage = ""
-		progressAfterFirstBatch = `{"SourceFileSize":2,"EncodeFileSize":1,"LoadedRowCnt":1}`
-		progressAfterAll = `{"SourceFileSize":2,"EncodeFileSize":2,"LoadedRowCnt":2}`
+		progressAfterFirstBatch = `{"SourceFileSize":2,"ReadRowCnt":1,"EncodeFileSize":1,"LoadedRowCnt":1}`
+		progressAfterAll = `{"SourceFileSize":2,"ReadRowCnt":2,"EncodeFileSize":2,"LoadedRowCnt":2}`
 	}
 
 	var wg sync.WaitGroup

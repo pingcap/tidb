@@ -152,6 +152,7 @@ func ProcessChunk(
 	}
 	// chunk process is responsible to close data/index writer
 	cp.close(ctx)
+	tableImporter.setLastInsertID(encoder.GetLastInsertID())
 	return nil
 }
 

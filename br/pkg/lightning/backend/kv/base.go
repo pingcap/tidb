@@ -116,6 +116,9 @@ type BaseKVEncoder struct {
 
 	logger      *zap.Logger
 	recordCache []types.Datum
+	// the first auto-generated ID in the current encoder.
+	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
+	LastInsertID uint64
 }
 
 // NewBaseKVEncoder creates a new BaseKVEncoder.
@@ -241,6 +244,9 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
 		value, err = table.CastValue(e.SessionCtx,
 			types.NewIntDatum(rowID), col.ToInfo(), false, false)
+		if err == nil && e.LastInsertID == 0 {
+			e.LastInsertID = value.GetUint64()
+		}
 	case e.IsAutoRandomCol(col.ToInfo()):
 		var val types.Datum
 		realRowID := e.AutoIDFn(rowID)
@@ -250,6 +256,9 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 			val = types.NewIntDatum(realRowID)
 		}
 		value, err = table.CastValue(e.SessionCtx, val, col.ToInfo(), false, false)
+		if err == nil && e.LastInsertID == 0 {
+			e.LastInsertID = value.GetUint64()
+		}
 	case col.IsGenerated():
 		// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.

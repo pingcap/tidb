@@ -31,6 +31,9 @@ type LogicalImportProgress struct {
 
 // PhysicalImportProgress is the progress info of the physical import mode.
 type PhysicalImportProgress struct {
+	// ReadRowCnt is the number of rows read from data files.
+	// Lines ignored by IGNORE N LINES clause is not included.
+	ReadRowCnt atomic.Uint64
 	// EncodeFileSize is the size of the file that has finished KV encoding in bytes.
 	// it should equal to SourceFileSize eventually.
 	EncodeFileSize atomic.Int64

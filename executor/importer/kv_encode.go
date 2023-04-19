@@ -34,6 +34,9 @@ import (
 
 type kvEncoder interface {
 	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
+	// GetLastInsertID returns the first auto-generated ID in the current encoder.
+	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
+	GetLastInsertID() uint64
 	io.Closer
 }
 
@@ -80,6 +83,11 @@ func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 	}
 
 	return en.Record2KV(record, row, rowID)
+}
+
+// GetLastInsertID implements the kvEncoder interface.
+func (en *tableKVEncoder) GetLastInsertID() uint64 {
+	return en.LastInsertID
 }
 
 // todo merge with code in load_data.go
