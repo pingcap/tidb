@@ -2206,13 +2206,6 @@ def go_deps():
         sum = "h1:0Vihzu20St42/UDsvZGdNE6jak7oi/UOeMzwMPHkgFY=",
         version = "v3.2.0+incompatible",
     )
-    go_repository(
-        name = "com_github_jarcoal_httpmock",
-        build_file_proto_mode = "disable",
-        importpath = "github.com/jarcoal/httpmock",
-        sum = "h1:gSvTxxFR/MEMfsGrvRbdfpRUMBStovlSRLw0Ep1bwwc=",
-        version = "v1.2.0",
-    )
 
     go_repository(
         name = "com_github_jcmturner_aescts_v2",
@@ -4123,8 +4116,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:XpdZrei86oIrRjXbqvlQh23TdHXVtSxWmsxxwy/Zgc0=",
-        version = "v2.0.7-0.20230328084104-ea13e9700259",
+        sum = "h1:pfDrSVAnfkk2EkrOc0iOmtA4n8F6TL9oEAK8R/enC50=",
+        version = "v2.0.8-0.20230417065328-92db9f7b151f",
     )
     go_repository(
         name = "com_github_tikv_pd",

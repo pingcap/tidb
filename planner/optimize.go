@@ -107,7 +107,9 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		// Keep the original AST unchanged to avoid any side effect.
 		paramStmt, err := core.ParseParameterizedSQL(sctx, paramSQL)
 		if err != nil {
-			return nil, nil, false, err
+			// This can happen rarely, cannot parse the parameterized(restored) SQL successfully, skip the plan cache in this case.
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return nil, nil, false, nil
 		}
 		// GeneratePlanCacheStmtWithAST may evaluate these parameters so set their values into SCtx in advance.
 		if err := core.SetParameterValuesIntoSCtx(sctx, true, nil, paramExprs); err != nil {
@@ -144,9 +146,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !sessVars.EnableTiFlashReadForWriteStmt && !IsReadOnly(node, sessVars) {
+	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && sctx.GetSessionVars().StrictSQLMode && !IsReadOnly(node, sessVars) {
+		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		delete(sessVars.IsolationReadEngines, kv.TiFlash)
 		defer func() {
+			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
 	}

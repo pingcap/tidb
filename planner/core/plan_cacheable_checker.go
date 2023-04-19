@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/logutil"
@@ -50,9 +52,10 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
 	}
 	checker := cacheableChecker{
-		sctx:      sctx,
-		cacheable: true,
-		schema:    is,
+		sctx:         sctx,
+		cacheable:    true,
+		schema:       is,
+		sumInListLen: 0,
 	}
 	node.Accept(&checker)
 	return checker.cacheable, checker.reason
@@ -64,6 +67,8 @@ type cacheableChecker struct {
 	cacheable bool
 	schema    infoschema.InfoSchema
 	reason    string // reason why cannot use plan-cache
+
+	sumInListLen int // the accumulated number of elements in all in-lists
 }
 
 // Enter implements Visitor interface.
@@ -113,7 +118,13 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
-
+	case *ast.PatternInExpr:
+		checker.sumInListLen += len(node.List)
+		if checker.sumInListLen > 100 { // to save memory
+			checker.cacheable = false
+			checker.reason = "too many values in in-list (more than 100)"
+			return in, true
+		}
 	case *ast.VariableExpr:
 		checker.cacheable = false
 		checker.reason = "query has user-defined variables is un-cacheable"
@@ -214,6 +225,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			return ok, reason
 		}
 	case *ast.UpdateStmt:
+		if len(x.TableHints) > 0 {
+			return false, "not support update statement with table hints"
+		}
 		if x.MultipleTable {
 			return false, "not support multiple tables update statements"
 		}
@@ -222,6 +236,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			return ok, reason
 		}
 	case *ast.InsertStmt:
+		if len(x.TableHints) > 0 {
+			return false, "not support insert statement with table hints"
+		}
 		if x.Select == nil { // `insert into t values (...)`
 			nRows := len(x.Lists)
 			nCols := 0
@@ -250,6 +267,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			}
 		}
 	case *ast.DeleteStmt:
+		if len(x.TableHints) > 0 {
+			return false, "not support insert statement with table hints"
+		}
 		if x.IsMultiTable {
 			return false, "not support multiple tables delete statements"
 		}
@@ -267,6 +287,11 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 
 	node.Accept(checker)
 	cacheable, reason := checker.cacheable, checker.reason
+
+	if !cacheable {
+		// this metrics can measure the extra overhead of non-prep plan cache.
+		core_metrics.GetNonPrepPlanCacheUnsupportedCounter().Inc()
+	}
 
 	// put the checker back
 	nonPrepCacheCheckerPool.Put(checker)
@@ -414,6 +439,11 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.cacheable = false
 			checker.reason = "query has values with under-score charset"
 		}
+		if node.Kind() == types.KindBinaryLiteral {
+			// for safety, BIT / HEX literals are not supported.
+			checker.cacheable = false
+			checker.reason = "query has BIT / HEX literals are not supported"
+		}
 		if node.IsNull() {
 			// for a condition like `not-null-col = null`, the planner will optimize it to `False` and generate a
 			// table-dual plan, but if it is converted to `not-null-col = ?` here, then the planner cannot do this
@@ -422,25 +452,25 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.reason = "query has null constants"
 		}
 		checker.constCnt++
-		if checker.constCnt > 50 { // just for safety and reduce memory cost
+		if checker.constCnt > 200 { // just for safety and reduce memory cost
 			checker.cacheable = false
-			checker.reason = "query has more than 50 constants"
+			checker.reason = "query has more than 200 constants"
 		}
 		return in, !checker.cacheable
 	case *ast.GroupByClause:
 		for _, item := range node.Items {
-			if _, isPos := item.Expr.(*ast.PositionExpr); isPos {
+			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
 				checker.cacheable = false
-				checker.reason = "query has group by position"
+				checker.reason = "only support group by {columns}'"
 				return in, !checker.cacheable
 			}
 		}
 		return in, !checker.cacheable
 	case *ast.OrderByClause:
 		for _, item := range node.Items {
-			if _, isPos := item.Expr.(*ast.PositionExpr); isPos {
+			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
 				checker.cacheable = false
-				checker.reason = "query has order by position"
+				checker.reason = "only support order by {columns}'"
 				return in, !checker.cacheable
 			}
 		}
@@ -587,6 +617,9 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 	}
 	if hasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
 		return false, "the switch 'tidb_enable_plan_cache_for_subquery' is off"
+	}
+	if sctx.GetSessionVars().PlanCacheMaxPlanSize > 0 && uint64(pp.MemoryUsage()) > sctx.GetSessionVars().PlanCacheMaxPlanSize { // to save memory
+		return false, "plan is too large(decided by the variable @@tidb_plan_cache_max_plan_size)"
 	}
 	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
 }

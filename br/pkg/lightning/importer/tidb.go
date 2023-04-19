@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
@@ -235,32 +234,8 @@ func LoadSchemaInfo(
 	return result, nil
 }
 
-// ObtainGCLifeTime obtains the current GC lifetime.
-func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
-	var gcLifeTime string
-	err := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}.QueryRow(
-		ctx,
-		"obtain GC lifetime",
-		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-		&gcLifeTime,
-	)
-	return gcLifeTime, err
-}
-
-// UpdateGCLifeTime updates the current GC lifetime.
-func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
-	sql := common.SQLWithRetry{
-		DB:     db,
-		Logger: log.FromContext(ctx).With(zap.String("gcLifeTime", gcLifeTime)),
-	}
-	return sql.Exec(ctx, "update GC lifetime",
-		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-		gcLifeTime,
-	)
-}
-
 // ObtainImportantVariables obtains the important variables from TiDB.
-func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBVars bool) map[string]string {
+func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool) map[string]string {
 	var query strings.Builder
 	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
 	first := true
@@ -279,7 +254,8 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 		}
 	}
 	query.WriteString("')")
-	kvs, err := g.QueryStringsWithLog(ctx, query.String(), "obtain system variables", log.FromContext(ctx))
+	exec := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
+	kvs, err := exec.QueryStringRows(ctx, "obtain system variables", query.String())
 	if err != nil {
 		// error is not fatal
 		log.FromContext(ctx).Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
@@ -307,14 +283,11 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 }
 
 // ObtainNewCollationEnabled obtains the new collation enabled status from TiDB.
-func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, error) {
+func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) (bool, error) {
 	newCollationEnabled := false
-	newCollationVal, err := g.ObtainStringWithLog(
-		ctx,
-		"SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'",
-		"obtain new collation enabled",
-		log.FromContext(ctx),
-	)
+	var newCollationVal string
+	exec := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
+	err := exec.QueryRow(ctx, "obtain new collation enabled", "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'", &newCollationVal)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
 	} else if errors.ErrorEqual(err, sql.ErrNoRows) {
@@ -331,7 +304,7 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, e
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
 // the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
-func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr uint64) error {
+func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr uint64) error {
 	var query string
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
 	if incr > math.MaxInt64 {
@@ -343,7 +316,8 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
 	}
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
-	err := g.ExecuteWithLog(ctx, query, "alter table auto_increment", logger)
+	exec := common.SQLWithRetry{DB: db, Logger: logger}
+	err := exec.Exec(ctx, "alter table auto_increment", query)
 	task.End(zap.ErrorLevel, err)
 	if err != nil {
 		task.Error(
@@ -355,7 +329,7 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 }
 
 // AlterAutoRandom rebase the table auto random id
-func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64, maxAutoRandom uint64) error {
+func AlterAutoRandom(ctx context.Context, db *sql.DB, tableName string, randomBase uint64, maxAutoRandom uint64) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
 	if randomBase == maxAutoRandom+1 {
 		// insert a tuple with key maxAutoRandom
@@ -367,7 +341,8 @@ func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, 
 	}
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
-	err := g.ExecuteWithLog(ctx, query, "alter table auto_random_base", logger)
+	exec := common.SQLWithRetry{DB: db, Logger: logger}
+	err := exec.Exec(ctx, "alter table auto_random_base", query)
 	task.End(zap.ErrorLevel, err)
 	if err != nil {
 		task.Error(

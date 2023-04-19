@@ -18,6 +18,7 @@ go_library(
     deps = [
         "//br/pkg/aws",
         "//br/pkg/backup",
+        "//br/pkg/checkpoint",
         "//br/pkg/checksum",
         "//br/pkg/common",
         "//br/pkg/config",
@@ -96,6 +97,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
+    shard_count = 19,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/errors",

@@ -138,23 +138,12 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			if colInfo == nil {
 				continue
 			}
-			var topnCount int64
-			// If this is stats of the Version2, we need to consider the topn's count as well.
-			// See the comments of Version2 for more details.
-			if statsVer >= statistics.Version2 {
-				var err error
-				topnCount, err = h.initTopNCountSum(tblID, id)
-				if err != nil {
-					terror.Log(err)
-				}
-			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
 			col := &statistics.Column{
 				Histogram:  *hist,
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
-				Count:      nullCount + topnCount,
 				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
@@ -306,7 +295,6 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 			if !ok {
 				continue
 			}
-			column.Count += row.GetInt64(3)
 			if !mysql.HasPriKeyFlag(column.Info.GetFlag()) {
 				continue
 			}
@@ -332,31 +320,6 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 		}
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(3), row.GetInt64(4), row.GetInt64(7))
 	}
-}
-
-func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
-	// Before stats ver 2, histogram represents all data in this column.
-	// In stats ver 2, histogram + TopN represent all data in this column.
-	// So we need to add TopN total count here.
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	selSQL := "select sum(count) from mysql.stats_top_n where table_id = %? and is_index = 0 and hist_id = %?"
-	rs, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, selSQL, tableID, colID)
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
-	if err != nil {
-		return 0, err
-	}
-	req := rs.NewChunk(nil)
-	iter := chunk.NewIterator4Chunk(req)
-	err = rs.Next(ctx, req)
-	if err != nil {
-		return 0, err
-	}
-	if req.NumRows() == 0 {
-		return 0, nil
-	}
-	return iter.Begin().GetMyDecimal(0).ToInt()
 }
 
 func (h *Handle) initStatsBuckets(cache *statsCache) error {
@@ -438,7 +401,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	// Set columns' stats status.
 	for _, table := range cache.Values() {
 		for _, col := range table.Columns {
-			if col.StatsVer != statistics.Version0 || col.Count > 0 {
+			if col.StatsAvailable() {
 				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
 					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 				} else {

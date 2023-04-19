@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -204,7 +205,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
-	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 {
+	if !config.GetGlobalConfig().DisaggregatedTiFlash && p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
 		buffer.WriteString("pushed down filter:")
 		if len(p.lateMaterializationFilterCondition) > 0 {
 			if normalized {
@@ -305,10 +306,20 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
+	var str strings.Builder
 	if p.IsIntersectionType {
-		return "type: intersection"
+		str.WriteString("type: intersection")
+	} else {
+		str.WriteString("type: union")
 	}
-	return "type: union"
+	if p.PushedLimit != nil {
+		str.WriteString(", limit embedded(offset:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
+		str.WriteString(", count:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
+		str.WriteString(")")
+	}
+	return str.String()
 }
 
 // ExplainInfo implements Plan interface.

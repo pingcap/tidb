@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -42,9 +43,9 @@ var (
 )
 
 type deliveredRow struct {
-	kvs    *kv.Pairs // if kvs is nil, this indicated we've got the last message.
+	kvs *kv.Pairs // if kvs is nil, this indicated we've got the last message.
+	// end offset in data file after encode this row.
 	offset int64
-	rowID  int64
 }
 
 type deliverResult struct {
@@ -114,15 +115,20 @@ type chunkProcessor struct {
 	chunkInfo   *checkpoints.ChunkCheckpoint
 	logger      *zap.Logger
 	kvsCh       chan []deliveredRow
-	dataWriter  *backend.LocalEngineWriter
-	indexWriter *backend.LocalEngineWriter
+	dataWriter  backend.EngineWriter
+	indexWriter backend.EngineWriter
 
-	checksum verify.KVChecksum
-	encoder  kvEncoder
-	kvCodec  tikv.Codec
+	checksum    verify.KVChecksum
+	encoder     kvEncoder
+	kvCodec     tikv.Codec
+	progress    *asyncloaddata.Progress
+	startOffset int64
 }
 
 func (p *chunkProcessor) process(ctx context.Context) error {
+	if err := p.initProgress(); err != nil {
+		return err
+	}
 	// todo: use error group pattern to simplify the code
 	deliverCompleteCh := make(chan deliverResult)
 	go func() {
@@ -152,6 +158,17 @@ func (p *chunkProcessor) process(ctx context.Context) error {
 	return errors.Trace(firstErr(encodeErr, deliverErr))
 }
 
+func (p *chunkProcessor) initProgress() error {
+	// we might skip N rows or start from checkpoint
+	offset, err := p.parser.ScannedPos()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	p.progress.EncodeFileSize.Add(offset)
+	p.startOffset = offset
+	return nil
+}
+
 func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-chan deliverResult) error {
 	defer close(p.kvsCh)
 
@@ -179,13 +196,14 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 		var readDur, encodeDur time.Duration
 		canDeliver := false
 		rowBatch := make([]deliveredRow, 0, MinDeliverRowCnt)
-		var newOffset, rowID int64
+		var newOffset int64
 		var kvSize uint64
 	outLoop:
 		for !canDeliver {
 			readDurStart := time.Now()
 			err = p.parser.ReadRow()
-			newOffset, rowID = p.parser.Pos()
+			// todo: we can implement a ScannedPos which don't return error, will change it later.
+			newOffset, _ = p.parser.ScannedPos()
 
 			switch errors.Cause(err) {
 			case nil:
@@ -212,7 +230,7 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 				return err
 			}
 
-			rowBatch = append(rowBatch, deliveredRow{kvs: kvs, offset: newOffset, rowID: rowID})
+			rowBatch = append(rowBatch, deliveredRow{kvs: kvs, offset: newOffset})
 			kvSize += kvs.Size()
 			// pebble cannot allow > 4.0G kv in one batch.
 			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
@@ -236,6 +254,7 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 	kvBatch := newDeliverKVBatch(p.kvCodec)
 
+	prevOffset, currOffset := p.startOffset, p.startOffset
 	for {
 	outer:
 		for kvBatch.size() < MinDeliverBytes {
@@ -244,8 +263,9 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 				if !ok {
 					break outer
 				}
-				for _, p := range kvPacket {
-					kvBatch.add(p.kvs)
+				for _, row := range kvPacket {
+					kvBatch.add(row.kvs)
+					currOffset = row.offset
 				}
 			case <-ctx.Done():
 				return ctx.Err()
@@ -258,13 +278,13 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 
 		err := func() error {
 			// todo: disk quota related code from lightning, removed temporary
-			if err := p.dataWriter.WriteRows(ctx, nil, &kvBatch.dataKVs); err != nil {
+			if err := p.dataWriter.AppendRows(ctx, nil, &kvBatch.dataKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to data engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
 			}
-			if err := p.indexWriter.WriteRows(ctx, nil, &kvBatch.indexKVs); err != nil {
+			if err := p.indexWriter.AppendRows(ctx, nil, &kvBatch.indexKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to index engine failed", log.ShortError(err))
 				}
@@ -275,6 +295,9 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+
+		p.progress.EncodeFileSize.Add(currOffset - prevOffset)
+		prevOffset = currOffset
 
 		p.checksum.Add(kvBatch.dataChecksum)
 		p.checksum.Add(kvBatch.indexChecksum)

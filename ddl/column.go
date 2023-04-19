@@ -1214,18 +1214,6 @@ func (*updateColumnWorker) String() string {
 	return typeUpdateColumnWorker.String()
 }
 
-func (*updateColumnWorker) GetTasks() ([]*BackfillJob, error) {
-	panic("[ddl] update column worker GetTask function doesn't implement")
-}
-
-func (*updateColumnWorker) UpdateTask(*BackfillJob) error {
-	panic("[ddl] update column worker UpdateTask function doesn't implement")
-}
-
-func (*updateColumnWorker) FinishTask(*BackfillJob) error {
-	panic("[ddl] update column worker FinishTask function doesn't implement")
-}
-
 func (w *updateColumnWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
