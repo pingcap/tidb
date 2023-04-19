@@ -241,6 +241,8 @@ type DDL interface {
 	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() syncer.SchemaSyncer
+	// StateSyncer gets the cluster state syncer.
+	StateSyncer() syncer.StateSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -324,6 +326,7 @@ type ddlCtx struct {
 	store        kv.Storage
 	ownerManager owner.Manager
 	schemaSyncer syncer.SchemaSyncer
+	stateSyncer  syncer.StateSyncer
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
@@ -617,6 +620,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	id := uuid.New().String()
 	var manager owner.Manager
 	var schemaSyncer syncer.SchemaSyncer
+	var stateSyncer syncer.StateSyncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
@@ -626,6 +630,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
+		stateSyncer = syncer.NewStateSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -645,6 +650,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobDoneCh:               make(chan struct{}, 1),
 		ownerManager:               manager,
 		schemaSyncer:               schemaSyncer,
+		stateSyncer:                stateSyncer,
 		binlogCli:                  binloginfo.GetPumpsClient(),
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
@@ -904,6 +910,11 @@ func (d *ddl) genPlacementPolicyID() (int64, error) {
 // SchemaSyncer implements DDL.SchemaSyncer interface.
 func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
 	return d.schemaSyncer
+}
+
+// StateSyncer implements DDL.StateSyncer interface.
+func (d *ddl) StateSyncer() syncer.StateSyncer {
+	return d.stateSyncer
 }
 
 // OwnerManager implements DDL.OwnerManager interface.
