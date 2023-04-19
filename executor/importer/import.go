@@ -210,6 +210,10 @@ type LoadDataController struct {
 	dataFiles []*mydump.SourceFileMeta
 	// total data file size in bytes, only initialized when load from remote.
 	TotalFileSize int64
+	// user session context. DO NOT use it if load is in DETACHED mode.
+	UserCtx sessionctx.Context
+	// used for checksum in physical mode
+	distSQLScanConcurrency int
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -284,7 +288,7 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 }
 
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, error) {
+func NewLoadDataController(userCtx sessionctx.Context, plan *Plan, tbl table.Table) (*LoadDataController, error) {
 	fullTableName := common.UniqueTable(plan.TableName.Schema.L, plan.TableName.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{

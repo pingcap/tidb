@@ -517,6 +517,11 @@ func (d Checker) SchemaSyncer() syncer.SchemaSyncer {
 	return d.realDDL.SchemaSyncer()
 }
 
+// StateSyncer implements the DDL interface.
+func (d Checker) StateSyncer() syncer.StateSyncer {
+	return d.realDDL.StateSyncer()
+}
+
 // OwnerManager implements the DDL interface.
 func (d Checker) OwnerManager() owner.Manager {
 	return d.realDDL.OwnerManager()
