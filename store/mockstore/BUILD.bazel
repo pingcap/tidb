@@ -16,6 +16,7 @@ go_library(
         "//store/mockstore/mockcopr",
         "//store/mockstore/mockstorage",
         "//store/mockstore/unistore",
+        "//testkit/testenv",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",

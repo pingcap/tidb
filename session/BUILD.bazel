@@ -67,6 +67,7 @@ go_library(
         "//table/temptable",
         "//tablecodec",
         "//telemetry",
+        "//testkit/testenv",
         "//ttl/ttlworker",
         "//types",
         "//types/parser_driver",
