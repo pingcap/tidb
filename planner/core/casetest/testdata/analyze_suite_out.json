@@ -105,9 +105,9 @@
         "SQL": "explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5",
         "Plan": [
           "IndexLookUp 10.00 root  ",
-          "├─IndexRangeScan(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
+          "├─IndexRangeScan(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false, stats:partial[ab:unInitialized, ac:unInitialized]",
           "└─Selection(Probe) 10.00 cop[tikv]  eq(test.t.c, 5)",
-          "  └─TableRowIDScan 12.50 cop[tikv] table:t keep order:false"
+          "  └─TableRowIDScan 12.50 cop[tikv] table:t keep order:false, stats:partial[ab:unInitialized, ac:unInitialized]"
         ]
       }
     ]
