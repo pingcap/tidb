@@ -96,6 +96,7 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) ([]*SubtaskMe
 	if err != nil {
 		return nil, err
 	}
+	defer tableImporter.Close()
 
 	engineCheckpoints, err := tableImporter.PopulateChunks(ctx)
 	if err != nil {
