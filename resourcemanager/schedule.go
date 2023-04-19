@@ -40,6 +40,11 @@ func (r *ResourceManager) schedulePool(pool *util.PoolContainer) scheduler.Comma
 		case scheduler.Hold:
 			continue
 		default:
+			if cmd == scheduler.Downclock {
+				if pool.Pool.Cap() == 1 || pool.Pool.Running() > pool.Pool.Cap() {
+					continue
+				}
+			}
 			return cmd
 		}
 	}
@@ -56,15 +61,15 @@ func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
 		case scheduler.Downclock:
 			concurrency := con - 1
 			log.Debug("[resource manager] downclock goroutine pool",
-				zap.Int("origin concurrency", con),
-				zap.Int("concurrency", concurrency),
+				zap.Int32("origin concurrency", con),
+				zap.Int32("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()))
 			pool.Pool.Tune(concurrency)
 		case scheduler.Overclock:
 			concurrency := con + 1
 			log.Debug("[resource manager] overclock goroutine pool",
-				zap.Int("origin concurrency", con),
-				zap.Int("concurrency", concurrency),
+				zap.Int32("origin concurrency", con),
+				zap.Int32("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()))
 			pool.Pool.Tune(concurrency)
 		}

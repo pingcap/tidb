@@ -332,6 +332,7 @@ func TestMDLRRUpdateSchema(t *testing.T) {
 	tk.MustExec("begin")
 	tkDDL.MustExec("alter table test.t modify column a char(10);")
 	tk.MustGetErrCode("select * from t", mysql.ErrInfoSchemaChanged)
+	tk.MustGetErrCode("select * from t", mysql.ErrInfoSchemaChanged)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 <nil>"))
 
@@ -603,7 +604,7 @@ func TestMDLCacheTable(t *testing.T) {
 	require.Less(t, ts1, ts2)
 }
 
-func TestMDLStealRead(t *testing.T) {
+func TestMDLStaleRead(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
@@ -620,29 +621,15 @@ func TestMDLStealRead(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	var ts2 time.Time
-	var ts1 time.Time
-
 	time.Sleep(2 * time.Second)
 
 	tk.MustExec("start transaction read only as of timestamp NOW() - INTERVAL 1 SECOND")
 	tk.MustQuery("select * from t")
 
-	go func() {
-		tkDDL.MustExec("alter table test.t add column b int;")
-		ts2 = time.Now()
-		wg.Done()
-	}()
+	tkDDL.MustExec("alter table test.t add column b int;")
 
-	time.Sleep(2 * time.Second)
-	ts1 = time.Now()
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	tk.MustExec("commit")
-
-	wg.Wait()
-	require.Greater(t, ts1, ts2)
 }
 
 func TestMDLTiDBSnapshot(t *testing.T) {
@@ -901,6 +888,27 @@ func TestMDLEnable2Disable(t *testing.T) {
 	tk.MustGetErrCode("commit", mysql.ErrInfoSchemaChanged)
 	tk3.MustExec("commit")
 	tk.MustExec("admin check table t")
+}
+
+func TestSwitchMDL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
+
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustQuery("show global variables like 'tidb_enable_metadata_lock'").Check(testkit.Rows("tidb_enable_metadata_lock OFF"))
+
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustQuery("show global variables like 'tidb_enable_metadata_lock'").Check(testkit.Rows("tidb_enable_metadata_lock ON"))
+
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustQuery("show global variables like 'tidb_enable_metadata_lock'").Check(testkit.Rows("tidb_enable_metadata_lock OFF"))
 }
 
 func TestMDLViewItself(t *testing.T) {

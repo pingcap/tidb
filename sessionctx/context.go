@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
@@ -54,8 +54,8 @@ type SessionStatesHandler interface {
 
 // PlanCache is an interface for prepare and non-prepared plan cache
 type PlanCache interface {
-	Get(key kvcache.Key, paramTypes []*types.FieldType, limitParams []uint64) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType, limitParams []uint64)
+	Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
+	Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts)
 	Delete(key kvcache.Key)
 	DeleteAll()
 	Size() int
@@ -119,9 +119,8 @@ type Context interface {
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
-	// GetPlanCache returns the cache of the physical plan.
-	// isNonPrepared indicates to return the non-prepared plan cache or the prepared plan cache.
-	GetPlanCache(isNonPrepared bool) PlanCache
+	// GetSessionPlanCache returns the session-level cache of the physical plan.
+	GetSessionPlanCache() PlanCache
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})

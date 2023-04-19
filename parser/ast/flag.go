@@ -70,7 +70,7 @@ func (f *flagSetter) Leave(in Node) (Node, bool) {
 		x.SetFlag(x.Expr.GetFlag())
 	case *PatternInExpr:
 		f.patternIn(x)
-	case *PatternLikeExpr:
+	case *PatternLikeOrIlikeExpr:
 		f.patternLike(x)
 	case *PatternRegexpExpr:
 		f.patternRegexp(x)
@@ -121,7 +121,7 @@ func (f *flagSetter) patternIn(x *PatternInExpr) {
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) patternLike(x *PatternLikeExpr) {
+func (f *flagSetter) patternLike(x *PatternLikeOrIlikeExpr) {
 	flag := x.Pattern.GetFlag()
 	if x.Expr != nil {
 		flag |= x.Expr.GetFlag()

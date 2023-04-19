@@ -57,7 +57,6 @@ const (
 
 	defaultBackupConcurrency = 4
 	maxBackupConcurrency     = 256
-	checkpointDefaultGCTTL   = 72 * 60 // 72 minutes
 )
 
 const (
@@ -65,6 +64,7 @@ const (
 	DBBackupCmd    = "Database Backup"
 	TableBackupCmd = "Table Backup"
 	RawBackupCmd   = "Raw Backup"
+	TxnBackupCmd   = "Txn Backup"
 	EBSBackupCmd   = "EBS Backup"
 )
 
@@ -112,6 +112,10 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	flags.String(flagCompressionType, "zstd",
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	flags.Int32(flagCompressionLevel, 0, "compression level used for sst file compression")
+
+	flags.Uint32(flagConcurrency, 4, "The size of a BR thread pool that executes tasks, "+
+		"One task represents one table range (or one index range) according to the backup schemas. If there is one table with one index."+
+		"there will be two tasks to back up this table. This value should increase if you need to back up lots of tables or indices.")
 
 	flags.Bool(flagRemoveSchedulers, false,
 		"disable the balance, shuffle and region-merge schedulers in PD to speed up backup")
@@ -189,13 +193,11 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// if use checkpoint and gcTTL is the default value
-	// update gcttl to checkpoint's default gc ttl
-	if cfg.UseCheckpoint && gcTTL == utils.DefaultBRGCSafePointTTL {
-		gcTTL = checkpointDefaultGCTTL
-		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", gcTTL))
-	}
 	cfg.GCTTL = gcTTL
+	cfg.Concurrency, err = flags.GetUint32(flagConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	compressionCfg, err := parseCompressionFlags(flags)
 	if err != nil {
@@ -357,6 +359,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// if use noop as external storage, turn off the checkpoint mode
+	if u.GetNoop() != nil {
+		log.Info("since noop external storage is used, turn off checkpoint mode")
+		cfg.UseCheckpoint = false
+	}
 	skipStats := cfg.IgnoreStats
 	// For backup, Domain is not needed if user ignores stats.
 	// Domain loads all table info into memory. By skipping Domain, we save
@@ -420,6 +427,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	err = client.SetLockFile(ctx)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// if use checkpoint and gcTTL is the default value
+	// update gcttl to checkpoint's default gc ttl
+	if cfg.UseCheckpoint && cfg.GCTTL == utils.DefaultBRGCSafePointTTL {
+		cfg.GCTTL = utils.DefaultCheckpointGCSafePointTTL
+		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", cfg.GCTTL))
 	}
 	client.SetGCTTL(cfg.GCTTL)
 
@@ -505,11 +518,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	ranges, schemas, policies, err := client.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
 	if err != nil {
 		return errors.Trace(err)
-	}
-	// Add keyspace prefix to BackupRequest
-	for i := range ranges {
-		start, end := ranges[i].StartKey, ranges[i].EndKey
-		ranges[i].StartKey, ranges[i].EndKey = mgr.GetStorage().GetCodec().EncodeRange(start, end)
 	}
 
 	// Metafile size should be less than 64MB.

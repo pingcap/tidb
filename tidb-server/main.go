@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/extension"
+	_ "github.com/pingcap/tidb/extension/_import"
 	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -58,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
-	uni_metrics "github.com/pingcap/tidb/store/mockstore/unistore/metrics"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/metricsutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
@@ -195,7 +196,9 @@ func main() {
 		os.Exit(0)
 	}
 	registerStores()
-	registerMetrics()
+	err := metricsutil.RegisterMetrics()
+	terror.MustNil(err)
+
 	if variable.EnableTmpStorageOnOOM.Load() {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
@@ -206,17 +209,14 @@ func main() {
 	setupExtensions()
 	setupStmtSummary()
 
-	err := cpuprofile.StartCPUProfiler()
+	err = cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
 	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
-		clusterID, err := config.GetAutoScalerClusterID()
-		terror.MustNil(err)
-
 		err = tiflashcompute.InitGlobalTopoFetcher(
 			config.GetGlobalConfig().TiFlashComputeAutoScalerType,
 			config.GetGlobalConfig().TiFlashComputeAutoScalerAddr,
-			clusterID,
+			config.GetGlobalConfig().AutoScalerClusterID,
 			config.GetGlobalConfig().IsTiFlashComputeFixedPool)
 		terror.MustNil(err)
 	}
@@ -324,13 +324,6 @@ func registerStores() {
 	terror.MustNil(err)
 	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})
 	terror.MustNil(err)
-}
-
-func registerMetrics() {
-	metrics.RegisterMetrics()
-	if config.GetGlobalConfig().Store == "unistore" {
-		uni_metrics.RegisterMetrics()
-	}
 }
 
 func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
@@ -690,9 +683,9 @@ func setGlobalVars() {
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	if cfg.Performance.TxnTotalSizeLimit == config.DefTxnTotalSizeLimit {
 		// practically deprecate the config, let the new session memory tracker take charge of it.
-		kv.TxnTotalSizeLimit = config.SuperLargeTxnSize
+		kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
 	} else {
-		kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+		kv.TxnTotalSizeLimit.Store(cfg.Performance.TxnTotalSizeLimit)
 	}
 	if cfg.Performance.TxnEntrySizeLimit > config.MaxTxnEntrySizeLimit {
 		log.Fatal("cannot set txn entry size limit larger than 120M")
@@ -788,7 +781,7 @@ func setGlobalVars() {
 
 func setupLog() {
 	cfg := config.GetGlobalConfig()
-	err := logutil.InitLogger(cfg.Log.ToLogConfig())
+	err := logutil.InitLogger(cfg.Log.ToLogConfig(), keyspace.WrapZapcoreWithKeyspace())
 	terror.MustNil(err)
 
 	// trigger internal http(s) client init.
@@ -862,17 +855,21 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	terror.Log(errors.Trace(err))
 }
 
-func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
+// The amount of time we wait for the ongoing txt to finished.
+// We should better provider a dynamic way to set this value.
+var gracefulCloseConnectionsTimeout = 15 * time.Second
+
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, _ bool) {
 	dom.StopAutoAnalyze()
-	if graceful {
-		done := make(chan struct{})
-		svr.GracefulDown(context.Background(), done)
-		// Kill sys processes such as auto analyze. Otherwise, tidb-server cannot exit until auto analyze is finished.
-		// See https://github.com/pingcap/tidb/issues/40038 for details.
-		svr.KillSysProcesses()
-	} else {
-		svr.TryGracefulDown()
-	}
+
+	drainClientWait := gracefulCloseConnectionsTimeout
+
+	cancelClientWait := time.Second * 1
+	svr.DrainClients(drainClientWait, cancelClientWait)
+
+	// Kill sys processes such as auto analyze. Otherwise, tidb-server cannot exit until auto analyze is finished.
+	// See https://github.com/pingcap/tidb/issues/40038 for details.
+	svr.KillSysProcesses()
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()

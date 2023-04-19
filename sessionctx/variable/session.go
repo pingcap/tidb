@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
@@ -64,9 +65,6 @@ import (
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
-
-// DefaultResourceGroupName is the default resource group name.
-const DefaultResourceGroupName = "default"
 
 var (
 	// PreparedStmtCount is exported for test.
@@ -205,8 +203,8 @@ type TxnCtxNoNeedToRestore struct {
 	shardRemain  int
 	currentShard int64
 
-	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
-	unchangedRowKeys map[string]struct{}
+	// unchangedKeys is used to store the unchanged keys that needs to lock for pessimistic transaction.
+	unchangedKeys map[string]struct{}
 
 	PessimisticCacheHit int
 
@@ -241,13 +239,13 @@ type TxnCtxNoNeedToRestore struct {
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
 
-	// AggressiveLockingUsed marking whether at least one of the statements in the transaction was executed in
-	// aggressive locking mode.
-	AggressiveLockingUsed bool
-	// AggressiveLockingEffective marking whether at least one of the statements in the transaction was executed in
-	// aggressive locking mode, and it takes effect (which is determined according to whether lock-with-conflict
+	// FairLockingUsed marking whether at least one of the statements in the transaction was executed in
+	// fair locking mode.
+	FairLockingUsed bool
+	// FairLockingEffective marking whether at least one of the statements in the transaction was executed in
+	// fair locking mode, and it takes effect (which is determined according to whether lock-with-conflict
 	// has occurred during execution of any statement).
-	AggressiveLockingEffective bool
+	FairLockingEffective bool
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -280,20 +278,20 @@ func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
-// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
-func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
-	if tc.unchangedRowKeys == nil {
-		tc.unchangedRowKeys = map[string]struct{}{}
+// AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte) {
+	if tc.unchangedKeys == nil {
+		tc.unchangedKeys = map[string]struct{}{}
 	}
-	tc.unchangedRowKeys[string(key)] = struct{}{}
+	tc.unchangedKeys[string(key)] = struct{}{}
 }
 
-// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
-func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
-	for key := range tc.unchangedRowKeys {
+// CollectUnchangedKeysForLock collects unchanged keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedKeys {
 		buf = append(buf, kv.Key(key))
 	}
-	tc.unchangedRowKeys = nil
+	tc.unchangedKeys = nil
 	return buf
 }
 
@@ -663,8 +661,8 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
-	// PreparedParams params for prepared statements
-	PreparedParams    PreparedParams
+	// Parameter values for plan cache.
+	PlanCacheParams   *PlanCacheParamList
 	LastUpdateTime4PC types.Time
 
 	// ActiveRoles stores active roles for current user
@@ -701,10 +699,10 @@ type SessionVars struct {
 	ConnectionID uint64
 
 	// PlanID is the unique id of logical and physical plan.
-	PlanID int
+	PlanID atomic.Int32
 
 	// PlanColumnID is the unique id for column when building plan.
-	PlanColumnID int64
+	PlanColumnID atomic.Int64
 
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
@@ -761,6 +759,9 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
+	// AllowDeriveTopN is used to enable/disable derived TopN optimization.
+	AllowDeriveTopN bool
+
 	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
 	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
 	// size exceeds the broadcast threshold
@@ -783,6 +784,9 @@ type SessionVars struct {
 
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
+
+	// InMultiStmts indicates whether the statement is a multi-statement like `update t set a=1; update t set b=2;`.
+	InMultiStmts bool
 
 	// AllowWriteRowID variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
@@ -812,6 +816,24 @@ type SessionVars struct {
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
 	TiFlashMaxThreads int64
 
+	// TiFlashMaxBytesBeforeExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalJoin int64
+
+	// TiFlashMaxBytesBeforeExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalGroupBy int64
+
+	// TiFlashMaxBytesBeforeExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalSort int64
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -822,6 +844,11 @@ type SessionVars struct {
 	// BroadcastJoinThresholdCount is used to limit the total count of smaller table.
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
+
+	// PreferBCJByExchangeDataSize indicates the method used to choose mpp broadcast join
+	// false: choose mpp broadcast join by `BroadcastJoinThresholdSize` and `BroadcastJoinThresholdCount`
+	// true: compare data exchange size of join and choose the smallest one
+	PreferBCJByExchangeDataSize bool
 
 	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	LimitPushDownThreshold int64
@@ -1057,7 +1084,7 @@ type SessionVars struct {
 
 	mppExchangeCompressionMode kv.ExchangeCompressionMode
 
-	PlannerSelectBlockAsName []ast.HintTable
+	PlannerSelectBlockAsName atomic.Pointer[[]ast.HintTable]
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	LockWaitTimeout int64
@@ -1288,6 +1315,12 @@ type SessionVars struct {
 	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	NonPreparedPlanCacheSize uint64
 
+	// PlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
+	PlanCacheMaxPlanSize uint64
+
+	// SessionPlanCacheSize controls the size of session plan cache.
+	SessionPlanCacheSize uint64
+
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
 	ConstraintCheckInPlacePessimistic bool
@@ -1308,6 +1341,10 @@ type SessionVars struct {
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
+
+	// InPlanReplayer means we are now executing a statement for a PLAN REPLAYER SQL.
+	// Note that PLAN REPLAYER CAPTURE is not included here.
+	InPlanReplayer bool
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
@@ -1360,16 +1397,32 @@ type SessionVars struct {
 	// Resource group name
 	ResourceGroupName string
 
-	// ProtectedTSList holds a list of timestamps that should delay GC.
-	ProtectedTSList protectedTSList
-
-	// PessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
-	PessimisticTransactionAggressiveLocking bool
+	PessimisticTransactionFairLocking bool
 
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
+
+	// Enable late materialization: push down some selection condition to tablescan.
+	EnableLateMaterialization bool
+
+	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
+	// Only for disaggregated-tiflash mode.
+	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
+
+	// SlowTxnThreshold is the threshold of slow transaction logs
+	SlowTxnThreshold uint64
+
+	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
+	// If exceeding the threshold, try other stores using replica read.
+	LoadBasedReplicaReadThreshold time.Duration
+
+	// OptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
+	// use the ExpectedCnt to adjust the estimated row count for index scan.
+	OptOrderingIdxSelThresh float64
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1565,8 +1618,7 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 
 // AllocNewPlanID alloc new ID
 func (s *SessionVars) AllocNewPlanID() int {
-	s.PlanID++
-	return s.PlanID
+	return int(s.PlanID.Add(1))
 }
 
 const (
@@ -1617,14 +1669,53 @@ func (p PartitionPruneMode) Update() PartitionPruneMode {
 	}
 }
 
-// PreparedParams contains the parameters of the current prepared statement when executing it.
-type PreparedParams []types.Datum
+// PlanCacheParamList stores the parameters for plan cache.
+// Use attached methods to access or modify parameter values instead of accessing them directly.
+type PlanCacheParamList struct {
+	paramValues     []types.Datum
+	forNonPrepCache bool
+}
 
-func (pps PreparedParams) String() string {
-	if len(pps) == 0 {
+// NewPlanCacheParamList creates a new PlanCacheParams.
+func NewPlanCacheParamList() *PlanCacheParamList {
+	p := &PlanCacheParamList{paramValues: make([]types.Datum, 0, 8)}
+	p.Reset()
+	return p
+}
+
+// Reset resets the PlanCacheParams.
+func (p *PlanCacheParamList) Reset() {
+	p.paramValues = p.paramValues[:0]
+	p.forNonPrepCache = false
+}
+
+// String implements the fmt.Stringer interface.
+func (p *PlanCacheParamList) String() string {
+	if p == nil || len(p.paramValues) == 0 ||
+		p.forNonPrepCache { // hide non-prep parameter values by default
 		return ""
 	}
-	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
+	return " [arguments: " + types.DatumsToStrNoErr(p.paramValues) + "]"
+}
+
+// Append appends a parameter value to the PlanCacheParams.
+func (p *PlanCacheParamList) Append(vs ...types.Datum) {
+	p.paramValues = append(p.paramValues, vs...)
+}
+
+// SetForNonPrepCache sets the flag forNonPrepCache.
+func (p *PlanCacheParamList) SetForNonPrepCache(flag bool) {
+	p.forNonPrepCache = flag
+}
+
+// GetParamValue returns the value of the parameter at the specified index.
+func (p *PlanCacheParamList) GetParamValue(idx int) types.Datum {
+	return p.paramValues[idx]
+}
+
+// AllParamValues returns all parameter values.
+func (p *PlanCacheParamList) AllParamValues() []types.Datum {
+	return p.paramValues
 }
 
 // ConnectionInfo presents the connection information, which is mainly used by audit logs.
@@ -1681,7 +1772,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		stmtVars:                      make(map[string]string),
 		PreparedStmts:                 make(map[uint32]interface{}),
 		PreparedStmtNameToID:          make(map[string]uint32),
-		PreparedParams:                make([]types.Datum, 0, 10),
+		PlanCacheParams:               NewPlanCacheParamList(),
 		TxnCtx:                        &TransactionContext{},
 		RetryInfo:                     &RetryInfo{},
 		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
@@ -1773,6 +1864,12 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
+		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
+		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
+	}
+	// Always disable late materialization for disaggregated TiFlash until it is supported.
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		vars.EnableLateMaterialization = false
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1808,6 +1905,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
+	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
+	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
+	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
@@ -1930,8 +2030,7 @@ func (s *SessionVars) CleanBuffers() {
 
 // AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
-	s.PlanColumnID++
-	return s.PlanColumnID
+	return s.PlanColumnID.Add(1)
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -2132,7 +2231,7 @@ func (k planCacheStmtKey) Hash() []byte {
 // AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
 func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) {
 	if s.nonPreparedPlanCacheStmts == nil {
-		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.NonPreparedPlanCacheSize), 0, 0)
+		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
 	}
 	s.nonPreparedPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
 }
@@ -2354,7 +2453,7 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 }
 
 // EncodeSessionStates saves session states into SessionStates.
-func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
 	s.userVars.lock.RLock()
 	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
@@ -2382,6 +2481,7 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
+	sessionStates.ResourceGroupName = s.ResourceGroupName
 
 	// Encode StatementContext. We encode it here to avoid circle dependency.
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
@@ -2391,7 +2491,7 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 }
 
 // DecodeSessionStates restores session states from SessionStates.
-func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
 	for name, userVar := range sessionStates.UserVars {
 		s.SetUserVarVal(name, *userVar.Clone())
@@ -2415,6 +2515,7 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
+	s.ResourceGroupName = sessionStates.ResourceGroupName
 
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
@@ -2700,6 +2801,10 @@ const (
 	SlowLogStartPrefixStr = SlowLogRowPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
+	// SlowLogKeyspaceName is slow log field name.
+	SlowLogKeyspaceName = "Keyspace_name"
+	// SlowLogKeyspaceID is slow log field name.
+	SlowLogKeyspaceID = "Keyspace_ID"
 	// SlowLogUserAndHostStr is the user and host field name, which is compatible with MySQL.
 	SlowLogUserAndHostStr = "User@Host"
 	// SlowLogUserStr is slow log field name.
@@ -2830,6 +2935,8 @@ type JSONSQLWarnForSlowLog struct {
 // slow query log.
 type SlowQueryLogItems struct {
 	TxnTS             uint64
+	KeyspaceName      string
+	KeyspaceID        uint32
 	SQL               string
 	Digest            string
 	TimeTotal         time.Duration
@@ -2872,6 +2979,8 @@ type SlowQueryLogItems struct {
 // The slow log output is like below:
 // # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
+// # Keyspace_name: keyspace_a
+// # Keyspace_ID: 1
 // # User@Host: root[root] @ localhost [127.0.0.1]
 // # Conn_ID: 6
 // # Query_time: 4.895492
@@ -2893,6 +3002,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	var buf bytes.Buffer
 
 	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
+	if logItems.KeyspaceName != "" {
+		writeSlowLogItem(&buf, SlowLogKeyspaceName, logItems.KeyspaceName)
+		writeSlowLogItem(&buf, SlowLogKeyspaceID, fmt.Sprintf("%d", logItems.KeyspaceID))
+	}
+
 	if s.User != nil {
 		hostAddress := s.User.Hostname
 		if s.ConnectionInfo != nil {
@@ -3255,54 +3369,4 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
-}
-
-// protectedTSList implements util/processinfo#ProtectedTSList
-type protectedTSList struct {
-	sync.Mutex
-	items map[uint64]int
-}
-
-// HoldTS holds the timestamp to prevent its data from being GCed.
-func (lst *protectedTSList) HoldTS(ts uint64) (unhold func()) {
-	lst.Lock()
-	if lst.items == nil {
-		lst.items = map[uint64]int{}
-	}
-	lst.items[ts] += 1
-	lst.Unlock()
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			lst.Lock()
-			if lst.items != nil {
-				if lst.items[ts] > 1 {
-					lst.items[ts] -= 1
-				} else {
-					delete(lst.items, ts)
-				}
-			}
-			lst.Unlock()
-		})
-	}
-}
-
-// GetMinProtectedTS returns the minimum protected timestamp that greater than `lowerBound` (0 if no such one).
-func (lst *protectedTSList) GetMinProtectedTS(lowerBound uint64) (ts uint64) {
-	lst.Lock()
-	for k, v := range lst.items {
-		if v > 0 && k > lowerBound && (k < ts || ts == 0) {
-			ts = k
-		}
-	}
-	lst.Unlock()
-	return
-}
-
-// Size returns the number of protected timestamps (exported for test).
-func (lst *protectedTSList) Size() (size int) {
-	lst.Lock()
-	size = len(lst.items)
-	lst.Unlock()
-	return
 }

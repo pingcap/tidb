@@ -350,6 +350,11 @@ func (ds *DataSource) buildIndexMergeOrPath(
 			path.TableFilters = nil
 		}
 	}
+
+	// Keep this filter as a part of table filters for safety if it has any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.ctx, filters[current:current+1]) {
+		shouldKeepCurrentFilter = true
+	}
 	if shouldKeepCurrentFilter {
 		indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
 	}
@@ -435,6 +440,11 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 			dedupedFinalFilters = append(dedupedFinalFilters, cond)
 			hashCodeSet[hashCode] = struct{}{}
 		}
+	}
+
+	// Keep these partial filters as a part of table filters for safety if there is any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.ctx, partialFilters) {
+		dedupedFinalFilters = append(dedupedFinalFilters, partialFilters...)
 	}
 
 	// 3. Estimate the row count after partial paths.

@@ -31,7 +31,6 @@ import (
 	ddlUtil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -530,15 +529,6 @@ func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
-var statsHealthyGauges = []prometheus.Gauge{
-	metrics.StatsHealthyGauge.WithLabelValues("[0,50)"),
-	metrics.StatsHealthyGauge.WithLabelValues("[50,80)"),
-	metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),
-	metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
-	// [0,100] should always be the last
-	metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
-}
-
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (h *Handle) UpdateStatsHealthyMetrics() {
 	v := h.statsCache.Load()
@@ -564,7 +554,7 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 		distribution[4] += 1
 	}
 	for i, val := range distribution {
-		statsHealthyGauges[i].Set(float64(val))
+		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
 }
 
@@ -621,7 +611,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 			continue
 		}
 		tbl.Version = version
-		tbl.Count = count
+		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
@@ -760,7 +750,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			allPartitionStats[partitionID] = partitionStats
 		}
 		for i := 0; i < globalStats.Num; i++ {
-			_, hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			if !analyzed {
 				var errMsg string
 				if isIndex == 0 {
@@ -772,7 +762,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 				return
 			}
 			// partition stats is not empty but column stats(hist, topn) is missing
-			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
+			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				var errMsg string
 				if isIndex == 0 {
 					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
@@ -784,7 +774,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			}
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
-				globalStats.Count += partitionStats.Count
+				globalStats.Count += partitionStats.RealtimeCount
 				globalStats.ModifyCount += partitionStats.ModifyCount
 			}
 			allHg[i] = append(allHg[i], hg)
@@ -1026,7 +1016,7 @@ func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	}
 	h.statsCache.Unlock()
 	if updated && enableQuota {
-		costGauge.Set(float64(newCost))
+		handle_metrics.CostGauge.Set(float64(newCost))
 	}
 	return
 }
@@ -1105,11 +1095,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 		IsHandle:   c.IsHandle,
 		StatsVer:   statsVer,
 	}
-	// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
-	colHist.Count = int64(colHist.TotalRowCount())
-	// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-	// So we need add colHist.Count > 0 here.
-	if statsVer != statistics.Version0 || colHist.Count > 0 {
+	if colHist.StatsAvailable() {
 		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
@@ -1205,177 +1191,6 @@ func (h *Handle) FlushStats() {
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
 		logutil.BgLogger().Error("[stats] dump stats feedback fail", zap.Error(err))
 	}
-}
-
-func (h *Handle) indexStatsFromStorage(reader *statistics.StatsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
-	histID := row.GetInt64(2)
-	distinct := row.GetInt64(3)
-	histVer := row.GetUint64(4)
-	nullCount := row.GetInt64(5)
-	statsVer := row.GetInt64(7)
-	idx := table.Indices[histID]
-	errorRate := statistics.ErrorRate{}
-	flag := row.GetInt64(8)
-	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	if statistics.IsAnalyzed(flag) && !reader.IsHistory() {
-		h.mu.rateMap.clear(table.PhysicalID, histID, true)
-	} else if idx != nil {
-		errorRate = idx.ErrorRate
-	}
-	for _, idxInfo := range tableInfo.Indices {
-		if histID != idxInfo.ID {
-			continue
-		}
-		if idx == nil || idx.LastUpdateVersion < histVer {
-			hg, err := statistics.HistogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			cms, topN, err := statistics.CMSketchAndTopNFromStorage(reader, table.PhysicalID, 1, idxInfo.ID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			fmSketch, err := statistics.FMSketchFromStorage(reader, table.PhysicalID, 1, histID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			idx = &statistics.Index{
-				Histogram:  *hg,
-				CMSketch:   cms,
-				TopN:       topN,
-				FMSketch:   fmSketch,
-				Info:       idxInfo,
-				ErrorRate:  errorRate,
-				StatsVer:   statsVer,
-				Flag:       flag,
-				PhysicalID: table.PhysicalID,
-			}
-			if statsVer != statistics.Version0 {
-				idx.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-			}
-			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
-		}
-		break
-	}
-	if idx != nil {
-		table.Indices[histID] = idx
-	} else {
-		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
-	}
-	return nil
-}
-
-func (h *Handle) columnStatsFromStorage(reader *statistics.StatsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool) error {
-	histID := row.GetInt64(2)
-	distinct := row.GetInt64(3)
-	histVer := row.GetUint64(4)
-	nullCount := row.GetInt64(5)
-	totColSize := row.GetInt64(6)
-	statsVer := row.GetInt64(7)
-	correlation := row.GetFloat64(9)
-	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	col := table.Columns[histID]
-	errorRate := statistics.ErrorRate{}
-	flag := row.GetInt64(8)
-	if statistics.IsAnalyzed(flag) && !reader.IsHistory() {
-		h.mu.rateMap.clear(table.PhysicalID, histID, false)
-	} else if col != nil {
-		errorRate = col.ErrorRate
-	}
-	for _, colInfo := range tableInfo.Columns {
-		if histID != colInfo.ID {
-			continue
-		}
-		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
-		// We will not load buckets if:
-		// 1. Lease > 0, and:
-		// 2. this column is not handle, and:
-		// 3. the column doesn't has any statistics before, and:
-		// 4. loadAll is false.
-		notNeedLoad := h.Lease() > 0 &&
-			!isHandle &&
-			(col == nil || !col.IsStatsInitialized() && col.LastUpdateVersion < histVer) &&
-			!loadAll
-		if notNeedLoad {
-			count, err := statistics.ColumnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				Info:       colInfo,
-				Count:      count + nullCount,
-				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
-				StatsVer:   statsVer,
-			}
-			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-			// So we need add col.Count > 0 here.
-			if statsVer != statistics.Version0 || col.Count > 0 {
-				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-			}
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
-			col.Histogram.Correlation = correlation
-			break
-		}
-		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := statistics.HistogramFromStorage(reader, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			cms, topN, err := statistics.CMSketchAndTopNFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			var fmSketch *statistics.FMSketch
-			if loadAll {
-				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
-				// we load all the statistics, i.e., loadAll is true.
-				fmSketch, err = statistics.FMSketchFromStorage(reader, table.PhysicalID, 0, histID)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *hg,
-				Info:       colInfo,
-				CMSketch:   cms,
-				TopN:       topN,
-				FMSketch:   fmSketch,
-				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
-				StatsVer:   statsVer,
-			}
-			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
-			col.Count = int64(col.TotalRowCount())
-			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-			// So we need add colHist.Count > 0 here.
-			if statsVer != statistics.Version0 || col.Count > 0 {
-				col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-			}
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
-			break
-		}
-		if col.TotColSize != totColSize {
-			newCol := *col
-			newCol.TotColSize = totColSize
-			col = &newCol
-		}
-		break
-	}
-	if col != nil {
-		table.Columns[col.ID] = col
-	} else {
-		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
-		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
-		// avoid error.
-		logutil.BgLogger().Debug("we cannot find column in table info now. It may be deleted", zap.Int64("colID", histID), zap.String("table", tableInfo.Name.O))
-	}
-	return nil
 }
 
 // TableStatsFromStorage loads table stats info from storage.

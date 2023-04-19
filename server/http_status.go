@@ -205,6 +205,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
+	router.Handle("/extract_task/dump", s.newExtractServeHandler()).Name("ExtractTaskDump")
 
 	router.Handle("/optimize_trace/dump/{filename}", s.newOptimizeTraceHandler()).Name("OptimizeTraceDump")
 
@@ -417,6 +418,9 @@ func (s *Server) startHTTPServer() {
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
 	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})
 
+	// ttlJobTriggerHandler is enabled only for tests, so we can accelerate the schedule of TTL job
+	router.Handle("/test/ttl/trigger/{db}/{table}", &ttlJobTriggerHandler{tikvHandlerTool.Store.(kv.Storage)})
+
 	var (
 		httpRouterPage bytes.Buffer
 		pathTemplate   string
@@ -545,7 +549,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	// If the server is in the process of shutting down, return a non-200 status.
 	// It is important not to return status{} as acquiring the s.ConnectionCount()
 	// acquires a lock that may already be held by the shutdown process.
-	if s.inShutdownMode {
+	if !s.health.Load() {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

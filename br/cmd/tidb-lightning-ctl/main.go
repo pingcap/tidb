@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/restore"
+	"github.com/pingcap/tidb/br/pkg/lightning/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 )
 
@@ -128,7 +128,7 @@ func compactCluster(ctx context.Context, cfg *config.Config, tls *common.TLS) er
 		tls.WithHost(cfg.TiDB.PdAddr),
 		tikv.StoreStateDisconnected,
 		func(c context.Context, store *tikv.Store) error {
-			return tikv.Compact(c, tls, store.Address, restore.FullLevelCompact)
+			return tikv.Compact(c, tls, store.Address, importer.FullLevelCompact)
 		},
 	)
 }
@@ -169,7 +169,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 	//nolint: errcheck
 	defer cpdb.Close()
 
-	target, err := restore.NewTiDBManager(ctx, cfg.TiDB, tls)
+	target, err := importer.NewTiDBManager(ctx, cfg.TiDB, tls)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -196,7 +196,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 	// we need either lightning process alive or engine map persistent.
 	// both of them seems unnecessary if we only need to do is cleanup specify engine directory.
 	// so we didn't choose to use common API.
-	if cfg.TikvImporter.Backend == "local" {
+	if cfg.TikvImporter.Backend == config.BackendLocal {
 		for _, table := range targetTables {
 			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
 				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)

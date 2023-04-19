@@ -200,7 +200,7 @@ func TestPseudoTable(t *testing.T) {
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
 	require.Len(t, tbl.Columns, 1)
-	require.Greater(t, tbl.Count, int64(0))
+	require.Greater(t, tbl.RealtimeCount, int64(0))
 	sctx := mock.NewContext()
 	count := tbl.ColumnLessRowCount(sctx, types.NewIntDatum(100), colInfo.ID)
 	require.Equal(t, 3333, int(count))
@@ -257,8 +257,8 @@ func SubTestColumnRange() func(*testing.T) {
 		}
 		tbl := &Table{
 			HistColl: HistColl{
-				Count:   int64(col.TotalRowCount()),
-				Columns: make(map[int64]*Column),
+				RealtimeCount: int64(col.TotalRowCount()),
+				Columns:       make(map[int64]*Column),
 			},
 		}
 		ran := []*ranger.Range{{
@@ -329,8 +329,8 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, StatsLoadedStatus: NewStatsFullLoadStatus()}
 		tbl := &Table{
 			HistColl: HistColl{
-				Count:   int64(col.TotalRowCount()),
-				Columns: make(map[int64]*Column),
+				RealtimeCount: int64(col.TotalRowCount()),
+				Columns:       make(map[int64]*Column),
 			},
 		}
 		ran := []*ranger.Range{{
@@ -403,7 +403,7 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
 
-		tbl.Count *= 10
+		tbl.RealtimeCount *= 10
 		count, err = tbl.GetRowCountByIntColumnRanges(ctx, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
@@ -425,8 +425,8 @@ func SubTestIndexRanges() func(*testing.T) {
 		idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 		tbl := &Table{
 			HistColl: HistColl{
-				Count:   int64(idx.TotalRowCount()),
-				Indices: make(map[int64]*Index),
+				RealtimeCount: int64(idx.TotalRowCount()),
+				Indices:       make(map[int64]*Index),
 			},
 		}
 		ran := []*ranger.Range{{

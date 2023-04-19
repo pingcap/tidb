@@ -29,8 +29,10 @@ func (s *mockGCSSuite) TestLoadCSV() {
 	// no-new-line-at-end
 
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-load-csv",
-		Name:       "no-new-line-at-end.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load-csv",
+			Name:       "no-new-line-at-end.csv",
+		},
 		Content: []byte(`i,s
 100,"test100"
 101,"\""
@@ -53,8 +55,10 @@ func (s *mockGCSSuite) TestLoadCSV() {
 	// new-line-at-end
 
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-load-csv",
-		Name:       "new-line-at-end.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load-csv",
+			Name:       "new-line-at-end.csv",
+		},
 		Content: []byte(`i,s
 100,"test100"
 101,"\""
@@ -77,7 +81,7 @@ func (s *mockGCSSuite) TestLoadCSV() {
 
 	// can't read file at tidb-server
 	sql = "LOAD DATA INFILE '/etc/passwd' INTO TABLE load_csv.t;"
-	s.tk.MustContainErrMsg(sql, "don't support load data from tidb-server")
+	s.tk.MustContainErrMsg(sql, "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '/etc/passwd' needs to specify the clause of LOCAL first")
 }
 
 func (s *mockGCSSuite) TestIgnoreNLines() {
@@ -86,8 +90,10 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.tk.MustExec("CREATE TABLE load_csv.t (s varchar(32), i INT);")
 
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-bucket",
-		Name:       "ignore-lines-bad-syntax.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-bucket",
+			Name:       "ignore-lines-bad-syntax.csv",
+		},
 		Content: []byte(`"bad syntax"1
 "b",2
 "c",3
@@ -114,8 +120,10 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	// test IGNORE N LINES will directly find (line) terminator without checking it's inside quotes
 
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-bucket",
-		Name:       "count-terminator-inside-quotes.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-bucket",
+			Name:       "count-terminator-inside-quotes.csv",
+		},
 		Content: []byte(`"a
 ",1
 "b
@@ -141,8 +149,10 @@ func (s *mockGCSSuite) TestCustomizeNULL() {
 	s.tk.MustExec("CREATE TABLE load_csv.t (c varchar(32), c2 varchar(32));")
 
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-bucket",
-		Name:       "customize-null.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-bucket",
+			Name:       "customize-null.csv",
+		},
 		Content: []byte(`\N,"\N"
 !N,"!N"
 NULL,"NULL"
@@ -187,9 +197,8 @@ mynull,"mynull"
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\'
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY 'NULL';`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\' DEFINED NULL BY 'NULL'
+		LINES TERMINATED BY '\n';`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`<nil> <nil>`,
@@ -200,9 +209,8 @@ mynull,"mynull"
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\'
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY 'NULL' OPTIONALLY ENCLOSED;`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\' DEFINED NULL BY 'NULL' OPTIONALLY ENCLOSED
+		LINES TERMINATED BY '\n'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`<nil> <nil>`,
@@ -213,9 +221,8 @@ mynull,"mynull"
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '!'
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY 'mynull' OPTIONALLY ENCLOSED;`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '!' DEFINED NULL BY 'mynull' OPTIONALLY ENCLOSED
+		LINES TERMINATED BY '\n'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`\N \N`,
@@ -227,15 +234,16 @@ mynull,"mynull"
 
 	ascii0 := string([]byte{0})
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-bucket",
-		Name:       "ascii-0.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-bucket",
+			Name:       "ascii-0.csv",
+		},
 		Content: []byte(fmt.Sprintf(`\0,"\0"
 %s,"%s"`, ascii0, ascii0)),
 	})
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ascii-0.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY ''
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY x'00' OPTIONALLY ENCLOSED;`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '' DEFINED NULL BY x'00' OPTIONALLY ENCLOSED
+		LINES TERMINATED BY '\n';`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`\0 \0`,
@@ -244,9 +252,8 @@ mynull,"mynull"
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ascii-0.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\'
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY x'00';`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\' DEFINED NULL BY x'00'
+		LINES TERMINATED BY '\n';`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"<nil> \000",
@@ -255,8 +262,7 @@ mynull,"mynull"
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ','
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY 'mynull' OPTIONALLY ENCLOSED;`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' DEFINED NULL BY 'mynull' OPTIONALLY ENCLOSED
+		LINES TERMINATED BY '\n';`, gcsEndpoint)
 	s.tk.MustMatchErrMsg(sql, `must specify FIELDS \[OPTIONALLY\] ENCLOSED BY`)
 }

@@ -126,7 +126,7 @@ func pseudoSelectivity(coll *HistColl, exprs []expression.Expression) float64 {
 			}
 			colExists[col.Info.Name.L] = true
 			if mysql.HasUniKeyFlag(col.Info.GetFlag()) {
-				return 1.0 / float64(coll.Count)
+				return 1.0 / float64(coll.RealtimeCount)
 			}
 		case ast.GE, ast.GT, ast.LE, ast.LT:
 			minFactor = math.Min(minFactor, 1.0/pseudoLessRate)
@@ -149,7 +149,7 @@ func pseudoSelectivity(coll *HistColl, exprs []expression.Expression) float64 {
 			}
 		}
 		if unique {
-			return 1.0 / float64(coll.Count)
+			return 1.0 / float64(coll.RealtimeCount)
 		}
 	}
 	return minFactor
@@ -181,7 +181,7 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 // Currently the time complexity is o(n^2).
 func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Expression, filledPaths []*planutil.AccessPath) (float64, []*StatsNode, error) {
 	// If table's count is zero or conditions are empty, we should return 100% selectivity.
-	if coll.Count == 0 || len(exprs) == 0 {
+	if coll.RealtimeCount == 0 || len(exprs) == 0 {
 		return 1, nil, nil
 	}
 	ret := 1.0
@@ -192,7 +192,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
 		ret = pseudoSelectivity(coll, exprs)
 		if sc.EnableOptimizerCETrace {
-			CETraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression", expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.Count))
+			CETraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression", expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.RealtimeCount))
 		}
 		return ret, nil, nil
 	}
@@ -238,14 +238,14 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
-				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
+				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 				continue
 			}
 			cnt, err := coll.GetRowCountByColumnRanges(ctx, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
+			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 		}
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
@@ -276,7 +276,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			selectivity := cnt / float64(coll.Count)
+			selectivity := cnt / float64(coll.RealtimeCount)
 			nodes = append(nodes, &StatsNode{
 				Tp:          IndexType,
 				ID:          id,
@@ -312,7 +312,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				}
 			}
 			expr := expression.ComposeCNFCondition(ctx, curExpr...)
-			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.Count))
+			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
 		}
 	}
 
@@ -335,7 +335,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				case ast.LogicOr:
 					notCoveredDNF[i] = x
 					continue
-				case ast.Like, ast.Regexp, ast.RegexpLike:
+				case ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 					notCoveredStrMatch[i] = x
 					continue
 				case ast.UnaryNot:
@@ -343,7 +343,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 					innerSF, ok := inner.(*expression.ScalarFunction)
 					if ok {
 						switch innerSF.FuncName.L {
-						case ast.Like, ast.Regexp, ast.RegexpLike:
+						case ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 							notCoveredNegateStrMatch[i] = x
 							continue
 						}
@@ -422,7 +422,7 @@ OUTER:
 			selectivity = selectivity + curSelectivity - selectivity*curSelectivity
 			if sc.EnableOptimizerCETrace {
 				// Tracing for the expression estimation results of this DNF.
-				CETraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.Count))
+				CETraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.RealtimeCount))
 			}
 		}
 
@@ -435,14 +435,14 @@ OUTER:
 			// Tracing for the expression estimation results after applying the DNF estimation result.
 			curExpr = append(curExpr, remainedExprs[i])
 			expr := expression.ComposeCNFCondition(ctx, curExpr...)
-			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.Count))
+			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
 		}
 	}
 
 	// Try to cover remaining string matching functions by evaluating the expressions with TopN to estimate.
 	if ctx.GetSessionVars().EnableEvalTopNEstimationForStrMatch() {
 		for i, scalarCond := range notCoveredStrMatch {
-			ok, sel, err := coll.GetSelectivityByFilter(ctx, ctx.GetSessionVars().GetStrMatchDefaultSelectivity(), []expression.Expression{scalarCond})
+			ok, sel, err := coll.GetSelectivityByFilter(ctx, []expression.Expression{scalarCond})
 			if err != nil {
 				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
 			}
@@ -454,7 +454,7 @@ OUTER:
 			delete(notCoveredStrMatch, i)
 		}
 		for i, scalarCond := range notCoveredNegateStrMatch {
-			ok, sel, err := coll.GetSelectivityByFilter(ctx, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity(), []expression.Expression{scalarCond})
+			ok, sel, err := coll.GetSelectivityByFilter(ctx, []expression.Expression{scalarCond})
 			if err != nil {
 				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
 			}
@@ -488,7 +488,7 @@ OUTER:
 	if sc.EnableOptimizerCETrace {
 		// Tracing for the expression estimation results after applying the default selectivity.
 		totalExpr := expression.ComposeCNFCondition(ctx, remainedExprs...)
-		CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.Count))
+		CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
 	}
 	return ret, nodes, nil
 }

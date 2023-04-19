@@ -33,7 +33,7 @@ func TestDMLVisitorCover(t *testing.T) {
 	}{
 		{&DeleteStmt{TableRefs: tableRefsClause, Tables: &DeleteTableList{}, Where: ce,
 			Order: &OrderByClause{}, Limit: &Limit{Count: ce, Offset: ce}}, 4, 4},
-		{&ShowStmt{Table: &TableName{}, Column: &ColumnName{}, Pattern: &PatternLikeExpr{Expr: ce, Pattern: ce}, Where: ce}, 3, 3},
+		{&ShowStmt{Table: &TableName{}, Column: &ColumnName{}, Pattern: &PatternLikeOrIlikeExpr{Expr: ce, Pattern: ce}, Where: ce}, 3, 3},
 		{&LoadDataStmt{Table: &TableName{}, Columns: []*ColumnName{{}}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}}, 0, 0},
 		{&Assignment{Column: &ColumnName{}, Expr: ce}, 1, 1},
 		{&ByItem{Expr: ce}, 1, 1},
@@ -408,6 +408,140 @@ func TestWindowSpecRestore(t *testing.T) {
 		return &node.(*SelectStmt).Fields.Fields[0].Expr.(*WindowFuncExpr).Spec
 	}
 	runNodeRestoreTest(t, testCases, "select rank() over %s from t window w as (order by a)", extractNodeFunc)
+}
+
+func TestLoadDataRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t`",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t` character set utf8mb4",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t` CHARACTER SET utf8mb4",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t` character set gbk",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t` CHARACTER SET gbk",
+		},
+		// ignore N lines
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` ignore 0 lines",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` IGNORE 0 LINES",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` ignore 11 lines",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` IGNORE 11 LINES",
+		},
+		// fields
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields terminated by 'a\\t'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS TERMINATED BY 'a\t'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` FIELDS OPTIONALLY ENCLOSED BY 'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS OPTIONALLY ENCLOSED BY 'a'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields enclosed by 'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS ENCLOSED BY 'a'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields escaped by 'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS ESCAPED BY 'a'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields defined null by 'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS DEFINED NULL BY 'a'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields defined null by 'a' optionally enclosed",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS DEFINED NULL BY 'a' OPTIONALLY ENCLOSED",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields defined null by 'a' optionally enclosed  optionally  enclosed  by  'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS OPTIONALLY ENCLOSED BY 'a' DEFINED NULL BY 'a' OPTIONALLY ENCLOSED",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields optionally  enclosed  by  'a'  defined null by 'a' optionally enclosed",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS OPTIONALLY ENCLOSED BY 'a' DEFINED NULL BY 'a' OPTIONALLY ENCLOSED",
+		},
+		// lines
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` lines starting by 'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` LINES STARTING BY 'a'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` lines terminated by '\\n'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` LINES TERMINATED BY '\n'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` lines starting by 'a' terminated by '\\n'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` LINES STARTING BY 'a' TERMINATED BY '\n'",
+		},
+		// with options
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with batch_size=999,detached",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH batch_size=999, detached",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached, batch_size=999",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, batch_size=999",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached, thread=-100, batch_size=999",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, thread=-100, batch_size=999",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' format 'sql' into table `t` with detached, batch_size=999",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql' INTO TABLE `t` WITH detached, batch_size=999",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*LoadDataStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestLoadDataActions(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			sourceSQL: "show load data jobs",
+			expectSQL: "SHOW LOAD DATA JOBS",
+		},
+		{
+			sourceSQL: "show load data job 123",
+			expectSQL: "SHOW LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "show load data jobs where aa > 1",
+			expectSQL: "SHOW LOAD DATA JOBS WHERE `aa`>1",
+		},
+		{
+			sourceSQL: "pause load data job 123",
+			expectSQL: "PAUSE LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "resume load data job 123",
+			expectSQL: "RESUME LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "Cancel load data job 123",
+			expectSQL: "CANCEL LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "drop   load data job 123",
+			expectSQL: "DROP LOAD DATA JOB 123",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
 func TestFulltextSearchModifier(t *testing.T) {

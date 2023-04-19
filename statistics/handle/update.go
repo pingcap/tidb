@@ -436,7 +436,7 @@ func (h *Handle) needDumpStatsDelta(is infoschema.InfoSchema, mode dumpMode, id 
 		return true
 	}
 	statsTbl := h.GetPartitionStats(tbl.Meta(), id)
-	if statsTbl.Pseudo || statsTbl.Count == 0 || float64(item.Count)/float64(statsTbl.Count) > DumpStatsDeltaRatio {
+	if statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
 	}
@@ -998,12 +998,12 @@ var AutoAnalyzeMinCnt int64 = 1000
 // TableAnalyzed checks if the table is analyzed.
 func TableAnalyzed(tbl *statistics.Table) bool {
 	for _, col := range tbl.Columns {
-		if col.Count > 0 {
+		if col.IsAnalyzed() {
 			return true
 		}
 	}
 	for _, idx := range tbl.Indices {
-		if idx.Histogram.Len() > 0 {
+		if idx.IsAnalyzed() {
 			return true
 		}
 	}
@@ -1026,7 +1026,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 		return false, ""
 	}
 	// No need to analyze it.
-	tblCnt := float64(tbl.Count)
+	tblCnt := float64(tbl.RealtimeCount)
 	if histCnt := tbl.GetColRowCount(); histCnt > 0 {
 		tblCnt = histCnt
 	}
@@ -1170,7 +1170,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 }
 
 func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, ratio float64, analyzeSnapshot bool, sql string, params ...interface{}) bool {
-	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
+	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio); needAnalyze {
@@ -1210,7 +1210,7 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 	partitionNames := make([]interface{}, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
-		if partitionStatsTbl.Pseudo || partitionStatsTbl.Count < AutoAnalyzeMinCnt {
+		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
 		}
 		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*h.Lease(), ratio); needAnalyze {
@@ -1230,14 +1230,11 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 		sqlBuilder.WriteString(suffix)
 		return sqlBuilder.String()
 	}
-	if len(partitionNames) < 1 {
-		return false
-	}
-	logutil.BgLogger().Info("[stats] start to auto analyze",
-		zap.String("table", tblInfo.Name.String()),
-		zap.Any("partitions", partitionNames),
-		zap.Int("analyze partition batch size", analyzePartitionBatchSize))
 	if len(partitionNames) > 0 {
+		logutil.BgLogger().Info("[stats] start to auto analyze",
+			zap.String("table", tblInfo.Name.String()),
+			zap.Any("partitions", partitionNames),
+			zap.Int("analyze partition batch size", analyzePartitionBatchSize))
 		statsTbl := h.GetTableStats(tblInfo)
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
@@ -1403,7 +1400,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 					zap.String("range", rangeString))
 			}
 		} else {
-			count, err := statistics.GetPseudoRowCountByColumnRanges(sc, float64(t.Count), []*ranger.Range{&rang}, 0)
+			count, err := statistics.GetPseudoRowCountByColumnRanges(sc, float64(t.RealtimeCount), []*ranger.Range{&rang}, 0)
 			if err == nil {
 				logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
 					zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
@@ -1434,13 +1431,13 @@ func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
 		if idx == nil || idx.Histogram.Len() == 0 {
 			return
 		}
-		logForIndex(logPrefix, t, idx, ranges, actual, idx.GetIncreaseFactor(t.Count))
+		logForIndex(logPrefix, t, idx, ranges, actual, idx.GetIncreaseFactor(t.RealtimeCount))
 	} else {
 		c := t.Columns[q.Hist.ID]
 		if c == nil || c.Histogram.Len() == 0 {
 			return
 		}
-		logForPK(logPrefix, c, ranges, actual, c.GetIncreaseFactor(t.Count))
+		logForPK(logPrefix, c, ranges, actual, c.GetIncreaseFactor(t.RealtimeCount))
 	}
 }
 
@@ -1494,10 +1491,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback, enablePseud
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count, t.ModifyCount)
+		expected, err = idx.GetRowCount(sctx, nil, ranges, t.RealtimeCount, t.ModifyCount)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, t.ModifyCount, true)
+		expected, err = c.GetColumnRowCount(sctx, ranges, t.RealtimeCount, t.ModifyCount, true)
 	}
 	q.Expected = int64(expected)
 	return err
@@ -1607,7 +1604,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 			logutil.BgLogger().Debug("encode keys fail", zap.Error(err))
 			continue
 		}
-		equalityCount := float64(idx.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
+		equalityCount := float64(idx.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.RealtimeCount)
 		rang := &ranger.Range{
 			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
 			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
@@ -1634,7 +1631,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 			continue
 		}
 
-		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.Count), float64(q.Feedback[i].Count))
+		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.RealtimeCount), float64(q.Feedback[i].Count))
 		value := types.NewBytesDatum(bytes)
 		q.Feedback[i] = statistics.Feedback{Lower: &value, Upper: &value, Count: int64(equalityCount)}
 		err = h.dumpRangeFeedback(sc, rang, rangeCount, rangeFB)

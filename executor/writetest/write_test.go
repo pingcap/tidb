@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -1211,375 +1210,6 @@ func TestGeneratedColumnForInsert(t *testing.T) {
 	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1000 9.9"))
 }
 
-func TestPartitionedTableReplace(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	testSQL := `drop table if exists replace_test;
-		    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
-			partition by range (id) (
-			PARTITION p0 VALUES LESS THAN (3),
-			PARTITION p1 VALUES LESS THAN (5),
-			PARTITION p2 VALUES LESS THAN (7),
-			PARTITION p3 VALUES LESS THAN (9));`
-	tk.MustExec(testSQL)
-	testSQL = `replace replace_test (c1) values (1),(2),(NULL);`
-	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "Records: 3  Duplicates: 0  Warnings: 0")
-
-	errReplaceSQL := `replace replace_test (c1) values ();`
-	tk.MustExec("begin")
-	err := tk.ExecToErr(errReplaceSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	errReplaceSQL = `replace replace_test (c1, c2) values (1,2),(1);`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	errReplaceSQL = `replace replace_test (xxx) values (3);`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	errReplaceSQL = `replace replace_test_xxx (c1) values ();`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	replaceSetSQL := `replace replace_test set c1 = 3;`
-	tk.MustExec(replaceSetSQL)
-	require.Empty(t, tk.Session().LastMessage())
-
-	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSetSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	errReplaceSetSQL = `replace replace_test set xxx = 6;`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSetSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	tk.MustExec(`drop table if exists replace_test_1`)
-	tk.MustExec(`create table replace_test_1 (id int, c1 int) partition by range (id) (
-			PARTITION p0 VALUES LESS THAN (4),
-			PARTITION p1 VALUES LESS THAN (6),
-			PARTITION p2 VALUES LESS THAN (8),
-			PARTITION p3 VALUES LESS THAN (10),
-			PARTITION p4 VALUES LESS THAN (100))`)
-	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test;`)
-	require.Equal(t, tk.Session().LastMessage(), "Records: 4  Duplicates: 0  Warnings: 0")
-
-	tk.MustExec(`drop table if exists replace_test_2`)
-	tk.MustExec(`create table replace_test_2 (id int, c1 int) partition by range (id) (
-			PARTITION p0 VALUES LESS THAN (10),
-			PARTITION p1 VALUES LESS THAN (50),
-			PARTITION p2 VALUES LESS THAN (100),
-			PARTITION p3 VALUES LESS THAN (300))`)
-	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;`)
-	require.Equal(t, tk.Session().LastMessage(), "Records: 8  Duplicates: 0  Warnings: 0")
-
-	errReplaceSelectSQL := `replace replace_test_1 select c1 from replace_test;`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSelectSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	tk.MustExec(`drop table if exists replace_test_3`)
-	replaceUniqueIndexSQL := `create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)) partition by range (c2) (
-				    PARTITION p0 VALUES LESS THAN (4),
-				    PARTITION p1 VALUES LESS THAN (7),
-				    PARTITION p2 VALUES LESS THAN (11))`
-	tk.MustExec(replaceUniqueIndexSQL)
-	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=8;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=8;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-	require.Empty(t, tk.Session().LastMessage())
-	replaceUniqueIndexSQL = `replace into replace_test_3 set c1=8, c2=8;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	require.Equal(t, int64(2), int64(tk.Session().AffectedRows()))
-	require.Empty(t, tk.Session().LastMessage())
-
-	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-	require.Empty(t, tk.Session().LastMessage())
-
-	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by range (c1) (
-				    PARTITION p0 VALUES LESS THAN (4),
-				    PARTITION p1 VALUES LESS THAN (7),
-				    PARTITION p2 VALUES LESS THAN (11));`
-	tk.MustExec(`drop table if exists replace_test_4`)
-	tk.MustExec(replaceUniqueIndexSQL)
-	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-
-	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by range (c2) (
-				    PARTITION p0 VALUES LESS THAN (4),
-				    PARTITION p1 VALUES LESS THAN (7),
-				    PARTITION p2 VALUES LESS THAN (11));`
-	tk.MustExec(replacePrimaryKeySQL)
-	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
-	tk.MustExec(replacePrimaryKeySQL)
-	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
-	tk.MustExec(replacePrimaryKeySQL)
-	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-
-	issue989SQL := `CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by range (b) (
-			    PARTITION p1 VALUES LESS THAN (100),
-			    PARTITION p2 VALUES LESS THAN (200))`
-	tk.MustExec(issue989SQL)
-	issue989SQL = `insert into tIssue989 (a, b) values (1, 2);`
-	tk.MustExec(issue989SQL)
-	issue989SQL = `replace into tIssue989(a, b) values (111, 2);`
-	tk.MustExec(issue989SQL)
-	r := tk.MustQuery("select * from tIssue989;")
-	r.Check(testkit.Rows("111 2"))
-}
-
-func TestHashPartitionedTableReplace(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
-	tk.MustExec("drop table if exists replace_test;")
-	testSQL := `create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
-			partition by hash(id) partitions 4;`
-	tk.MustExec(testSQL)
-
-	testSQL = `replace replace_test (c1) values (1),(2),(NULL);`
-	tk.MustExec(testSQL)
-
-	errReplaceSQL := `replace replace_test (c1) values ();`
-	tk.MustExec("begin")
-	err := tk.ExecToErr(errReplaceSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	errReplaceSQL = `replace replace_test (c1, c2) values (1,2),(1);`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	errReplaceSQL = `replace replace_test (xxx) values (3);`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	errReplaceSQL = `replace replace_test_xxx (c1) values ();`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSetSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	errReplaceSetSQL = `replace replace_test set xxx = 6;`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSetSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	tk.MustExec(`replace replace_test set c1 = 3;`)
-	tk.MustExec(`replace replace_test set c1 = 4;`)
-	tk.MustExec(`replace replace_test set c1 = 5;`)
-	tk.MustExec(`replace replace_test set c1 = 6;`)
-	tk.MustExec(`replace replace_test set c1 = 7;`)
-
-	tk.MustExec(`drop table if exists replace_test_1`)
-	tk.MustExec(`create table replace_test_1 (id int, c1 int) partition by hash(id) partitions 5;`)
-	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test;`)
-
-	tk.MustExec(`drop table if exists replace_test_2`)
-	tk.MustExec(`create table replace_test_2 (id int, c1 int) partition by hash(id) partitions 6;`)
-
-	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;`)
-
-	errReplaceSelectSQL := `replace replace_test_1 select c1 from replace_test;`
-	tk.MustExec("begin")
-	err = tk.ExecToErr(errReplaceSelectSQL)
-	require.Error(t, err)
-	tk.MustExec("rollback")
-
-	tk.MustExec(`drop table if exists replace_test_3`)
-	replaceUniqueIndexSQL := `create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)) partition by hash(c2) partitions 7;`
-	tk.MustExec(replaceUniqueIndexSQL)
-
-	tk.MustExec(`replace into replace_test_3 set c2=8;`)
-	tk.MustExec(`replace into replace_test_3 set c2=8;`)
-	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-	tk.MustExec(`replace into replace_test_3 set c1=8, c2=8;`)
-	require.Equal(t, int64(2), int64(tk.Session().AffectedRows()))
-
-	tk.MustExec(`replace into replace_test_3 set c2=NULL;`)
-	tk.MustExec(`replace into replace_test_3 set c2=NULL;`)
-	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-
-	for i := 0; i < 100; i++ {
-		sql := fmt.Sprintf("replace into replace_test_3 set c2=%d;", i)
-		tk.MustExec(sql)
-	}
-	result := tk.MustQuery("select count(*) from replace_test_3")
-	result.Check(testkit.Rows("102"))
-
-	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by hash(c1) partitions 8;`
-	tk.MustExec(`drop table if exists replace_test_4`)
-	tk.MustExec(replaceUniqueIndexSQL)
-	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-
-	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by hash (c2) partitions 9;`
-	tk.MustExec(replacePrimaryKeySQL)
-	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
-	tk.MustExec(replacePrimaryKeySQL)
-	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
-	tk.MustExec(replacePrimaryKeySQL)
-	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-
-	issue989SQL := `CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by hash (b) partitions 10;`
-	tk.MustExec(issue989SQL)
-	issue989SQL = `insert into tIssue989 (a, b) values (1, 2);`
-	tk.MustExec(issue989SQL)
-	issue989SQL = `replace into tIssue989(a, b) values (111, 2);`
-	tk.MustExec(issue989SQL)
-	r := tk.MustQuery("select * from tIssue989;")
-	r.Check(testkit.Rows("111 2"))
-}
-
-func TestPartitionedTableUpdate(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`create table t (id int not null default 1, name varchar(255))
-			PARTITION BY RANGE ( id ) (
-			PARTITION p0 VALUES LESS THAN (6),
-			PARTITION p1 VALUES LESS THAN (11),
-			PARTITION p2 VALUES LESS THAN (16),
-			PARTITION p3 VALUES LESS THAN (21))`)
-
-	tk.MustExec(`insert INTO t VALUES (1, "hello");`)
-	tk.CheckExecResult(1, 0)
-	tk.MustExec(`insert INTO t VALUES (7, "hello");`)
-	tk.CheckExecResult(1, 0)
-
-	// update non partition column
-	tk.MustExec(`UPDATE t SET name = "abc" where id > 0;`)
-	tk.CheckExecResult(2, 0)
-	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 2  Changed: 2  Warnings: 0")
-	r := tk.MustQuery(`SELECT * from t order by id limit 2;`)
-	r.Check(testkit.Rows("1 abc", "7 abc"))
-
-	// update partition column
-	tk.MustExec(`update t set id = id + 1`)
-	tk.CheckExecResult(2, 0)
-	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 2  Changed: 2  Warnings: 0")
-	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
-	r.Check(testkit.Rows("2 abc", "8 abc"))
-
-	// update partition column, old and new record locates on different partitions
-	tk.MustExec(`update t set id = 20 where id = 8`)
-	tk.CheckExecResult(1, 0)
-	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 1  Warnings: 0")
-	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
-	r.Check(testkit.Rows("2 abc", "20 abc"))
-
-	// table option is auto-increment
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t (id int not null auto_increment, name varchar(255), primary key(id))
-			PARTITION BY RANGE ( id ) (
-			PARTITION p0 VALUES LESS THAN (6),
-			PARTITION p1 VALUES LESS THAN (11),
-			PARTITION p2 VALUES LESS THAN (16),
-			PARTITION p3 VALUES LESS THAN (21))`)
-
-	tk.MustExec("insert into t(name) values ('aa')")
-	tk.MustExec("update t set id = 8 where name = 'aa'")
-	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 1  Warnings: 0")
-	tk.MustExec("insert into t(name) values ('bb')")
-	r = tk.MustQuery("select * from t;")
-	r.Check(testkit.Rows("8 aa", "9 bb"))
-
-	err := tk.ExecToErr("update t set id = null where name = 'aa'")
-	require.EqualError(t, err, "[table:1048]Column 'id' cannot be null")
-
-	// Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t (id int, name int unique)
-			PARTITION BY RANGE ( name ) (
-			PARTITION p0 VALUES LESS THAN (6),
-			PARTITION p1 VALUES LESS THAN (11),
-			PARTITION p2 VALUES LESS THAN (16),
-			PARTITION p3 VALUES LESS THAN (21))`)
-	tk.MustExec("insert t values (1, 1), (2, 2);")
-	err = tk.ExecToErr("update t set name = 1 where id = 2")
-	require.Error(t, err)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
-
-	// test update ignore for pimary key
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t(a bigint, primary key (a))
-			PARTITION BY RANGE (a) (
-			PARTITION p0 VALUES LESS THAN (6),
-			PARTITION p1 VALUES LESS THAN (11))`)
-	tk.MustExec("insert into t values (5)")
-	tk.MustExec("insert into t values (7)")
-	err = tk.ExecToErr("update ignore t set a = 5 where a = 7;")
-	require.NoError(t, err)
-	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 0  Warnings: 1")
-	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 't.PRIMARY'"))
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
-
-	// test update ignore for truncate as warning
-	err = tk.ExecToErr("update ignore t set a = 1 where a = (select '2a')")
-	require.NoError(t, err)
-	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '2a'", "Warning 1292 Truncated incorrect DOUBLE value: '2a'"))
-
-	// test update ignore for unique key
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t(a bigint, unique key I_uniq (a))
-			PARTITION BY RANGE (a) (
-			PARTITION p0 VALUES LESS THAN (6),
-			PARTITION p1 VALUES LESS THAN (11))`)
-	tk.MustExec("insert into t values (5)")
-	tk.MustExec("insert into t values (7)")
-	err = tk.ExecToErr("update ignore t set a = 5 where a = 7;")
-	require.NoError(t, err)
-	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 0  Warnings: 1")
-	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 't.I_uniq'"))
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
-}
-
 // TestUpdateCastOnlyModifiedValues for issue #4514.
 func TestUpdateCastOnlyModifiedValues(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1743,62 +1373,6 @@ func TestDelete(t *testing.T) {
 	tk.MustExec("drop sequence seq")
 }
 
-func TestPartitionedTableDelete(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
-	createTable := `CREATE TABLE test.t (id int not null default 1, name varchar(255), index(id))
-			  PARTITION BY RANGE ( id ) (
-			  PARTITION p0 VALUES LESS THAN (6),
-			  PARTITION p1 VALUES LESS THAN (11),
-			  PARTITION p2 VALUES LESS THAN (16),
-			  PARTITION p3 VALUES LESS THAN (21))`
-
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(createTable)
-	for i := 1; i < 21; i++ {
-		tk.MustExec(fmt.Sprintf(`insert into t values (%d, "hello")`, i))
-	}
-
-	tk.MustExec(`delete from t where id = 2 limit 1;`)
-	tk.CheckExecResult(1, 0)
-
-	// Test delete with false condition
-	tk.MustExec(`delete from t where 0;`)
-	tk.CheckExecResult(0, 0)
-
-	tk.MustExec("insert into t values (2, 'abc')")
-	tk.MustExec(`delete from t where t.id = 2 limit 1`)
-	tk.CheckExecResult(1, 0)
-
-	// Test delete ignore
-	tk.MustExec("insert into t values (2, 'abc')")
-	err := tk.ExecToErr("delete from t where id = (select '2a')")
-	require.Error(t, err)
-	err = tk.ExecToErr("delete ignore from t where id = (select '2a')")
-	require.NoError(t, err)
-	tk.CheckExecResult(1, 0)
-	r := tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '2a'", "Warning 1292 Truncated incorrect DOUBLE value: '2a'"))
-
-	// Test delete without using index, involve multiple partitions.
-	tk.MustExec("delete from t ignore index(id) where id >= 13 and id <= 17")
-	tk.CheckExecResult(5, 0)
-
-	tk.MustExec("admin check table t")
-	tk.MustExec(`delete from t;`)
-	tk.CheckExecResult(14, 0)
-
-	// Fix that partitioned table should not use PointGetPlan.
-	tk.MustExec(`create table t1 (c1 bigint, c2 bigint, c3 bigint, primary key(c1)) partition by range (c1) (partition p0 values less than (3440))`)
-	tk.MustExec("insert into t1 values (379, 379, 379)")
-	tk.MustExec("delete from t1 where c1 = 379")
-	tk.CheckExecResult(1, 0)
-	tk.MustExec(`drop table t1;`)
-}
-
 func fillDataMultiTable(tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")
@@ -1874,24 +1448,16 @@ type testCase struct {
 
 func checkCases(
 	tests []testCase,
-	ld *executor.LoadDataInfo,
+	ld *executor.LoadDataWorker,
 	t *testing.T,
 	tk *testkit.TestKit,
 	ctx sessionctx.Context,
 	selectSQL, deleteSQL string,
 ) {
-	origin := ld.IgnoreLines
 	for _, tt := range tests {
-		ld.IgnoreLines = origin
-		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
-		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
-		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
-
 		parser, err := mydump.NewCSVParser(
 			context.Background(),
-			ld.GenerateCSVConfig(),
+			ld.GetController().GenerateCSVConfig(),
 			mydump.NewStringReader(string(tt.data)),
 			1,
 			nil,
@@ -1899,18 +1465,9 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
-		err1 := ld.ReadRows(context.Background(), parser)
-		require.NoError(t, err1)
-		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
-		require.NoError(t, err1)
-		ld.SetMaxRowsInBatch(20000)
-		ld.SetMessage()
-		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage())
-		ctx.StmtCommit(context.Background())
-		txn, err := ctx.Txn(true)
+		err = ld.TestLoad(parser)
 		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
+		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
 		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
 	}
@@ -1924,33 +1481,20 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	tk.MustExec(createSQL)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_missing")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
 
 	deleteSQL := "delete from load_data_missing"
 	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
-	parser, err := mydump.NewCSVParser(
-		context.Background(),
-		ld.GenerateCSVConfig(),
-		mydump.NewStringReader(""),
-		1,
-		nil,
-		false,
-		nil)
-	require.NoError(t, err)
-	err = ld.ReadRows(context.Background(), parser)
-	require.NoError(t, err)
-	require.Len(t, ld.GetRows(), 0)
-	r := tk.MustQuery(selectSQL)
-	r.Check(nil)
 
 	curTime := types.CurrentTime(mysql.TypeTimestamp)
 	timeHour := curTime.Hour()
 	timeMinute := curTime.Minute()
 	tests := []testCase{
-		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte(""), nil, "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
@@ -1960,7 +1504,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	timeMinute = curTime.Minute()
 	selectSQL = "select id, hour(t), minute(t), t2 from load_data_missing;"
 	tests = []testCase{
-		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
@@ -1974,7 +1518,7 @@ func TestIssue18681(t *testing.T) {
 	tk.MustExec(createSQL)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -1983,36 +1527,18 @@ func TestIssue18681(t *testing.T) {
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-	ld.SetMaxRowsInBatch(20000)
 
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate
+	originIgnoreTruncate := sc.IgnoreTruncate.Load()
 	defer func() {
-		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.IgnoreTruncate.Store(originIgnoreTruncate)
 	}()
-	sc.IgnoreTruncate = false
+	sc.IgnoreTruncate.Store(false)
 	tests := []testCase{
 		{[]byte("true\tfalse\t0\t1\n"), []string{"1|0|0|1"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 	require.Equal(t, uint16(0), sc.WarningCount())
-}
-
-func TestIssue33298(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	ctx := tk.Session().(sessionctx.Context)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists load_data_test")
-	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
-
-	// According to https://dev.mysql.com/doc/refman/8.0/en/load-data.html , fixed-row format should be used when fields
-	// terminated by '' and enclosed by ''. However, tidb doesn't support it yet and empty terminator leads to infinite
-	// loop in `indexOfTerminator` (see https://github.com/pingcap/tidb/issues/33298).
-	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''"))
-	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"))
 }
 
 func TestIssue34358(t *testing.T) {
@@ -2026,386 +1552,12 @@ func TestIssue34358(t *testing.T) {
 	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
 
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ( @v1, @v2 ) set a = @v1, b = @v2")
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	require.NotNil(t, ld)
 	checkCases([]testCase{
-		{[]byte("\\N\n"), []string{"<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("\\N\n"), []string{"<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
-}
-
-func TestLoadData(t *testing.T) {
-	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	createSQL := `drop table if exists load_data_test;
-		create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int);`
-	err := tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
-	require.Error(t, err)
-	tk.MustExec(createSQL)
-	err = tk.ExecToErr("load data infile '/tmp/nonexistence.csv' into table load_data_test")
-	require.Error(t, err)
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
-	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
-
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-	parser, err := mydump.NewCSVParser(
-		context.Background(),
-		ld.GenerateCSVConfig(),
-		mydump.NewStringReader(""),
-		1,
-		nil,
-		false,
-		nil)
-	require.NoError(t, err)
-	err = ld.ReadRows(context.Background(), parser)
-	require.NoError(t, err)
-	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
-	require.NoError(t, err)
-	ld.SetMaxRowsInBatch(20000)
-	r := tk.MustQuery(selectSQL)
-	r.Check(nil)
-
-	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate
-	defer func() {
-		sc.IgnoreTruncate = originIgnoreTruncate
-	}()
-	sc.IgnoreTruncate = false
-	// fields and lines are default, ReadRows returns data is nil
-	tests := []testCase{
-		{[]byte("\n"), []string{"1|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("\t\n"), []string{"2|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
-		{[]byte("3\t2\t3\t4\n"), []string{"3|2|3|4"}, trivialMsg},
-		{[]byte("3*1\t2\t3\t4\n"), []string{"3|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("4\t2\t\t3\t4\n"), []string{"4|2||3"}, trivialMsg},
-		{[]byte("\t1\t2\t3\t4\n"), []string{"5|1|2|3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("6\t2\t3\n"), []string{"6|2|3|<nil>"}, trivialMsg},
-		{[]byte("\t2\t3\t4\n\t22\t33\t44\n"), []string{"7|2|3|4", "8|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
-		{[]byte("7\t2\t3\t4\n7\t22\t33\t44\n"), []string{"7|2|3|4"}, "Records: 2  Deleted: 0  Skipped: 1  Warnings: 1"},
-
-		// outdated test but still increase AUTO_INCREMENT
-		{[]byte("\t2\t3\t4"), []string{"9|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("\t2\t3\t4\t5\n"), []string{"10|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("\t2\t34\t5\n"), []string{"11|2|34|5"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-
-	// lines starting symbol is "" and terminated symbol length is 2, ReadRows returns data is nil
-	ld.LinesInfo.Terminated = "||"
-	tests = []testCase{
-		{[]byte("0\t2\t3\t4\t5||"), []string{"12|2|3|4"}, trivialMsg},
-		{[]byte("1\t2\t3\t4\t5||"), []string{"1|2|3|4"}, trivialMsg},
-		{[]byte("2\t2\t3\t4\t5||3\t22\t33\t44\t55||"),
-			[]string{"2|2|3|4", "3|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("3\t2\t3\t4\t5||4\t22\t33||"), []string{
-			"3|2|3|4", "4|22|33|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("4\t2\t3\t4\t5||5\t22\t33||6\t222||"),
-			[]string{"4|2|3|4", "5|22|33|<nil>", "6|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("6\t2\t34\t5||"), []string{"6|2|34|5"}, trivialMsg},
-	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-
-	// fields and lines aren't default, ReadRows returns data is nil
-	ld.FieldsInfo.Terminated = "\\"
-	ld.LinesInfo.Starting = "xxx"
-	ld.LinesInfo.Terminated = "|!#^"
-	tests = []testCase{
-		{[]byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
-		{[]byte("xxx3\\2\\3\\4|!#^"), []string{"3|2|3|4"}, trivialMsg},
-		{[]byte("xxx4\\2\\\\3\\4|!#^"), []string{"4|2||3"}, trivialMsg},
-		{[]byte("xxx\\1\\2\\3\\4|!#^"), []string{"15|1|2|3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("xxx6\\2\\3|!#^"), []string{"6|2|3|<nil>"}, trivialMsg},
-		{[]byte("xxx\\2\\3\\4|!#^xxx\\22\\33\\44|!#^"), []string{
-			"16|2|3|4",
-			"17|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
-		{[]byte("\\2\\3\\4|!#^\\22\\33\\44|!#^xxx\\222\\333\\444|!#^"), []string{
-			"18|222|333|444"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-
-		{[]byte("xxx\\2\\3\\4"), []string{"19|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("\\2\\3\\4|!#^"), []string{}, "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("\\2\\3\\4|!#^xxx18\\22\\33\\44|!#^"),
-			[]string{"18|22|33|44"}, trivialMsg},
-
-		{[]byte("xxx10\\2\\3\\4|!#^"),
-			[]string{"10|2|3|4"}, trivialMsg},
-		{[]byte("10\\2\\3xxx11\\4\\5|!#^"),
-			[]string{"11|4|5|<nil>"}, trivialMsg},
-		{[]byte("xxx21\\2\\3\\4\\5|!#^"),
-			[]string{"21|2|3|4"}, trivialMsg},
-		{[]byte("xxx22\\2\\3\\4\\5|!#^xxx23\\22\\33\\44\\55|!#^"),
-			[]string{"22|2|3|4", "23|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("xxx23\\2\\3\\4\\5|!#^xxx24\\22\\33|!#^"),
-			[]string{"23|2|3|4", "24|22|33|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("xxx24\\2\\3\\4\\5|!#^xxx25\\22\\33|!#^xxx26\\222|!#^"),
-			[]string{"24|2|3|4", "25|22|33|<nil>", "26|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("xxx25\\2\\3\\4\\5|!#^26\\22\\33|!#^xxx27\\222|!#^"),
-			[]string{"25|2|3|4", "27|222|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("xxx\\2\\34\\5|!#^"), []string{"28|2|34|5"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-
-	// TODO: not support it now
-	// lines starting symbol is the same as terminated symbol, ReadRows returns data is nil
-	//ld.LinesInfo.Terminated = "xxx"
-	//tests = []testCase{
-	//	// data1 = nil, data2 != nil
-	//	{[]byte("xxxxxx"), []string{"29|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-	//	{[]byte("xxx3\\2\\3\\4xxx"), []string{"3|2|3|4"}, nil, trivialMsg},
-	//	{[]byte("xxx\\2\\3\\4xxxxxx\\22\\33\\44xxx"),
-	//		[]string{"30|2|3|4", "31|22|33|44"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
-	//
-	//	// data1 != nil, data2 = nil
-	//	{[]byte("xxx\\2\\3\\4"), nil, []string{"32|2|3|4"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-	//
-	//	// data1 != nil, data2 != nil
-	//	{[]byte("xxx10\\2\\3"), []byte("\\4\\5xxx"), []string{"10|2|3|4"}, nil, trivialMsg},
-	//	{[]byte("xxxxx10\\2\\3"), []byte("\\4\\5xxx"), []string{"33|2|3|4"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-	//	{[]byte("xxx21\\2\\3\\4\\5xx"), []byte("x"), []string{"21|2|3|4"}, nil, trivialMsg},
-	//	{[]byte("xxx32\\2\\3\\4\\5x"), []byte("xxxxx33\\22\\33\\44\\55xxx"),
-	//		[]string{"32|2|3|4", "33|22|33|44"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-	//	{[]byte("xxx33\\2\\3\\4\\5xxx"), []byte("xxx34\\22\\33xxx"),
-	//		[]string{"33|2|3|4", "34|22|33|<nil>"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-	//	{[]byte("xxx34\\2\\3\\4\\5xx"), []byte("xxxx35\\22\\33xxxxxx36\\222xxx"),
-	//		[]string{"34|2|3|4", "35|22|33|<nil>", "36|222|<nil>|<nil>"}, nil, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 0"},
-	//
-	//	// ReadRows returns data isn't nil
-	//	{[]byte("\\2\\3\\4xxxx"), nil, []byte("xxxx"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
-	//	{[]byte("\\2\\3\\4xxx"), nil, []string{"37|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-	//	{[]byte("\\2\\3\\4xxxxxx11\\22\\33\\44xxx"), nil,
-	//		[]string{"38|<nil>|<nil>|<nil>", "39|<nil>|<nil>|<nil>"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
-	//	{[]byte("xx10\\2\\3"), []byte("\\4\\5xxx"), nil, []byte("xxx"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
-	//	{[]byte("xxx10\\2\\3"), []byte("\\4xxxx"), []string{"10|2|3|4"}, []byte("x"), trivialMsg},
-	//	{[]byte("xxx10\\2\\3\\4\\5x"), []byte("xx11\\22\\33xxxxxx12\\222xxx"),
-	//		[]string{"10|2|3|4", "40|<nil>|<nil>|<nil>"}, []byte("xxx"), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 1"},
-	//}
-	//checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-
-	// test line terminator in field quoter
-	ld.LinesInfo.Terminated = "\n"
-	tt := byte('"')
-	ld.FieldsInfo.Enclosed = &tt
-	tests = []testCase{
-		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), []string{"1|1|2\n|3", "4|4|5\n5|6"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-
-	ld.LinesInfo.Terminated = "#\n"
-	ld.FieldsInfo.Terminated = "#"
-	tests = []testCase{
-		{[]byte("xxx1#\nxxx2#\n"), []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("xxx1#2#3#4#\nnxxx2#3#4#5#\n"), []string{"1|2|3|4", "2|3|4|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("xxx1#2#\"3#\"#\"4\n\"#\nxxx2#3#\"#4#\n\"#5#\n"), []string{"1|2|3#|4", "2|3|#4#\n|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-
-	// TODO: now support it now
-	//ld.LinesInfo.Terminated = "#"
-	//ld.FieldsInfo.Terminated = "##"
-	//ld.LinesInfo.Starting = ""
-	//tests = []testCase{
-	//	{[]byte("1#2#"), []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-	//	// TODO: WTF?
-	//	{[]byte("1##2##3##4#2##3##4##5#"), []string{"1|2|3|4", "2|3|4|5"}, "Records: 14  Deleted: 0  Skipped: 3  Warnings: 9"},
-	//	{[]byte("1##2##\"3##\"##\"4\n\"#2##3##\"##4#\"##5#"), []string{"1|2|3##|4", "2|3|##4#|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-	//}
-	//checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-func TestLoadDataEscape(t *testing.T) {
-	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
-	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
-	// test escape
-	tests := []testCase{
-		// data1 = nil, data2 != nil
-		{[]byte("1\ta string\n"), []string{"1|a string"}, trivialMsg},
-		{[]byte("2\tstr \\t\n"), []string{"2|str \t"}, trivialMsg},
-		{[]byte("3\tstr \\n\n"), []string{"3|str \n"}, trivialMsg},
-		{[]byte("4\tboth \\t\\n\n"), []string{"4|both \t\n"}, trivialMsg},
-		{[]byte("5\tstr \\\\\n"), []string{"5|str \\"}, trivialMsg},
-		{[]byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}, trivialMsg},
-		{[]byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, trivialMsg},
-		{[]byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, trivialMsg},
-		{[]byte("9\ttab\\	tab\n"), []string{"9|tab	tab"}, trivialMsg},
-	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-// TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
-func TestLoadDataSpecifiedColumns(t *testing.T) {
-	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
-	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
-	// test
-	tests := []testCase{
-		{[]byte("7\ta string\n"), []string{"1|7|a string|0"}, trivialMsg},
-		{[]byte("8\tstr \\t\n"), []string{"2|8|str \t|0"}, trivialMsg},
-		{[]byte("9\tstr \\n\n"), []string{"3|9|str \n|0"}, trivialMsg},
-		{[]byte("10\tboth \\t\\n\n"), []string{"4|10|both \t\n|0"}, trivialMsg},
-		{[]byte("11\tstr \\\\\n"), []string{"5|11|str \\|0"}, trivialMsg},
-		{[]byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|12|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'}) + "|0"}, trivialMsg},
-		{[]byte("\\N\ta string\n"), []string{"7|<nil>|a string|0"}, trivialMsg},
-	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-func TestLoadDataIgnoreLines(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ignore 1 lines")
-	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
-	tests := []testCase{
-		{[]byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-func TestLoadDataNULL(t *testing.T) {
-	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html
-	// - For the default FIELDS and LINES values, NULL is written as a field value of \N for output, and a field value of \N is read as NULL for input (assuming that the ESCAPED BY character is \).
-	// - If FIELDS ENCLOSED BY is not empty, a field containing the literal word NULL as its value is read as a NULL value. This differs from the word NULL enclosed within FIELDS ENCLOSED BY characters, which is read as the string 'NULL'.
-	// - If FIELDS ESCAPED BY is empty, NULL is written as the word NULL.
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec("CREATE TABLE load_data_test (id VARCHAR(20), value VARCHAR(20)) CHARACTER SET utf8")
-	tk.MustExec(`load data local infile '/tmp/nonexistence.csv' into table load_data_test
-FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`)
-	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
-	tests := []testCase{
-		{
-			[]byte(`NULL,"NULL"
-\N,"\N"
-"\\N"`),
-			[]string{"<nil>|NULL", "<nil>|<nil>", "\\N|<nil>"},
-			// TODO: Warnings should be 1, "Row 3 doesn't contain data for all columns"
-			"Records: 3  Deleted: 0  Skipped: 0  Warnings: 0",
-		},
-	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-func TestLoadDataReplace(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
-	tk.MustExec("CREATE TABLE load_data_replace (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
-	tk.MustExec("INSERT INTO load_data_replace VALUES(1,'val 1'),(2,'val 2')")
-	tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE load_data_replace")
-	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
-	tests := []testCase{
-		{[]byte("1\tline1\n2\tline2\n"), []string{"1|line1", "2|line2"}, "Records: 2  Deleted: 2  Skipped: 0  Warnings: 0"},
-		{[]byte("2\tnew line2\n3\tnew line3\n"), []string{"1|line1", "2|new line2", "3|new line3"}, "Records: 2  Deleted: 1  Skipped: 0  Warnings: 0"},
-	}
-	deleteSQL := "DO 1"
-	selectSQL := "TABLE load_data_replace;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-// TestLoadDataOverflowBigintUnsigned related to issue 6360
-func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
-	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
-	tests := []testCase{
-		{[]byte("-1\n-18446744073709551615\n-18446744073709551616\n"), []string{"0", "0", "0"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
-		{[]byte("-9223372036854775809\n18446744073709551616\n"), []string{"0", "18446744073709551615"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
-	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-func TestLoadDataIntoPartitionedTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table range_t (a int, b int) partition by range (a) ( " +
-		"partition p0 values less than (4)," +
-		"partition p1 values less than (7)," +
-		"partition p2 values less than (11))")
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','")
-	ctx := tk.Session().(sessionctx.Context)
-	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
-
-	parser, err := mydump.NewCSVParser(
-		context.Background(),
-		ld.GenerateCSVConfig(),
-		mydump.NewStringReader("1,2\n3,4\n5,6\n7,8\n9,10\n"),
-		1,
-		nil,
-		false,
-		nil)
-	require.NoError(t, err)
-
-	err = ld.ReadRows(context.Background(), parser)
-	require.NoError(t, err)
-	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
-	require.NoError(t, err)
-	ld.SetMaxRowsInBatch(20000)
-	ld.SetMessage()
-	ctx.StmtCommit(context.Background())
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
 }
 
 func TestNullDefault(t *testing.T) {
@@ -3950,34 +3102,6 @@ func TestIssue22496(t *testing.T) {
 	tk.MustExec("drop table t12")
 }
 
-func TestEqualDatumsAsBinary(t *testing.T) {
-	tests := []struct {
-		a    []interface{}
-		b    []interface{}
-		same bool
-	}{
-		// Positive cases
-		{[]interface{}{1}, []interface{}{1}, true},
-		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
-		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
-
-		// negative cases
-		{[]interface{}{1}, []interface{}{2}, false},
-		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
-		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
-
-		// Corner cases
-		{[]interface{}{}, []interface{}{}, true},
-		{[]interface{}{nil}, []interface{}{nil}, true},
-		{[]interface{}{}, []interface{}{1}, false},
-		{[]interface{}{1}, []interface{}{1, 1}, false},
-		{[]interface{}{nil}, []interface{}{1}, false},
-	}
-	for _, tt := range tests {
-		testEqualDatumsAsBinary(t, tt.a, tt.b, tt.same)
-	}
-}
-
 func TestIssue21232(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3996,15 +3120,6 @@ func TestIssue21232(t *testing.T) {
 	tk.MustExec("update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
-}
-
-func testEqualDatumsAsBinary(t *testing.T, a []interface{}, b []interface{}, same bool) {
-	sc := new(stmtctx.StatementContext)
-	re := new(executor.ReplaceExec)
-	sc.IgnoreTruncate = true
-	res, err := re.EqualDatumsAsBinary(sc, types.MakeDatums(a...), types.MakeDatums(b...))
-	require.NoError(t, err)
-	require.Equal(t, same, res, "a: %v, b: %v", a, b)
 }
 
 func TestUpdate(t *testing.T) {

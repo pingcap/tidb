@@ -105,6 +105,9 @@ func TestEscapeBackslash(t *testing.T) {
 	}
 }
 
+type myInt int
+type myStr string
+
 func TestEscapeSQL(t *testing.T) {
 	type TestCase struct {
 		name   string
@@ -385,6 +388,18 @@ func TestEscapeSQL(t *testing.T) {
 			params: []interface{}{[]float64{55.2, 0.66}},
 			output: "select 55.2,0.66",
 		},
+		{
+			name:   "myInt",
+			input:  "select %?",
+			params: []interface{}{myInt(3)},
+			output: "select 3",
+		},
+		{
+			name:   "myStr",
+			input:  "select %?",
+			params: []interface{}{myStr("3")},
+			output: "select '3'",
+		},
 	}
 	for _, v := range tests {
 		// copy iterator variable into a new variable, see issue #27779
@@ -449,5 +464,29 @@ func TestEscapeString(t *testing.T) {
 	}
 	for _, v := range tests {
 		require.Equal(t, v.output, EscapeString(v.input))
+	}
+}
+
+func BenchmarkEscapeString(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		escapeSQL("select %?", "3")
+	}
+}
+
+func BenchmarkUnderlyingString(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		escapeSQL("select %?", myStr("3"))
+	}
+}
+
+func BenchmarkEscapeInt(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		escapeSQL("select %?", 3)
+	}
+}
+
+func BenchmarkUnderlyingInt(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		escapeSQL("select %?", myInt(3))
 	}
 }

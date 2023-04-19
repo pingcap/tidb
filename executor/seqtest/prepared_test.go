@@ -334,7 +334,7 @@ func TestPrepareWithAggregation(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-			PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session()),
+			PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session(), false),
 		})
 		require.NoError(t, err)
 		tk.SetSession(se)
@@ -420,14 +420,14 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(0), hit) // insert-values-stmt cannot use the plan cache
+			require.Equal(t, float64(1), hit)
 		}
 		tk.MustExec(`set @a=3,@b=3; execute stmt_insert using @a, @b;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(0), hit)
+			require.Equal(t, float64(2), hit)
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -443,21 +443,21 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(0), hit)
+			require.Equal(t, float64(2), hit)
 		}
 		tk.MustExec(`set @a=2; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(1), hit)
+			require.Equal(t, float64(3), hit)
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(2), hit)
+			require.Equal(t, float64(4), hit)
 		}
 
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)
@@ -478,6 +478,7 @@ func TestPreparedUpdate(t *testing.T) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect hit counter in this UT.
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
 
@@ -550,6 +551,7 @@ func TestPreparedDelete(t *testing.T) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect hit counter in this UT.
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
 
@@ -599,7 +601,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=true`)
 
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, tk.Session()),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, tk.Session(), false),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
@@ -608,7 +610,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("drop table if exists prepare_test")
 	tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
 
-	require.Equal(t, 0, tk.Session().GetPlanCache(false).Size())
+	require.Equal(t, 0, tk.Session().GetSessionPlanCache().Size())
 	tk.MustExec(`prepare stmt1 from 'select id from prepare_test'`)
 	tk.MustExec("execute stmt1")
 	tk.MustExec(`prepare stmt2 from 'select c1 from prepare_test'`)
@@ -617,20 +619,20 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("execute stmt3")
 	tk.MustExec(`prepare stmt4 from 'select * from prepare_test'`)
 	tk.MustExec("execute stmt4")
-	require.Equal(t, 3, tk.Session().GetPlanCache(false).Size())
+	require.Equal(t, 3, tk.Session().GetSessionPlanCache().Size())
 
 	tk.MustExec("deallocate prepare stmt1")
-	require.Equal(t, 3, tk.Session().GetPlanCache(false).Size())
+	require.Equal(t, 3, tk.Session().GetSessionPlanCache().Size())
 	tk.MustExec("deallocate prepare stmt2")
 	tk.MustExec("deallocate prepare stmt3")
 	tk.MustExec("deallocate prepare stmt4")
-	require.Equal(t, 0, tk.Session().GetPlanCache(false).Size())
+	require.Equal(t, 0, tk.Session().GetSessionPlanCache().Size())
 
 	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
 	tk.MustExec(`execute stmt1`)
 	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
 	tk.MustExec(`execute stmt2`)
-	require.Equal(t, 1, tk.Session().GetPlanCache(false).Size()) // use the same cached plan since they have the same statement
+	require.Equal(t, 1, tk.Session().GetSessionPlanCache().Size()) // use the same cached plan since they have the same statement
 
 	tk.MustExec(`drop database if exists plan_cache`)
 	tk.MustExec(`create database plan_cache`)
@@ -638,7 +640,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec(`create table prepare_test (id int PRIMARY KEY, c1 int)`)
 	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
 	tk.MustExec(`execute stmt3`)
-	require.Equal(t, 2, tk.Session().GetPlanCache(false).Size()) // stmt3 has different DB
+	require.Equal(t, 2, tk.Session().GetSessionPlanCache().Size()) // stmt3 has different DB
 }
 
 func TestPreparedIssue8153(t *testing.T) {
@@ -796,106 +798,13 @@ func TestIssue38323(t *testing.T) {
 	tk.MustExec("create table t(id int, k int);")
 
 	tk.MustExec("prepare stmt from 'explain select * from t where id = ? and k = ? group by id, k';")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
 	tk.MustExec("set @a = 1;")
 	tk.MustExec("execute stmt using @a, @a")
 	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where id = 1 and k = 1 group by id, k").Rows())
 
 	tk.MustExec("prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
 	tk.MustExec("set @a = 1;")
 	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where 1 = id and 1 = k group by id, k").Rows())
-}
-
-func TestSetPlanCacheLimitSwitch(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF;")
-	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = 1;")
-	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@global.tidb_enable_plan_cache_for_param_limit = off;")
-	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@global.tidb_enable_plan_cache_for_param_limit = ON;")
-	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
-
-	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_param_limit = '';", "[variable:1231]Variable 'tidb_enable_plan_cache_for_param_limit' can't be set to the value of ''")
-	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_param_limit = 11;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_param_limit' can't be set to the value of '11'")
-	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_param_limit = enabled;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_param_limit' can't be set to the value of 'enabled'")
-	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_param_limit = disabled;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_param_limit' can't be set to the value of 'disabled'")
-	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_param_limit = open;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_param_limit' can't be set to the value of 'open'")
-}
-
-func TestPlanCacheLimitSwitchEffective(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, key(a))")
-
-	checkIfCached := func(res string) {
-		tk.MustExec("set @a = 1")
-		tk.MustExec("execute stmt using @a")
-		tk.MustExec("execute stmt using @a")
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(res))
-	}
-
-	// before prepare
-	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF")
-	tk.MustExec("prepare stmt from 'select * from t limit ?'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
-	checkIfCached("0")
-	tk.MustExec("deallocate prepare stmt")
-
-	// after prepare
-	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = ON")
-	tk.MustExec("prepare stmt from 'select * from t limit ?'")
-	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF")
-	checkIfCached("0")
-	tk.MustExec("execute stmt using @a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"))
-	tk.MustExec("deallocate prepare stmt")
-
-	// after execute
-	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = ON")
-	tk.MustExec("prepare stmt from 'select * from t limit ?'")
-	checkIfCached("1")
-	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF")
-	checkIfCached("0")
-	tk.MustExec("deallocate prepare stmt")
-}
-
-func TestSetPlanCacheSubquerySwitch(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = OFF;")
-	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = 1;")
-	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@global.tidb_enable_plan_cache_for_subquery = off;")
-	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@global.tidb_enable_plan_cache_for_subquery = ON;")
-	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("1"))
-
-	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_subquery = '';", "[variable:1231]Variable 'tidb_enable_plan_cache_for_subquery' can't be set to the value of ''")
-	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_subquery = 11;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_subquery' can't be set to the value of '11'")
-	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_subquery = enabled;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_subquery' can't be set to the value of 'enabled'")
-	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_subquery = disabled;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_subquery' can't be set to the value of 'disabled'")
-	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_subquery = open;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_subquery' can't be set to the value of 'open'")
 }

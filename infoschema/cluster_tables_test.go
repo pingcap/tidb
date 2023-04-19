@@ -1150,6 +1150,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	tk.MustExec(sql)
 	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	time.Sleep(time.Millisecond * 10)
 	binding := tk.MustQuery("show bindings").Rows()
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	createTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][4].(string), loc)
@@ -1157,8 +1158,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 
 	// binding from history cover binding from history
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
-	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
-	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	time.Sleep(time.Millisecond * 10)
 	binding1 := tk.MustQuery("show bindings").Rows()
 	createTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][4].(string), loc)
 	updateTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][5].(string), loc)
@@ -1171,6 +1171,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	}
 	// binding from sql cover binding from history
 	tk.MustExec("create binding for select * from t where a = 1 using select /*+ ignore_index(t, a) */ * from t where a = 1")
+	time.Sleep(time.Millisecond * 10)
 	binding2 := tk.MustQuery("show bindings").Rows()
 	createTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][4].(string), loc)
 	updateTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][5].(string), loc)
@@ -1186,6 +1187,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	}
 	// binding from history cover binding from sql
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	time.Sleep(time.Millisecond * 10)
 	binding3 := tk.MustQuery("show bindings").Rows()
 	createTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][4].(string), loc)
 	updateTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][5].(string), loc)

@@ -555,6 +555,11 @@ type PhysicalIndexMergeReader struct {
 	// AccessMVIndex indicates whether this IndexMergeReader access a MVIndex.
 	AccessMVIndex bool
 
+	// PushedLimit is used to avoid unnecessary table scan tasks of IndexMergeReader.
+	PushedLimit *PushedDownLimit
+	// ByItems is used to support sorting the handles returned by partialPlans.
+	ByItems []*util.ByItems
+
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
@@ -566,6 +571,8 @@ type PhysicalIndexMergeReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+
+	KeepOrder bool
 }
 
 // GetAvgTableRowSize return the average row size of table plan.
@@ -670,6 +677,9 @@ type PhysicalIndexScan struct {
 	isPartition bool
 	Desc        bool
 	KeepOrder   bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
+
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
@@ -794,6 +804,10 @@ type PhysicalTableScan struct {
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
+	// lateMaterializationFilterCondition is used to record the filter conditions
+	// that are pushed down to table scan from selection by late materialization.
+	// TODO: remove this field after we support pushing down selection to coprocessor.
+	lateMaterializationFilterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
@@ -825,6 +839,8 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
 
 	isChildOfIndexLookUp bool
 
@@ -837,6 +853,11 @@ type PhysicalTableScan struct {
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
 	prop        *property.PhysicalProperty
+
+	// constColsByCond records the constant part of the index columns caused by the access conds.
+	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
+	// it's for indexMerge's tableScan only.
+	constColsByCond []bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1035,9 +1056,15 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 type PhysicalTopN struct {
 	basePhysicalPlan
 
-	ByItems []*util.ByItems
-	Offset  uint64
-	Count   uint64
+	ByItems     []*util.ByItems
+	PartitionBy []property.SortItem
+	Offset      uint64
+	Count       uint64
+}
+
+// GetPartitionBy returns partition by fields
+func (lt *PhysicalTopN) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1052,6 +1079,10 @@ func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
 	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
 	for _, it := range lt.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
+	}
+	cloned.PartitionBy = make([]property.SortItem, 0, len(lt.PartitionBy))
+	for _, it := range lt.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
 	}
 	return cloned, nil
 }
@@ -1074,6 +1105,9 @@ func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
 	sum = lt.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
 	for _, byItem := range lt.ByItems {
 		sum += byItem.MemoryUsage()
+	}
+	for _, item := range lt.PartitionBy {
+		sum += item.MemoryUsage()
 	}
 	return
 }
@@ -1640,8 +1674,14 @@ func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 type PhysicalLimit struct {
 	physicalSchemaProducer
 
-	Offset uint64
-	Count  uint64
+	PartitionBy []property.SortItem
+	Offset      uint64
+	Count       uint64
+}
+
+// GetPartitionBy returns partition by fields
+func (p *PhysicalLimit) GetPartitionBy() []property.SortItem {
+	return p.PartitionBy
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1651,6 +1691,10 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
+	}
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
 	}
 	cloned.physicalSchemaProducer = *base
 	return cloned, nil

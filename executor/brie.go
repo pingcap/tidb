@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/br/pkg/task/show"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -42,9 +44,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -64,7 +68,7 @@ type brieTaskProgress struct {
 	current int64
 
 	// lock is the mutex protected the two fields below.
-	lock sync.Mutex
+	lock syncutil.Mutex
 	// cmd is the name of the step the BRIE task is currently performing.
 	cmd string
 	// total is the total progress of the task.
@@ -218,6 +222,11 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		},
 	}
 
+	if s.Kind == ast.BRIEKindShowBackupMeta {
+		e.fillByShowMetadata(s)
+		return e
+	}
+
 	tidbCfg := config.GetGlobalConfig()
 	cfg := task.Config{
 		TLS: task.TLSConfig{
@@ -249,13 +258,13 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case "hdfs":
 		if sem.IsEnabled() {
 			// Storage is not permitted to be hdfs when SEM is enabled.
-			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
+			b.err = exeerrors.ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
 			return nil
 		}
 	case "local", "file", "":
 		if sem.IsEnabled() {
 			// Storage is not permitted to be local when SEM is enabled.
-			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("local storage")
+			b.err = exeerrors.ErrNotSupportedWithSem.GenWithStackByArgs("local storage")
 			return nil
 		}
 	default:
@@ -351,7 +360,52 @@ type BRIEExec struct {
 
 	backupCfg  *task.BackupConfig
 	restoreCfg *task.RestoreConfig
+	showConfig *show.Config
 	info       *brieTaskInfo
+}
+
+func (e *BRIEExec) fillByShowMetadata(s *ast.BRIEStmt) {
+	if s.Kind != ast.BRIEKindShowBackupMeta {
+		panic(fmt.Sprintf("precondition failed: `fillByShowMetadata` should always called by a ast.BRIEKindShowBackupMeta, but it is %s.", s.Kind))
+	}
+
+	store := s.Storage
+	e.showConfig = &show.Config{
+		Storage: store,
+		Cipher: backuppb.CipherInfo{
+			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+		},
+	}
+	e.info.kind = ast.BRIEKindShowBackupMeta
+}
+
+func (e *BRIEExec) runShowMetadata(ctx context.Context, req *chunk.Chunk) error {
+	exe, err := show.CreateExec(ctx, *e.showConfig)
+	if err != nil {
+		return errors.Annotate(err, "failed to create show exec")
+	}
+	res, err := exe.Read(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to read metadata from backupmeta")
+	}
+
+	startTime := oracle.GetTimeFromTS(uint64(res.StartVersion))
+	endTime := oracle.GetTimeFromTS(uint64(res.EndVersion))
+
+	for _, table := range res.Tables {
+		req.AppendString(0, table.DBName)
+		req.AppendString(1, table.TableName)
+		req.AppendInt64(2, int64(table.KVCount))
+		req.AppendInt64(3, int64(table.KVSize))
+		if res.StartVersion > 0 {
+			req.AppendTime(4, types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, 0))
+		} else {
+			req.AppendNull(4)
+		}
+		req.AppendTime(5, types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, 0))
+	}
+	e.info = nil
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -359,6 +413,13 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.info == nil {
 		return nil
+	}
+
+	if e.info.kind == ast.BRIEKindShowBackupMeta {
+		// This should be able to execute without the queue.
+		// NOTE: maybe extract the procedure of executing task in queue
+		// into a function, make it more tidy.
+		return e.runShowMetadata(ctx, req)
 	}
 
 	bq := globalBRIEQueue
@@ -397,9 +458,9 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
-		err = handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), ErrBRIEBackupFailed)
+		err = handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
 	case ast.BRIEKindRestore:
-		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
+		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), exeerrors.ErrBRIERestoreFailed)
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}

@@ -74,6 +74,13 @@ func (c constantRegions) Stores(ctx context.Context) ([]streamhelper.Store, erro
 	return nil, status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
+// Updates the service GC safe point for the cluster.
+// Returns the latest service GC safe point.
+// If the arguments is `0`, this would remove the service safe point.
+func (c constantRegions) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
+	return 0, status.Error(codes.Unimplemented, "Unsupported operation")
+}
+
 func makeSubrangeRegions(keys ...string) constantRegions {
 	if len(keys) == 0 {
 		return nil

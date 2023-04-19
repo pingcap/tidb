@@ -31,7 +31,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -221,7 +221,7 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 	rootTk.MustExec(`SET DEFAULT ROLE r_1 TO 'test_role'@'localhost';`)
 	// test bogus role for current user.
 	err := tk.ExecToErr(`SET DEFAULT ROLE roledoesnotexist TO 'test_role'@'localhost';`)
-	require.True(t, terror.ErrorEqual(err, executor.ErrRoleNotGranted))
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrRoleNotGranted))
 
 	rootTk.MustExec(`GRANT SELECT ON test.* TO r_1;`)
 	pc := privilege.GetPrivilegeManager(tk.Session())
@@ -1357,7 +1357,7 @@ func TestMetricsSchema(t *testing.T) {
 			"nobody",
 			func(err error) {
 				require.Error(t, err)
-				require.True(t, terror.ErrorEqual(err, executor.ErrDBaccessDenied))
+				require.True(t, terror.ErrorEqual(err, exeerrors.ErrDBaccessDenied))
 			},
 		},
 		{
@@ -1977,9 +1977,9 @@ func TestRenameUser(t *testing.T) {
 
 	// Test rename to a too long name
 	err = tk.ExecToErr("RENAME USER 'ru6@localhost' TO '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost'")
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
 	err = tk.ExecToErr("RENAME USER 'ru6@localhost' TO 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X'")
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
 
 	// Cleanup
 	rootTk.MustExec("DROP USER ru6@localhost")
@@ -2510,7 +2510,7 @@ func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 
 	err := tk.QueryToErr("SHOW GRANTS FOR CURRENT_USER() USING notgranted")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, executor.ErrRoleNotGranted))
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrRoleNotGranted))
 
 	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
@@ -3185,9 +3185,6 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
 
-	// Disable resource group.
-	require.Equal(t, "", tk.Session().GetSessionVars().ResourceGroupName)
-
 	// Enable resource group.
 	variable.EnableResourceControl.Store(true)
 	err = tk.Session().Auth(user, tokenBytes, nil)
@@ -3204,4 +3201,16 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	// Wrong token
 	err = tk.Session().Auth(user, nil, nil)
 	require.ErrorContains(t, err, "Access denied")
+}
+
+func TestNilHandleInConnectionVerification(t *testing.T) {
+	config.GetGlobalConfig().Security.SkipGrantTable = true
+	privileges.SkipWithGrant = true
+	defer func() {
+		config.GetGlobalConfig().Security.SkipGrantTable = false
+		privileges.SkipWithGrant = false
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil))
 }

@@ -23,13 +23,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -135,11 +135,6 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
 	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
 }
 
-var (
-	dumpHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "success")
-	dumpHistoricalStatsFailedCounter  = metrics.HistoricalStatsCounter.WithLabelValues("dump", "fail")
-)
-
 // DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history
 func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (jt *JSONTable, err error) {
 	historicalStatsEnabled, err := h.CheckHistoricalStatsEnable()
@@ -152,9 +147,9 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.T
 
 	defer func() {
 		if err == nil {
-			dumpHistoricalStatsSuccessCounter.Inc()
+			handle_metrics.DumpHistoricalStatsSuccessCounter.Inc()
 		} else {
-			dumpHistoricalStatsFailedCounter.Inc()
+			handle_metrics.DumpHistoricalStatsFailedCounter.Inc()
 		}
 	}()
 	pi := tableInfo.GetPartitionInfo()
@@ -229,7 +224,7 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 		TableName:    tableInfo.Name.L,
 		Columns:      make(map[string]*jsonColumn, len(tbl.Columns)),
 		Indices:      make(map[string]*jsonColumn, len(tbl.Indices)),
-		Count:        tbl.Count,
+		Count:        tbl.RealtimeCount,
 		ModifyCount:  tbl.ModifyCount,
 		Version:      tbl.Version,
 	}
@@ -329,7 +324,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 	if err != nil || tbl == nil {
 		return nil, err
 	}
-	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, snapshot)
+	tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = h.statsMetaByTableIDFromStorage(physicalID, snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -382,18 +377,18 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 
 	for _, col := range tbl.Columns {
 		// loadStatsFromJSON doesn't support partition table now.
-		// The table level Count and Modify_count would be overridden by the SaveMetaToStorage below, so we don't need
+		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
 		// loadStatsFromJSON doesn't support partition table now.
-		// The table level Count and Modify_count would be overridden by the SaveMetaToStorage below, so we don't need
+		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -402,7 +397,7 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return h.SaveMetaToStorage(tbl.PhysicalID, tbl.Count, tbl.ModifyCount, StatsMetaHistorySourceLoadStats)
+	return h.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, StatsMetaHistorySourceLoadStats)
 }
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
@@ -410,7 +405,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 	newHistColl := statistics.HistColl{
 		PhysicalID:     physicalID,
 		HavePhysicalID: true,
-		Count:          jsonTbl.Count,
+		RealtimeCount:  jsonTbl.Count,
 		ModifyCount:    jsonTbl.ModifyCount,
 		Columns:        make(map[int64]*statistics.Column, len(jsonTbl.Columns)),
 		Indices:        make(map[int64]*statistics.Index, len(jsonTbl.Indices)),
@@ -426,11 +421,13 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			hist := statistics.HistogramFromProto(jsonIdx.Histogram)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.Correlation = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.Correlation
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonIdx.CMSketch)
-			// If the statistics is loaded from a JSON without stats version,
-			// we set it to 1.
-			statsVer := int64(statistics.Version1)
+			statsVer := int64(statistics.Version0)
 			if jsonIdx.StatsVer != nil {
 				statsVer = *jsonIdx.StatsVer
+			} else if jsonIdx.Histogram.Ndv > 0 || jsonIdx.NullCount > 0 {
+				// If the statistics are collected without setting stats version(which happens in v4.0 and earlier versions),
+				// we set it to 1.
+				statsVer = int64(statistics.Version1)
 			}
 			idx := &statistics.Index{
 				Histogram:         *hist,
@@ -470,11 +467,13 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
 			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
-			// If the statistics is loaded from a JSON without stats version,
-			// we set it to 1.
-			statsVer := int64(statistics.Version1)
+			statsVer := int64(statistics.Version0)
 			if jsonCol.StatsVer != nil {
 				statsVer = *jsonCol.StatsVer
+			} else if jsonCol.Histogram.Ndv > 0 || jsonCol.NullCount > 0 {
+				// If the statistics are collected without setting stats version(which happens in v4.0 and earlier versions),
+				// we set it to 1.
+				statsVer = int64(statistics.Version1)
 			}
 			col := &statistics.Column{
 				PhysicalID:        physicalID,
@@ -487,7 +486,6 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				StatsVer:          statsVer,
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
-			col.Count = int64(col.TotalRowCount())
 			tbl.Columns[col.ID] = col
 		}
 	}

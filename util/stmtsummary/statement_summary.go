@@ -246,6 +246,8 @@ type StmtExecInfo struct {
 	ResultRows      int64
 	TiKVExecDetails util.ExecDetails
 	Prepared        bool
+	KeyspaceName    string
+	KeyspaceID      uint32
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.

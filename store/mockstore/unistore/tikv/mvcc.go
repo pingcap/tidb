@@ -649,18 +649,22 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 	req *kvrpcpb.PessimisticLockRequest) (*mvcc.Lock, uint64, error) {
 	var lockedWithConflictTS uint64 = 0
 
+	var writeConflictError error
+
 	if item != nil {
 		userMeta := mvcc.DBUserMeta(item.UserMeta())
 		if !req.Force {
 			if userMeta.CommitTS() > req.ForUpdateTs {
+				writeConflictError = &kverrors.ErrConflict{
+					StartTS:          req.StartVersion,
+					ConflictTS:       userMeta.StartTS(),
+					ConflictCommitTS: userMeta.CommitTS(),
+					Key:              item.KeyCopy(nil),
+					Reason:           kvrpcpb.WriteConflict_PessimisticRetry,
+				}
+
 				if req.GetWakeUpMode() == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeNormal {
-					return nil, 0, &kverrors.ErrConflict{
-						StartTS:          req.StartVersion,
-						ConflictTS:       userMeta.StartTS(),
-						ConflictCommitTS: userMeta.CommitTS(),
-						Key:              item.KeyCopy(nil),
-						Reason:           kvrpcpb.WriteConflict_PessimisticRetry,
-					}
+					return nil, 0, writeConflictError
 				} else if req.GetWakeUpMode() == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
 					lockedWithConflictTS = userMeta.CommitTS()
 				} else {
@@ -668,21 +672,35 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 				}
 			}
 		}
-		if lockedWithConflictTS == 0 && m.Assertion == kvrpcpb.Assertion_NotExist && !item.IsEmpty() {
+		if m.Assertion == kvrpcpb.Assertion_NotExist && !item.IsEmpty() {
+			if lockedWithConflictTS != 0 {
+				// If constraint is violated, disable locking with conflict behavior.
+				if writeConflictError == nil {
+					panic("unreachable")
+				}
+				return nil, 0, writeConflictError
+			}
 			return nil, 0, &kverrors.ErrKeyAlreadyExists{Key: m.Key}
 		}
 	}
 
-	actualWrittenForUpdateTS := req.ForUpdateTs
-	if lockedWithConflictTS > 0 {
-		actualWrittenForUpdateTS = lockedWithConflictTS
-	} else if ok, err := doesNeedLock(item, req); !ok {
+	if ok, err := doesNeedLock(item, req); !ok {
 		if err != nil {
 			return nil, 0, err
 		}
+		if lockedWithConflictTS > 0 {
+			// If lockIfOnlyExist is used on a not-existing key, disable locking with conflict behavior.
+			if writeConflictError == nil {
+				panic("unreachable")
+			}
+			return nil, 0, writeConflictError
+		}
 		return nil, 0, nil
 	}
-
+	actualWrittenForUpdateTS := req.ForUpdateTs
+	if lockedWithConflictTS > 0 {
+		actualWrittenForUpdateTS = lockedWithConflictTS
+	}
 	lock := &mvcc.Lock{
 		LockHdr: mvcc.LockHdr{
 			StartTS:     req.StartVersion,
@@ -788,8 +806,20 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 
 func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation, req *kvrpcpb.PrewriteRequest) error {
 	startTS := req.StartVersion
+
+	expectedForUpdateTSMap := make(map[int]uint64, len(req.GetForUpdateTsConstraints()))
+	for _, constraint := range req.GetForUpdateTsConstraints() {
+		index := int(constraint.Index)
+		if index >= len(mutations) {
+			return errors.Errorf("prewrite request invalid: for_update_ts constraint set for index %v while %v mutations were given", index, len(mutations))
+		}
+
+		expectedForUpdateTSMap[index] = constraint.ExpectedForUpdateTs
+	}
+
 	reader := reqCtx.getDBReader()
 	txn := reader.GetTxn()
+
 	for i, m := range mutations {
 		if m.Op == kvrpcpb.Op_CheckNotExists {
 			return kverrors.ErrInvalidOp{Op: m.Op}
@@ -799,8 +829,14 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 		needConstraintCheck := len(req.PessimisticActions) > 0 && req.PessimisticActions[i] == kvrpcpb.PrewriteRequest_DO_CONSTRAINT_CHECK
 		lockExists := lock != nil
 		lockMatch := lockExists && lock.StartTS == startTS
+		lockConstraintPasses := true
+		if expectedForUpdateTS, ok := expectedForUpdateTSMap[i]; ok {
+			if lock.ForUpdateTS != expectedForUpdateTS {
+				lockConstraintPasses = false
+			}
+		}
 		if isPessimisticLock {
-			valid := lockExists && lockMatch
+			valid := lockExists && lockMatch && lockConstraintPasses
 			if !valid {
 				return errors.New("pessimistic lock not found")
 			}

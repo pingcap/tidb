@@ -57,7 +57,7 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
-	require.True(t, intest.InTest, "you should add --tags=intest when to test")
+	require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
 	runtime.GOMAXPROCS(mathutil.Min(16, runtime.GOMAXPROCS(0)))
 	tk := &TestKit{
 		require: require.New(t),
@@ -74,10 +74,10 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		mockSm, ok := sm.(*MockSessionManager)
 		if ok {
 			mockSm.mu.Lock()
-			if mockSm.conn == nil {
-				mockSm.conn = make(map[uint64]session.Session)
+			if mockSm.Conn == nil {
+				mockSm.Conn = make(map[uint64]session.Session)
 			}
-			mockSm.conn[tk.session.GetSessionVars().ConnectionID] = tk.session
+			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
 			mockSm.mu.Unlock()
 		}
 		tk.session.SetSessionManager(sm)
@@ -124,7 +124,8 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 			tk.alloc.Reset()
 		}
 	}()
-	tk.MustExecWithContext(context.Background(), sql, args...)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	tk.MustExecWithContext(ctx, sql, args...)
 }
 
 // MustExecWithContext executes a sql statement and asserts nil error.
@@ -293,7 +294,8 @@ func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	return tk.ExecWithContext(context.Background(), sql, args...)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	return tk.ExecWithContext(ctx, sql, args...)
 }
 
 // ExecWithContext executes a sql statement using the prepared stmt API

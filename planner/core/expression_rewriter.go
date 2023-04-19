@@ -81,7 +81,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if err != nil {
 		return nil, err
 	}
-	sctx.GetSessionVars().PlannerSelectBlockAsName = savedBlockNames
+	sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&savedBlockNames)
 	return newExpr, nil
 }
 
@@ -1111,6 +1111,19 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	return v, true
 }
 
+func initConstantRepertoire(c *expression.Constant) {
+	c.SetRepertoire(expression.ASCII)
+	if c.GetType().EvalType() == types.ETString {
+		for _, b := range c.Value.GetBytes() {
+			// if any character in constant is not ascii, set the repertoire to UNICODE.
+			if b >= 0x80 {
+				c.SetRepertoire(expression.UNICODE)
+				break
+			}
+		}
+	}
+}
+
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	if er.err != nil {
@@ -1134,23 +1147,15 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		v.Datum.SetValue(v.Datum.GetValue(), retType)
 		value := &expression.Constant{Value: v.Datum, RetType: retType}
-		value.SetRepertoire(expression.ASCII)
-		if retType.EvalType() == types.ETString {
-			for _, b := range v.Datum.GetBytes() {
-				// if any character in constant is not ascii, set the repertoire to UNICODE.
-				if b >= 0x80 {
-					value.SetRepertoire(expression.UNICODE)
-					break
-				}
-			}
-		}
+		initConstantRepertoire(value)
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
-		var value expression.Expression
+		var value *expression.Constant
 		value, er.err = expression.ParamMarkerExpression(er.sctx, v, false)
 		if er.err != nil {
 			return retNode, false
 		}
+		initConstantRepertoire(value)
 		er.ctxStackAppend(value, types.EmptyName)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
@@ -1219,8 +1224,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
-	case *ast.PatternLikeExpr:
-		er.patternLikeToExpression(v)
+	case *ast.PatternLikeOrIlikeExpr:
+		er.patternLikeOrIlikeToExpression(v)
 	case *ast.PatternRegexpExpr:
 		er.regexpToScalarFunc(v)
 	case *ast.RowExpr:
@@ -1562,7 +1567,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					if c.GetType().EvalType() == types.ETInt {
 						continue // no need to refine it
 					}
-					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", c.String()))
+					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("'%v' may be converted to INT", c.String()))
 					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
@@ -1720,7 +1725,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 	er.ctxStackAppend(function, types.EmptyName)
 }
 
-func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
+func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeOrIlikeExpr) {
 	l := len(er.ctxStack)
 	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[l-2:]...)
 	if er.err != nil {
@@ -1731,7 +1736,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
-	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
+	// Treat predicate 'like' or 'ilike' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
 		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
 		if err != nil {
@@ -1754,8 +1759,12 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		}
 	}
 	if !isPatternExactMatch {
+		funcName := ast.Like
+		if !v.IsLike {
+			funcName = ast.Ilike
+		}
 		types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
-		function = er.notToExpression(v.Not, ast.Like, &v.Type,
+		function = er.notToExpression(v.Not, funcName, &v.Type,
 			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
 	}
 
@@ -1883,26 +1892,37 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 // Otherwise it should return false to indicate (the caller) that original behavior needs to be performed.
 func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	switch v.FnName.L {
-	// when column is not null, ifnull on such column is not necessary.
+	// when column is not null, ifnull on such column can be optimized to a cast.
 	case ast.Ifnull:
 		if len(v.Args) != 2 {
 			er.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
 			return true
 		}
 		stackLen := len(er.ctxStack)
-		arg1 := er.ctxStack[stackLen-2]
-		col, isColumn := arg1.(*expression.Column)
+		lhs := er.ctxStack[stackLen-2]
+		rhs := er.ctxStack[stackLen-1]
+		col, isColumn := lhs.(*expression.Column)
 		var isEnumSet bool
-		if arg1.GetType().GetType() == mysql.TypeEnum || arg1.GetType().GetType() == mysql.TypeSet {
+		if lhs.GetType().GetType() == mysql.TypeEnum || lhs.GetType().GetType() == mysql.TypeSet {
 			isEnumSet = true
 		}
-		// if expr1 is a column and column has not null flag, then we can eliminate ifnull on
-		// this column.
+		// if expr1 is a column with not null flag, then we can optimize it as a cast.
 		if isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.GetFlag()) {
-			name := er.ctxNameStk[stackLen-2]
-			newCol := col.Clone().(*expression.Column)
+			retTp, err := expression.InferType4ControlFuncs(er.sctx, ast.Ifnull, lhs, rhs)
+			if err != nil {
+				er.err = err
+				return true
+			}
+			retTp.AddFlag((lhs.GetType().GetFlag() & mysql.NotNullFlag) | (rhs.GetType().GetFlag() & mysql.NotNullFlag))
+			if lhs.GetType().GetType() == mysql.TypeNull && rhs.GetType().GetType() == mysql.TypeNull {
+				retTp.SetType(mysql.TypeNull)
+				retTp.SetFlen(0)
+				retTp.SetDecimal(0)
+				types.SetBinChsClnFlag(retTp)
+			}
 			er.ctxStackPop(len(v.Args))
-			er.ctxStackAppend(newCol, name)
+			casted := expression.BuildCastFunction(er.sctx, lhs, retTp)
+			er.ctxStackAppend(casted, types.EmptyName)
 			return true
 		}
 

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -37,10 +38,36 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/logutil"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/ranger"
-	"go.uber.org/zap"
 )
+
+// SetParameterValuesIntoSCtx sets these parameters into session context.
+func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
+	vars := sctx.GetSessionVars()
+	vars.PlanCacheParams.Reset()
+	for i, usingParam := range params {
+		val, err := usingParam.Eval(chunk.Row{})
+		if err != nil {
+			return err
+		}
+		if isGetVarBinaryLiteral(sctx, usingParam) {
+			binVal, convErr := val.ToBytes()
+			if convErr != nil {
+				return convErr
+			}
+			val.SetBinaryLiteral(binVal)
+		}
+		if markers != nil {
+			param := markers[i].(*driver.ParamMarkerExpr)
+			param.Datum = val
+			param.InExecute = true
+		}
+		vars.PlanCacheParams.Append(val)
+	}
+	vars.PlanCacheParams.SetForNonPrepCache(isNonPrep)
+	return nil
+}
 
 func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
@@ -53,22 +80,8 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 2: set parameter values
-	for i, usingParam := range params {
-		val, err := usingParam.Eval(chunk.Row{})
-		if err != nil {
-			return err
-		}
-		param := stmtAst.Params[i].(*driver.ParamMarkerExpr)
-		if isGetVarBinaryLiteral(sctx, usingParam) {
-			binVal, convErr := val.ToBytes()
-			if convErr != nil {
-				return convErr
-			}
-			val.SetBinaryLiteral(binVal)
-		}
-		param.Datum = val
-		param.InExecute = true
-		vars.PreparedParams = append(vars.PreparedParams, val)
+	if err := SetParameterValuesIntoSCtx(sctx, isNonPrepared, stmtAst.Params, params); err != nil {
+		return errors.Trace(err)
 	}
 
 	// step 3: check schema version
@@ -101,7 +114,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	// And update lastUpdateTime to the newest one.
 	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
 	if stmt.StmtCacheable && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
-		sctx.GetPlanCache(isNonPrepared).DeleteAll()
+		sctx.GetSessionPlanCache().DeleteAll()
 		stmtAst.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
@@ -115,10 +128,6 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
-	if v := ctx.Value("____GetPlanFromSessionPlanCacheErr"); v != nil { // for testing
-		return nil, nil, errors.New("____GetPlanFromSessionPlanCacheErr")
-	}
-
 	if err := planCachePreprocess(ctx, sctx, isNonPrepared, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
@@ -128,8 +137,13 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	stmtCtx := sessVars.StmtCtx
 	stmtAst := stmt.PreparedAst
 	stmtCtx.UseCache = stmt.StmtCacheable
+	if isNonPrepared {
+		stmtCtx.CacheType = stmtctx.SessionNonPrepared
+	} else {
+		stmtCtx.CacheType = stmtctx.SessionPrepared
+	}
 	if !stmt.StmtCacheable {
-		stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: %s", stmt.UncacheableReason))
+		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
 	}
 
 	var bindSQL string
@@ -137,7 +151,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		var ignoreByBinding bool
 		bindSQL, ignoreByBinding = GetBindSQL4PlanCache(sctx, stmt)
 		if ignoreByBinding {
-			stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: ignore plan cache by binding"))
+			stmtCtx.SetSkipPlanCache(errors.Errorf("ignore plan cache by binding"))
 		}
 	}
 
@@ -153,34 +167,33 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
-			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL); err != nil {
+			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
 			return nil, nil, err
 		}
 	}
-
-	paramTypes := parseParamTypes(sctx, params)
 
 	if stmtCtx.UseCache && stmtAst.CachedPlan != nil { // special code path for fast point plan
 		if plan, names, ok, err := getCachedPointPlan(stmtAst, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
 	}
-	limitCountAndOffset, paramErr := ExtractLimitFromAst(stmt.PreparedAst.Stmt, sctx)
-	if paramErr != nil {
-		return nil, nil, paramErr
+
+	matchOpts, err := GetMatchOpts(sctx, is, stmt, params)
+	if err != nil {
+		return nil, nil, err
 	}
 	if stmtCtx.UseCache { // for non-point plans
-		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt,
-			paramTypes, limitCountAndOffset); err != nil || ok {
+		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt, matchOpts); err != nil || ok {
 			return plan, names, err
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, paramTypes, bindSQL, limitCountAndOffset)
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, bindSQL, matchOpts)
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
 func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramTypes []*types.FieldType) {
+	paramTypes = make([]*types.FieldType, 0, len(params))
 	for _, param := range params {
 		if c, ok := param.(*expression.Constant); ok { // from binary protocol
 			paramTypes = append(paramTypes, c.GetType())
@@ -207,15 +220,14 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 	// so you don't need to consider whether prepared.useCache is enabled.
 	plan := stmt.CachedPlan.(Plan)
 	names := stmt.CachedNames.(types.NameSlice)
-	err := RebuildPlan4CachedPlan(plan)
-	if err != nil {
-		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+	if !RebuildPlan4CachedPlan(plan) {
 		return nil, nil, false, nil
 	}
 	if metrics.ResettablePlanCacheCounterFortTest {
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 	} else {
-		planCacheCounter.Inc()
+		// only for prepared plan cache
+		core_metrics.GetPlanCacheHitCounter(false).Inc()
 	}
 	sessVars.FoundInPlanCache = true
 	stmtCtx.PointExec = true
@@ -223,12 +235,12 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 }
 
 func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType, limitParams []uint64) (Plan,
+	is infoschema.InfoSchema, stmt *PlanCacheStmt, matchOpts *utilpc.PlanCacheMatchOpts) (Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	candidate, exist := sctx.GetPlanCache(isNonPrepared).Get(cacheKey, paramTypes, limitParams)
+	candidate, exist := sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 	if !exist {
 		return nil, nil, false, nil
 	}
@@ -240,13 +252,11 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
 			// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
 			// rebuilding the filters in UnionScan is pretty trivial.
-			sctx.GetPlanCache(isNonPrepared).Delete(cacheKey)
+			sctx.GetSessionPlanCache().Delete(cacheKey)
 			return nil, nil, false, nil
 		}
 	}
-	err := RebuildPlan4CachedPlan(cachedVal.Plan)
-	if err != nil {
-		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
 		return nil, nil, false, nil
 	}
 	sessVars.FoundInPlanCache = true
@@ -258,7 +268,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	if metrics.ResettablePlanCacheCounterFortTest {
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 	} else {
-		planCacheCounter.Inc()
+		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
@@ -267,13 +277,13 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramTypes []*types.FieldType,
-	bindSQL string, limitParams []uint64) (Plan, []*types.FieldName, error) {
+	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, bindSQL string,
+	matchOpts *utilpc.PlanCacheMatchOpts) (Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	planCacheMissCounter.Inc()
+	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	p, names, err := OptimizeAstNode(ctx, sctx, stmtAst.Stmt, is)
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
@@ -287,7 +297,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		if cacheable, reason := isPlanCacheable(sctx, p, len(paramTypes), len(limitParams)); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
 			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
 		}
 	}
@@ -298,27 +308,40 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			if cacheKey, err = NewPlanCacheKey(sessVars, stmt.StmtText, stmt.StmtDB,
-				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL); err != nil {
+				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
 				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes, limitParams)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		sctx.GetPlanCache(isNonPrepared).Put(cacheKey, cached, paramTypes, limitParams)
+		sctx.GetSessionPlanCache().Put(cacheKey, cached, matchOpts)
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
-func RebuildPlan4CachedPlan(p Plan) error {
+func RebuildPlan4CachedPlan(p Plan) (ok bool) {
 	sc := p.SCtx().GetSessionVars().StmtCtx
+	if !sc.UseCache {
+		return false // plan-cache is disabled for this query
+	}
+
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
-	return rebuildRange(p)
+	if err := rebuildRange(p); err != nil {
+		// TODO: log or warn this error.
+		return false // fail to rebuild ranges
+	}
+	if !sc.UseCache {
+		// in this case, the UseCache flag changes from `true` to `false`, then there must be some
+		// over-optimized operations were triggered, return `false` for safety here.
+		return false
+	}
+	return true
 }
 
 func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
@@ -405,26 +428,34 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if len(ranges.Ranges) == 0 || len(ranges.AccessConds) != len(x.AccessConditions) {
-					return errors.New("failed to rebuild range: the length of the range has changed")
+				if !isSafeRange(x.AccessConditions, ranges, false, nil) {
+					return errors.New("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
 					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
 				}
 			} else {
 				var pkCol *expression.Column
+				var unsignedIntHandle bool
 				if x.TblInfo.PKIsHandle {
 					if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
 						pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
 					}
+					if !x.TblInfo.IsCommonHandle {
+						unsignedIntHandle = true
+					}
 				}
 				if pkCol != nil {
-					ranges, _, _, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
+					ranges, accessConds, remainingConds, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
 					if err != nil {
 						return err
 					}
-					if len(ranges) == 0 {
-						return errors.New("failed to rebuild range: the length of the range has changed")
+					if !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+						Ranges:        ranges,
+						AccessConds:   accessConds,
+						RemainedConds: remainingConds,
+					}, unsignedIntHandle, nil) {
+						return errors.New("rebuild to get an unsafe range")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
 				}
@@ -466,26 +497,34 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if len(ranges.Ranges) != len(x.IndexValues) || len(ranges.AccessConds) != len(x.AccessConditions) {
-					return errors.New("failed to rebuild range: the length of the range has changed")
+				if len(ranges.Ranges) != len(x.IndexValues) || !isSafeRange(x.AccessConditions, ranges, false, nil) {
+					return errors.New("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
 					copy(x.IndexValues[i], ranges.Ranges[i].LowVal)
 				}
 			} else {
 				var pkCol *expression.Column
+				var unsignedIntHandle bool
 				if x.TblInfo.PKIsHandle {
 					if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
 						pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
 					}
+					if !x.TblInfo.IsCommonHandle {
+						unsignedIntHandle = true
+					}
 				}
 				if pkCol != nil {
-					ranges, _, _, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
+					ranges, accessConds, remainingConds, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
 					if err != nil {
 						return err
 					}
-					if len(ranges) != len(x.Handles) {
-						return errors.New("failed to rebuild range: the length of the range has changed")
+					if len(ranges) != len(x.Handles) && !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+						Ranges:        ranges,
+						AccessConds:   accessConds,
+						RemainedConds: remainingConds,
+					}, unsignedIntHandle, nil) {
+						return errors.New("rebuild to get an unsafe range")
 					}
 					for i := range ranges {
 						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
@@ -595,11 +634,14 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			if err != nil {
 				return err
 			}
-			if len(res.AccessConds) != len(ts.AccessCondition) {
-				return errors.New("rebuild range for cached plan failed")
+			if !isSafeRange(ts.AccessCondition, res, false, ts.Ranges) {
+				return errors.New("rebuild to get an unsafe range")
 			}
 			ts.Ranges = res.Ranges
 		} else {
+			if len(ts.AccessCondition) > 0 {
+				return errors.New("fail to build ranges, cannot get the primary key column")
+			}
 			ts.Ranges = ranger.FullRange()
 		}
 	} else {
@@ -610,11 +652,22 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			}
 		}
 		if pkCol != nil {
-			ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType, 0)
+			ranges, accessConds, remainingConds, err := ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType, 0)
 			if err != nil {
 				return err
 			}
+			if !isSafeRange(ts.AccessCondition, &ranger.DetachRangeResult{
+				Ranges:        ts.Ranges,
+				AccessConds:   accessConds,
+				RemainedConds: remainingConds,
+			}, true, ts.Ranges) {
+				return errors.New("rebuild to get an unsafe range")
+			}
+			ts.Ranges = ranges
 		} else {
+			if len(ts.AccessCondition) > 0 {
+				return errors.New("fail to build ranges, cannot get the primary key column")
+			}
 			ts.Ranges = ranger.FullIntRange(false)
 		}
 	}
@@ -623,18 +676,45 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 
 func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
 	if len(is.IdxCols) == 0 {
-		is.Ranges = ranger.FullRange()
-		return
+		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
+			is.Ranges = ranger.FullRange()
+			return
+		}
+		return errors.New("unexpected range for PhysicalIndexScan")
 	}
+
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens, 0)
 	if err != nil {
 		return err
 	}
-	if len(res.AccessConds) != len(is.AccessCondition) {
-		return errors.New("rebuild range for cached plan failed")
+	if !isSafeRange(is.AccessCondition, res, false, is.Ranges) {
+		return errors.New("rebuild to get an unsafe range")
 	}
 	is.Ranges = res.Ranges
 	return
+}
+
+// checkRebuiltRange checks whether the re-built range is safe.
+// To re-use a cached plan, the planner needs to rebuild the access range, but as
+// parameters change, some unsafe ranges may occur.
+// For example, the first time the planner can build a range `(2, 5)` from `a>2 and a<(?)5`, but if the
+// parameter changes to `(?)1`, then it'll get an unsafe range `(empty)`.
+// To make plan-cache safer, let the planner abandon the cached plan if it gets an unsafe range here.
+func isSafeRange(accessConds []expression.Expression, rebuiltResult *ranger.DetachRangeResult,
+	unsignedIntHandle bool, originalRange ranger.Ranges) (safe bool) {
+	if len(rebuiltResult.RemainedConds) > 0 || // the ranger generates some other extra conditions
+		len(rebuiltResult.AccessConds) != len(accessConds) || // not all access conditions are used
+		len(rebuiltResult.Ranges) == 0 { // get an empty range
+		return false
+	}
+
+	if len(accessConds) > 0 && // if have accessConds, and
+		ranger.HasFullRange(rebuiltResult.Ranges, unsignedIntHandle) && // get an full range, and
+		originalRange != nil && !ranger.HasFullRange(originalRange, unsignedIntHandle) { // the original range is not a full range
+		return false
+	}
+
+	return true
 }
 
 // CheckPreparedPriv checks the privilege of the prepared statement

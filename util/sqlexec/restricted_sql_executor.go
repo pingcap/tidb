@@ -149,6 +149,8 @@ type SQLExecutor interface {
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// clear allowed flag
 	ClearDiskFullOpt()
+	// GetSessionVars is used to read some result after ExecuteXXX
+	GetSessionVars() *variable.SessionVars
 }
 
 // SQLParser is an interface provides parsing sql statement.
@@ -169,7 +171,7 @@ type Statement interface {
 	OriginText() string
 
 	// GetTextToLog gets the desensitization SQL text for logging.
-	GetTextToLog() string
+	GetTextToLog(keepHint bool) string
 
 	// Exec executes SQL and gets a Recordset.
 	Exec(ctx context.Context) (RecordSet, error)

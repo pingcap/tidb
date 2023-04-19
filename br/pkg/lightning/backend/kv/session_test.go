@@ -17,6 +17,7 @@ package kv_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -24,7 +25,7 @@ import (
 )
 
 func TestSession(t *testing.T) {
-	session := kv.NewSession(&kv.SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890}, log.L())
+	session := kv.NewSessionCtx(&encode.SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890}, log.L())
 	_, err := session.Txn(true)
 	require.NoError(t, err)
 }

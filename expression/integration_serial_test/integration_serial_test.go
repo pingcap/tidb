@@ -2300,7 +2300,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE';")
 	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").CheckContain("Incorrect datetime value: '0000-00-00 00:00:00.000000'")
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE,STRICT_TRANS_TABLES';")
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
@@ -2395,7 +2395,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec(`update t set a = monthname("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
 	tk.MustExec("insert into t value(monthname('0000-00-00'))")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").CheckContain("Incorrect datetime value: '0000-00-00 00:00:00.000000'")
 	tk.MustExec(`update t set a = monthname("0000-00-00")`)
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert into t value(monthname('0000-00-00'))")
@@ -2406,7 +2406,7 @@ func TestTimeBuiltin(t *testing.T) {
 	require.NoError(t, err)
 	result = tk.MustQuery(`select monthname("2017-12-01"), monthname("0000-00-00"), monthname("0000-01-00"), monthname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("December <nil> January January"))
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").CheckContain("Incorrect datetime value: '0000-00-00 00:00:00.000000'")
 
 	// for dayname
 	tk.MustExec(`drop table if exists t`)
@@ -3790,7 +3790,7 @@ func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 
 	var err error
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session()),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session(), false),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
@@ -4107,6 +4107,7 @@ func TestNoopFunctions(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // variable changes in the test will not affect the plan cache
 	tk.MustExec("DROP TABLE IF EXISTS t1")
 	tk.MustExec("CREATE TABLE t1 (a INT NOT NULL PRIMARY KEY)")
 	tk.MustExec("INSERT INTO t1 VALUES (1),(2),(3)")

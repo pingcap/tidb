@@ -123,16 +123,19 @@ func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, tab
 }
 
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
-func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask) error {
+func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask, needToRecordDone bool) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
 	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
-	if err != nil {
-		return errors.Trace(err)
+	if needToRecordDone {
+		_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	err = RemoveFromGCDeleteRange(sctx, dr.JobID, dr.ElementID)

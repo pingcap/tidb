@@ -20,11 +20,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -67,12 +70,19 @@ func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state 
 	return updateTTLTaskHeartBeatTempalte, []interface{}{string(stateStr), now.Format(timeFormat), jobID, scanID}, nil
 }
 
+const countRunningTasks = "SELECT count(1) FROM mysql.tidb_ttl_task WHERE status = 'running'"
+
+var errAlreadyScheduled = errors.New("task is already scheduled")
+var errTooManyRunningTasks = errors.New("there are too many running tasks")
+
 // taskManager schedules and manages the ttl tasks on this instance
 type taskManager struct {
 	ctx      context.Context
 	sessPool sessionPool
 
 	id string
+
+	store kv.Storage
 
 	scanWorkers []worker
 	delWorkers  []worker
@@ -84,12 +94,14 @@ type taskManager struct {
 	notifyStateCh chan interface{}
 }
 
-func newTaskManager(ctx context.Context, sessPool sessionPool, infoSchemaCache *cache.InfoSchemaCache, id string) *taskManager {
+func newTaskManager(ctx context.Context, sessPool sessionPool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
 	return &taskManager{
 		ctx:      logutil.WithKeyValue(ctx, "ttl-worker", "task-manager"),
 		sessPool: sessPool,
 
 		id: id,
+
+		store: store,
 
 		scanWorkers: []worker{},
 		delWorkers:  []worker{},
@@ -269,14 +281,22 @@ func (m *taskManager) rescheduleTasks(se session.Session, now time.Time) {
 		return
 	}
 
+loop:
 	for _, t := range tasks {
 		logger := logutil.Logger(m.ctx).With(zap.String("jobID", t.JobID), zap.Int64("scanID", t.ScanID))
 
 		task, err := m.lockScanTask(se, t, now)
 		if err != nil {
-			// If other nodes lock the task, it will return an error. It's expected
-			// so the log level is only `info`
-			logutil.Logger(m.ctx).Info("fail to lock scan task", zap.Error(err))
+			switch errors.Cause(err) {
+			case errAlreadyScheduled:
+				continue
+			case errTooManyRunningTasks:
+				break loop
+			case storeerr.ErrLockWaitTimeout:
+				// don't step into the next step to avoid exceeding the limit
+				break loop
+			}
+			logutil.Logger(m.ctx).Warn("fail to lock scan task", zap.Error(err))
 			continue
 		}
 
@@ -299,7 +319,7 @@ func (m *taskManager) rescheduleTasks(se session.Session, now time.Time) {
 }
 
 func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([]*cache.TTLTask, error) {
-	sql, args := cache.PeekWaitingTTLTask(now.Add(-2 * ttlTaskHeartBeatTickerInterval))
+	sql, args := cache.PeekWaitingTTLTask(now.Add(-getTaskManagerHeartBeatExpireInterval()))
 	rows, err := se.ExecuteSQL(m.ctx, sql, args...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "execute sql: %s", sql)
@@ -328,12 +348,26 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 	err := se.RunInTxn(ctx, func() error {
 		var err error
 
+		// The `for update` here ensures two things:
+		// 1. The instance which will update this row has committed, and we can get the newest information.
+		// 2. There is only one successful transaction concurrently.
+		//    If it's a `for update nowait`, we cannot avoid the situation that multiple transactions fetched the tasks
+		//    at the same time, and the task limitation doesn't work.
 		task, err = m.syncTaskFromTable(se, task.JobID, task.ScanID, true)
 		if err != nil {
 			return err
 		}
-		if task.OwnerID != "" && !task.OwnerHBTime.Add(2*jobManagerLoopTickerInterval).Before(now) {
-			return errors.New("task is already scheduled")
+		if task.OwnerID != "" && !task.OwnerHBTime.Add(getTaskManagerHeartBeatExpireInterval()).Before(now) {
+			return errors.WithStack(errAlreadyScheduled)
+		}
+
+		// check the count of running task is smaller or equal than the limit
+		rows, err := se.ExecuteSQL(ctx, countRunningTasks)
+		if err != nil {
+			return errors.Wrapf(err, "execute sql: %s", countRunningTasks)
+		}
+		if !m.meetTTLRunningTask(int(rows[0].GetInt64(0))) {
+			return errors.WithStack(errTooManyRunningTasks)
 		}
 
 		sql, args := setTTLTaskOwnerSQL(task.JobID, task.ScanID, m.id, now)
@@ -370,12 +404,12 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 	}, nil
 }
 
-func (m *taskManager) syncTaskFromTable(se session.Session, jobID string, scanID int64, detectLock bool) (*cache.TTLTask, error) {
+func (m *taskManager) syncTaskFromTable(se session.Session, jobID string, scanID int64, waitLock bool) (*cache.TTLTask, error) {
 	ctx := m.ctx
 
 	sql, args := cache.SelectFromTTLTaskWithID(jobID, scanID)
-	if detectLock {
-		sql += " FOR UPDATE NOWAIT"
+	if waitLock {
+		sql += " FOR UPDATE"
 	}
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
 	if err != nil {
@@ -508,6 +542,30 @@ func (m *taskManager) reportMetrics() {
 	}
 	metrics.ScanningTaskCnt.Set(float64(scanningTaskCnt))
 	metrics.DeletingTaskCnt.Set(float64(deletingTaskCnt))
+}
+
+func (m *taskManager) meetTTLRunningTask(count int) bool {
+	ttlRunningTask := variable.TTLRunningTasks.Load()
+	// `-1` is the auto value, means we should calculate the limit according to the count of TiKV
+	if ttlRunningTask != -1 {
+		return int(ttlRunningTask) > count
+	}
+
+	store, ok := m.store.(tikv.Storage)
+	if !ok {
+		return variable.MaxConfigurableConcurrency > count
+	}
+
+	regionCache := store.GetRegionCache()
+	if regionCache == nil {
+		return true
+	}
+	limit := len(regionCache.GetAllStores())
+	if limit > variable.MaxConfigurableConcurrency {
+		limit = variable.MaxConfigurableConcurrency
+	}
+
+	return limit > count
 }
 
 type runningScanTask struct {

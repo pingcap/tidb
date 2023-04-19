@@ -20,6 +20,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/x509"
+	"database/sql"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -42,11 +43,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/lightning/restore"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/redact"
@@ -67,6 +67,7 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+// Lightning is the main struct of the lightning package.
 type Lightning struct {
 	globalCfg *config.GlobalConfig
 	globalTLS *common.TLS
@@ -77,7 +78,7 @@ type Lightning struct {
 	server     http.Server
 	serverAddr net.Addr
 	serverLock sync.Mutex
-	status     restore.LightningStatus
+	status     importer.LightningStatus
 
 	promFactory  promutil.Factory
 	promRegistry promutil.Registry
@@ -95,6 +96,7 @@ func initEnv(cfg *config.GlobalConfig) error {
 	return log.InitLogger(&cfg.App.Config, cfg.TiDB.LogLevel)
 }
 
+// New creates a new Lightning instance.
 func New(globalCfg *config.GlobalConfig) *Lightning {
 	if err := initEnv(globalCfg); err != nil {
 		fmt.Println("Failed to initialize environment:", err)
@@ -129,6 +131,7 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 	}
 }
 
+// GoServe starts the HTTP server in a goroutine. The server will be closed
 func (l *Lightning) GoServe() error {
 	handleSigUsr1(func() {
 		l.serverLock.Lock()
@@ -171,11 +174,13 @@ func newLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
 	return &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 }
 
+// WriteHeader implements http.ResponseWriter.
 func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.statusCode = code
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
+// Write implements http.ResponseWriter.
 func (lrw *loggingResponseWriter) Write(d []byte) (int, error) {
 	// keep first part of the response for logging, max 1K
 	if lrw.body == "" && len(d) > 0 {
@@ -269,32 +274,7 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	return nil
 }
 
-// RunOnce is used by binary lightning and host when using lightning as a library.
-//   - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
-//     cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. and glue could be nil to let lightning
-//     use a default glue later.
-//   - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
-//     caller implemented glue.
-//
-// deprecated: use RunOnceWithOptions instead.
-func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glue glue.Glue) error {
-	if err := taskCfg.Adjust(taskCtx); err != nil {
-		return err
-	}
-
-	taskCfg.TaskID = time.Now().UnixNano()
-	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
-		taskCfg.TaskID = int64(val.(int))
-	})
-	o := &options{
-		glue:         glue,
-		promFactory:  l.promFactory,
-		promRegistry: l.promRegistry,
-		logger:       log.L(),
-	}
-	return l.run(taskCtx, taskCfg, o)
-}
-
+// RunServer is used by binary lightning to start a HTTP server to receive import tasks.
 func (l *Lightning) RunServer() error {
 	l.serverLock.Lock()
 	l.taskCfgs = config.NewConfigList()
@@ -316,7 +296,7 @@ func (l *Lightning) RunServer() error {
 		}
 		err = l.run(context.Background(), task, o)
 		if err != nil && !common.IsContextCanceledError(err) {
-			restore.DeliverPauser.Pause() // force pause the progress on error
+			importer.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
 		}
 	}
@@ -412,11 +392,7 @@ var (
 	taskCfgRecorderKey = "taskCfgRecorderKey"
 )
 
-func getKeyspaceName(g glue.Glue) (string, error) {
-	db, err := g.GetDB()
-	if err != nil {
-		return "", err
-	}
+func getKeyspaceName(db *sql.DB) (string, error) {
 	if db == nil {
 		return "", nil
 	}
@@ -515,17 +491,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		return common.ErrInvalidTLSConfig.Wrap(err)
 	}
 
-	// initiation of default glue should be after BuildTLSConfig, which is ready to be called after taskCfg.Adjust
-	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
-	g := o.glue
-	if g == nil {
-		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
-		if err != nil {
-			return common.ErrDBConnect.Wrap(err)
-		}
-		g = glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode)
-	}
-
 	s := o.dumpFileStorage
 	if s == nil {
 		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
@@ -573,27 +538,41 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
-	keyspaceName, err := getKeyspaceName(g)
-	if err != nil {
-		o.logger.Error("fail to get keyspace name", zap.Error(err))
-		return errors.Trace(err)
+	// db is only not nil in unit test
+	db := o.db
+	if db == nil {
+		// initiation of default db should be after BuildTLSConfig
+		db, err = importer.DBFromConfig(ctx, taskCfg.TiDB)
+		if err != nil {
+			return common.ErrDBConnect.Wrap(err)
+		}
 	}
-	o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
 
-	param := &restore.ControllerParam{
+	var keyspaceName string
+	if taskCfg.TikvImporter.Backend == config.BackendLocal {
+		if taskCfg.TikvImporter.KeyspaceName == "" {
+			keyspaceName, err = getKeyspaceName(db)
+			if err != nil {
+				o.logger.Warn("unable to get keyspace name, lightning will use empty keyspace name", zap.Error(err))
+			}
+		}
+		o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
+	}
+
+	param := &importer.ControllerParam{
 		DBMetas:           dbMetas,
 		Status:            &l.status,
 		DumpFileStorage:   s,
 		OwnExtStorage:     o.dumpFileStorage == nil,
-		Glue:              g,
+		DB:                db,
 		CheckpointStorage: o.checkpointStorage,
 		CheckpointName:    o.checkpointName,
 		DupIndicator:      o.dupIndicator,
 		KeyspaceName:      keyspaceName,
 	}
 
-	var procedure *restore.Controller
-	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
+	var procedure *importer.Controller
+	procedure, err = importer.NewImportController(ctx, taskCfg, param)
 	if err != nil {
 		o.logger.Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
@@ -609,6 +588,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	return errors.Trace(err)
 }
 
+// Stop stops the lightning server.
 func (l *Lightning) Stop() {
 	l.cancelLock.Lock()
 	if l.cancel != nil {
@@ -900,11 +880,11 @@ func handlePause(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodGet:
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"paused":%v}`, restore.DeliverPauser.IsPaused())
+		fmt.Fprintf(w, `{"paused":%v}`, importer.DeliverPauser.IsPaused())
 
 	case http.MethodPut:
 		w.WriteHeader(http.StatusOK)
-		restore.DeliverPauser.Pause()
+		importer.DeliverPauser.Pause()
 		log.L().Info("progress paused")
 		_, _ = w.Write([]byte("{}"))
 
@@ -920,7 +900,7 @@ func handleResume(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodPut:
 		w.WriteHeader(http.StatusOK)
-		restore.DeliverPauser.Resume()
+		importer.DeliverPauser.Resume()
 		log.L().Info("progress resumed")
 		_, _ = w.Write([]byte("{}"))
 
@@ -985,7 +965,7 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 		maxDBFiles := topNTotalSize / int64(cfg.TikvImporter.LocalWriterMemCacheSize) * 2
 		// the pebble db and all import routine need upto maxDBFiles fds for read and write.
 		maxOpenDBFiles := maxDBFiles * (1 + int64(cfg.TikvImporter.RangeConcurrency))
-		estimateMaxFiles := local.Rlim_t(cfg.App.RegionConcurrency) + local.Rlim_t(maxOpenDBFiles)
+		estimateMaxFiles := local.RlimT(cfg.App.RegionConcurrency) + local.RlimT(maxOpenDBFiles)
 		if err := local.VerifyRLimit(estimateMaxFiles); err != nil {
 			return err
 		}
@@ -1009,6 +989,8 @@ func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) e
 	}
 	return nil
 }
+
+// CheckpointRemove removes the checkpoint of the given table.
 func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
 	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
@@ -1033,34 +1015,36 @@ func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string)
 	return errors.Trace(cpdb.RemoveCheckpoint(ctx, tableName))
 }
 
+// CleanupMetas removes the table metas of the given table.
 func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
 	if tableName == "all" {
 		tableName = ""
 	}
 	// try to clean up table metas if exists
-	db, err := restore.DBFromConfig(ctx, cfg.TiDB)
+	db, err := importer.DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tableMetaExist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TableMetaTableName)
+	tableMetaExist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, importer.TableMetaTableName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if tableMetaExist {
-		metaTableName := common.UniqueTable(cfg.App.MetaSchemaName, restore.TableMetaTableName)
-		if err = restore.RemoveTableMetaByTableName(ctx, db, metaTableName, tableName); err != nil {
+		metaTableName := common.UniqueTable(cfg.App.MetaSchemaName, importer.TableMetaTableName)
+		if err = importer.RemoveTableMetaByTableName(ctx, db, metaTableName, tableName); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	exist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TaskMetaTableName)
+	exist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, importer.TaskMetaTableName)
 	if err != nil || !exist {
 		return errors.Trace(err)
 	}
-	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, log.L(), db, cfg.App.MetaSchemaName, tableMetaExist))
+	return errors.Trace(importer.MaybeCleanupAllMetas(ctx, log.L(), db, cfg.App.MetaSchemaName, tableMetaExist))
 }
 
+// SwitchMode switches the mode of the TiKV cluster.
 func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
 	var m import_sstpb.SwitchMode
 	switch mode {

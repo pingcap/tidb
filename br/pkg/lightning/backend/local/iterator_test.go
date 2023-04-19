@@ -16,7 +16,6 @@ package local
 
 import (
 	"bytes"
-	"context"
 	"math/rand"
 	"path/filepath"
 	"sort"
@@ -37,7 +36,7 @@ func TestDupDetectIterator(t *testing.T) {
 		pairs = append(pairs, common.KvPair{
 			Key:   randBytes(32),
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
 	}
@@ -47,13 +46,13 @@ func TestDupDetectIterator(t *testing.T) {
 		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
 		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
 	}
@@ -63,19 +62,19 @@ func TestDupDetectIterator(t *testing.T) {
 		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
 		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
 		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
 	}
@@ -122,7 +121,7 @@ func TestDupDetectIterator(t *testing.T) {
 	dupDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
 	require.NoError(t, err)
 	var iter Iter
-	iter = newDupDetectIter(context.Background(), db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), dupDetectOpt{})
+	iter = newDupDetectIter(db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), DupDetectOpt{})
 	sort.Slice(pairs, func(i, j int) bool {
 		key1 := keyAdapter.Encode(nil, pairs[i].Key, pairs[i].RowID)
 		key2 := keyAdapter.Encode(nil, pairs[j].Key, pairs[j].RowID)
@@ -184,22 +183,22 @@ func TestDupDetectIterSeek(t *testing.T) {
 		{
 			Key:   []byte{1, 2, 3, 0},
 			Val:   randBytes(128),
-			RowID: 1,
+			RowID: common.EncodeIntRowID(1),
 		},
 		{
 			Key:   []byte{1, 2, 3, 1},
 			Val:   randBytes(128),
-			RowID: 2,
+			RowID: common.EncodeIntRowID(2),
 		},
 		{
 			Key:   []byte{1, 2, 3, 1},
 			Val:   randBytes(128),
-			RowID: 3,
+			RowID: common.EncodeIntRowID(3),
 		},
 		{
 			Key:   []byte{1, 2, 3, 2},
 			Val:   randBytes(128),
-			RowID: 4,
+			RowID: common.EncodeIntRowID(4),
 		},
 	}
 
@@ -217,7 +216,7 @@ func TestDupDetectIterSeek(t *testing.T) {
 
 	dupDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
 	require.NoError(t, err)
-	iter := newDupDetectIter(context.Background(), db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), dupDetectOpt{})
+	iter := newDupDetectIter(db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), DupDetectOpt{})
 
 	require.True(t, iter.Seek([]byte{1, 2, 3, 1}))
 	require.Equal(t, pairs[1].Val, iter.Value())
@@ -226,4 +225,18 @@ func TestDupDetectIterSeek(t *testing.T) {
 	require.NoError(t, iter.Close())
 	require.NoError(t, db.Close())
 	require.NoError(t, dupDB.Close())
+}
+
+func TestKeyAdapterEncoding(t *testing.T) {
+	keyAdapter := dupDetectKeyAdapter{}
+	srcKey := []byte{1, 2, 3}
+	v := keyAdapter.Encode(nil, srcKey, common.EncodeIntRowID(1))
+	resKey, err := keyAdapter.Decode(nil, v)
+	require.NoError(t, err)
+	require.EqualValues(t, srcKey, resKey)
+
+	v = keyAdapter.Encode(nil, srcKey, []byte("mock_common_handle"))
+	resKey, err = keyAdapter.Decode(nil, v)
+	require.NoError(t, err)
+	require.EqualValues(t, srcKey, resKey)
 }

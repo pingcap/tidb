@@ -935,12 +935,12 @@ func TestCartesianProduct(t *testing.T) {
 func TestBatchInsertDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	originLimit := kv.TxnTotalSizeLimit.Load()
 	defer func() {
-		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
+		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5900)
+	kv.TxnTotalSizeLimit.Store(6000)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1467,12 +1467,12 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
-	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
+	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
 	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
-	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 }
 
 func TestIssue18744(t *testing.T) {

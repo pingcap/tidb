@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
@@ -580,4 +581,98 @@ func TestGetSchemaStorage(t *testing.T) {
 		tables[0].IndexLength,
 		tables[0].DataFree,
 	})
+}
+
+func TestTTL(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("create database test_ttl")
+	dbt.MustExec("use test_ttl")
+	dbt.MustExec("create table t1(t timestamp) TTL=`t` + interval 1 day")
+
+	getJobCnt := func(status string) int {
+		selectSQL := "select count(1) from mysql.tidb_ttl_job_history"
+		if status != "" {
+			selectSQL += " where status = '" + status + "'"
+		}
+
+		rs, err := db.Query(selectSQL)
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, rs.Close())
+		}()
+
+		cnt := -1
+		rowNum := 0
+		for rs.Next() {
+			rowNum++
+			require.Equal(t, 1, rowNum)
+			require.NoError(t, rs.Scan(&cnt))
+		}
+		require.NoError(t, rs.Err())
+		return cnt
+	}
+
+	waitAllJobsFinish := func() {
+		start := time.Now()
+		for time.Since(start) < time.Minute {
+			cnt := getJobCnt("running")
+			if cnt == 0 {
+				return
+			}
+		}
+		require.Fail(t, "timeout for waiting job finished")
+	}
+
+	doTrigger := func(db, tb string) (map[string]interface{}, error) {
+		resp, err := ts.postStatus(fmt.Sprintf("/test/ttl/trigger/%s/%s", db, tb), "application/json", nil)
+		if err != nil {
+			return nil, err
+		}
+
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+
+		if resp.StatusCode != 200 {
+			return nil, errors.Errorf("http status: %s, %s", resp.Status, body)
+		}
+
+		var obj map[string]interface{}
+		require.NoError(t, json.Unmarshal(body, &obj))
+		return obj, nil
+	}
+
+	expectedJobCnt := 1
+	obj, err := doTrigger("test_ttl", "t1")
+	require.NoError(t, err)
+	if err != nil {
+		// if error returns, may be a job is running, we should skip it and have a next try when it stopped
+		require.Equal(t, expectedJobCnt, getJobCnt(""))
+		waitAllJobsFinish()
+		obj, err = doTrigger("test_ttl", "t1")
+		require.NoError(t, err)
+		expectedJobCnt++
+	}
+
+	_, ok := obj["table_result"]
+	require.True(t, ok)
+	require.Equal(t, expectedJobCnt, getJobCnt(""))
+
+	// error case, table not exist
+	obj, err = doTrigger("test_ttl", "t2")
+	require.Nil(t, obj)
+	require.EqualError(t, err, "http status: 400 Bad Request, table test_ttl.t2 not exists")
 }

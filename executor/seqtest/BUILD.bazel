@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "seqtest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "prepared_test.go",
@@ -10,7 +10,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 39,
+    shard_count = 40,
     deps = [
         "//config",
         "//ddl/testutil",

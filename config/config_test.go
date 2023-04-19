@@ -1308,3 +1308,20 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 		conf.KeyspaceName = ""
 	})
 }
+
+func TestAutoScalerConfig(t *testing.T) {
+	conf := NewConfig()
+	require.False(t, conf.UseAutoScaler)
+
+	conf = GetGlobalConfig()
+	require.False(t, conf.UseAutoScaler)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.UseAutoScaler = true
+	})
+	require.True(t, GetGlobalConfig().UseAutoScaler)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.UseAutoScaler = false
+	})
+}

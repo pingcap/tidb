@@ -36,6 +36,7 @@ go_test(
     ],
     embed = [":stmtctx"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//kv",
         "//sessionctx/variable",
@@ -45,6 +46,7 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
     ],
 )

@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "casetest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "binary_plan_test.go",
         "cbo_test.go",
@@ -22,10 +22,12 @@ go_test(
         "rule_join_reorder_test.go",
         "rule_result_reorder_test.go",
         "stats_test.go",
+        "tiflash_selection_late_materialization_test.go",
         "window_push_down_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",

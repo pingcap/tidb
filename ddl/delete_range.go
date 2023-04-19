@@ -23,7 +23,9 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -62,7 +64,7 @@ type delRangeManager interface {
 
 type delRange struct {
 	store      kv.Storage
-	sessPool   *sessionPool
+	sessPool   *sess.Pool
 	emulatorCh chan struct{}
 	keys       []kv.Key
 	quitCh     chan struct{}
@@ -72,7 +74,7 @@ type delRange struct {
 }
 
 // newDelRangeManager returns a delRangeManager.
-func newDelRangeManager(store kv.Storage, sessPool *sessionPool) delRangeManager {
+func newDelRangeManager(store kv.Storage, sessPool *sess.Pool) delRangeManager {
 	dr := &delRange{
 		store:        store,
 		sessPool:     sessPool,
@@ -88,11 +90,11 @@ func newDelRangeManager(store kv.Storage, sessPool *sessionPool) delRangeManager
 
 // addDelRangeJob implements delRangeManager interface.
 func (dr *delRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
-	sctx, err := dr.sessPool.get()
+	sctx, err := dr.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dr.sessPool.put(sctx)
+	defer dr.sessPool.Put(sctx)
 
 	if job.MultiSchemaInfo != nil {
 		err = insertJobIntoDeleteRangeTableMultiSchema(ctx, sctx, job)
@@ -126,11 +128,11 @@ func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, sctx sessionc
 
 // removeFromGCDeleteRange implements delRangeManager interface.
 func (dr *delRange) removeFromGCDeleteRange(ctx context.Context, jobID int64) error {
-	sctx, err := dr.sessPool.get()
+	sctx, err := dr.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dr.sessPool.put(sctx)
+	defer dr.sessPool.Put(sctx)
 	err = util.RemoveMultiFromGCDeleteRange(ctx, sctx, jobID)
 	return errors.Trace(err)
 }
@@ -170,12 +172,12 @@ func (dr *delRange) startEmulator() {
 }
 
 func (dr *delRange) doDelRangeWork() error {
-	sctx, err := dr.sessPool.get()
+	sctx, err := dr.sessPool.Get()
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] delRange emulator get session failed", zap.Error(err))
 		return errors.Trace(err)
 	}
-	defer dr.sessPool.put(sctx)
+	defer dr.sessPool.Put(sctx)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	ranges, err := util.LoadDeleteRanges(ctx, sctx, math.MaxInt64)
@@ -237,7 +239,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 			return errors.Trace(err)
 		}
 		if finish {
-			if err := util.CompleteDeleteRange(sctx, r); err != nil {
+			if err := util.CompleteDeleteRange(sctx, r, true); err != nil {
 				logutil.BgLogger().Error("[ddl] delRange emulator complete task failed", zap.Error(err))
 				return errors.Trace(err)
 			}
@@ -301,7 +303,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 					return errors.Trace(err)
 				}
 			}
-			return nil
+			// logical table may contain global index regions, so delete the logical table range.
+			startKey = tablecodec.EncodeTablePrefix(tableID)
+			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+			elemID := ea.allocForPhysicalID(tableID)
+			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
 		}
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
@@ -364,7 +370,14 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		if err := job.DecodeArgs(&indexName, &ifExists, &indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
+
+		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
 		if len(partitionIDs) > 0 {
+			failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
+				if val.(bool) {
+					panic("drop global index must not delete partition index range")
+				}
+			})
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)

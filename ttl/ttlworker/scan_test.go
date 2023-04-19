@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/types"
@@ -406,4 +407,41 @@ func TestScanTaskDoScan(t *testing.T) {
 	task.schemaChangeIdx = 1
 	task.schemaChangeInRetry = 2
 	task.runDoScanForTest(1, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
+}
+
+func TestScanTaskCheck(t *testing.T) {
+	tbl := newMockTTLTbl(t, "t1")
+	pool := newMockSessionPool(t, tbl)
+	pool.se.evalExpire = time.UnixMilli(100)
+	pool.se.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
+
+	task := &ttlScanTask{
+		ctx: context.Background(),
+		TTLTask: &cache.TTLTask{
+			ExpireTime: time.UnixMilli(101).Add(time.Minute),
+		},
+		tbl:        tbl,
+		statistics: &ttlStatistics{},
+	}
+
+	ch := make(chan *ttlDeleteTask, 1)
+	result := task.doScan(context.Background(), ch, pool)
+	require.Equal(t, task, result.task)
+	require.EqualError(t, result.err, "current expire time is after safe expire time. (60101 > 60100)")
+	require.Equal(t, 0, len(ch))
+	require.Equal(t, "Total Rows: 0, Success Rows: 0, Error Rows: 0", task.statistics.String())
+
+	task = &ttlScanTask{
+		ctx: context.Background(),
+		TTLTask: &cache.TTLTask{
+			ExpireTime: time.UnixMilli(100).Add(time.Minute),
+		},
+		tbl:        tbl,
+		statistics: &ttlStatistics{},
+	}
+	result = task.doScan(context.Background(), ch, pool)
+	require.Equal(t, task, result.task)
+	require.NoError(t, result.err)
+	require.Equal(t, 1, len(ch))
+	require.Equal(t, "Total Rows: 1, Success Rows: 0, Error Rows: 0", task.statistics.String())
 }

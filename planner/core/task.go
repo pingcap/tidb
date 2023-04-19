@@ -819,6 +819,11 @@ func (t *rootTask) MemoryUsage() (sum int64) {
 
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
+
 	sunk := false
 	if cop, ok := t.(*copTask); ok {
 		if len(cop.idxMergePartPlans) == 0 {
@@ -831,7 +836,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
 				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 				stats := deriveLimitStats(childProfile, float64(newCount))
-				pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+				pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 				cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 				pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
@@ -846,7 +851,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				for _, partialScan := range cop.idxMergePartPlans {
 					childProfile := partialScan.statsInfo()
 					stats := deriveLimitStats(childProfile, float64(newCount))
-					pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+					pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 					pushedDownLimit.SetChildren(partialScan)
 					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 					limitChildren = append(limitChildren, pushedDownLimit)
@@ -862,12 +867,17 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		newCount := p.Offset + p.Count
 		childProfile := mpp.plan().statsInfo()
 		stats := deriveLimitStats(childProfile, float64(newCount))
-		pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+		pushedDownLimit := PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.ctx, stats, p.blockOffset)
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*mppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 		t = mpp.convertToRootTask(p.ctx)
 	}
 	if sunk {
+		return t
+	}
+	// Skip limit with partition on the root. This is a derived topN and window function
+	// will take care of the filter.
+	if len(p.GetPartitionBy()) > 0 {
 		return t
 	}
 	return attachPlan2Task(p, t)
@@ -938,14 +948,19 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	for _, expr := range p.ByItems {
 		newByItems = append(newByItems, expr.Clone())
 	}
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
 	newCount := p.Offset + p.Count
 	childProfile := childPlan.statsInfo()
 	// Strictly speaking, for the row count of pushed down TopN, we should multiply newCount with "regionNum",
 	// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 	stats := deriveLimitStats(childProfile, float64(newCount))
 	topN := PhysicalTopN{
-		ByItems: newByItems,
-		Count:   newCount,
+		ByItems:     newByItems,
+		PartitionBy: newPartitionBy,
+		Count:       newCount,
 	}.Init(p.ctx, stats, p.blockOffset, p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
 	return topN
@@ -1060,6 +1075,11 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		mppTask.p = pushedDownTopN
 	}
 	rootTask := t.convertToRootTask(p.ctx)
+	// Skip TopN with partition on the root. This is a derived topN and window function
+	// will take care of the filter.
+	if len(p.GetPartitionBy()) > 0 {
+		return t
+	}
 	return attachPlan2Task(p, rootTask)
 }
 
@@ -1145,6 +1165,13 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if partialSel != nil && finalScan.statsInfo().RowCount > 0 {
 				selSelectivityOnPartialScan[i] = partialSel.statsInfo().RowCount / finalScan.statsInfo().RowCount
 			}
+			// TODO: Support partition table later.
+			if plan, ok := finalScan.(*PhysicalTableScan); ok && tblInfo.GetPartitionInfo() == nil {
+				plan.ByItems = p.ByItems
+			}
+			if plan, ok := finalScan.(*PhysicalIndexScan); ok && tblInfo.GetPartitionInfo() == nil {
+				plan.ByItems = p.ByItems
+			}
 			partialScans = append(partialScans, finalScan)
 		}
 	}
@@ -1162,6 +1189,10 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		return nil, false
 	}
 
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
 		if len(copTsk.idxMergePartPlans) > 0 {
@@ -1178,8 +1209,42 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				return nil, false
 			}
 			clonedTblScan.statsInfo().ScaleByExpectCnt(float64(p.Count+p.Offset) * float64(len(copTsk.idxMergePartPlans)))
+			// TODO: This is a hack way, planner should not prune handle columns when `keepOrder` = true.
+			// TODO: Support partition table later.
+			if tblInfo.GetPartitionInfo() == nil {
+				if tblInfo.PKIsHandle {
+					pk := tblInfo.GetPkColInfo()
+					col := expression.ColInfo2Col(tblScan.tblCols, pk)
+					tblScan.HandleCols = NewIntHandleCols(col)
+					clonedTblScan.Schema().Append(col)
+					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, pk)
+				} else if tblInfo.IsCommonHandle {
+					idxInfo := tblInfo.GetPrimaryKey()
+					tblScan.HandleCols = NewCommonHandleCols(p.SCtx().GetSessionVars().StmtCtx, tblInfo, idxInfo, tblScan.tblCols)
+					for i := 0; i < tblScan.HandleCols.NumCols(); i++ {
+						clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(i))
+						clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, tblScan.HandleCols.GetCol(i).ToInfo())
+					}
+				} else {
+					clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(0))
+					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, model.NewExtraHandleColInfo())
+				}
+			}
 			copTsk.tablePlan = clonedTblScan
 			copTsk.indexPlanFinished = true
+			rootTask := copTsk.convertToRootTask(p.ctx)
+			// TODO: support order prop push down into partition table
+			if tblInfo.GetPartitionInfo() == nil {
+				if indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader); ok {
+					indexMerge.PushedLimit = &PushedDownLimit{
+						Offset: p.Offset,
+						Count:  p.Count,
+					}
+					indexMerge.ByItems = p.ByItems
+					indexMerge.KeepOrder = true
+					return rootTask, true
+				}
+			}
 		} else {
 			// The normal index scan cases.(single read and double read)
 			propMatched := p.checkOrderPropForSubIndexScan(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
@@ -1187,6 +1252,8 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				return nil, false
 			}
 			idxScan.Desc = isDesc
+			idxScan.KeepOrder = true
+			idxScan.ByItems = p.ByItems
 			childProfile := copTsk.plan().statsInfo()
 			newCount := p.Offset + p.Count
 			stats := deriveLimitStats(childProfile, float64(newCount))
@@ -1206,6 +1273,32 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				scaledRowCount := child.Stats().RowCount / selSelectivity
 				idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
 			}
+
+			rootTask := copTsk.convertToRootTask(p.ctx)
+			// embedded limit in indexLookUp, no more limit needed.
+			if idxLookup, ok := rootTask.p.(*PhysicalIndexLookUpReader); ok {
+				idxLookup.PushedLimit = &PushedDownLimit{
+					Offset: p.Offset,
+					Count:  p.Count,
+				}
+				extraInfo, extraCol, hasExtraCol := tryGetPkExtraColumn(p.ctx.GetSessionVars(), tblInfo)
+				// TODO: sometimes it will add a duplicate `_tidb_rowid` column in ts.schema()
+				if hasExtraCol {
+					idxLookup.ExtraHandleCol = extraCol
+					ts := idxLookup.TablePlans[0].(*PhysicalTableScan)
+					ts.Columns = append(ts.Columns, extraInfo)
+					ts.schema.Append(extraCol)
+					ts.HandleIdx = []int{len(ts.Columns) - 1}
+				}
+				return rootTask, true
+			}
+			rootLimit := PhysicalLimit{
+				Count:       p.Count,
+				Offset:      p.Offset,
+				PartitionBy: newPartitionBy,
+			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+			rootLimit.SetSchema(rootTask.plan().Schema())
+			return attachPlan2Task(rootLimit, rootTask), true
 		}
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {
@@ -1227,11 +1320,13 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		tblScan.Desc = isDesc
 		// SplitRangesAcrossInt64Boundary needs the KeepOrder flag. See that func and the struct tableResultHandler for more details.
 		tblScan.KeepOrder = true
+		tblScan.ByItems = p.ByItems
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
 		stats := deriveLimitStats(childProfile, float64(newCount))
 		pushedLimit := PhysicalLimit{
-			Count: newCount,
+			Count:       newCount,
+			PartitionBy: newPartitionBy,
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		pushedLimit.SetSchema(copTsk.tablePlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
@@ -1246,6 +1341,15 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			scaledRowCount := child.Stats().RowCount / selSelectivity
 			tblScan.SetStats(tblScan.Stats().ScaleByExpectCnt(scaledRowCount))
 		}
+
+		rootTask := copTsk.convertToRootTask(p.ctx)
+		rootLimit := PhysicalLimit{
+			Count:       p.Count,
+			Offset:      p.Offset,
+			PartitionBy: newPartitionBy,
+		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		rootLimit.SetSchema(rootTask.plan().Schema())
+		return attachPlan2Task(rootLimit, rootTask), true
 	} else {
 		return nil, false
 	}
@@ -1304,7 +1408,7 @@ func (p *PhysicalTopN) checkSubScans(colsProp *property.PhysicalProperty, isDesc
 				}
 			} else {
 				idxCols, idxColLens := expression.IndexInfo2PrefixCols(x.Columns, x.Schema().Columns, tables.FindPrimaryIndex(x.Table))
-				matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, nil, colsProp)
+				matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, x.constColsByCond, colsProp)
 				if !matched {
 					return false
 				}
@@ -2718,7 +2822,19 @@ func accumulateNetSeekCost4MPP(p PhysicalPlan) (cost float64) {
 	return
 }
 
+func tryExpandVirtualColumn(p PhysicalPlan) {
+	if ts, ok := p.(*PhysicalTableScan); ok {
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+		return
+	}
+	for _, child := range p.Children() {
+		tryExpandVirtualColumn(child)
+	}
+}
+
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
+	// In disaggregated-tiflash mode, need to consider generated column.
+	tryExpandVirtualColumn(t.p)
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}.Init(ctx, t.p.statsInfo())
@@ -2812,10 +2928,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	}.Init(ctx, t.p.statsInfo())
 
 	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
-		// Use compress when exchange type is `Hash`
-		if sender.ExchangeType == tipb.ExchangeType_Hash {
-			sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
-		}
+		sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
 	}
 
 	sender.SetChildren(t.p)

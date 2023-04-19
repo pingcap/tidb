@@ -56,7 +56,7 @@ func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session())})
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session(), false)})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
@@ -873,6 +873,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
@@ -893,6 +894,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test.
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -989,6 +991,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
@@ -1720,6 +1723,7 @@ func TestVariablesInfo(t *testing.T) {
 		"tidb_enable_collect_execution_info ON OFF", // for test stability
 		"tidb_enable_mutation_checker OFF ON",       // for new installs
 		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
+		"tidb_pessimistic_txn_fair_locking OFF ON",  // for new instances
 		"tidb_row_format_version 1 2",               // for new installs
 		"tidb_txn_assertion_level OFF FAST",         // for new installs
 		"timestamp 0 123456789",                     // always dynamic

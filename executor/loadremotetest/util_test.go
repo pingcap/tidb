@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/suite"
@@ -34,9 +33,12 @@ type mockGCSSuite struct {
 }
 
 var (
-	gcsHost     = "127.0.0.1"
-	gcsPort     = uint16(4443)
-	gcsEndpoint = fmt.Sprintf("http://%s:%d", gcsHost, gcsPort)
+	gcsHost = "127.0.0.1"
+	gcsPort = uint16(4443)
+	// for fake gcs server, we must use this endpoint format
+	// NOTE: must end with '/'
+	gcsEndpointFormat = "http://%s:%d/storage/v1/"
+	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
 )
 
 func TestLoadRemote(t *testing.T) {
@@ -55,10 +57,8 @@ func (s *mockGCSSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.store = testkit.CreateMockStore(s.T())
 	s.tk = testkit.NewTestKit(s.T(), s.store)
-	executor.InTest = true
 }
 
 func (s *mockGCSSuite) TearDownSuite() {
 	s.server.Stop()
-	executor.InTest = false
 }

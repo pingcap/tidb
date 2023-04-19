@@ -29,8 +29,18 @@ func isIdentExtend(ch byte) bool {
 	return ch >= 0x80
 }
 
+// Initialize a lookup table for isUserVarChar
+var isUserVarCharTable [256]bool
+
+func init() {
+	for i := 0; i < 256; i++ {
+		ch := byte(i)
+		isUserVarCharTable[i] = isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
+	}
+}
+
 func isUserVarChar(ch byte) bool {
-	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
+	return isUserVarCharTable[ch]
 }
 
 type trieNode struct {
@@ -192,6 +202,7 @@ var tokenMap = map[string]int{
 	"BOOLEAN":                  booleanType,
 	"BOTH":                     both,
 	"BOUND":                    bound,
+	"BR":                       br,
 	"BRIEF":                    briefType,
 	"BTREE":                    btree,
 	"BUCKETS":                  buckets,
@@ -200,6 +211,7 @@ var tokenMap = map[string]int{
 	"BY":                       by,
 	"BYTE":                     byteType,
 	"CACHE":                    cache,
+	"CALIBRATE":                calibrate,
 	"CALL":                     call,
 	"CANCEL":                   cancel,
 	"CAPTURE":                  capture,
@@ -221,6 +233,7 @@ var tokenMap = map[string]int{
 	"CLEANUP":                  cleanup,
 	"CLIENT":                   client,
 	"CLIENT_ERRORS_SUMMARY":    clientErrorsSummary,
+	"CLOSE":                    close,
 	"CLUSTER":                  cluster,
 	"CLUSTERED":                clustered,
 	"CMSKETCH":                 cmSketch,
@@ -245,6 +258,7 @@ var tokenMap = map[string]int{
 	"CONSTRAINT":               constraint,
 	"CONSTRAINTS":              constraints,
 	"CONTEXT":                  context,
+	"CONTINUE":                 continueKwd,
 	"CONVERT":                  convert,
 	"COPY":                     copyKwd,
 	"CORRELATION":              correlation,
@@ -265,6 +279,7 @@ var tokenMap = map[string]int{
 	"CURRENT_TIMESTAMP":        currentTs,
 	"CURRENT_USER":             currentUser,
 	"CURRENT":                  current,
+	"CURSOR":                   cursor,
 	"CURTIME":                  curTime,
 	"CYCLE":                    cycle,
 	"DATA":                     data,
@@ -283,6 +298,7 @@ var tokenMap = map[string]int{
 	"DEALLOCATE":               deallocate,
 	"DEC":                      decimalType,
 	"DECIMAL":                  decimalType,
+	"DECLARE":                  declare,
 	"DEFAULT":                  defaultKwd,
 	"DEFINED":                  defined,
 	"DEFINER":                  definer,
@@ -313,6 +329,7 @@ var tokenMap = map[string]int{
 	"DUPLICATE":                duplicate,
 	"DYNAMIC":                  dynamic,
 	"ELSE":                     elseKwd,
+	"ELSEIF":                   elseIfKwd,
 	"ENABLE":                   enable,
 	"ENABLED":                  enabled,
 	"ENCLOSED":                 enclosed,
@@ -335,6 +352,7 @@ var tokenMap = map[string]int{
 	"EXCLUSIVE":                exclusive,
 	"EXECUTE":                  execute,
 	"EXISTS":                   exists,
+	"EXIT":                     exit,
 	"EXPANSION":                expansion,
 	"EXPIRE":                   expire,
 	"EXPLAIN":                  explain,
@@ -359,10 +377,13 @@ var tokenMap = map[string]int{
 	"FORCE":                    force,
 	"FOREIGN":                  foreign,
 	"FORMAT":                   format,
+	"FOUND":                    found,
 	"FROM":                     from,
 	"FULL":                     full,
+	"FULL_BACKUP_STORAGE":      fullBackupStorage,
 	"FULLTEXT":                 fulltext,
 	"FUNCTION":                 function,
+	"GC_TTL":                   gcTTL,
 	"GENERAL":                  general,
 	"GENERATED":                generated,
 	"GET_FORMAT":               getFormat,
@@ -372,6 +393,7 @@ var tokenMap = map[string]int{
 	"GROUP_CONCAT":             groupConcat,
 	"GROUP":                    group,
 	"HASH":                     hash,
+	"HANDLER":                  handler,
 	"HAVING":                   having,
 	"HELP":                     help,
 	"HIGH_PRIORITY":            highPriority,
@@ -385,6 +407,7 @@ var tokenMap = map[string]int{
 	"IDENTIFIED":               identified,
 	"IF":                       ifKwd,
 	"IGNORE":                   ignore,
+	"ILIKE":                    ilike,
 	"IMPORT":                   importKwd,
 	"IMPORTS":                  imports,
 	"IN":                       in,
@@ -394,6 +417,7 @@ var tokenMap = map[string]int{
 	"INDEXES":                  indexes,
 	"INFILE":                   infile,
 	"INNER":                    inner,
+	"INOUT":                    inout,
 	"INPLACE":                  inplace,
 	"INSERT_METHOD":            insertMethod,
 	"INSERT":                   insert,
@@ -412,8 +436,13 @@ var tokenMap = map[string]int{
 	"INTO":                     into,
 	"INVISIBLE":                invisible,
 	"INVOKER":                  invoker,
+	"ITERATE":                  iterate,
 	"IO":                       io,
 	"RU_PER_SEC":               ruRate,
+	"PRIORITY":                 priority,
+	"HIGH":                     high,
+	"MEDIUM":                   medium,
+	"LOW":                      low,
 	"IO_READ_BANDWIDTH":        ioReadBandwidth,
 	"IO_WRITE_BANDWIDTH":       ioWriteBandwidth,
 	"IPC":                      ipc,
@@ -441,6 +470,7 @@ var tokenMap = map[string]int{
 	"LEARNER":                  learner,
 	"LEARNER_CONSTRAINTS":      learnerConstraints,
 	"LEARNERS":                 learners,
+	"LEAVE":                    leave,
 	"LEFT":                     left,
 	"LESS":                     less,
 	"LEVEL":                    level,
@@ -479,6 +509,7 @@ var tokenMap = map[string]int{
 	"MEMORY":                   memory,
 	"MEMBER":                   member,
 	"MERGE":                    merge,
+	"METADATA":                 metadata,
 	"MICROSECOND":              microsecond,
 	"MIN_ROWS":                 minRows,
 	"MIN":                      min,
@@ -519,6 +550,9 @@ var tokenMap = map[string]int{
 	"OF":                       of,
 	"OFF":                      off,
 	"OFFSET":                   offset,
+	"OLTP_READ_ONLY":           oltpReadOnly,
+	"OLTP_READ_WRITE":          oltpReadWrite,
+	"OLTP_WRITE_ONLY":          oltpWriteOnly,
 	"ON_DUPLICATE":             onDuplicate,
 	"ON":                       on,
 	"ONLINE":                   online,
@@ -532,6 +566,7 @@ var tokenMap = map[string]int{
 	"OPTIONALLY":               optionally,
 	"OR":                       or,
 	"ORDER":                    order,
+	"OUT":                      out,
 	"OUTER":                    outer,
 	"OUTFILE":                  outfile,
 	"PACK_KEYS":                packKeys,
@@ -542,6 +577,7 @@ var tokenMap = map[string]int{
 	"PARTITIONING":             partitioning,
 	"PARTITIONS":               partitions,
 	"PASSWORD":                 password,
+	"PAUSE":                    pause,
 	"PERCENT":                  percent,
 	"PER_DB":                   per_db,
 	"PER_TABLE":                per_table,
@@ -550,6 +586,7 @@ var tokenMap = map[string]int{
 	"PLAN":                     plan,
 	"PLAN_CACHE":               planCache,
 	"PLUGINS":                  plugins,
+	"POINT":                    point,
 	"POLICY":                   policy,
 	"POSITION":                 position,
 	"PRE_SPLIT_REGIONS":        preSplitRegions,
@@ -607,6 +644,7 @@ var tokenMap = map[string]int{
 	"RESTART":                  restart,
 	"RESTORE":                  restore,
 	"RESTORES":                 restores,
+	"RESTORED_TS":              restoredTS,
 	"RESTRICT":                 restrict,
 	"REVERSE":                  reverse,
 	"REVOKE":                   revoke,
@@ -679,9 +717,13 @@ var tokenMap = map[string]int{
 	"SQL_TSI_WEEK":             sqlTsiWeek,
 	"SQL_TSI_YEAR":             sqlTsiYear,
 	"SQL":                      sql,
+	"SQLEXCEPTION":             sqlexception,
+	"SQLSTATE":                 sqlstate,
+	"SQLWARNING":               sqlwarning,
 	"SSL":                      ssl,
 	"STALENESS":                staleness,
 	"START":                    start,
+	"START_TS":                 startTS,
 	"STARTING":                 starting,
 	"STATISTICS":               statistics,
 	"STATS_AUTO_RECALC":        statsAutoRecalc,
@@ -761,6 +803,7 @@ var tokenMap = map[string]int{
 	"TOKUDB_ZSTD":              tokudbZstd,
 	"TOP":                      top,
 	"TOPN":                     topn,
+	"TPCC":                     tpcc,
 	"TRACE":                    trace,
 	"TRADITIONAL":              traditional,
 	"TRAILING":                 trailing,
@@ -784,6 +827,8 @@ var tokenMap = map[string]int{
 	"UNKNOWN":                  unknown,
 	"UNLOCK":                   unlock,
 	"UNSIGNED":                 unsigned,
+	"UNTIL":                    until,
+	"UNTIL_TS":                 untilTS,
 	"UPDATE":                   update,
 	"USAGE":                    usage,
 	"USE":                      use,
@@ -815,10 +860,12 @@ var tokenMap = map[string]int{
 	"WEIGHT_STRING":            weightString,
 	"WHEN":                     when,
 	"WHERE":                    where,
+	"WHILE":                    while,
 	"WIDTH":                    width,
 	"WITH":                     with,
 	"WITHOUT":                  without,
 	"WRITE":                    write,
+	"WORKLOAD":                 workload,
 	"X509":                     x509,
 	"XOR":                      xor,
 	"YEAR_MONTH":               yearMonth,
@@ -997,33 +1044,30 @@ var hintTokenMap = map[string]int{
 func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	// An identifier before or after '.' means it is part of a qualified identifier.
 	// We do not parse it as keyword.
-	if s.r.peek() == '.' {
+	if s.r.peek() == '.' || (offset > 0 && s.r.s[offset-1] == '.') {
 		return 0
 	}
-	if offset > 0 && s.r.s[offset-1] == '.' {
-		return 0
-	}
+
 	buf := &s.buf
 	buf.Reset()
 	buf.Grow(len(lit))
 	data := buf.Bytes()[:len(lit)]
+
 	for i := 0; i < len(lit); i++ {
-		if lit[i] >= 'a' && lit[i] <= 'z' {
-			data[i] = lit[i] + 'A' - 'a'
+		c := lit[i]
+		if c >= 'a' && c <= 'z' {
+			data[i] = c + 'A' - 'a'
 		} else {
-			data[i] = lit[i]
+			data[i] = c
 		}
 	}
 
-	checkBtFuncToken := false
-	if s.r.peek() == '(' {
-		checkBtFuncToken = true
-	} else if s.sqlMode.HasIgnoreSpaceMode() {
+	checkBtFuncToken := s.r.peek() == '('
+	if !checkBtFuncToken && s.sqlMode.HasIgnoreSpaceMode() {
 		s.skipWhitespace()
-		if s.r.peek() == '(' {
-			checkBtFuncToken = true
-		}
+		checkBtFuncToken = s.r.peek() == '('
 	}
+
 	if checkBtFuncToken {
 		if tok := btFuncTokenMap[string(data)]; tok != 0 {
 			return tok

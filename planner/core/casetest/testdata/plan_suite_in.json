@@ -19,9 +19,11 @@
 
       "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1, t t2 where t1.a=t2.a",
       "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t1) */ * from t t1, t t2 where t1.a=t2.a",
 
       "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1, t t2 where t1.a=t2.a",
       "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t1) */ * from t t1, t t2 where t1.a=t2.a",
 
       "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
       "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -52,8 +54,8 @@
       "select /*+ qb_name(qb, v1), broadcast_join(t1@qb, t2@qb) */ * from v1",
 
       // Subquery hint
-      "SELECT /*+ shuffle_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE */ 1 FROM t t1 WHERE t1.b = t.b);",
-      "SELECT /*+ broadcast_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE */ 1 FROM t t1 WHERE t1.b = t.b);",
+      "SELECT /*+ shuffle_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t t1 WHERE t1.b = t.b);",
+      "SELECT /*+ broadcast_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t t1 WHERE t1.b = t.b);",
       "select * from t t1 where t1.a < (select /*+ MPP_1PHASE_AGG() */ sum(t2.a) from t t2 where t2.b = t1.b);",
       "select * from t t1 where t1.a < (select /*+ MPP_2PHASE_AGG() */ sum(t2.a) from t t2 where t2.b = t1.b);",
 
@@ -65,7 +67,108 @@
       "WITH CTE AS (SELECT /*+ MERGE(), MPP_1PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
       "WITH CTE AS (SELECT /*+ MERGE(), MPP_2PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
       "WITH CTE AS (SELECT /*+ MERGE(), shuffle_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
-      "WITH CTE AS (SELECT /*+ MERGE(), broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;"
+      "WITH CTE AS (SELECT /*+ MERGE(), broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+
+
+      // Test MPP Hints with hash_join_build and hash_join_probe hints
+      // TestMPPOuterJoinBuildSideForBroadcastJoin
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+
+      // TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide
+      "set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 1",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+
+      // TestMPPOuterJoinBuildSideForShuffleJoin
+      "set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+
+      // Semi Join
+      "select /*+ shuffle_join(t1, t2@sel_2), hash_join_build(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
+      "select /*+ shuffle_join(t1, t2@sel_2), hash_join_build(t1) */ a from t t1 where t1.a>1 or t1.a not in (select a from t t2);",
+      "select /*+ shuffle_join(t1, t2@sel_2), hash_join_probe(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
+      "select /*+ shuffle_join(t1, t2@sel_2), hash_join_probe(t1) */ a from t t1 where t1.a>1 or t1.a not in (select a from t t2);"
+    ]
+  },
+  {
+    "name": "TestMPPHintsScope",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "explain select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "set @@session.tidb_enforce_mpp=true",
+      "explain select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "set @@session.tidb_enforce_mpp=false",
+      "explain select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ read_from_storage(tiflash[t1, t2]) hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ read_from_storage(tiflash[t1, t2]) merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "set @@session.tidb_allow_mpp=false",
+      "explain select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"
+    ]
+  }, 
+  {
+    "name": "TestMPPBCJModel",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+      "explain select * from t t1, t t2 where t1.a=t2.a",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+      "explain select * from t t1, t t2 where t1.a=t2.a"
+    ]
+  },
+  {
+    "name": "TestMPPPreferBCJ",
+    "cases": [
+      "explain select * from t1, t2 where t1.a=t2.b",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+      "explain select * from t1, t2 where t1.a=t2.b",
+      "insert into t2 values (9); analyze table t2;",
+      "explain select * from t1, t2 where t1.a=t2.b"
+    ]
+  },
+  {
+    "name": "TestMPPBCJModelOneTiFlash",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+      "explain select * from t t1, t t2 where t1.a=t2.a",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+      "explain select * from t t1, t t2 where t1.a=t2.a"
+    ]
+  },
+  {
+    "name": "TestMPPRightSemiJoin",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)"
+    ]
+  },
+  {
+    "name": "TestIssue37520",
+    "cases": [
+      "select /*+ inl_join(t1@sel_2) */ a, (select b from t1 where t1.a = t2.b) from t2;",
+      "select /*+ inl_join(t2) */ a, (select b from t1 where t1.a = t2.b) from t2;",
+      "select /*+ inl_join(t2@sel_2) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);",
+      "select /*+ inl_join(t1) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);"
     ]
   },
   {
@@ -1163,7 +1266,7 @@
       "select count(*) from t where a=1",
       "select count(*) from t_pick_row_id",
       "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- shouldn't be rewritten",
-      "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten",
+      "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten",
       "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten",
       "select count(distinct 1) from t -- shouldn't be rewritten",
       "select count(1), count(a), count(b) from t -- shouldn't be rewritten",
@@ -1179,7 +1282,7 @@
       "select count(*) from t where a=1",
       "select count(*) from t_pick_row_id",
       "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive",
-      "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten for correlated sub query",
+      "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten for correlated sub query",
       "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
       "select count(distinct 1) from t -- shouldn't be rewritten",
       "select count(1), count(a), count(b) from t -- keep count(1)",
@@ -1196,22 +1299,6 @@
     ]
   },
   {
-    "name": "TestRemoveRedundantPredicates",
-    "cases":[
-      "select f from t use index() where f = 1 and f = 1 -- simple redundancy of exact condition",
-      "select f from t use index() where f = 1 and f = 2 -- unsatisfiable condition",
-      "select f from t use index() where f = 1 and f in (1,2,3)  -- intersection of in and =",
-      "select f from t use index() where f = 1 and f <> 1  -- intersection of = and <>",
-      "select f from t use index() where f not in (1,2,3) and f = 3 -- intersection of not in list and =",
-      "select f from t use index() where f <> 3 and f <> 3 -- intersection of two not in values.",
-      "select t1.f /* merge_join(t1, t2) */ from t t1, t t2 where t1.a=t2.a and t1.a=t2.a -- exact redundancy in joins",
-      "select f from t use index() where f in (1,2,3) and f <> 2 -- intersection of in and <>. Not done yet see issue 39676",
-      "select f from t use index() where f in (1,2,3) and f in (3,4,5) -- intersection of two in. Not done yet",
-      "select f from t use index() where f not in (1,2,3) and f not in (3,4,5) -- intersection of two not in. Not done yet",
-      "select f from t use index() where f not in (1,2,3) and f in (1,2,3) -- intersection of in and not in. Not done yet"
-    ]
-  },
-  {
     "name": "TestIndexMergeOrderPushDown",
     "cases": [
       "select * from t where a = 1 or b = 1 order by c limit 2",
@@ -1222,7 +1309,9 @@
       "select * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2",
       "select * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2",
       "select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2",
-      "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2"
+      "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2",
+      "select * from tcommon where a = 1 or b = 1 order by c limit 2",
+      "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2"
     ]
   }
 ]

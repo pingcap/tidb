@@ -16,45 +16,90 @@ package core
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/format"
 	"github.com/stretchr/testify/require"
 )
 
 func TestParameterize(t *testing.T) {
 	sctx := MockContext()
 	cases := []struct {
-		sql        string
-		paramSQL   string
-		params     []interface{}
-		restoreSQL string
+		sql      string
+		paramSQL string
+		params   []interface{}
 	}{
 		{
 			"select * from t where a<10",
 			"SELECT * FROM `t` WHERE `a`<?",
 			[]interface{}{int64(10)},
-			"SELECT * FROM `t` WHERE `a`<10",
 		},
 		{
 			"select * from t",
 			"SELECT * FROM `t`",
 			[]interface{}{},
-			"SELECT * FROM `t`",
 		},
 		{
 			"select * from t where a<10 and b<20 and c=30 and d>40",
 			"SELECT * FROM `t` WHERE `a`<? AND `b`<? AND `c`=? AND `d`>?",
 			[]interface{}{int64(10), int64(20), int64(30), int64(40)},
-			"SELECT * FROM `t` WHERE `a`<10 AND `b`<20 AND `c`=30 AND `d`>40",
 		},
 		{
 			"select * from t where a='a' and b='bbbbbbbbbbbbbbbbbbbbbbbb'",
 			"SELECT * FROM `t` WHERE `a`=? AND `b`=?",
 			[]interface{}{"a", "bbbbbbbbbbbbbbbbbbbbbbbb"},
-			"SELECT * FROM `t` WHERE `a`=_UTF8MB4'a' AND `b`=_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbb'",
+		},
+		{
+			"select 1, 2, 3 from t where a<10",
+			"SELECT 1,2,3 FROM `t` WHERE `a`<?",
+			[]interface{}{int64(10)},
+		},
+		{
+			"select a+1 from t where a<10",
+			"SELECT a+1 FROM `t` WHERE `a`<?",
+			[]interface{}{int64(10)},
+		},
+		{
+			`select a+ "a b c" from t`,
+			"SELECT a+ \"a b c\" FROM `t`",
+			[]interface{}{},
+		},
+		{
+			`select a + 'a b c'+"x" from t`,
+			"SELECT a + 'a b c'+\"x\" FROM `t`", // keep the original format for select fields
+			[]interface{}{},
+		},
+		{
+			`select a + 'a b c'+"x" as 'xxx' from t`,
+			"SELECT a + 'a b c'+\"x\" as 'xxx' FROM `t`", // keep the original format for select fields
+			[]interface{}{},
+		},
+		{
+			`insert into t (a, B, c) values (1, 2, 3), (4, 5, 6)`,
+			"INSERT INTO `t` (`a`,`B`,`c`) VALUES (?,?,?),(?,?,?)",
+			[]interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6)},
+		},
+		{
+			`select * from t where a < date_format('2020-02-02', '%Y-%m-%d')`,
+			"SELECT * FROM `t` WHERE `a`<date_format(?, '%Y-%m-%d')",
+			[]interface{}{"2020-02-02"},
+		},
+		{
+			"select * from `txu#p#p1`",
+			"SELECT * FROM `txu#p#p1`",
+			[]interface{}{},
+		},
+
+		// keep the original format for limit clauses
+		{
+			`select * from t limit 10`,
+			"SELECT * FROM `t` LIMIT 10",
+			[]interface{}{},
+		},
+		{
+			`select * from t limit 10, 20`,
+			"SELECT * FROM `t` LIMIT 10,20",
+			[]interface{}{},
 		},
 		// TODO: more test cases
 	}
@@ -69,12 +114,46 @@ func TestParameterize(t *testing.T) {
 		for i := range params {
 			require.Equal(t, c.params[i], params[i].Datum.GetValue())
 		}
+	}
+}
 
-		err = RestoreASTWithParams(context.Background(), sctx, stmt, params)
-		require.Nil(t, err)
-		var buf strings.Builder
-		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
-		require.Nil(t, stmt.Restore(rCtx))
-		require.Equal(t, c.restoreSQL, buf.String())
+func BenchmarkParameterizeSelect(b *testing.B) {
+	paymentSelectCustomerForUpdate := `SELECT c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone,
+c_credit, c_credit_lim, c_discount, c_balance, c_since FROM customer WHERE c_w_id = ? AND c_d_id = ?AND c_id = ? FOR UPDATE`
+	stmt, err := parser.New().ParseOneStmt(paymentSelectCustomerForUpdate, "", "")
+	require.Nil(b, err)
+	sctx := MockContext()
+	_, _, err = ParameterizeAST(context.Background(), sctx, stmt)
+	require.Nil(b, err)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ParameterizeAST(context.Background(), sctx, stmt)
+	}
+}
+
+func BenchmarkParameterizeInsert(b *testing.B) {
+	paymentInsertHistory := `INSERT INTO history (h_c_d_id, h_c_w_id, h_c_id, h_d_id, h_w_id, h_date, h_amount, h_data) VALUES (1, 2, 3, 4, 5, 6, 7, 8)`
+	stmt, err := parser.New().ParseOneStmt(paymentInsertHistory, "", "")
+	require.Nil(b, err)
+	sctx := MockContext()
+	_, _, err = ParameterizeAST(context.Background(), sctx, stmt)
+	require.Nil(b, err)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ParameterizeAST(context.Background(), sctx, stmt)
+	}
+}
+
+func BenchmarkGetParamSQL(b *testing.B) {
+	paymentInsertHistory := `INSERT INTO history (h_c_d_id, h_c_w_id, h_c_id, h_d_id, h_w_id, h_date, h_amount, h_data) VALUES (1, 2, 3, 4, 5, 6, 7, 8)`
+	stmt, err := parser.New().ParseOneStmt(paymentInsertHistory, "", "")
+	require.Nil(b, err)
+	sctx := MockContext()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		GetParamSQLFromAST(context.Background(), sctx, stmt)
 	}
 }

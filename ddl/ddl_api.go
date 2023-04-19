@@ -88,6 +88,8 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
+	// DefaultResourceGroupName is the default resource group name.
+	DefaultResourceGroupName = "default"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
@@ -2150,7 +2152,7 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
 		err = checkPartitionByRange(ctx, tbInfo)
-	case model.PartitionTypeHash:
+	case model.PartitionTypeHash, model.PartitionTypeKey:
 		err = checkPartitionByHash(ctx, tbInfo)
 	case model.PartitionTypeList:
 		err = checkPartitionByList(ctx, tbInfo)
@@ -2873,7 +2875,21 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 	return checkListPartitionValue(ctx, tbInfo)
 }
 
-func isColTypeAllowedAsPartitioningCol(fieldType types.FieldType) bool {
+func isValidKeyPartitionColType(fieldType types.FieldType) bool {
+	switch fieldType.GetType() {
+	case mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeJSON, mysql.TypeGeometry:
+		return false
+	default:
+		return true
+	}
+}
+
+func isColTypeAllowedAsPartitioningCol(partType model.PartitionType, fieldType types.FieldType) bool {
+	// For key partition, the permitted partition field types can be all field types except
+	// BLOB, JSON, Geometry
+	if partType == model.PartitionTypeKey {
+		return isValidKeyPartitionColType(fieldType)
+	}
 	// The permitted data types are shown in the following list:
 	// All integer types
 	// DATE and DATETIME
@@ -2896,7 +2912,7 @@ func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 		if colInfo == nil {
 			return errors.Trace(dbterror.ErrFieldNotFoundPart)
 		}
-		if !isColTypeAllowedAsPartitioningCol(colInfo.FieldType) {
+		if !isColTypeAllowedAsPartitioningCol(tbInfo.Partition.Type, colInfo.FieldType) {
 			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.O)
 		}
 	}
@@ -3045,6 +3061,8 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 	switch typ {
 	case ast.ResourceRURate:
 		resourceGroupSettings.RURate = uintVal
+	case ast.ResourcePriority:
+		resourceGroupSettings.Priority = uintVal
 	case ast.ResourceUnitCPU:
 		resourceGroupSettings.CPULimiter = stringVal
 	case ast.ResourceUnitIOReadBandwidth:
@@ -3850,6 +3868,19 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
+	if pi.Type == model.PartitionTypeHash || pi.Type == model.PartitionTypeKey {
+		// Add partition for hash/key is actually a reorganize partition
+		// operation and not a metadata only change!
+		switch spec.Tp {
+		case ast.AlterTableAddLastPartition:
+			return errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION of HASH/KEY partitioned table"))
+		case ast.AlterTableAddPartitions:
+		// only thing supported
+		default:
+			return errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of HASH/KEY partitioned table"))
+		}
+		return d.hashPartitionManagement(ctx, ident, spec, pi)
+	}
 
 	partInfo, err := BuildAddedPartitionInfo(ctx, meta, spec)
 	if err != nil {
@@ -3966,10 +3997,16 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
 		}
 	}
-	if pi.Type == model.PartitionTypeRange {
+	switch pi.Type {
+	case model.PartitionTypeRange:
 		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
 			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"REORGANIZE PARTITION of RANGE; not adjacent partitions"))
+		}
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		if len(idMap) != len(pi.Definitions) {
+			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"REORGANIZE PARTITION of HASH/RANGE; must reorganize all partitions"))
 		}
 	}
 
@@ -3990,6 +4027,11 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	}
 	switch pi.Type {
 	case model.PartitionTypeRange, model.PartitionTypeList:
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		if spec.Tp != ast.AlterTableCoalescePartitions &&
+			spec.Tp != ast.AlterTableAddPartitions {
+			return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+		}
 	default:
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 	}
@@ -4031,6 +4073,9 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
+	if err == nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+	}
 	return errors.Trace(err)
 }
 
@@ -4089,7 +4134,7 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, p
 }
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
-func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -4100,25 +4145,62 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
-	meta := t.Meta()
-	if meta.GetPartitionInfo() == nil {
+	pi := t.Meta().GetPartitionInfo()
+	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	switch meta.Partition.Type {
-	// We don't support coalesce partitions hash type partition now.
-	case model.PartitionTypeHash:
-		return errors.Trace(dbterror.ErrUnsupportedCoalescePartition)
-
-	// Key type partition cannot be constructed currently, ignoring it for now.
-	case model.PartitionTypeKey:
+	switch pi.Type {
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		return d.hashPartitionManagement(sctx, ident, spec, pi)
 
 	// Coalesce partition can only be used on hash/key partitions.
 	default:
 		return errors.Trace(dbterror.ErrCoalesceOnlyOnHashPartition)
 	}
+}
 
-	return errors.Trace(err)
+func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, pi *model.PartitionInfo) error {
+	newSpec := *spec
+	newSpec.PartitionNames = make([]model.CIStr, len(pi.Definitions))
+	for i := 0; i < len(pi.Definitions); i++ {
+		// reorganize ALL partitions into the new number of partitions
+		newSpec.PartitionNames[i] = pi.Definitions[i].Name
+	}
+	for i := 0; i < len(newSpec.PartDefinitions); i++ {
+		switch newSpec.PartDefinitions[i].Clause.(type) {
+		case *ast.PartitionDefinitionClauseNone:
+			// OK, expected
+		case *ast.PartitionDefinitionClauseIn:
+			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("LIST", "IN"))
+		case *ast.PartitionDefinitionClauseLessThan:
+			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("RANGE", "LESS THAN"))
+		case *ast.PartitionDefinitionClauseHistory:
+			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("SYSTEM_TIME", "HISTORY"))
+
+		default:
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"partitioning clause")
+		}
+	}
+	if newSpec.Num < uint64(len(newSpec.PartDefinitions)) {
+		newSpec.Num = uint64(len(newSpec.PartDefinitions))
+	}
+	if spec.Tp == ast.AlterTableCoalescePartitions {
+		if newSpec.Num < 1 {
+			return ast.ErrCoalescePartitionNoPartition
+		}
+		if newSpec.Num >= uint64(len(pi.Definitions)) {
+			return dbterror.ErrDropLastPartition
+		}
+		if isNonDefaultPartitionOptionsUsed(pi.Definitions) {
+			// The partition definitions will be copied in buildHashPartitionDefinitions()
+			// if there is a non-empty list of definitions
+			newSpec.PartDefinitions = []*ast.PartitionDefinition{{}}
+		}
+	}
+
+	return d.ReorganizePartitions(sctx, ident, &newSpec)
 }
 
 func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
@@ -4965,7 +5047,7 @@ func GetModifiableColumnJob(
 			if col.Name.L != newCol.Name.L {
 				return nil, dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 			}
-			if !isColTypeAllowedAsPartitioningCol(newCol.FieldType) {
+			if !isColTypeAllowedAsPartitioningCol(t.Meta().Partition.Type, newCol.FieldType) {
 				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
 			}
 			pi := pt.Meta().GetPartitionInfo()
@@ -5022,10 +5104,12 @@ func GetModifiableColumnJob(
 			}
 			pAst := at.Specs[0].Partition
 			sv := sctx.GetSessionVars().StmtCtx
-			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate
-			sv.TruncateAsWarning, sv.IgnoreTruncate = false, false
-			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo)
-			sv.TruncateAsWarning, sv.IgnoreTruncate = oldTruncAsWarn, oldIgnoreTrunc
+			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate.Load()
+			sv.TruncateAsWarning = false
+			sv.IgnoreTruncate.Store(false)
+			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
+			sv.TruncateAsWarning = oldTruncAsWarn
+			sv.IgnoreTruncate.Store(oldIgnoreTrunc)
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}
@@ -5860,7 +5944,6 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		}
 	}
 
-	// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
 	// This DDL will update the table charset to default charset.
 	origCharset, origCollate, err = ResolveCharsetCollation(
 		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
@@ -6139,7 +6222,11 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
 	}
 
-	genIDs, err := d.genGlobalIDs(1)
+	ids := 1
+	if tb.Meta().Partition != nil {
+		ids += len(tb.Meta().Partition.Definitions)
+	}
+	genIDs, err := d.genGlobalIDs(ids)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6151,7 +6238,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		TableName:  tb.Meta().Name.L,
 		Type:       model.ActionTruncateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newTableID, fkCheck},
+		Args:       []interface{}{newTableID, fkCheck, genIDs[1:]},
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
 		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
@@ -6682,6 +6769,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -6697,6 +6785,8 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
+		Charset:  charset,
+		Collate:  collate,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6941,11 +7031,6 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return err
 	}
 
-	// Check for drop index on auto_increment column.
-	err = CheckDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	err = checkIndexNeededInForeignKey(is, schema.Name.L, t.Meta(), indexInfo)
 	if err != nil {
 		return err
@@ -7044,6 +7129,7 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+	numParts := uint64(0)
 	switch meta.Partition.Type {
 	case model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
@@ -7061,6 +7147,20 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
 			}
 		}
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		switch spec.Tp {
+		case ast.AlterTableCoalescePartitions:
+			if int(spec.Num) >= len(meta.Partition.Definitions) {
+				return nil, dbterror.ErrDropLastPartition
+			}
+			numParts = uint64(len(meta.Partition.Definitions)) - spec.Num
+		case ast.AlterTableAddPartitions:
+			if len(spec.PartDefinitions) > 0 {
+				numParts = uint64(len(meta.Partition.Definitions)) + uint64(len(spec.PartDefinitions))
+			} else {
+				numParts = uint64(len(meta.Partition.Definitions)) + spec.Num
+			}
+		}
 	default:
 		// we don't support ADD PARTITION for all other partition types yet.
 		return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
@@ -7073,7 +7173,7 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		Enable:  meta.Partition.Enable,
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta)
+	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta, numParts)
 	if err != nil {
 		return nil, err
 	}
@@ -7260,11 +7360,11 @@ func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 		Args:       []interface{}{arg},
 	}
 
-	ctx, err := d.sessPool.get()
+	ctx, err := d.sessPool.Get()
 	if err != nil {
 		return err
 	}
-	defer d.sessPool.put(ctx)
+	defer d.sessPool.Put(ctx)
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
@@ -7814,10 +7914,6 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 	}
 
-	if groupName.L == variable.DefaultResourceGroupName {
-		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(groupName))
-	}
-
 	if err := d.checkResourceGroupValidation(groupInfo); err != nil {
 		return err
 	}
@@ -7848,6 +7944,9 @@ func (d *ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) e
 // DropResourceGroup implements the DDL interface.
 func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
+	if groupName.L == DefaultResourceGroupName {
+		return resourcegroup.ErrDroppingInternalResourceGroup
+	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check group existence.
 	group, ok := is.ResourceGroupByName(groupName)
@@ -7884,7 +7983,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 }
 
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
-	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	for _, opt := range options {
 		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
 		if err != nil {

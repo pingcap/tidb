@@ -37,9 +37,12 @@ type Config struct {
 }
 
 func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
-	f.Duration(flagBackoffTime, DefaultBackOffTime, "The gap between two retries.")
-	f.Duration(flagTickInterval, DefaultTickInterval, "From how long we trigger the tick (advancing the checkpoint).")
-	f.Duration(flagTryAdvanceThreshold, DefaultTryAdvanceThreshold, "If the checkpoint lag is greater than how long, we would try to poll TiKV for checkpoints.")
+	f.Duration(flagBackoffTime, DefaultBackOffTime,
+		"The gap between two retries.")
+	f.Duration(flagTickInterval, DefaultTickInterval,
+		"From how long we trigger the tick (advancing the checkpoint).")
+	f.Duration(flagTryAdvanceThreshold, DefaultTryAdvanceThreshold,
+		"If the checkpoint lag is greater than how long, we would try to poll TiKV for checkpoints.")
 }
 
 func Default() Config {
