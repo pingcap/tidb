@@ -88,7 +88,7 @@ func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (pr *paramReplacer) Reset() {
-	pr.params = nil
+	pr.params = make([]*driver.ValueExpr, 0, 4)
 }
 
 // GetParamSQLFromAST returns the parameterized SQL of this AST.
