@@ -618,6 +618,10 @@ type partialTableWorker struct {
 	pushedLimit        *plannercore.PushedDownLimit
 }
 
+// needPartitionHandle indicates whether we need create a partitonHandle or not.
+// If we want to keep order in IndexMerge for a partition table,
+// we should create a partitionHandle which contained PID information.
+// In TableRowIDScan, the partitionHandle will be used to create key ranges.
 func (w *partialTableWorker) needPartitionHandle() bool {
 	return w.partitionTableMode && len(w.byItems) > 0
 }
@@ -703,8 +707,8 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
 		for i := 0; i < chk.NumRows(); i++ {
-			w.scannedKeys++
 			if w.pushedLimit != nil {
+				w.scannedKeys++
 				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
 					// Skip the handles after Offset+Count.
 					return handles, retChk, nil
@@ -1564,8 +1568,8 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
 		for i := 0; i < chk.NumRows(); i++ {
-			w.scannedKeys++
 			if w.pushedLimit != nil {
+				w.scannedKeys++
 				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
 					// Skip the handles after Offset+Count.
 					return handles, retChk, nil
