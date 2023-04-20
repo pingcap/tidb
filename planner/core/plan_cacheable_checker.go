@@ -217,6 +217,12 @@ var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPl
 
 // NonPreparedPlanCacheableWithCtx checks whether this SQL is cacheable for non-prepared plan cache.
 func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (ok bool, reason string) {
+	selStmt, isSelect := node.(*ast.SelectStmt)
+	if !sctx.GetSessionVars().EnableNonPreparedPlanCacheForDML &&
+		(!isSelect || selStmt.LockInfo != nil) {
+		return false, "not a SELECT statement"
+	}
+
 	var tableNames []*ast.TableName
 	switch x := node.(type) {
 	case *ast.SelectStmt:
