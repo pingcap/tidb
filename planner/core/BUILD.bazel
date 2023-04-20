@@ -43,7 +43,6 @@ go_library(
         "planbuilder.go",
         "point_get_plan.go",
         "preprocess.go",
-        "procdure_plan.go",
         "procedure_plan.go",
         "property_cols_prune.go",
         "resolve_indices.go",
