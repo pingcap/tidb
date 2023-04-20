@@ -138,19 +138,18 @@ func TestGetParamSQLFromASTConcurrently(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
-		go func() {
+		go func(id int) {
 			for i := 0; i < 1000; i++ {
-				idx := rand.Intn(n)
-				_, vals, err := GetParamSQLFromAST(context.Background(), MockContext(), stmts[idx])
+				_, vals, err := GetParamSQLFromAST(context.Background(), MockContext(), stmts[id])
 				require.Nil(t, err)
 				require.Equal(t, len(vals), 3)
-				require.Equal(t, vals[0].GetValue(), int64(idx*3+0))
-				require.Equal(t, vals[1].GetValue(), int64(idx*3+1))
-				require.Equal(t, vals[2].GetValue(), int64(idx*3+2))
+				require.Equal(t, vals[0].GetValue(), int64(id*3+0))
+				require.Equal(t, vals[1].GetValue(), int64(id*3+1))
+				require.Equal(t, vals[2].GetValue(), int64(id*3+2))
 				time.Sleep(time.Millisecond + time.Duration(rand.Intn(int(time.Millisecond))))
 			}
 			wg.Done()
-		}()
+		}(i)
 	}
 	wg.Wait()
 }
