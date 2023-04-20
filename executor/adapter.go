@@ -1266,14 +1266,14 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 		phase    string
 		duration time.Duration
 	}{
-		{a.phaseBuildDurations[0], executor_metrics.PhaseBuildFinal},
-		{a.phaseBuildDurations[1], executor_metrics.PhaseBuildLocking},
-		{a.phaseOpenDurations[0], executor_metrics.PhaseOpenFinal},
-		{a.phaseOpenDurations[1], executor_metrics.PhaseOpenLocking},
-		{a.phaseNextDurations[0], executor_metrics.PhaseNextFinal},
-		{a.phaseNextDurations[1], executor_metrics.PhaseNextLocking},
-		{a.phaseLockDurations[0], executor_metrics.PhaseLockFinal},
-		{a.phaseLockDurations[1], executor_metrics.PhaseLockLocking},
+		{executor_metrics.PhaseBuildFinal, a.phaseBuildDurations[0]},
+		{executor_metrics.PhaseBuildLocking, a.phaseBuildDurations[1]},
+		{executor_metrics.PhaseOpenFinal, a.phaseOpenDurations[0]},
+		{executor_metrics.PhaseOpenLocking, a.phaseOpenDurations[1]},
+		{executor_metrics.PhaseNextFinal, a.phaseNextDurations[0]},
+		{executor_metrics.PhaseNextLocking, a.phaseNextDurations[1]},
+		{executor_metrics.PhaseLockFinal, a.phaseLockDurations[0]},
+		{executor_metrics.PhaseLockLocking, a.phaseLockDurations[1]},
 	} {
 		if it.duration > 0 {
 			getPhaseDurationObserver(it.phase, internal).Observe(it.duration.Seconds())
@@ -1284,12 +1284,12 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 			phase    string
 			duration time.Duration
 		}{
-			{commitDetails.PrewriteTime, executor_metrics.PhaseCommitPrewrite},
-			{commitDetails.CommitTime, executor_metrics.PhaseCommitCommit},
-			{commitDetails.GetCommitTsTime, executor_metrics.PhaseCommitWaitCommitTS},
-			{commitDetails.GetLatestTsTime, executor_metrics.PhaseCommitWaitLatestTS},
-			{commitDetails.LocalLatchTime, executor_metrics.PhaseCommitWaitLatch},
-			{commitDetails.WaitPrewriteBinlogTime, executor_metrics.PhaseCommitWaitBinlog},
+			{executor_metrics.PhaseCommitPrewrite, commitDetails.PrewriteTime},
+			{executor_metrics.PhaseCommitCommit, commitDetails.CommitTime},
+			{executor_metrics.PhaseCommitWaitCommitTS, commitDetails.GetCommitTsTime},
+			{executor_metrics.PhaseCommitWaitLatestTS, commitDetails.GetLatestTsTime},
+			{executor_metrics.PhaseCommitWaitLatch, commitDetails.LocalLatchTime},
+			{executor_metrics.PhaseCommitWaitBinlog, commitDetails.WaitPrewriteBinlogTime},
 		} {
 			if it.duration > 0 {
 				getPhaseDurationObserver(it.phase, internal).Observe(it.duration.Seconds())
