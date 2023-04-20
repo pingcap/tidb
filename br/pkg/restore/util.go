@@ -339,7 +339,7 @@ func GoValidateFileRanges(
 				if !ok {
 					return
 				}
-				summary.CollectUint("TableCount", 1)
+				summary.CollectUint("table-count", 1)
 				files := fileOfTable[t.OldTable.Info.ID]
 				if partitions := t.OldTable.Info.Partition; partitions != nil {
 					log.Debug("table partition",
