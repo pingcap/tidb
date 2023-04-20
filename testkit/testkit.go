@@ -19,7 +19,6 @@ package testkit
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -32,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit/testenv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/intest"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,7 +57,7 @@ type TestKit struct {
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 	require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
-	runtime.GOMAXPROCS(mathutil.Min(16, runtime.GOMAXPROCS(0)))
+	testenv.SetGOMAXPROCSForTest()
 	tk := &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),

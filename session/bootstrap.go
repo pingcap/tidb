@@ -854,14 +854,19 @@ const (
 	version139 = 139
 	// version 140 add column task_key to mysql.tidb_global_task
 	version140 = 140
-	// version 141 set the value of `tidb_session_plan_cache_size` to "tidb_prepared_plan_cache_size" if there is no `tidb_session_plan_cache_size`.
+	// version 141
+	//   set the value of `tidb_session_plan_cache_size` to "tidb_prepared_plan_cache_size" if there is no `tidb_session_plan_cache_size`.
+	//   update tidb_load_based_replica_read_threshold from 0 to 4
 	// This will only happens when we upgrade a cluster before 7.1.
 	version141 = 141
+	// version 142 insert "tidb_enable_non_prepared_plan_cache|0" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_non_prepared_plan_cache.
+	// This will only happens when we upgrade a cluster before 6.5.
+	version142 = 142
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version140
+var currentBootstrapVersion int64 = version142
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -991,6 +996,7 @@ var (
 		upgradeToVer139,
 		upgradeToVer140,
 		upgradeToVer141,
+		upgradeToVer142,
 	}
 )
 
@@ -2443,7 +2449,8 @@ func upgradeToVer140(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD UNIQUE KEY task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
-// upgradeToVer141 sets the value of `tidb_session_plan_cache_size` as `tidb_prepared_plan_cache_size` for compatibility.
+// upgradeToVer141 sets the value of `tidb_session_plan_cache_size` as `tidb_prepared_plan_cache_size` for compatibility,
+// and update tidb_load_based_replica_read_threshold from 0 to 4.
 func upgradeToVer141(s Session, ver int64) {
 	if ver >= version141 {
 		return
@@ -2465,6 +2472,26 @@ func upgradeToVer141(s Session, ver int64) {
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBSessionPlanCacheSize, val)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBLoadBasedReplicaReadThreshold, variable.DefTiDBLoadBasedReplicaReadThreshold.String())
+}
+
+func upgradeToVer142(s Session, ver int64) {
+	if ver >= version142 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache, variable.Off)
 }
 
 func writeOOMAction(s Session) {

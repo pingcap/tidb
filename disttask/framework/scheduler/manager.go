@@ -181,13 +181,13 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
-		logutil.Logger(m.logCtx).Info("onRunnableTasks", zap.Any("task", task))
 		if _, ok := m.subtaskExecutorPools[task.Type]; !ok {
 			logutil.Logger(m.logCtx).Error("unknown task type", zap.String("type", task.Type))
 			continue
 		}
 		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending)
 		if err != nil {
+			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.onError(err)
 			continue
 		}

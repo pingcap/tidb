@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -1423,15 +1424,15 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 		"├─TableReader_15 3323.33 root  MppVersion: 1, data:ExchangeSender_14",
 		"│ └─ExchangeSender_14 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_13 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
+		"│     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
 		"├─TableReader_19 3323.33 root  MppVersion: 1, data:ExchangeSender_18",
 		"│ └─ExchangeSender_18 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_17 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_16 10000.00 mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
+		"│     └─TableFullScan_16 10000.00 mpp[tiflash] table:t1, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
 		"└─TableReader_23 3323.33 root  MppVersion: 1, data:ExchangeSender_22",
 		"  └─ExchangeSender_22 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Selection_21 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"))
+		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo"))
 }
 
 func TestMPPMemoryTracker(t *testing.T) {
@@ -1454,7 +1455,7 @@ func TestMPPMemoryTracker(t *testing.T) {
 	}()
 	err = tk.QueryToErr("select * from t")
 	require.NotNil(t, err)
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	require.True(t, strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
 }
 
 func TestTiFlashComputeDispatchPolicy(t *testing.T) {

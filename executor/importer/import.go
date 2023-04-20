@@ -161,6 +161,8 @@ type Plan struct {
 	SplitFile         bool
 	MaxRecordedErrors int64
 	Detached          bool
+
+	DistSQLScanConcurrency int
 }
 
 // LoadDataController load data controller.
@@ -220,6 +222,10 @@ type LoadDataController struct {
 	dataFiles        []*mydump.SourceFileMeta
 	// total data file size in bytes, only initialized when load from remote.
 	TotalFileSize int64
+	// user session context. DO NOT use it if load is in DETACHED mode.
+	UserCtx sessionctx.Context
+	// used for checksum in physical mode
+	distSQLScanConcurrency int
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -284,6 +290,8 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		Charset:          charset,
 		ImportantSysVars: getImportantSysVars(userSctx),
+
+		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 	}
 	if err := p.initOptions(userSctx, plan.Options); err != nil {
 		return nil, err
@@ -292,7 +300,7 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 }
 
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, error) {
+func NewLoadDataController(userCtx sessionctx.Context, plan *Plan, tbl table.Table) (*LoadDataController, error) {
 	fullTableName := common.UniqueTable(plan.TableName.Schema.L, plan.TableName.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
@@ -324,6 +332,9 @@ func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, er
 		sqlMode:          plan.SQLMode,
 		charset:          plan.Charset,
 		importantSysVars: plan.ImportantSysVars,
+		UserCtx:          userCtx,
+
+		distSQLScanConcurrency: plan.DistSQLScanConcurrency,
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
@@ -582,6 +593,7 @@ func (e *LoadDataController) initFieldMappings() []string {
 
 	if len(e.ColumnsAndUserVars) == 0 {
 		for _, v := range tableCols {
+			// Data for generated column is generated from the other rows rather than from the parsed data.
 			fieldMapping := &FieldMapping{
 				Column: v,
 			}
@@ -630,12 +642,7 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 		return dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
 	}
 
-	for _, col := range cols {
-		if !col.IsGenerated() {
-			// todo: should report error here, since in reorderColumns we report error if en(cols) != len(columnNames)
-			e.InsertColumns = append(e.InsertColumns, col)
-		}
-	}
+	e.InsertColumns = append(e.InsertColumns, cols...)
 
 	// e.InsertColumns is appended according to the original tables' column sequence.
 	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.

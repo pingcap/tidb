@@ -87,7 +87,11 @@ func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-func (pr *paramReplacer) Reset() { pr.params = nil }
+func (pr *paramReplacer) Reset() {
+	if pr.params != nil {
+		pr.params = pr.params[:0]
+	}
+}
 
 // GetParamSQLFromAST returns the parameterized SQL of this AST.
 // NOTICE: this function does not modify the original AST.
