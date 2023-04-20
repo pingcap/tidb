@@ -17,6 +17,7 @@ package kv
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -96,14 +97,9 @@ const (
 	// ScanBatchSize set the iter scan batch size.
 	ScanBatchSize
 	// TxnSource set the source of this transaction.
-	// For now, it can represent the transaction is created by a TiCDC or Lossy DDL reorg Backfill job.
-	// 1. Reserve 1 - 15 for TiCDC to implement BDR synchronization.
-	// 2. Reserve 1024 - `To Be Determined` for Lossy DDL Backfill job.
-	//    For now, we only use 1024 for column reorg backfill job.
-	// The reason for having these spans is to keep some room for future expansion of it.
-	// We only can set one source for a transaction, so please make sure the different features which
-	// use this option don't conflict with each other.
-	// Or find a way to set multiple sources for a transaction in an uint64.
+	// We use an uint64 to represent the source of a transaction.
+	// The first 8 bits are reserved for TiCDC, and the next 4 bits are reserved for Lossy DDL reorg Backfill job.
+	// The remaining 52 bits are reserved for extendability.
 	TxnSource
 	// ResourceGroupName set the bind resource group name.
 	ResourceGroupName
@@ -201,3 +197,60 @@ const (
 	// InternalDistTask is the type of distributed task.
 	InternalDistTask = "DistTask"
 )
+
+// For kv.TxnSource
+// We use an uint64 to represent the source of a transaction.
+// The first 8 bits are reserved for TiCDC, and the next 4 bits are reserved for Lossy DDL reorg Backfill job.
+// The remaining 52 bits are reserved for extendability.
+const (
+	// TiCDC uses 1 - 255 to indicate the source of TiDB.
+	// For now, 1 - 15 are reserved for TiCDC to implement BDR synchronization.
+	// 16 - 255 are reserved for extendability.
+	cdcWriteSourceBits = 8
+	cdcWriteSourceMax  = (1 << cdcWriteSourceBits) - 1
+
+	// TiCDC uses 1-15 to indicate the change from a lossy DDL reorg Backfill job.
+	// For now, we only use 1 for column reorg backfill job.
+	lossyDDLReorgSourceBits   = 4
+	LossyDDLColumnReorgSource = 1
+	lossyDDLReorgSourceMax    = (1 << lossyDDLReorgSourceBits) - 1
+	lossyDDLReorgSourceShift  = cdcWriteSourceBits
+)
+
+// SetCdcWriteSource sets the TiCDC write source in the txnOption.
+func SetCdcWriteSource(txnOption *uint64, value uint64) error {
+	if value > cdcWriteSourceBits {
+		return errors.Errorf("value %d is out of TiCDC write source range, should be in [1, %d]",
+			value, cdcWriteSourceMax)
+	}
+	*txnOption |= value
+
+	return nil
+}
+
+func getCdcWriteSource(txnOption uint64) uint64 {
+	return txnOption & cdcWriteSourceMax
+}
+
+func isCdcWriteSourceSet(txnOption uint64) bool {
+	return (txnOption & cdcWriteSourceMax) != 0
+}
+
+// SetLossyDDLReorgSource sets the lossy DDL reorg source in the txnOption.
+func SetLossyDDLReorgSource(txnOption *uint64, value uint64) error {
+	if value > lossyDDLReorgSourceMax {
+		return errors.Errorf("value %d is out of lossy DDL reorg source range, should be in [1, %d]",
+			value, lossyDDLReorgSourceMax)
+	}
+	*txnOption |= value << lossyDDLReorgSourceShift
+
+	return nil
+}
+
+func getLossyDDLReorgSource(txnOption uint64) uint64 {
+	return (txnOption >> lossyDDLReorgSourceShift) & lossyDDLReorgSourceMax
+}
+
+func isLossyDDLReorgSourceSet(txnOption uint64) bool {
+	return (txnOption >> lossyDDLReorgSourceShift) != 0
+}
