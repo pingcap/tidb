@@ -1583,6 +1583,36 @@
       {
         "SQL": "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)",
         "Plan": [
+          "TableReader_34 0.80 root  MppVersion: 1, data:ExchangeSender_33",
+          "└─ExchangeSender_33 0.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_32 0.80 mpp[tiflash]  semi join, equal:[eq(test.t1.a, test.t2.b)]",
+          "    ├─ExchangeReceiver_17(Build) 8.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_16 8.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_15 8.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "    │     └─TableFullScan_14 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
+          "    └─Selection_13(Probe) 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      └─TableFullScan_12 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_broadcast_join_threshold_size=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_broadcast_join_threshold_count=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)",
+        "Plan": [
           "TableReader_36 0.80 root  MppVersion: 1, data:ExchangeSender_35",
           "└─ExchangeSender_35 0.80 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_34 0.80 mpp[tiflash]  semi join, equal:[eq(test.t1.a, test.t2.b)]",
