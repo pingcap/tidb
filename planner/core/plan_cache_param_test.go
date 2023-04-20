@@ -16,9 +16,14 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -115,6 +120,39 @@ func TestParameterize(t *testing.T) {
 			require.Equal(t, c.params[i], params[i].Datum.GetValue())
 		}
 	}
+}
+
+func TestGetParamSQLFromASTConcurrently(t *testing.T) {
+	n := 100
+	var sqls []string
+	for i := 0; i < n; i++ {
+		sqls = append(sqls, fmt.Sprintf(`insert into t values (%d, %d, %d)`, i*3+0, i*3+1, i*3+2))
+	}
+	var stmts []ast.StmtNode
+	for _, sql := range sqls {
+		stmt, err := parser.New().ParseOneStmt(sql, "", "")
+		require.Nil(t, err)
+		stmts = append(stmts, stmt)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			for i := 0; i < 1000; i++ {
+				idx := rand.Intn(n)
+				_, vals, err := GetParamSQLFromAST(context.Background(), MockContext(), stmts[idx])
+				require.Nil(t, err)
+				require.Equal(t, len(vals), 3)
+				require.Equal(t, vals[0].GetValue(), int64(idx*3+0))
+				require.Equal(t, vals[1].GetValue(), int64(idx*3+1))
+				require.Equal(t, vals[2].GetValue(), int64(idx*3+2))
+				time.Sleep(time.Millisecond + time.Duration(rand.Intn(int(time.Millisecond))))
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 }
 
 func BenchmarkParameterizeSelect(b *testing.B) {
