@@ -18,6 +18,7 @@ go_library(
         "//br/pkg/httputil",
         "//br/pkg/logutil",
         "//br/pkg/restore/ingestrec",
+        "//br/pkg/restore/tiflashrec",
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",

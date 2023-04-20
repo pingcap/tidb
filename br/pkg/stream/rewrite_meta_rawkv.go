@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -68,9 +69,10 @@ type SchemasReplace struct {
 	DbMap            map[UpstreamID]*DBReplace
 	globalTableIdMap map[UpstreamID]DownstreamID
 
-	ingestRecorder *ingestrec.IngestRecorder
-	RewriteTS      uint64        // used to rewrite commit ts in meta kv.
-	TableFilter    filter.Filter // used to filter schema/table
+	ingestRecorder  *ingestrec.IngestRecorder
+	TiflashRecorder *tiflashrec.TiFlashRecorder
+	RewriteTS       uint64        // used to rewrite commit ts in meta kv.
+	TableFilter     filter.Filter // used to filter schema/table
 
 	genGenGlobalID            func(ctx context.Context) (int64, error)
 	genGenGlobalIDs           func(ctx context.Context, n int) ([]int64, error)
@@ -102,6 +104,7 @@ func NewDBReplace(name string, newID DownstreamID) *DBReplace {
 // NewSchemasReplace creates a SchemasReplace struct.
 func NewSchemasReplace(
 	dbMap map[UpstreamID]*DBReplace,
+	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	restoreTS uint64,
 	tableFilter filter.Filter,
 	genID func(ctx context.Context) (int64, error),
@@ -123,6 +126,7 @@ func NewSchemasReplace(
 		DbMap:                     dbMap,
 		globalTableIdMap:          globalTableIdMap,
 		ingestRecorder:            ingestrec.New(),
+		TiflashRecorder:           tiflashRecorder,
 		RewriteTS:                 restoreTS,
 		TableFilter:               tableFilter,
 		genGenGlobalID:            genID,
