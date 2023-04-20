@@ -578,6 +578,7 @@ func (e *LoadDataController) initFieldMappings() []string {
 
 	if len(e.ColumnsAndUserVars) == 0 {
 		for _, v := range tableCols {
+			// Data for generated column is generated from the other rows rather than from the parsed data.
 			fieldMapping := &FieldMapping{
 				Column: v,
 			}
@@ -626,12 +627,7 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 		return dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
 	}
 
-	for _, col := range cols {
-		if !col.IsGenerated() {
-			// todo: should report error here, since in reorderColumns we report error if en(cols) != len(columnNames)
-			e.InsertColumns = append(e.InsertColumns, col)
-		}
-	}
+	e.InsertColumns = append(e.InsertColumns, cols...)
 
 	// e.InsertColumns is appended according to the original tables' column sequence.
 	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
