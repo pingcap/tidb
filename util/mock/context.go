@@ -48,7 +48,7 @@ var (
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
-	//fix fieldalignment
+	//fixed by fieldalignment
 	txn           wrapTxn
 	Store         kv.Storage
 	ctx           context.Context
