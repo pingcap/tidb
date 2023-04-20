@@ -36,11 +36,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/memory"
->>>>>>> bcd22339019 (*: format the error message when query/instance exceeds memory quota (#43182))
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )

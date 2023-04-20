@@ -161,14 +161,10 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 		}
 	}
 	a.acted = true
-<<<<<<< HEAD
-	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
-=======
 	if a.invoker == SingleQuery {
 		panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForSingleQuery + fmt.Sprintf("[conn=%d]", a.ConnID))
 	}
 	panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForInstance + fmt.Sprintf("[conn=%d]", a.ConnID))
->>>>>>> bcd22339019 (*: format the error message when query/instance exceeds memory quota (#43182))
 }
 
 // GetPriority get the priority of the Action

@@ -31,11 +31,7 @@ go_test(
         "//types",
         "//util",
         "//util/codec",
-<<<<<<< HEAD
-=======
-        "//util/dbterror/exeerrors",
         "//util/memory",
->>>>>>> bcd22339019 (*: format the error message when query/instance exceeds memory quota (#43182))
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

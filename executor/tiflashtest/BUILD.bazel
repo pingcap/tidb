@@ -21,11 +21,6 @@ go_test(
         "//testkit",
         "//testkit/external",
         "//util/israce",
-<<<<<<< HEAD
-=======
-        "//util/memory",
-        "//util/tiflashcompute",
->>>>>>> bcd22339019 (*: format the error message when query/instance exceeds memory quota (#43182))
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",
