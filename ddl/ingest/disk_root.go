@@ -96,8 +96,14 @@ func (d *diskRootImpl) PreCheckUsage() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if float64(sz.Available) < (1-capacityThreshold)*float64(sz.Capacity) {
-		return errors.Errorf("%s, please clean up the disk and retry", d.UsageInfo())
+	if RiskOfDiskFull(sz.Available, sz.Capacity) {
+		sortPath := ConfigSortPath()
+		return errors.Errorf("sort path: %s, %s, please clean up the disk and retry", sortPath, d.UsageInfo())
 	}
 	return nil
+}
+
+// RiskOfDiskFull checks if the disk has less than 10% space.
+func RiskOfDiskFull(available, capacity uint64) bool {
+	return float64(available) < (1-capacityThreshold)*float64(capacity)
 }
