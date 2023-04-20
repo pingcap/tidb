@@ -96,6 +96,14 @@ const (
 	// ScanBatchSize set the iter scan batch size.
 	ScanBatchSize
 	// TxnSource set the source of this transaction.
+	// For now, it can represent the transaction is created by a TiCDC or Lossy DDL reorg Backfill job.
+	// 1. Reserve 1 - 15 for TiCDC to implement BDR synchronization.
+	// 2. Reserve 1024 - `To Be Determined` for Lossy DDL Backfill job.
+	//    For now, we only use 1024 for column reorg backfill job.
+	// The reason for having these spans is to keep some room for future expansion of it.
+	// We only can set one source for a transaction, so please make sure the different features which
+	// use this option don't conflict with each other.
+	// Or find a way to set multiple sources for a transaction in an uint64.
 	TxnSource
 	// ResourceGroupName set the bind resource group name.
 	ResourceGroupName
