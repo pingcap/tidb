@@ -39,9 +39,9 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
-// Available implements BackendCtxMgr.Available interface.
-func (*MockBackendCtxMgr) Available() bool {
-	return true
+// CheckAvailable implements BackendCtxMgr.Available interface.
+func (*MockBackendCtxMgr) CheckAvailable() (bool, error) {
+	return true, nil
 }
 
 // Register implements BackendCtxMgr.Register interface.

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/pingcap/errors"
 	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
@@ -29,6 +30,8 @@ type DiskRoot interface {
 	UpdateUsage()
 	ShouldImport() bool
 	UsageInfo() string
+	PreCheckUsage() error
+	StartupCheck() error
 }
 
 const capacityThreshold = 0.9
@@ -86,4 +89,37 @@ func (d *diskRootImpl) UsageInfo() string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return fmt.Sprintf("disk usage: %d/%d, backend usage: %d", d.used, d.capacity, d.bcUsed)
+}
+
+// PreCheckUsage implements DiskRoot interface.
+func (d *diskRootImpl) PreCheckUsage() error {
+	sz, err := lcom.GetStorageSize(d.path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if RiskOfDiskFull(sz.Available, sz.Capacity) {
+		sortPath := ConfigSortPath()
+		return errors.Errorf("sort path: %s, %s, please clean up the disk and retry", sortPath, d.UsageInfo())
+	}
+	return nil
+}
+
+// StartupCheck implements DiskRoot interface.
+func (d *diskRootImpl) StartupCheck() error {
+	sz, err := lcom.GetStorageSize(d.path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	quota := variable.DDLDiskQuota.Load()
+	if sz.Available < quota {
+		sortPath := ConfigSortPath()
+		return errors.Errorf("the available disk space(%d) in %s should be greater than @@tidb_ddl_disk_quota(%d)",
+			sz.Available, sortPath, quota)
+	}
+	return nil
+}
+
+// RiskOfDiskFull checks if the disk has less than 10% space.
+func RiskOfDiskFull(available, capacity uint64) bool {
+	return float64(available) < (1-capacityThreshold)*float64(capacity)
 }

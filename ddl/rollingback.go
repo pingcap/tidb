@@ -88,7 +88,9 @@ func cleanupLocalIndexData(jobID int64) {
 	sortPath := ingest.ConfigSortPath()
 	f := filepath.Join(sortPath, ingest.EncodeBackendTag(jobID))
 	err := os.RemoveAll(f)
-	logutil.BgLogger().Error("[ddl-ingest] can not remove local index data", zap.Error(err))
+	if err != nil {
+		logutil.BgLogger().Error("[ddl-ingest] can not remove local index data", zap.Error(err))
+	}
 }
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
