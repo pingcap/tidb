@@ -57,7 +57,8 @@ type Writer interface {
 	Put(key, value []byte) error
 	// Size returns the total size of buffered key/value pairs.
 	Size() int64
-	// Flush explicitly flushes all buffered key/value pairs to the underlying storage.
+	// Flush flushes all buffered key/value pairs to the underlying storage,
+	// the writer can be reused after calling Flush().
 	Flush() error
 	// Close flushes all buffered key/value pairs and releases all resources held by the writer.
 	Close() error

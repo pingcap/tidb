@@ -51,7 +51,7 @@ func OpenPebbleMap(dirname string, opts *pebble.Options) (*PebbleMap, error) {
 
 	db, err := pebble.Open(dbDir, opts)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return &PebbleMap{
 		db:     db,
@@ -76,7 +76,7 @@ func (p *PebbleMap) NewWriter() Writer {
 
 // Close implements the SortedMap.Close.
 func (p *PebbleMap) Close() error {
-	return p.db.Close()
+	return errors.Trace(p.db.Close())
 }
 
 type pebbleMapIterator struct{ iter *pebble.Iterator }
@@ -153,11 +153,11 @@ func (w *pebbleMapWriter) Flush() error {
 		}
 	}
 	if err := sstWriter.Close(); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	if err := w.m.db.Ingest([]string{sstPath}); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	w.kvs = nil
