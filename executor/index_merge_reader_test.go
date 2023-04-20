@@ -969,7 +969,7 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists thandle, tpk, tcommon, thash, tcommonhash")
+	tk.MustExec("drop table if exists thandle, tpk, tcommon, thash, tcommonhash, tpkhash")
 	tk.MustExec("create table thandle(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c))")
 	tk.MustExec("create table tpk(a int, b int, c int, d int auto_increment, primary key(d), index idx_ac(a, c), index idx_bc(b, c))")
 	tk.MustExec("create table tcommon(a int, b int, c int, d int auto_increment, primary key(a, c, d), index idx_ac(a, c), index idx_bc(b, c))")

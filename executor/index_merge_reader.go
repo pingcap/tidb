@@ -1035,6 +1035,15 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderByAndPushedLimit(ctx co
 	memTracker.Consume(int64(taskHeap.requiredCnt) * int64(unsafe.Sizeof(rowIdx{0, 0, 0})))
 
 	for task := range fetchCh {
+		select {
+		case err := <-task.doneCh:
+			// If got error from partialIndexWorker/partialTableWorker, stop processing.
+			if err != nil {
+				syncErr(ctx, finished, resultCh, err)
+				return
+			}
+		default:
+		}
 		if _, ok := uselessMap[task.partialPlanID]; ok {
 			continue
 		}
