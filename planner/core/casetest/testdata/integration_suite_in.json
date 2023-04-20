@@ -1319,5 +1319,13 @@
       "select b from t3 where a = 1 and b is not null",
       "select b from t3 where a = 1 and b is null"
     ]
+  },
+  {
+    "name": "TestFixControl",
+    "cases": [
+      "set @@tidb_opt_fix_control = \"1000:'on', 10000:1\"",
+      "set @@tidb_opt_fix_control = \"100:'on', 100:1\"",
+      "set @@tidb_opt_fix_control = \"100, 100\""
+    ]
   }
 ]

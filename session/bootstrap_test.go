@@ -1903,11 +1903,19 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	mustExec(t, seV54, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver54))
+	mustExec(t, seV54, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableNonPreparedPlanCache))
 	mustExec(t, seV54, "commit")
 	unsetStoreBootstrapped(store.UUID())
 	ver, err := getBootstrapVersion(seV54)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver54), ver)
+
+	// We are now in 5.4, check TiDBCostModelVersion should not exist.
+	res := mustExecToRecodeSet(t, seV54, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableNonPreparedPlanCache))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
 
 	// Upgrade to 7.0
 	domCurVer, err := BootstrapSession(store)
@@ -1919,8 +1927,8 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in 7.0
-	res := mustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableNonPreparedPlanCache))
-	chk := res.NewChunk(nil)
+	res = mustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableNonPreparedPlanCache))
+	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
 	require.Equal(t, 1, chk.NumRows())
@@ -2041,32 +2049,85 @@ func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 	require.Equal(t, "ON", row.GetString(1))
 }
 
-func TestTiDBUpgradeToVer142(t *testing.T) {
+func TestTiDBUpgradeToVer143(t *testing.T) {
 	store, _ := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
 
-	ver141 := version141
-	seV141 := CreateSessionAndSetID(t, store)
+	ver142 := version142
+	seV142 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(ver141))
+	err = m.FinishBootstrap(int64(ver142))
 	require.NoError(t, err)
-	mustExec(t, seV141, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver141))
+	mustExec(t, seV142, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver142))
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
 	unsetStoreBootstrapped(store.UUID())
-	ver, err := getBootstrapVersion(seV141)
+	ver, err := getBootstrapVersion(seV142)
 	require.NoError(t, err)
-	require.Equal(t, int64(ver141), ver)
+	require.Equal(t, int64(ver142), ver)
 
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = getBootstrapVersion(seV141)
+	ver, err = getBootstrapVersion(seV142)
 	require.NoError(t, err)
-	require.Less(t, int64(ver141), ver)
+	require.Less(t, int64(ver142), ver)
 	dom.Close()
+}
+
+func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
+	ctx := context.Background()
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// upgrade from 7.0 to 7.1.
+	ver70 := version139
+	seV70 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver70))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	mustExec(t, seV70, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver70))
+	mustExec(t, seV70, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBLoadBasedReplicaReadThreshold))
+	mustExec(t, seV70, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV70)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver70), ver)
+
+	// We are now in 7.0, tidb_load_based_replica_read_threshold is 0.
+	res := mustExecToRecodeSet(t, seV70, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBLoadBasedReplicaReadThreshold))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 2, row.Len())
+	require.Equal(t, "0", row.GetString(1))
+
+	// Upgrade to 7.1.
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// We are now in 7.1.
+	res = mustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBLoadBasedReplicaReadThreshold))
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row = chk.GetRow(0)
+	require.Equal(t, 2, row.Len())
+	require.Equal(t, "1s", row.GetString(1))
 }
