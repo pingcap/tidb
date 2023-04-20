@@ -74,9 +74,11 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
-// Maximum total sleep time(in ms) for kv/cop commands.
 const (
-	backupFineGrainedMaxBackoff = 80000
+	// backupFineGrainedMaxBackoff is 1 hour.
+	// given it begins the fine-grained backup, there must be some problems in the cluster.
+	// We need to be more patient.
+	backupFineGrainedMaxBackoff = 3600000
 	backupRetryTimes            = 5
 	// RangeUnit represents the progress updated counter when a range finished.
 	RangeUnit ProgressUnit = "range"
