@@ -88,9 +88,7 @@ func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (pr *paramReplacer) Reset() {
-	if pr.params != nil {
-		pr.params = pr.params[:0]
-	}
+	pr.params = nil
 }
 
 // GetParamSQLFromAST returns the parameterized SQL of this AST.
