@@ -198,6 +198,9 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 			fc = extFunc.(functionClass)
 			ok = true
 		}
+	}
+
+	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
 			return nil, errors.Trace(ErrNoDB)
