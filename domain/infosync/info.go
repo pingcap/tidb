@@ -1171,17 +1171,20 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 		return errors.Trace(err)
 	}
 	ctx := context.Background()
+	rules := make([]*placement.TiFlashRule, 0, len(*definitions))
+	pids := make([]int64, 0, len(*definitions))
 	for _, p := range *definitions {
 		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
 		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
-		if e := is.tiflashReplicaManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+		rules = append(rules, ruleNew)
+		pids = append(pids, p.ID)
+	}
+	if e := is.tiflashReplicaManager.SetPlacementRuleBatch(ctx, rules); e != nil {
+		return errors.Trace(e)
+	}
+	if accel {
+		if e := is.tiflashReplicaManager.PostAccelerateScheduleBatch(ctx, pids); e != nil {
 			return errors.Trace(e)
-		}
-		if accel {
-			e := is.tiflashReplicaManager.PostAccelerateSchedule(ctx, p.ID)
-			if e != nil {
-				return errors.Trace(e)
-			}
 		}
 	}
 	return nil
