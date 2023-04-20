@@ -70,6 +70,7 @@ go_test(
         "txn_test.go",
         "utils_test.go",
         "version_test.go",
+        "option_test.go",
     ],
     embed = [":kv"],
     flaky = True,

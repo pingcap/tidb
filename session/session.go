@@ -658,9 +658,18 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 
-	// If there is no txn source, we try to set the txn source to the CDC write source.
-	if val := s.txn.GetOption(kv.TxnSource); val == nil && sessVars.CDCWriteSource != 0 {
-		s.txn.SetOption(kv.TxnSource, sessVars.CDCWriteSource)
+	var txnSource uint64
+	if val := s.txn.GetOption(kv.TxnSource); val != nil {
+		txnSource = val.(uint64)
+	}
+	// If the transaction is started by CDC, we need to set the CDCWriteSource option.
+	if sessVars.CDCWriteSource != 0 {
+		err := kv.SetCdcWriteSource(&txnSource, sessVars.CDCWriteSource)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		s.txn.SetOption(kv.TxnSource, txnSource)
 	}
 
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
