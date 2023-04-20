@@ -816,6 +816,12 @@ func (w *encodeWorker) parserData2TableData(
 			continue
 		}
 
+		// Don't set the value for generated columns.
+		if fieldMappings[i].Column.IsGenerated() {
+			row = append(row, types.NewDatum(nil))
+			continue
+		}
+
 		row = append(row, parserData[i])
 	}
 	for i := 0; i < len(w.controller.ColumnAssignments); i++ {
