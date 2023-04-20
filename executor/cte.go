@@ -74,24 +74,28 @@ type CTEExec struct {
 
 	hashTbl baseHashTable
 
-	// Index of chunk to read from `resTbl`.
-	chkIdx int
-
-	// UNION ALL or UNION DISTINCT.
-	isDistinct bool
-	curIter    int
-	hCtx       *hashContext
-	sel        []int
-
-	// Limit related info.
-	hasLimit       bool
-	limitBeg       uint64
-	limitEnd       uint64
-	cursor         uint64
-	meetFirstBatch bool
+	hCtx *hashContext
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
+
+	sel []int
+
+	curIter int
+
+	// Index of chunk to read from `resTbl`.
+	chkIdx int
+
+	limitBeg uint64
+	limitEnd uint64
+	cursor   uint64
+
+	// UNION ALL or UNION DISTINCT.
+	isDistinct bool
+
+	// Limit related info.
+	hasLimit       bool
+	meetFirstBatch bool
 
 	// isInApply indicates whether CTE is in inner side of Apply
 	// and should resTbl/iterInTbl be reset for each outer row of Apply.

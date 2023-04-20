@@ -52,15 +52,16 @@ var (
 type GrantExec struct {
 	baseExecutor
 
+	is    infoschema.InfoSchema
+	Level *ast.GrantLevel
+
 	Privs                 []*ast.PrivElem
-	ObjectType            ast.ObjectTypeType
-	Level                 *ast.GrantLevel
 	Users                 []*ast.UserSpec
 	AuthTokenOrTLSOptions []*ast.AuthTokenOrTLSOption
 
-	is        infoschema.InfoSchema
-	WithGrant bool
-	done      bool
+	ObjectType ast.ObjectTypeType
+	WithGrant  bool
+	done       bool
 }
 
 // Next implements the Executor Next interface.

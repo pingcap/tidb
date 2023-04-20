@@ -81,61 +81,71 @@ const (
 type IndexMergeReaderExecutor struct {
 	baseExecutor
 
-	table        table.Table
-	indexes      []*model.IndexInfo
-	descs        []bool
-	ranges       [][]*ranger.Range
-	dagPBs       []*tipb.DAGRequest
-	startTS      uint64
-	tableRequest *tipb.DAGRequest
+	table table.Table
 
-	keepOrder   bool
-	pushedLimit *plannercore.PushedDownLimit
-	byItems     []*plannerutil.ByItems
-
-	// columns are only required by union scan.
-	columns []*model.ColumnInfo
-	*dataReaderBuilder
-
-	// fields about accessing partition tables
-	partitionTableMode bool                  // if this IndexMerge is accessing a partition table
-	prunedPartitions   []table.PhysicalTable // pruned partition tables need to access
-	partitionKeyRanges [][][]kv.KeyRange     // [partitionIdx][partialIndex][ranges]
-
-	// All fields above are immutable.
-
-	tblWorkerWg     sync.WaitGroup
-	idxWorkerWg     sync.WaitGroup
-	processWorkerWg sync.WaitGroup
-	finished        chan struct{}
-
-	workerStarted bool
-	keyRanges     [][]kv.KeyRange
-
-	resultCh   chan *indexMergeTableTask
-	resultCurr *indexMergeTableTask
-	feedbacks  []*statistics.QueryFeedback
-
-	// memTracker is used to track the memory usage of this executor.
-	memTracker *memory.Tracker
-	paging     bool
+	handleCols plannercore.HandleCols
 
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue // nolint:unused
 
-	partialPlans        [][]plannercore.PhysicalPlan
-	tblPlans            []plannercore.PhysicalPlan
-	partialNetDataSizes []float64
-	dataAvgRowSize      float64
+	*dataReaderBuilder
 
-	handleCols plannercore.HandleCols
-	stats      *IndexMergeRuntimeStat
+	finished chan struct{}
+
+	stats *IndexMergeRuntimeStat
+
+	tableRequest *tipb.DAGRequest
+
+	// memTracker is used to track the memory usage of this executor.
+	memTracker  *memory.Tracker
+	pushedLimit *plannercore.PushedDownLimit
+	resultCurr  *indexMergeTableTask
+
+	resultCh chan *indexMergeTableTask
+
+	partialPlans [][]plannercore.PhysicalPlan
+	keyRanges    [][]kv.KeyRange
+
+	prunedPartitions   []table.PhysicalTable // pruned partition tables need to access
+	partitionKeyRanges [][][]kv.KeyRange     // [partitionIdx][partialIndex][ranges]
+
+	dagPBs []*tipb.DAGRequest
 
 	// Indicates whether there is correlated column in filter or table/index range.
 	// We need to refresh dagPBs before send DAGReq to storage.
 	isCorColInPartialFilters []bool
-	isCorColInTableFilter    bool
+	indexes                  []*model.IndexInfo
 	isCorColInPartialAccess  []bool
+
+	partialNetDataSizes []float64
+	tblPlans            []plannercore.PhysicalPlan
+
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
+	byItems []*plannerutil.ByItems
+
+	feedbacks []*statistics.QueryFeedback
+
+	ranges          [][]*ranger.Range
+	descs           []bool
+	processWorkerWg sync.WaitGroup
+	idxWorkerWg     sync.WaitGroup
+
+	// All fields above are immutable.
+
+	tblWorkerWg    sync.WaitGroup
+	startTS        uint64
+	dataAvgRowSize float64
+
+	paging bool
+
+	// fields about accessing partition tables
+	partitionTableMode bool // if this IndexMerge is accessing a partition table
+
+	keepOrder bool
+
+	workerStarted         bool
+	isCorColInTableFilter bool
 
 	// Whether it's intersection or union.
 	isIntersection bool
@@ -593,15 +603,15 @@ func (e *IndexMergeReaderExecutor) getTablePlanRootID() int {
 }
 
 type partialTableWorker struct {
-	stats        *IndexMergeRuntimeStat
 	sc           sessionctx.Context
+	tableReader  Executor
+	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
+	stats        *IndexMergeRuntimeStat
+	memTracker   *memory.Tracker
+	byItems      []*plannerutil.ByItems
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
-	tableReader  Executor
-	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
-	memTracker   *memory.Tracker
-	byItems      []*plannerutil.ByItems
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
@@ -876,12 +886,12 @@ type rowIdx struct {
 }
 
 type handleHeap struct {
-	requiredCnt uint64
-	taskMap     map[int][]*indexMergeTableTask
+	taskMap map[int][]*indexMergeTableTask
 
 	idx         []rowIdx
 	compareFunc []chunk.CompareFunc
 	byItems     []*plannerutil.ByItems
+	requiredCnt uint64
 }
 
 func (h handleHeap) Len() int {
@@ -1156,10 +1166,10 @@ type intersectionProcessWorker struct {
 	// key: parTblIdx, val: HandleMap
 	// Value of MemAwareHandleMap is *int to avoid extra Get().
 	handleMapsPerWorker map[int]*kv.MemAwareHandleMap[*int]
-	workerID            int
 	workerCh            chan *indexMergeTableTask
 	indexMerge          *IndexMergeReaderExecutor
 	memTracker          *memory.Tracker
+	workerID            int
 	batchSize           int
 
 	// When rowDelta == memConsumeBatchSize, Consume(memUsage)
@@ -1370,15 +1380,15 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 }
 
 type partialIndexWorker struct {
-	stats        *IndexMergeRuntimeStat
 	sc           sessionctx.Context
+	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
+	stats        *IndexMergeRuntimeStat
+	memTracker   *memory.Tracker
+	byItems      []*plannerutil.ByItems
 	idxID        int
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
-	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
-	memTracker   *memory.Tracker
-	byItems      []*plannerutil.ByItems
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
@@ -1516,10 +1526,10 @@ type indexMergeTableScanWorker struct {
 	workCh         <-chan *indexMergeTableTask
 	finished       <-chan struct{}
 	indexMergeExec *IndexMergeReaderExecutor
-	tblPlans       []plannercore.PhysicalPlan
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
+	tblPlans   []plannercore.PhysicalPlan
 }
 
 func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **indexMergeTableTask) {

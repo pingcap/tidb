@@ -75,27 +75,27 @@ type SimpleExec struct {
 	baseExecutor
 
 	Statement ast.StmtNode
+	is        infoschema.InfoSchema
+
+	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
+	staleTxnStartTS uint64
 	// IsFromRemote indicates whether the statement IS FROM REMOTE TiDB instance in cluster,
 	//   and executing in coprocessor.
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 	IsFromRemote bool
 	done         bool
-	is           infoschema.InfoSchema
-
-	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
-	staleTxnStartTS uint64
 }
 
 type passwordOrLockOptionsInfo struct {
+	passwordLifetime            any
 	lockAccount                 string
 	passwordExpired             string
-	passwordLifetime            any
 	passwordHistory             int64
-	passwordHistoryChange       bool
 	passwordReuseInterval       int64
-	passwordReuseIntervalChange bool
 	failedLoginAttempts         int64
 	passwordLockTime            int64
+	passwordHistoryChange       bool
+	passwordReuseIntervalChange bool
 	failedLoginAttemptsChange   bool
 	passwordLockTimeChange      bool
 }
@@ -1799,8 +1799,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		type alterField struct {
-			expr  string
 			value any
+			expr  string
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {

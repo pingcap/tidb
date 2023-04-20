@@ -33,10 +33,10 @@ type globalStatsKey struct {
 }
 
 type globalStatsInfo struct {
-	isIndex int
 	// When the `isIndex == 0`, histIDs will be the column IDs.
 	// Otherwise, histIDs will only contain the index ID.
 	histIDs      []int64
+	isIndex      int
 	statsVersion int
 }
 

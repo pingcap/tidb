@@ -805,11 +805,11 @@ type samplingMergeResult struct {
 }
 
 type samplingBuildTask struct {
-	id               int64
 	rootRowCollector statistics.RowSampleCollector
 	tp               *types.FieldType
-	isColumn         bool
+	id               int64
 	slicePos         int
+	isColumn         bool
 }
 
 func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {

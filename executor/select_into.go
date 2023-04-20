@@ -34,6 +34,9 @@ import (
 type SelectIntoExec struct {
 	baseExecutor
 	intoOpt *ast.SelectIntoOption
+	writer  *bufio.Writer
+	dstFile *os.File
+	chk     *chunk.Chunk
 	core.LineFieldsInfo
 
 	lineBuf   []byte
@@ -41,9 +44,6 @@ type SelectIntoExec struct {
 	fieldBuf  []byte
 	escapeBuf []byte
 	enclosed  bool
-	writer    *bufio.Writer
-	dstFile   *os.File
-	chk       *chunk.Chunk
 	started   bool
 }
 

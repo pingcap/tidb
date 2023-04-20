@@ -80,18 +80,19 @@ import (
 //     +---------------------------------+
 type ShuffleExec struct {
 	baseExecutor
-	concurrency int
-	workers     []*shuffleWorker
 
-	prepared bool
-	executed bool
+	finishCh chan struct{}
+	outputCh chan *shuffleOutput
+	workers  []*shuffleWorker
 
 	// each dataSource has a corresponding spliter
 	splitters   []partitionSplitter
 	dataSources []Executor
 
-	finishCh chan struct{}
-	outputCh chan *shuffleOutput
+	concurrency int
+
+	prepared bool
+	executed bool
 }
 
 type shuffleOutput struct {
@@ -323,10 +324,10 @@ type shuffleReceiver struct {
 	baseExecutor
 
 	finishCh <-chan struct{}
-	executed bool
 
 	inputCh       chan *chunk.Chunk
 	inputHolderCh chan *chunk.Chunk
+	executed      bool
 }
 
 // Open implements the Executor Open interface.
@@ -371,11 +372,11 @@ type shuffleWorker struct {
 
 	finishCh <-chan struct{}
 
-	// each receiver corresponse to a dataSource
-	receivers []*shuffleReceiver
-
 	outputCh       chan *shuffleOutput
 	outputHolderCh chan *chunk.Chunk
+
+	// each receiver corresponse to a dataSource
+	receivers []*shuffleReceiver
 }
 
 func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
@@ -414,8 +415,8 @@ type partitionSplitter interface {
 
 type partitionHashSplitter struct {
 	byItems    []expression.Expression
-	numWorkers int
 	hashKeys   [][]byte
+	numWorkers int
 }
 
 func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
@@ -440,9 +441,9 @@ func buildPartitionHashSplitter(concurrency int, byItems []expression.Expression
 }
 
 type partitionRangeSplitter struct {
+	groupChecker *vecGroupChecker
 	byItems      []expression.Expression
 	numWorkers   int
-	groupChecker *vecGroupChecker
 	idx          int
 }
 

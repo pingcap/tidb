@@ -80,13 +80,13 @@ import (
 
 type memtableRetriever struct {
 	dummyCloser
+	extractor   plannercore.MemTablePredicateExtractor
 	table       *model.TableInfo
 	columns     []*model.ColumnInfo
 	rows        [][]types.Datum
 	rowIdx      int
 	retrieved   bool
 	initialized bool
-	extractor   plannercore.MemTablePredicateExtractor
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -312,11 +312,11 @@ func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uin
 }
 
 type statsCache struct {
-	mu         syncutil.RWMutex
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
 	dirtyIDs   []int64
+	mu         syncutil.RWMutex
 }
 
 var tableStatsCache = &statsCache{}
@@ -1374,9 +1374,10 @@ type DDLJobsReaderExec struct {
 	baseExecutor
 	DDLJobRetriever
 
+	is   infoschema.InfoSchema
+	sess sessionctx.Context
+
 	cacheJobs []*model.Job
-	is        infoschema.InfoSchema
-	sess      sessionctx.Context
 }
 
 // Open implements the Executor Next interface.
@@ -1975,15 +1976,15 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 // tableStorageStatsRetriever is used to read slow log data.
 type tableStorageStatsRetriever struct {
 	dummyCloser
+	stats         helper.PDRegionStats
 	table         *model.TableInfo
-	outputCols    []*model.ColumnInfo
-	retrieved     bool
-	initialized   bool
 	extractor     *plannercore.TableStorageStatsExtractor
+	helper        *helper.Helper
+	outputCols    []*model.ColumnInfo
 	initialTables []*initialTable
 	curTable      int
-	helper        *helper.Helper
-	stats         helper.PDRegionStats
+	retrieved     bool
+	initialized   bool
 }
 
 func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -2020,8 +2021,8 @@ func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionc
 }
 
 type initialTable struct {
-	db string
 	*model.TableInfo
+	db string
 }
 
 func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
@@ -2485,10 +2486,10 @@ func (e *memtableRetriever) setDataForClusterMemoryUsageOpsHistory(ctx sessionct
 // tidbTrxTableRetriever is the memtable retriever for the TIDB_TRX and CLUSTER_TIDB_TRX table.
 type tidbTrxTableRetriever struct {
 	dummyCloser
+	table   *model.TableInfo
+	columns []*model.ColumnInfo
+	txnInfo []*txninfo.TxnInfo
 	batchRetrieverHelper
-	table       *model.TableInfo
-	columns     []*model.ColumnInfo
-	txnInfo     []*txninfo.TxnInfo
 	initialized bool
 }
 
@@ -2601,12 +2602,12 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 // dataLockWaitsTableRetriever is the memtable retriever for the DATA_LOCK_WAITS table.
 type dataLockWaitsTableRetriever struct {
 	dummyCloser
-	batchRetrieverHelper
 	table          *model.TableInfo
 	columns        []*model.ColumnInfo
 	lockWaits      []*deadlock.WaitForEntry
 	resolvingLocks []txnlock.ResolvingLock
-	initialized    bool
+	batchRetrieverHelper
+	initialized bool
 }
 
 func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -2787,14 +2788,15 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 // deadlocksTableRetriever is the memtable retriever for the DEADLOCKS and CLUSTER_DEADLOCKS table.
 type deadlocksTableRetriever struct {
 	dummyCloser
+
+	table     *model.TableInfo
+	columns   []*model.ColumnInfo
+	deadlocks []*deadlockhistory.DeadlockRecord
 	batchRetrieverHelper
 
 	currentIdx          int
 	currentWaitChainIdx int
 
-	table       *model.TableInfo
-	columns     []*model.ColumnInfo
-	deadlocks   []*deadlockhistory.DeadlockRecord
 	initialized bool
 }
 
@@ -2937,16 +2939,16 @@ type hugeMemTableRetriever struct {
 	dummyCloser
 	extractor          *plannercore.ColumnsTableExtractor
 	table              *model.TableInfo
-	columns            []*model.ColumnInfo
-	retrieved          bool
-	initialized        bool
+	viewOutputNamesMap map[int64]types.NameSlice    // table id to view output names
+	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
 	rows               [][]types.Datum
 	dbs                []*model.DBInfo
+	columns            []*model.ColumnInfo
 	dbsIdx             int
 	tblIdx             int
 	viewMu             syncutil.RWMutex
-	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
-	viewOutputNamesMap map[int64]types.NameSlice    // table id to view output names
+	initialized        bool
+	retrieved          bool
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -2998,14 +3000,14 @@ func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table 
 type TiFlashSystemTableRetriever struct {
 	dummyCloser
 	table         *model.TableInfo
+	extractor     *plannercore.TiFlashSystemTableExtractor
 	outputCols    []*model.ColumnInfo
+	instanceIds   []string
 	instanceCount int
 	instanceIdx   int
-	instanceIds   []string
 	rowIdx        int
 	retrieved     bool
 	initialized   bool
-	extractor     *plannercore.TiFlashSystemTableExtractor
 }
 
 func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {

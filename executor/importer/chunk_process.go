@@ -49,8 +49,8 @@ type deliveredRow struct {
 }
 
 type deliverResult struct {
-	totalDur time.Duration
 	err      error
+	totalDur time.Duration
 }
 
 type deliverKVBatch struct {
@@ -112,16 +112,17 @@ func firstErr(errors ...error) error {
 // chunkProcessor process data chunk, it encodes and writes KV to local disk.
 type chunkProcessor struct {
 	parser      mydump.Parser
-	chunkInfo   *checkpoints.ChunkCheckpoint
-	logger      *zap.Logger
-	kvsCh       chan []deliveredRow
 	dataWriter  backend.EngineWriter
 	indexWriter backend.EngineWriter
 
+	encoder   kvEncoder
+	kvCodec   tikv.Codec
+	chunkInfo *checkpoints.ChunkCheckpoint
+	logger    *zap.Logger
+	kvsCh     chan []deliveredRow
+	progress  *asyncloaddata.Progress
+
 	checksum    verify.KVChecksum
-	encoder     kvEncoder
-	kvCodec     tikv.Codec
-	progress    *asyncloaddata.Progress
 	startOffset int64
 }
 

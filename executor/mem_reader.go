@@ -49,19 +49,19 @@ var (
 )
 
 type memIndexReader struct {
-	ctx           sessionctx.Context
-	index         *model.IndexInfo
-	table         *model.TableInfo
-	kvRanges      []kv.KeyRange
-	desc          bool
-	conditions    []expression.Expression
-	addedRows     [][]types.Datum
-	addedRowsLen  int
-	retFieldTypes []*types.FieldType
-	outputOffset  []int
+	ctx sessionctx.Context
 	// belowHandleCols is the handle's position of the below scan plan.
 	belowHandleCols plannercore.HandleCols
 	cacheTable      kv.MemBuffer
+	index           *model.IndexInfo
+	table           *model.TableInfo
+	kvRanges        []kv.KeyRange
+	conditions      []expression.Expression
+	addedRows       [][]types.Datum
+	retFieldTypes   []*types.FieldType
+	outputOffset    []int
+	addedRowsLen    int
+	desc            bool
 }
 
 func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -160,25 +160,25 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 }
 
 type memTableReader struct {
+	buffer        allocBuf
+	cacheTable    kv.MemBuffer
 	ctx           sessionctx.Context
+	colIDs        map[int64]int
 	table         *model.TableInfo
-	columns       []*model.ColumnInfo
 	kvRanges      []kv.KeyRange
-	desc          bool
-	conditions    []expression.Expression
 	addedRows     [][]types.Datum
 	retFieldTypes []*types.FieldType
-	colIDs        map[int64]int
-	buffer        allocBuf
+	conditions    []expression.Expression
 	pkColIDs      []int64
-	cacheTable    kv.MemBuffer
+	columns       []*model.ColumnInfo
 	offsets       []int
+	desc          bool
 }
 
 type allocBuf struct {
+	rd *rowcodec.BytesDecoder
 	// cache for decode handle.
 	handleBytes []byte
-	rd          *rowcodec.BytesDecoder
 }
 
 func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *TableReaderExecutor) *memTableReader {
@@ -467,22 +467,25 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 }
 
 type memIndexLookUpReader struct {
-	ctx           sessionctx.Context
-	index         *model.IndexInfo
-	columns       []*model.ColumnInfo
-	table         table.Table
-	desc          bool
-	conditions    []expression.Expression
-	retFieldTypes []*types.FieldType
+	ctx   sessionctx.Context
+	table table.Table
+
+	cacheTable kv.MemBuffer
+	index      *model.IndexInfo
 
 	idxReader *memIndexReader
 
-	// partition mode
-	partitionMode     bool                  // if it is accessing a partition table
+	columns       []*model.ColumnInfo
+	conditions    []expression.Expression
+	retFieldTypes []*types.FieldType
+
 	partitionTables   []table.PhysicalTable // partition tables to access
 	partitionKVRanges [][]kv.KeyRange       // kv ranges for these partition tables
 
-	cacheTable kv.MemBuffer
+	desc bool
+
+	// partition mode
+	partitionMode bool // if it is accessing a partition table
 }
 
 func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUpReader *IndexLookUpExecutor) *memIndexLookUpReader {
@@ -579,19 +582,19 @@ func (m *memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
 }
 
 type memIndexMergeReader struct {
-	ctx              sessionctx.Context
-	columns          []*model.ColumnInfo
-	table            table.Table
-	conditions       []expression.Expression
-	retFieldTypes    []*types.FieldType
-	indexMergeReader *IndexMergeReaderExecutor
-	memReaders       []memReader
-	isIntersection   bool
-
-	// partition mode
-	partitionMode     bool                  // if it is accessing a partition table
+	ctx               sessionctx.Context
+	table             table.Table
+	indexMergeReader  *IndexMergeReaderExecutor
+	columns           []*model.ColumnInfo
+	conditions        []expression.Expression
+	retFieldTypes     []*types.FieldType
+	memReaders        []memReader
 	partitionTables   []table.PhysicalTable // partition tables to access
 	partitionKVRanges [][][]kv.KeyRange     // kv ranges for these partition tables
+	isIntersection    bool
+
+	// partition mode
+	partitionMode bool // if it is accessing a partition table
 }
 
 func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMergeReader *IndexMergeReaderExecutor) *memIndexMergeReader {

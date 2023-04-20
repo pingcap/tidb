@@ -78,47 +78,48 @@ type TableReaderExecutor struct {
 	// The table ID may also change because of the partition table, and causes the key range to change.
 	// So instead of keeping a `range` struct field, it's better to define a interface.
 	kvRangeBuilder
-	// TODO: remove this field, use the kvRangeBuilder interface.
-	ranges []*ranger.Range
-
-	// kvRanges are only use for union scan.
-	kvRanges         []kv.KeyRange
-	dagPB            *tipb.DAGRequest
-	startTS          uint64
-	txnScope         string
-	readReplicaScope string
-	isStaleness      bool
-	// FIXME: in some cases the data size can be more accurate after get the handles count,
-	// but we keep things simple as it needn't to be that accurate for now.
-	netDataSize float64
-	// columns are only required by union scan and virtual column.
-	columns []*model.ColumnInfo
+	tablePlan plannercore.PhysicalPlan
 
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
-	resultHandler *tableResultHandler
-	feedback      *statistics.QueryFeedback
-	plans         []plannercore.PhysicalPlan
-	tablePlan     plannercore.PhysicalPlan
+	resultHandler    *tableResultHandler
+	selectResultHook // for testing
 
 	memTracker       *memory.Tracker
-	selectResultHook // for testing
+	dagPB            *tipb.DAGRequest
+	feedback         *statistics.QueryFeedback
+	txnScope         string
+	readReplicaScope string
+	plans            []plannercore.PhysicalPlan
+	// byItems only for partition table with orderBy + pushedLimit
+	byItems []*util.ByItems
+	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
+	virtualColumnRetFieldTypes []*types.FieldType
+	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
+	// to make sure we can compute the virtual column in right order.
+	virtualColumnIndex []int
+	// columns are only required by union scan and virtual column.
+	columns []*model.ColumnInfo
+
+	// kvRanges are only use for union scan.
+	kvRanges []kv.KeyRange
+	// TODO: remove this field, use the kvRangeBuilder interface.
+	ranges []*ranger.Range
+
+	startTS uint64
+	// FIXME: in some cases the data size can be more accurate after get the handles count,
+	// but we keep things simple as it needn't to be that accurate for now.
+	netDataSize float64
 
 	keepOrder bool
 	desc      bool
-	// byItems only for partition table with orderBy + pushedLimit
-	byItems   []*util.ByItems
 	paging    bool
 	storeType kv.StoreType
 	// corColInFilter tells whether there's correlated column in filter.
 	corColInFilter bool
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
-	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
-	// to make sure we can compute the virtual column in right order.
-	virtualColumnIndex []int
-	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
-	virtualColumnRetFieldTypes []*types.FieldType
+	isStaleness    bool
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
 

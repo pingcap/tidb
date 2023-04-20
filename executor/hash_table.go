@@ -523,13 +523,13 @@ const (
 )
 
 type entry struct {
-	ptr  chunk.RowPtr
 	next *entry
+	ptr  chunk.RowPtr
 }
 
 type naEntry struct {
-	ptr        chunk.RowPtr
 	nullBitMap *bitmap.ConcurrentBitmap
+	ptr        chunk.RowPtr
 }
 
 type entryStore struct {
@@ -640,8 +640,8 @@ func (ht *unsafeHashTable) Iter(traverse func(key uint64, e *entry)) {
 
 // concurrentMapHashTable is a concurrent hash table built on concurrentMap
 type concurrentMapHashTable struct {
-	hashMap    concurrentMap
 	entryStore *entryStore
+	hashMap    concurrentMap
 	length     uint64
 	memDelta   int64 // the memory delta of the concurrentMapHashTable since the last calling GetAndCleanMemoryDelta()
 }

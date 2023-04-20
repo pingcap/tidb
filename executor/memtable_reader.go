@@ -144,8 +144,8 @@ func (e *MemTableReaderExec) Close() error {
 
 type clusterConfigRetriever struct {
 	dummyCloser
-	retrieved bool
 	extractor *plannercore.ClusterTableExtractor
+	retrieved bool
 }
 
 // retrieve implements the memTableRetriever interface
@@ -159,9 +159,9 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 
 func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.StringSet) ([][]types.Datum, error) {
 	type result struct {
-		idx  int
-		rows [][]types.Datum
 		err  error
+		rows [][]types.Datum
+		idx  int
 	}
 	if !hasPriv(sctx, mysql.ConfigPriv) {
 		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
@@ -332,21 +332,21 @@ func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
 }
 
 type clusterLogRetriever struct {
-	isDrained  bool
-	retrieving bool
 	heap       *logResponseHeap
 	extractor  *plannercore.ClusterLogTableExtractor
 	cancel     context.CancelFunc
+	isDrained  bool
+	retrieving bool
 }
 
 type logStreamResult struct {
+	err error
 	// Read the next stream result while current messages is drained
 	next chan logStreamResult
 
 	addr     string
 	typ      string
 	messages []*diagnosticspb.LogMessage
-	err      error
 }
 
 type logResponseHeap []logStreamResult
@@ -583,9 +583,9 @@ func (e *clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
 }
 
 type hotRegionsResult struct {
-	addr     string
-	messages *HistoryHotRegions
 	err      error
+	messages *HistoryHotRegions
+	addr     string
 }
 
 type hotRegionsResponseHeap []hotRegionsResult
@@ -620,22 +620,22 @@ func (h *hotRegionsResponseHeap) Pop() interface{} {
 
 type hotRegionsHistoryRetriver struct {
 	dummyCloser
-	isDrained  bool
-	retrieving bool
 	heap       *hotRegionsResponseHeap
 	extractor  *plannercore.HotRegionsHistoryTableExtractor
+	isDrained  bool
+	retrieving bool
 }
 
 // HistoryHotRegionsRequest wrap conditions push down to PD.
 type HistoryHotRegionsRequest struct {
-	StartTime      int64    `json:"start_time,omitempty"`
-	EndTime        int64    `json:"end_time,omitempty"`
 	RegionIDs      []uint64 `json:"region_ids,omitempty"`
 	StoreIDs       []uint64 `json:"store_ids,omitempty"`
 	PeerIDs        []uint64 `json:"peer_ids,omitempty"`
 	IsLearners     []bool   `json:"is_learners,omitempty"`
 	IsLeaders      []bool   `json:"is_leaders,omitempty"`
 	HotRegionTypes []string `json:"hot_region_type,omitempty"`
+	StartTime      int64    `json:"start_time,omitempty"`
+	EndTime        int64    `json:"end_time,omitempty"`
 }
 
 // HistoryHotRegions records filtered hot regions stored in each PD.
@@ -647,19 +647,19 @@ type HistoryHotRegions struct {
 // HistoryHotRegion records each hot region's statistics.
 // it's the response of PD.
 type HistoryHotRegion struct {
-	UpdateTime    int64   `json:"update_time"`
-	RegionID      uint64  `json:"region_id"`
-	StoreID       uint64  `json:"store_id"`
-	PeerID        uint64  `json:"peer_id"`
-	IsLearner     bool    `json:"is_learner"`
-	IsLeader      bool    `json:"is_leader"`
 	HotRegionType string  `json:"hot_region_type"`
+	EndKey        string  `json:"end_key"`
+	StartKey      string  `json:"start_key"`
+	PeerID        uint64  `json:"peer_id"`
+	UpdateTime    int64   `json:"update_time"`
 	HotDegree     int64   `json:"hot_degree"`
 	FlowBytes     float64 `json:"flow_bytes"`
 	KeyRate       float64 `json:"key_rate"`
 	QueryRate     float64 `json:"query_rate"`
-	StartKey      string  `json:"start_key"`
-	EndKey        string  `json:"end_key"`
+	StoreID       uint64  `json:"store_id"`
+	RegionID      uint64  `json:"region_id"`
+	IsLearner     bool    `json:"is_learner"`
+	IsLeader      bool    `json:"is_leader"`
 }
 
 func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {

@@ -43,37 +43,40 @@ import (
 type BatchPointGetExec struct {
 	baseExecutor
 
-	tblInfo     *model.TableInfo
-	idxInfo     *model.IndexInfo
-	handles     []kv.Handle
-	physIDs     []int64
-	partExpr    *tables.PartitionExpr
-	partPos     int
-	planPhysIDs []int64
-	singlePart  bool
-	partTblID   int64
-	idxVals     [][]types.Datum
 	txn         kv.Transaction
-	lock        bool
-	waitTime    int64
-	inited      uint32
-	values      [][]byte
-	index       int
-	rowDecoder  *rowcodec.ChunkDecoder
-	keepOrder   bool
-	desc        bool
 	batchGetter kv.BatchGetter
 
-	columns []*model.ColumnInfo
+	snapshot kv.Snapshot
+
+	tblInfo    *model.TableInfo
+	idxInfo    *model.IndexInfo
+	partExpr   *tables.PartitionExpr
+	rowDecoder *rowcodec.ChunkDecoder
+	stats      *runtimeStatsWithSnapshot
+	idxVals    [][]types.Datum
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
 
+	planPhysIDs []int64
+	values      [][]byte
+	physIDs     []int64
+
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	snapshot kv.Snapshot
-	stats    *runtimeStatsWithSnapshot
+	handles []kv.Handle
+
+	columns    []*model.ColumnInfo
+	partTblID  int64
+	waitTime   int64
+	index      int
+	partPos    int
+	inited     uint32
+	lock       bool
+	desc       bool
+	keepOrder  bool
+	singlePart bool
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -500,8 +503,8 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 
 type cacheBatchGetter struct {
 	ctx      sessionctx.Context
-	tid      int64
 	snapshot kv.Snapshot
+	tid      int64
 }
 
 func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {

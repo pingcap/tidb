@@ -48,15 +48,15 @@ type partialResult4SumDecimal struct {
 }
 
 type partialResult4SumDistinctFloat64 struct {
+	valSet set.Float64SetWithMemoryUsage
 	val    float64
 	isNull bool
-	valSet set.Float64SetWithMemoryUsage
 }
 
 type partialResult4SumDistinctDecimal struct {
+	valSet set.StringSetWithMemoryUsage
 	val    types.MyDecimal
 	isNull bool
-	valSet set.StringSetWithMemoryUsage
 }
 
 type baseSumAggFunc struct {

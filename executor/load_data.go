@@ -57,10 +57,11 @@ var (
 type LoadDataExec struct {
 	baseExecutor
 
-	FileLocRef     ast.FileLocRefTp
-	OnDuplicate    ast.OnDuplicateKeyHandlingType
 	loadDataWorker *LoadDataWorker
-	detachHandled  bool
+
+	FileLocRef    ast.FileLocRefTp
+	OnDuplicate   ast.OnDuplicateKeyHandlingType
+	detachHandled bool
 }
 
 // Next implements the Executor Next interface.
@@ -97,28 +98,29 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 // commitTask is used for passing data from processStream goroutine to commitWork goroutine.
 type commitTask struct {
-	cnt  uint64
 	rows [][]types.Datum
+
+	cnt uint64
 
 	fileSize int64
 }
 
 type planInfo struct {
-	ID          int
 	Columns     []*ast.ColumnName
 	GenColExprs []expression.Expression
+	ID          int
 }
 
 // LoadDataWorker does a LOAD DATA job.
 type LoadDataWorker struct {
 	UserSctx sessionctx.Context
 
+	table table.Table
+
 	importPlan *importer.Plan
 	controller *importer.LoadDataController
+	progress   *asyncloaddata.Progress
 	planInfo   planInfo
-
-	table    table.Table
-	progress *asyncloaddata.Progress
 }
 
 func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {

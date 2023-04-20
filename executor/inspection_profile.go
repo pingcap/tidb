@@ -34,38 +34,38 @@ const (
 )
 
 type profileBuilder struct {
-	sctx        sessionctx.Context
-	idMap       map[string]uint64
-	idAllocator uint64
-	totalValue  float64
-	uniqueMap   map[string]struct{}
-	buf         *bytes.Buffer
 	start       time.Time
 	end         time.Time
+	sctx        sessionctx.Context
+	idMap       map[string]uint64
+	uniqueMap   map[string]struct{}
+	buf         *bytes.Buffer
+	idAllocator uint64
+	totalValue  float64
 	valueTP     metricValueType
 }
 
 type metricNode struct {
-	table      string
-	name       string
-	label      []string
-	condition  string
 	labelValue map[string]*metricValue
 	value      *metricValue
-	unit       int64
+	table      string
+	name       string
+	condition  string
+	label      []string
 	children   []*metricNode
+	unit       int64
 	// isPartOfParent indicates the parent of this node not fully contain this node.
 	isPartOfParent bool
 	initialized    bool
 }
 
 type metricValue struct {
+	comment string
 	sum     float64
 	count   int
 	avgP99  float64
 	avgP90  float64
 	avgP80  float64
-	comment string
 }
 
 type metricValueType int

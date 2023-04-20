@@ -33,9 +33,9 @@ func NewDeque(isMax bool, cmpFunc func(i, j interface{}) int) *MinMaxDeque {
 
 // MinMaxDeque is an array based double end queue
 type MinMaxDeque struct {
+	cmpFunc func(i, j interface{}) int
 	Items   []Pair
 	IsMax   bool
-	cmpFunc func(i, j interface{}) int
 }
 
 // PushBack pushes Idx and Item(wrapped in Pair) to the end of MinMaxDeque
@@ -166,55 +166,55 @@ const (
 )
 
 type partialResult4MaxMinInt struct {
-	val int64
+	// deque is used for recording max/mins inside current window with sliding algorithm
+	deque *MinMaxDeque
+	val   int64
 	// isNull is used to indicates:
 	// 1. whether the partial result is the initialization value which should not be compared during evaluation;
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	isNull bool
-	// deque is used for recording max/mins inside current window with sliding algorithm
-	deque *MinMaxDeque
 }
 
 type partialResult4MaxMinUint struct {
+	deque  *MinMaxDeque
 	val    uint64
 	isNull bool
-	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinDecimal struct {
+	deque  *MinMaxDeque
 	val    types.MyDecimal
 	isNull bool
-	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinFloat32 struct {
+	deque  *MinMaxDeque
 	val    float32
 	isNull bool
-	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinFloat64 struct {
+	deque  *MinMaxDeque
 	val    float64
 	isNull bool
-	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinTime struct {
+	deque  *MinMaxDeque
 	val    types.Time
 	isNull bool
-	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinDuration struct {
+	deque  *MinMaxDeque
 	val    types.Duration
 	isNull bool
-	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinString struct {
+	deque  *MinMaxDeque
 	val    string
 	isNull bool
-	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinJSON struct {
@@ -234,8 +234,8 @@ type partialResult4MaxMinSet struct {
 
 type baseMaxMinAggFunc struct {
 	baseAggFunc
-	isMax    bool
 	collator collate.Collator
+	isMax    bool
 }
 
 type maxMin4Int struct {

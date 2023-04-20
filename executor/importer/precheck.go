@@ -60,8 +60,8 @@ const (
 )
 
 type preCheckCollector struct {
-	failCount int
 	t         table.Writer
+	failCount int
 }
 
 func newPreCheckCollector() *preCheckCollector {

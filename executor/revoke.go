@@ -48,14 +48,15 @@ var (
 type RevokeExec struct {
 	baseExecutor
 
-	Privs      []*ast.PrivElem
-	ObjectType ast.ObjectTypeType
-	Level      *ast.GrantLevel
-	Users      []*ast.UserSpec
+	ctx   sessionctx.Context
+	is    infoschema.InfoSchema
+	Level *ast.GrantLevel
 
-	ctx  sessionctx.Context
-	is   infoschema.InfoSchema
-	done bool
+	Privs []*ast.PrivElem
+	Users []*ast.UserSpec
+
+	ObjectType ast.ObjectTypeType
+	done       bool
 }
 
 // Next implements the Executor Next interface.

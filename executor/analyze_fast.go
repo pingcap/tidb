@@ -90,19 +90,19 @@ func analyzeFastExec(exec *AnalyzeFastExec) *statistics.AnalyzeResults {
 
 // AnalyzeFastExec represents Fast Analyze executor.
 type AnalyzeFastExec struct {
+	handleCols core.HandleCols
+	cache      *tikv.RegionCache
+	wg         *sync.WaitGroup
+	tblInfo    *model.TableInfo
 	baseAnalyzeExec
-	handleCols  core.HandleCols
-	colsInfo    []*model.ColumnInfo
 	idxsInfo    []*model.IndexInfo
-	tblInfo     *model.TableInfo
-	cache       *tikv.RegionCache
-	wg          *sync.WaitGroup
-	rowCount    int64
-	sampCursor  int32
+	colsInfo    []*model.ColumnInfo
 	sampTasks   []*tikv.KeyLocation
 	scanTasks   []*tikv.KeyLocation
 	collectors  []*statistics.SampleCollector
+	rowCount    int64
 	randSeed    int64
+	sampCursor  int32
 	estSampStep uint32
 }
 
@@ -616,16 +616,16 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 
 // AnalyzeTestFastExec is for fast sample in unit test.
 type AnalyzeTestFastExec struct {
+	Ctx        sessionctx.Context
+	HandleCols core.HandleCols
+	TblInfo    *model.TableInfo
+	Opts       map[ast.AnalyzeOptionType]uint64
+	ColsInfo   []*model.ColumnInfo
+	IdxsInfo   []*model.IndexInfo
+	Collectors []*statistics.SampleCollector
 	AnalyzeFastExec
-	Ctx         sessionctx.Context
 	TableID     statistics.AnalyzeTableID
-	HandleCols  core.HandleCols
-	ColsInfo    []*model.ColumnInfo
-	IdxsInfo    []*model.IndexInfo
 	Concurrency int
-	Collectors  []*statistics.SampleCollector
-	TblInfo     *model.TableInfo
-	Opts        map[ast.AnalyzeOptionType]uint64
 	Snapshot    uint64
 }
 

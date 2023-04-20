@@ -26,8 +26,8 @@ import (
 // AdminPluginsExec indicates AdminPlugins executor.
 type AdminPluginsExec struct {
 	baseExecutor
-	Action  core.AdminPluginsAction
 	Plugins []string
+	Action  core.AdminPluginsAction
 }
 
 // Next implements the Executor Next interface.

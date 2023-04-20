@@ -36,40 +36,42 @@ type dataInfo struct {
 // PipelinedWindowExec is the executor for window functions.
 type PipelinedWindowExec struct {
 	baseExecutor
-	numWindowFuncs     int
-	windowFuncs        []aggfuncs.AggFunc
-	slidingWindowFuncs []aggfuncs.SlidingWindowAggFunc
-	partialResults     []aggfuncs.PartialResult
-	start              *core.FrameBound
-	end                *core.FrameBound
-	groupChecker       *vecGroupChecker
+	start        *core.FrameBound
+	end          *core.FrameBound
+	groupChecker *vecGroupChecker
 
 	// childResult stores the child chunk. Note that even if remaining is 0, e.rows might still references rows in data[0].chk after returned it to upper executor, since there is no guarantee what the upper executor will do to the returned chunk, it might destroy the data (as in the benchmark test, it reused the chunk to pull data, and it will be chk.Reset(), causing panicking). So dataIdx, accumulated and dropped are added to ensure that chunk will only be returned if there is no row reference.
 	childResult *chunk.Chunk
-	data        []dataInfo
-	dataIdx     int
 
-	// done indicates the child executor is drained or something unexpected happened.
-	done         bool
-	accumulated  uint64
-	dropped      uint64
-	rowToConsume uint64
-	newPartition bool
+	// rows keeps rows starting from curStartRow
+	rows               []chunk.Row
+	windowFuncs        []aggfuncs.AggFunc
+	slidingWindowFuncs []aggfuncs.SlidingWindowAggFunc
+	partialResults     []aggfuncs.PartialResult
+	data               []dataInfo
+	orderByCols        []*expression.Column
+	rowToConsume       uint64
+	stagedEndRow       uint64
+	dropped            uint64
+	rowCnt             uint64
+	numWindowFuncs     int
 
 	curRowIdx uint64
 	// curStartRow and curEndRow defines the current frame range
 	lastStartRow   uint64
 	lastEndRow     uint64
 	stagedStartRow uint64
-	stagedEndRow   uint64
+	accumulated    uint64
 	rowStart       uint64
-	orderByCols    []*expression.Column
+	dataIdx        int
+
 	// expectedCmpResult is used to decide if one value is included in the frame.
 	expectedCmpResult int64
 
-	// rows keeps rows starting from curStartRow
-	rows                     []chunk.Row
-	rowCnt                   uint64
+	newPartition bool
+
+	// done indicates the child executor is drained or something unexpected happened.
+	done                     bool
 	whole                    bool
 	isRangeFrame             bool
 	emptyFrame               bool

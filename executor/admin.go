@@ -181,26 +181,29 @@ func (e *CheckIndexRangeExec) Close() error {
 type RecoverIndexExec struct {
 	baseExecutor
 
-	done bool
-
 	index      table.Index
 	table      table.Table
-	physicalID int64
-	batchSize  int
+	handleCols plannercore.HandleCols
 
-	columns       []*model.ColumnInfo
-	colFieldTypes []*types.FieldType
-	srcChunk      *chunk.Chunk
-	handleCols    plannercore.HandleCols
-
-	containsGenedCol bool
-	cols             []*expression.Column
+	srcChunk *chunk.Chunk
 
 	// below buf is used to reduce allocations.
 	recoverRows []recoverRows
+
+	columns       []*model.ColumnInfo
+	colFieldTypes []*types.FieldType
+	cols          []*expression.Column
+
 	idxValsBufs [][]types.Datum
 	idxKeyBufs  [][]byte
 	batchKeys   []kv.Key
+	batchSize   int
+
+	physicalID int64
+
+	containsGenedCol bool
+
+	done bool
 }
 
 func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
@@ -584,24 +587,27 @@ func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 type CleanupIndexExec struct {
 	baseExecutor
 
-	done      bool
-	removeCnt uint64
-
-	index      table.Index
 	table      table.Table
-	physicalID int64
+	handleCols plannercore.HandleCols
+
+	index    table.Index
+	idxChunk *chunk.Chunk
+
+	idxValues *kv.HandleMap // kv.Handle -> [][]types.Datum
 
 	columns          []*model.ColumnInfo
 	idxColFieldTypes []*types.FieldType
-	idxChunk         *chunk.Chunk
-	handleCols       plannercore.HandleCols
+	batchKeys        []kv.Key
+	idxValsBufs      [][]types.Datum
+	lastIdxKey       []byte
+	physicalID       int64
 
-	idxValues   *kv.HandleMap // kv.Handle -> [][]types.Datum
-	batchSize   uint64
-	batchKeys   []kv.Key
-	idxValsBufs [][]types.Datum
-	lastIdxKey  []byte
-	scanRowCnt  uint64
+	removeCnt uint64
+
+	batchSize  uint64
+	scanRowCnt uint64
+
+	done bool
 }
 
 func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {

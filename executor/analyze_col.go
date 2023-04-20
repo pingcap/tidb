@@ -44,24 +44,27 @@ import (
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
 type AnalyzeColumnsExec struct {
-	baseAnalyzeExec
-
-	tableInfo     *model.TableInfo
-	colsInfo      []*model.ColumnInfo
-	handleCols    core.HandleCols
-	commonHandle  *model.IndexInfo
-	resultHandler *tableResultHandler
-	indexes       []*model.IndexInfo
 	core.AnalyzeInfo
 
+	handleCols      core.HandleCols
+	samplingMergeWg *util.WaitGroupWrapper
+
+	commonHandle  *model.IndexInfo
+	resultHandler *tableResultHandler
+
+	tableInfo *model.TableInfo
+
 	samplingBuilderWg *notifyErrorWaitGroupWrapper
-	samplingMergeWg   *util.WaitGroupWrapper
 
 	schemaForVirtualColEval *expression.Schema
-	baseCount               int64
-	baseModifyCnt           int64
 
 	memTracker *memory.Tracker
+	baseAnalyzeExec
+
+	colsInfo      []*model.ColumnInfo
+	indexes       []*model.IndexInfo
+	baseCount     int64
+	baseModifyCnt int64
 }
 
 func analyzeColumnsPushDownEntry(e *AnalyzeColumnsExec) *statistics.AnalyzeResults {

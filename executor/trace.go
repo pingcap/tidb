@@ -51,20 +51,21 @@ import (
 // TraceExec represents a root executor of trace query.
 type TraceExec struct {
 	baseExecutor
-	// CollectedSpans collects all span during execution. Span is appended via
-	// callback method which passes into tracer implementation.
-	CollectedSpans []basictracer.RawSpan
-	// exhausted being true means there is no more result.
-	exhausted bool
 	// stmtNode is the real query ast tree and it is used for building real query's plan.
 	stmtNode ast.StmtNode
 
 	builder *executorBuilder
 	format  string
 
-	// optimizerTrace indicates 'trace plan statement'
-	optimizerTrace       bool
 	optimizerTraceTarget string
+	// CollectedSpans collects all span during execution. Span is appended via
+	// callback method which passes into tracer implementation.
+	CollectedSpans []basictracer.RawSpan
+	// exhausted being true means there is no more result.
+	exhausted bool
+
+	// optimizerTrace indicates 'trace plan statement'
+	optimizerTrace bool
 }
 
 // Next executes real query and collects span later.

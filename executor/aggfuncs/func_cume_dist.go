@@ -32,9 +32,9 @@ type cumeDist struct {
 }
 
 type partialResult4CumeDist struct {
+	rows     []chunk.Row
 	curIdx   int
 	lastRank int
-	rows     []chunk.Row
 }
 
 func (r *cumeDist) AllocPartialResult() (pr PartialResult, memDelta int64) {

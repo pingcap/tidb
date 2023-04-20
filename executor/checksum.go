@@ -160,21 +160,21 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 }
 
 type checksumTask struct {
-	TableID int64
 	Request *kv.Request
+	TableID int64
 }
 
 type checksumResult struct {
 	Error    error
-	TableID  int64
 	Response *tipb.ChecksumResponse
+	TableID  int64
 }
 
 type checksumContext struct {
 	DBInfo    *model.DBInfo
 	TableInfo *model.TableInfo
-	StartTs   uint64
 	Response  *tipb.ChecksumResponse
+	StartTs   uint64
 }
 
 func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64) *checksumContext {

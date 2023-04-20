@@ -37,18 +37,18 @@ import (
 )
 
 type keyValueWithDupInfo struct {
-	newKey       kv.Key
 	dupErr       error
+	newKey       kv.Key
 	commonHandle bool
 }
 
 type toBeCheckedRow struct {
-	row        []types.Datum
-	handleKey  *keyValueWithDupInfo
-	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
-	t       table.Table
-	ignored bool
+	t          table.Table
+	handleKey  *keyValueWithDupInfo
+	row        []types.Datum
+	uniqueKeys []*keyValueWithDupInfo
+	ignored    bool
 }
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,

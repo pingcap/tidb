@@ -44,10 +44,10 @@ var (
 
 // Job import job.
 type Job struct {
-	ID int64
 	// Job don't manage the life cycle of the connection.
 	Conn sqlexec.SQLExecutor
 	User string
+	ID   int64
 }
 
 // NewJob returns new Job.
@@ -470,15 +470,15 @@ func getJobStatus(row chunk.Row) (JobStatus, string, error) {
 
 // JobInfo is the information of a load data job.
 type JobInfo struct {
-	JobID         int64
 	User          string
 	DataSource    string
 	TableSchema   string
 	TableName     string
 	ImportMode    string
 	Progress      string
-	Status        JobStatus
 	StatusMessage string
+	JobID         int64
+	Status        JobStatus
 	CreateTime    types.Time
 	StartTime     types.Time
 	EndTime       types.Time

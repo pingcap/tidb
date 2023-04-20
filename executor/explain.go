@@ -41,12 +41,13 @@ import (
 type ExplainExec struct {
 	baseExecutor
 
+	analyzeExec Executor
+
 	explain        *core.Explain
-	analyzeExec    Executor
-	executed       bool
 	ruRuntimeStats *clientutil.RURuntimeStats
 	rows           [][]string
 	cursor         int
+	executed       bool
 }
 
 // Open implements the Executor Open interface.
@@ -164,14 +165,14 @@ func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
 }
 
 type memoryDebugModeHandler struct {
-	ctx          context.Context
+	ctx        context.Context
+	wg         *sync.WaitGroup
+	memTracker *memory.Tracker
+
+	infoField    []zap.Field
 	minHeapInUse int64
 	alarmRatio   int64
 	autoGC       bool
-	wg           *sync.WaitGroup
-	memTracker   *memory.Tracker
-
-	infoField []zap.Field
 }
 
 func (h *memoryDebugModeHandler) fetchCurrentMemoryUsage(gc bool) (heapInUse, trackedMem uint64) {

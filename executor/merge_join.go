@@ -36,43 +36,48 @@ import (
 type MergeJoinExec struct {
 	baseExecutor
 
-	stmtCtx      *stmtctx.StatementContext
-	compareFuncs []expression.CompareFunc
-	joiner       joiner
-	isOuterJoin  bool
-	desc         bool
+	joiner joiner
+
+	stmtCtx *stmtctx.StatementContext
 
 	innerTable *mergeJoinTable
 	outerTable *mergeJoinTable
 
+	memTracker   *memory.Tracker
+	diskTracker  *disk.Tracker
+	compareFuncs []expression.CompareFunc
+	isOuterJoin  bool
+	desc         bool
+
 	hasMatch bool
 	hasNull  bool
-
-	memTracker  *memory.Tracker
-	diskTracker *disk.Tracker
 }
 
 type mergeJoinTable struct {
-	inited     bool
-	isInner    bool
-	childIndex int
-	joinKeys   []*expression.Column
-	filters    []expression.Expression
+	groupRowsIter chunk.Iterator
 
-	executed          bool
-	childChunk        *chunk.Chunk
-	childChunkIter    *chunk.Iterator4Chunk
-	groupChecker      *vecGroupChecker
-	groupRowsSelected []int
-	groupRowsIter     chunk.Iterator
+	childChunk *chunk.Chunk
+
+	memTracker *memory.Tracker
 
 	// for inner table, an unbroken group may refer many chunks
 	rowContainer *chunk.RowContainer
 
+	groupChecker   *vecGroupChecker
+	childChunkIter *chunk.Iterator4Chunk
+	joinKeys       []*expression.Column
+	filters        []expression.Expression
+
+	groupRowsSelected []int
+
 	// for outer table, save result of filters
 	filtersSelected []bool
 
-	memTracker *memory.Tracker
+	childIndex int
+
+	executed bool
+	inited   bool
+	isInner  bool
 }
 
 func (t *mergeJoinTable) init(exec *MergeJoinExec) {

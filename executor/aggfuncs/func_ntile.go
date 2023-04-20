@@ -31,8 +31,8 @@ const (
 //
 //	First 4 rows belongs to group 1. Following 4 rows belongs to group 2. The last 3 rows belongs to group 3.
 type ntile struct {
-	n uint64
 	baseAggFunc
+	n uint64
 }
 
 type partialResult4Ntile struct {

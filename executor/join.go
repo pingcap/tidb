@@ -48,28 +48,28 @@ var (
 )
 
 type hashJoinCtx struct {
-	sessCtx   sessionctx.Context
-	allocPool chunk.Allocator
-	// concurrency is the number of partition, build and join workers.
-	concurrency  uint
-	joinResultCh chan *hashjoinWorkerResult
+	allocPool     chunk.Allocator
+	sessCtx       sessionctx.Context
+	buildFinished chan error
+	diskTracker   *disk.Tracker // track disk usage.
+	joinResultCh  chan *hashjoinWorkerResult
 	// closeCh add a lock for closing executor.
 	closeCh            chan struct{}
-	finished           atomic.Bool
-	useOuterToBuild    bool
-	isOuterJoin        bool
-	isNullEQ           []bool
-	buildFinished      chan error
-	rowContainer       *hashRowContainer
-	joinType           plannercore.JoinType
-	outerMatchedStatus []*bitmap.ConcurrentBitmap
-	stats              *hashJoinRuntimeStats
-	probeTypes         []*types.FieldType
-	buildTypes         []*types.FieldType
-	outerFilter        expression.CNFExprs
-	isNullAware        bool
 	memTracker         *memory.Tracker // track memory usage.
-	diskTracker        *disk.Tracker   // track disk usage.
+	stats              *hashJoinRuntimeStats
+	rowContainer       *hashRowContainer
+	buildTypes         []*types.FieldType
+	isNullEQ           []bool
+	outerMatchedStatus []*bitmap.ConcurrentBitmap
+	probeTypes         []*types.FieldType
+	outerFilter        expression.CNFExprs
+	joinType           plannercore.JoinType
+	// concurrency is the number of partition, build and join workers.
+	concurrency     uint
+	finished        atomic.Bool
+	isOuterJoin     bool
+	useOuterToBuild bool
+	isNullAware     bool
 }
 
 // probeSideTupleFetcher reads tuples from probeSideExec and send them to probeWorkers.
@@ -83,28 +83,29 @@ type probeSideTupleFetcher struct {
 }
 
 type probeWorker struct {
-	hashJoinCtx *hashJoinCtx
-	workerID    uint
-
-	probeKeyColIdx   []int
-	probeNAKeyColIdx []int
-	// We pre-alloc and reuse the Rows and RowPtrs for each probe goroutine, to avoid allocation frequently
-	buildSideRows    []chunk.Row
-	buildSideRowPtrs []chunk.RowPtr
 
 	// We build individual joiner for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	joiner               joiner
 	rowIters             *chunk.Iterator4Slice
+	probeResultCh        chan *chunk.Chunk
+	joinChkResourceCh    chan *chunk.Chunk
+	probeChkResourceCh   chan *probeChkResource
+	hashJoinCtx          *hashJoinCtx
 	rowContainerForProbe *hashRowContainer
+	// We pre-alloc and reuse the Rows and RowPtrs for each probe goroutine, to avoid allocation frequently
+	buildSideRows    []chunk.Row
+	buildSideRowPtrs []chunk.RowPtr
+
 	// for every naaj probe worker,  pre-allocate the int slice for store the join column index to check.
 	needCheckBuildColPos []int
 	needCheckProbeColPos []int
 	needCheckBuildTypes  []*types.FieldType
 	needCheckProbeTypes  []*types.FieldType
-	probeChkResourceCh   chan *probeChkResource
-	joinChkResourceCh    chan *chunk.Chunk
-	probeResultCh        chan *chunk.Chunk
+	probeNAKeyColIdx     []int
+
+	probeKeyColIdx []int
+	workerID       uint
 }
 
 type buildWorker struct {
@@ -120,8 +121,9 @@ type HashJoinExec struct {
 	*hashJoinCtx
 
 	probeSideTupleFetcher *probeSideTupleFetcher
-	probeWorkers          []*probeWorker
 	buildWorker           *buildWorker
+
+	probeWorkers []*probeWorker
 
 	workerWg util.WaitGroupWrapper
 	waiterWg util.WaitGroupWrapper
@@ -1255,37 +1257,40 @@ func (w *buildWorker) buildHashTableForList(buildSideResultCh <-chan *chunk.Chun
 type NestedLoopApplyExec struct {
 	baseExecutor
 
-	ctx         sessionctx.Context
-	innerRows   []chunk.Row
-	cursor      int
-	innerExec   Executor
-	outerExec   Executor
-	innerFilter expression.CNFExprs
-	outerFilter expression.CNFExprs
+	ctx       sessionctx.Context
+	innerExec Executor
+	outerExec Executor
+	innerIter chunk.Iterator
 
 	joiner joiner
 
-	cache              *applyCache
-	canUseCache        bool
-	cacheHitCounter    int
-	cacheAccessCounter int
+	outerChunk *chunk.Chunk
+
+	memTracker *memory.Tracker // track memory usage.
+	outerRow   *chunk.Row
+
+	cache         *applyCache
+	innerChunk    *chunk.Chunk
+	innerList     *chunk.List
+	innerFilter   expression.CNFExprs
+	innerSelected []bool
+	innerRows     []chunk.Row
+	outerFilter   expression.CNFExprs
+
+	outerSelected []bool
 
 	outerSchema []*expression.CorrelatedColumn
 
-	outerChunk       *chunk.Chunk
-	outerChunkCursor int
-	outerSelected    []bool
-	innerList        *chunk.List
-	innerChunk       *chunk.Chunk
-	innerSelected    []bool
-	innerIter        chunk.Iterator
-	outerRow         *chunk.Row
-	hasMatch         bool
-	hasNull          bool
+	cacheHitCounter    int
+	outerChunkCursor   int
+	cursor             int
+	cacheAccessCounter int
+
+	canUseCache bool
+	hasMatch    bool
+	hasNull     bool
 
 	outer bool
-
-	memTracker *memory.Tracker // track memory usage.
 }
 
 // Close implements the Executor interface.
@@ -1519,10 +1524,11 @@ type cacheInfo struct {
 type joinRuntimeStats struct {
 	*execdetails.RuntimeStatsWithConcurrencyInfo
 
+	cache    cacheInfo
+	hashStat hashStatistic
+
 	applyCache  bool
-	cache       cacheInfo
 	hasHashStat bool
-	hashStat    hashStatistic
 }
 
 func newJoinRuntimeStats() *joinRuntimeStats {

@@ -204,8 +204,8 @@ func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src, ds
 }
 
 type partialResult4AvgDistinctDecimal struct {
-	partialResult4AvgDecimal
 	valSet set.StringSetWithMemoryUsage
+	partialResult4AvgDecimal
 }
 
 type avgOriginal4DistinctDecimal struct {
@@ -410,8 +410,8 @@ func (e *avgPartial4Float64) MergePartialResult(sctx sessionctx.Context, src, ds
 }
 
 type partialResult4AvgDistinctFloat64 struct {
-	partialResult4AvgFloat64
 	valSet set.Float64SetWithMemoryUsage
+	partialResult4AvgFloat64
 }
 
 type avgOriginal4DistinctFloat64 struct {

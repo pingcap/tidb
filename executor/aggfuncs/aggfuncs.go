@@ -180,6 +180,9 @@ type AggFunc interface {
 }
 
 type baseAggFunc struct {
+
+	// retTp means the target type of the final agg should return.
+	retTp *types.FieldType
 	// args stores the input arguments for an aggregate function, we should
 	// call arg.EvalXXX to get the actual input data for this function.
 	args []expression.Expression
@@ -187,9 +190,6 @@ type baseAggFunc struct {
 	// ordinal stores the ordinal of the columns in the output chunk, which is
 	// used to append the final result of this function.
 	ordinal int
-
-	// retTp means the target type of the final agg should return.
-	retTp *types.FieldType
 }
 
 func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {

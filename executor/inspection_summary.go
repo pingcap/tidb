@@ -32,10 +32,10 @@ import (
 
 type inspectionSummaryRetriever struct {
 	dummyCloser
-	retrieved bool
+	timeRange plannercore.QueryTimeRange
 	table     *model.TableInfo
 	extractor *plannercore.InspectionSummaryTableExtractor
-	timeRange plannercore.QueryTimeRange
+	retrieved bool
 }
 
 // inspectionSummaryRules is used to maintain

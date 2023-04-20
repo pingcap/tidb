@@ -29,15 +29,15 @@ import (
 // encode and write all data in this engine as sst files, and write index in indexEngine
 // todo: would be better if merge with backend/local/Engine
 type engineProcessor struct {
-	engineID      int32
-	fullTableName string
 	backend       *local.Backend
 	tableInfo     *checkpoints.TidbTableInfo
 	logger        *zap.Logger
 	tableImporter *TableImporter
-	rowOrdered    bool
 	indexEngine   *backend.OpenedEngine
+	fullTableName string
 	chunks        []*checkpoints.ChunkCheckpoint
+	engineID      int32
+	rowOrdered    bool
 }
 
 func (ep *engineProcessor) process(ctx context.Context) (*backend.ClosedEngine, error) {
@@ -167,8 +167,8 @@ func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.Op
 }
 
 type multiCloser struct {
-	closers []func() error
 	logger  *zap.Logger
+	closers []func() error
 }
 
 func (m *multiCloser) add(c io.Closer) {

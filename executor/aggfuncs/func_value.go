@@ -244,8 +244,8 @@ type firstValue struct {
 }
 
 type partialResult4FirstValue struct {
-	gotFirstValue bool
 	evaluator     valueEvaluator
+	gotFirstValue bool
 }
 
 func (v *firstValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -291,8 +291,8 @@ type lastValue struct {
 }
 
 type partialResult4LastValue struct {
-	gotLastValue bool
 	evaluator    valueEvaluator
+	gotLastValue bool
 }
 
 func (v *lastValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -336,8 +336,8 @@ type nthValue struct {
 }
 
 type partialResult4NthValue struct {
-	seenRows  uint64
 	evaluator valueEvaluator
+	seenRows  uint64
 }
 
 func (v *nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {

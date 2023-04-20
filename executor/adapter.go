@@ -84,10 +84,10 @@ type processinfoSetter interface {
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
-	fields     []*ast.ResultField
 	executor   Executor
-	stmt       *ExecStmt
 	lastErr    error
+	stmt       *ExecStmt
+	fields     []*ast.ResultField
 	txnStartTS uint64
 }
 
@@ -188,29 +188,29 @@ func (a *recordSet) OnFetchReturned() {
 
 // TelemetryInfo records some telemetry information during execution.
 type TelemetryInfo struct {
+	PartitionTelemetry    *PartitionTelemetryInfo
+	AccountLockTelemetry  *AccountLockTelemetryInfo
+	UseTableLookUp        atomic.Bool
 	UseNonRecursive       bool
 	UseRecursive          bool
 	UseMultiSchemaChange  bool
 	UseExchangePartition  bool
 	UseFlashbackToCluster bool
-	PartitionTelemetry    *PartitionTelemetryInfo
-	AccountLockTelemetry  *AccountLockTelemetryInfo
 	UseIndexMerge         bool
-	UseTableLookUp        atomic.Bool
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
 type PartitionTelemetryInfo struct {
-	UseTablePartition                bool
-	UseTablePartitionList            bool
-	UseTablePartitionRange           bool
+	TablePartitionMaxPartitionsNum   uint64
 	UseTablePartitionHash            bool
+	UseTablePartitionListColumns     bool
+	UseTablePartition                bool
 	UseTablePartitionRangeColumns    bool
 	UseTablePartitionRangeColumnsGt1 bool
 	UseTablePartitionRangeColumnsGt2 bool
 	UseTablePartitionRangeColumnsGt3 bool
-	UseTablePartitionListColumns     bool
-	TablePartitionMaxPartitionsNum   uint64
+	UseTablePartitionRange           bool
+	UseTablePartitionList            bool
 	UseCreateIntervalPartition       bool
 	UseAddIntervalPartition          bool
 	UseDropIntervalPartition         bool
@@ -230,25 +230,27 @@ type AccountLockTelemetryInfo struct {
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
 type ExecStmt struct {
-	// GoCtx stores parent go context.Context for a stmt.
-	GoCtx context.Context
+	retryStartTime time.Time
+
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan plannercore.Plan
-	// Text represents the origin query text.
-	Text string
 
 	StmtNode ast.StmtNode
 
 	Ctx sessionctx.Context
 
-	// LowerPriority represents whether to lower the execution priority of a query.
-	LowerPriority     bool
-	isPreparedStmt    bool
-	isSelectForUpdate bool
-	retryCount        uint
-	retryStartTime    time.Time
+	// GoCtx stores parent go context.Context for a stmt.
+	GoCtx  context.Context
+	Ti     *TelemetryInfo
+	PsStmt *plannercore.PlanCacheStmt
+	// Text represents the origin query text.
+	Text string
+
+	// OutputNames will be set if using cached plan
+	OutputNames        []*types.FieldName
+	phaseOpenDurations [2]time.Duration
 
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
@@ -257,14 +259,15 @@ type ExecStmt struct {
 	// pessimistic lock error and decide to retry, we add the first duration to
 	// the second and reset the first to 0 by calling `resetPhaseDurations`.
 	phaseBuildDurations [2]time.Duration
-	phaseOpenDurations  [2]time.Duration
 	phaseNextDurations  [2]time.Duration
 	phaseLockDurations  [2]time.Duration
 
-	// OutputNames will be set if using cached plan
-	OutputNames []*types.FieldName
-	PsStmt      *plannercore.PlanCacheStmt
-	Ti          *TelemetryInfo
+	retryCount        uint
+	isSelectForUpdate bool
+	isPreparedStmt    bool
+
+	// LowerPriority represents whether to lower the execution priority of a query.
+	LowerPriority bool
 }
 
 // GetStmtNode returns the stmtNode inside Statement
@@ -804,11 +807,11 @@ func getMaxExecutionTime(sctx sessionctx.Context) uint64 {
 }
 
 type chunkRowRecordSet struct {
-	rows     []chunk.Row
-	idx      int
-	fields   []*ast.ResultField
 	e        Executor
 	execStmt *ExecStmt
+	rows     []chunk.Row
+	fields   []*ast.ResultField
+	idx      int
 }
 
 func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
@@ -1260,8 +1263,8 @@ func getPhaseDurationObserver(phase string, internal bool) prometheus.Observer {
 
 func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.CommitDetails) {
 	for _, it := range []struct {
-		duration time.Duration
 		phase    string
+		duration time.Duration
 	}{
 		{a.phaseBuildDurations[0], executor_metrics.PhaseBuildFinal},
 		{a.phaseBuildDurations[1], executor_metrics.PhaseBuildLocking},
@@ -1278,8 +1281,8 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 	}
 	if commitDetails != nil {
 		for _, it := range []struct {
-			duration time.Duration
 			phase    string
+			duration time.Duration
 		}{
 			{commitDetails.PrewriteTime, executor_metrics.PhaseCommitPrewrite},
 			{commitDetails.CommitTime, executor_metrics.PhaseCommitCommit},

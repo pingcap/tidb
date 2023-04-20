@@ -127,14 +127,14 @@ type dataSourceExecutor interface {
 
 type baseExecutor struct {
 	ctx           sessionctx.Context
-	id            int
+	AllocPool     chunk.Allocator
 	schema        *expression.Schema // output schema
-	initCap       int
-	maxChunkSize  int
+	runtimeStats  *execdetails.BasicRuntimeStats
 	children      []Executor
 	retFieldTypes []*types.FieldType
-	runtimeStats  *execdetails.BasicRuntimeStats
-	AllocPool     chunk.Allocator
+	id            int
+	initCap       int
+	maxChunkSize  int
 }
 
 const (
@@ -339,9 +339,10 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 type CancelDDLJobsExec struct {
 	baseExecutor
 
-	cursor int
 	jobIDs []int64
 	errs   []error
+
+	cursor int
 }
 
 // Open implements the Executor Open interface.
@@ -447,9 +448,10 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 type ShowDDLExec struct {
 	baseExecutor
 
+	ddlInfo *ddl.Info
+
 	ddlOwnerID string
 	selfID     string
-	ddlInfo    *ddl.Info
 	done       bool
 }
 
@@ -496,21 +498,22 @@ type ShowDDLJobsExec struct {
 	baseExecutor
 	DDLJobRetriever
 
+	is   infoschema.InfoSchema
+	sess sessionctx.Context
+
 	jobNumber int
-	is        infoschema.InfoSchema
-	sess      sessionctx.Context
 }
 
 // DDLJobRetriever retrieve the DDLJobs.
 // nolint:structcheck
 type DDLJobRetriever struct {
-	runningJobs    []*model.Job
 	historyJobIter meta.LastJobIterator
-	cursor         int
 	is             infoschema.InfoSchema
+	TZLoc          *time.Location
+	runningJobs    []*model.Job
 	activeRoles    []*auth.RoleIdentity
 	cacheJobs      []*model.Job
-	TZLoc          *time.Location
+	cursor         int
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
@@ -644,9 +647,10 @@ func ts2Time(timestamp uint64, loc *time.Location) types.Time {
 type ShowDDLJobQueriesExec struct {
 	baseExecutor
 
-	cursor int
 	jobs   []*model.Job
 	jobIDs []int64
+
+	cursor int
 }
 
 // Open implements the Executor Open interface.
@@ -731,8 +735,9 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, req *chunk.Chunk) erro
 type ShowDDLJobQueriesWithRangeExec struct {
 	baseExecutor
 
+	jobs []*model.Job
+
 	cursor int
-	jobs   []*model.Job
 	offset uint64
 	limit  uint64
 }
@@ -916,14 +921,15 @@ func getTableName(is infoschema.InfoSchema, id int64) string {
 type CheckTableExec struct {
 	baseExecutor
 
+	table  table.Table
+	is     infoschema.InfoSchema
+	exitCh chan struct{}
+	retCh  chan error
+
 	dbName     string
-	table      table.Table
 	indexInfos []*model.IndexInfo
 	srcs       []*IndexLookUpExecutor
 	done       bool
-	is         infoschema.InfoSchema
-	exitCh     chan struct{}
-	retCh      chan error
 	checkIndex bool
 }
 
@@ -1173,7 +1179,6 @@ type SelectLockExec struct {
 	baseExecutor
 
 	Lock *ast.SelectLockInfo
-	keys []kv.Key
 
 	// The children may be a join of multiple tables, so we need a map.
 	tblID2Handle map[int64][]plannercore.HandleCols
@@ -1198,6 +1203,7 @@ type SelectLockExec struct {
 	// due to issues with chunk handling between the TableReaderExecutor and the
 	// SelectReader result.
 	tblID2PhysTblIDColIdx map[int64]int
+	keys                  []kv.Key
 }
 
 // Open implements the Executor Open interface.
@@ -1383,20 +1389,20 @@ func filterLockTableKeys(stmtCtx *stmtctx.StatementContext, keys []kv.Key) []kv.
 type LimitExec struct {
 	baseExecutor
 
-	begin  uint64
-	end    uint64
-	cursor uint64
-
-	// meetFirstBatch represents whether we have met the first valid Chunk from child.
-	meetFirstBatch bool
+	// Log the close time when opentracing is enabled.
+	span opentracing.Span
 
 	childResult *chunk.Chunk
 
 	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	columnIdxsUsedByChild []int
 
-	// Log the close time when opentracing is enabled.
-	span opentracing.Span
+	begin  uint64
+	end    uint64
+	cursor uint64
+
+	// meetFirstBatch represents whether we have met the first valid Chunk from child.
+	meetFirstBatch bool
 }
 
 // Next implements the Executor Next interface.
@@ -1591,14 +1597,15 @@ func (e *TableDualExec) Next(ctx context.Context, req *chunk.Chunk) error {
 type SelectionExec struct {
 	baseExecutor
 
-	batched     bool
-	filters     []expression.Expression
-	selected    []bool
 	inputIter   *chunk.Iterator4Chunk
-	inputRow    chunk.Row
 	childResult *chunk.Chunk
 
 	memTracker *memory.Tracker
+	inputRow   chunk.Row
+	filters    []expression.Expression
+	selected   []bool
+
+	batched bool
 }
 
 // Open implements the Executor Open interface.
@@ -1715,8 +1722,8 @@ type TableScanExec struct {
 	baseExecutor
 
 	t                     table.Table
-	columns               []*model.ColumnInfo
 	virtualTableChunkList *chunk.List
+	columns               []*model.ColumnInfo
 	virtualTableChunkIdx  int
 }
 
@@ -1834,24 +1841,27 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 //	                           +-------------+
 type UnionExec struct {
 	baseExecutor
-	concurrency int
-	childIDChan chan int
 
 	stopFetchData atomic.Value
 
-	finished      chan struct{}
-	resourcePools []chan *chunk.Chunk
-	resultPool    chan *unionWorkerResult
+	childIDChan chan int
 
-	results     []*chunk.Chunk
-	wg          sync.WaitGroup
-	initialized bool
-	mu          struct {
+	finished   chan struct{}
+	resultPool chan *unionWorkerResult
+
+	mu struct {
 		*syncutil.Mutex
 		maxOpenedChildID int
 	}
 
+	resourcePools []chan *chunk.Chunk
+
+	results     []*chunk.Chunk
+	wg          sync.WaitGroup
+	concurrency int
+
 	childInFlightForTest int32
+	initialized          bool
 }
 
 // unionWorkerResult stores the result for a union worker.

@@ -135,97 +135,105 @@ type Plan struct {
 	TableName *ast.TableName
 	TableInfo *model.TableInfo
 
-	FileLocRef         ast.FileLocRefTp
+	ImportantSysVars map[string]string
+
+	FieldsInfo  *ast.FieldsClause
+	LinesInfo   *ast.LinesClause
+	Charset     *string
+	IgnoreLines *uint64
+
+	ImportMode         string
 	Path               string
 	Format             string
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	ColumnAssignments  []*ast.Assignment
-	OnDuplicate        ast.OnDuplicateKeyHandlingType
-	FieldsInfo         *ast.FieldsClause
-	LinesInfo          *ast.LinesClause
-	Restrictive        bool
-	IgnoreLines        *uint64
 
-	SQLMode          mysql.SQLMode
-	Charset          *string
-	ImportantSysVars map[string]string
+	SQLMode     mysql.SQLMode
+	Analyze     config.PostOpLevel
+	OnDuplicate ast.OnDuplicateKeyHandlingType
 
-	ImportMode        string
-	DiskQuota         config.ByteSize
-	Checksum          config.PostOpLevel
-	AddIndex          bool
-	Analyze           config.PostOpLevel
-	ThreadCnt         int64
-	BatchSize         int64
-	MaxWriteSpeed     config.ByteSize
-	SplitFile         bool
-	MaxRecordedErrors int64
-	Detached          bool
+	FileLocRef ast.FileLocRefTp
+	DiskQuota  config.ByteSize
+	Checksum   config.PostOpLevel
 
 	DistSQLScanConcurrency int
+	MaxRecordedErrors      int64
+	ThreadCnt              int64
+	BatchSize              int64
+	MaxWriteSpeed          config.ByteSize
+	SplitFile              bool
+	Restrictive            bool
+	Detached               bool
+
+	AddIndex bool
 }
 
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
-	FileLocRef         ast.FileLocRefTp
-	Path               string
-	Format             string
-	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
-	ColumnAssignments  []*ast.Assignment
-	OnDuplicate        ast.OnDuplicateKeyHandlingType
+	// user session context. DO NOT use it if load is in DETACHED mode.
+	UserCtx   sessionctx.Context
+	dataStore storage.ExternalStorage
 
-	Table  table.Table
+	Table            table.Table
+	importantSysVars map[string]string
+	charset          *string
+
+	logger *zap.Logger
+	plannercore.LineFieldsInfo
+	Path   string
+	Format string
 	DBName string
-	DBID   int64
+
+	// import options
+	ImportMode string
 
 	// how input field(or input column) from data file is mapped, either to a column or variable.
 	// if there's NO column list clause in load data statement, then it's table's columns
 	// else it's user defined list.
 	FieldMappings []*FieldMapping
+
+	// used for DELIMITED DATA format
+	FieldNullDef       []string
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	dataFiles          []*mydump.SourceFileMeta
+	ColumnAssignments  []*ast.Assignment
 	// see InsertValues.InsertColumns
 	// todo: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
 	// - ref columns in set clause is allowed in mysql, but not in tidb
 	InsertColumns []*table.Column
+	OnDuplicate   ast.OnDuplicateKeyHandlingType
+
+	diskQuota config.ByteSize
+	// used for checksum in physical mode
+	distSQLScanConcurrency int
+	analyze                config.PostOpLevel
+	ThreadCnt              int64
+	BatchSize              int64
+	maxWriteSpeed          config.ByteSize // per second
+	// total data file size in bytes, only initialized when load from remote.
+	TotalFileSize     int64
+	maxRecordedErrors int64 // -1 means record all error
+	IgnoreLines       uint64
+
+	FileLocRef ast.FileLocRefTp
+	sqlMode    mysql.SQLMode
+	DBID       int64
+
+	checksum config.PostOpLevel
+	Detached bool
+
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
 	// operation.
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
-	// used for DELIMITED DATA format
-	FieldNullDef         []string
+	splitFile            bool
 	NullValueOptEnclosed bool
-	plannercore.LineFieldsInfo
-	IgnoreLines uint64
-
-	// import options
-	ImportMode        string
-	diskQuota         config.ByteSize
-	checksum          config.PostOpLevel
-	addIndex          bool
-	analyze           config.PostOpLevel
-	ThreadCnt         int64
-	BatchSize         int64
-	maxWriteSpeed     config.ByteSize // per second
-	splitFile         bool
-	maxRecordedErrors int64 // -1 means record all error
-	Detached          bool
-
-	logger           *zap.Logger
-	sqlMode          mysql.SQLMode
-	charset          *string
-	importantSysVars map[string]string
-	dataStore        storage.ExternalStorage
-	dataFiles        []*mydump.SourceFileMeta
-	// total data file size in bytes, only initialized when load from remote.
-	TotalFileSize int64
-	// user session context. DO NOT use it if load is in DETACHED mode.
-	UserCtx sessionctx.Context
-	// used for checksum in physical mode
-	distSQLScanConcurrency int
+	addIndex             bool
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {

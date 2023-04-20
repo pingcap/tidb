@@ -48,9 +48,8 @@ func percentile(data sort.Interface, percent int) int {
 }
 
 type basePercentile struct {
-	percent int
-
 	baseAggFunc
+	percent int
 }
 
 func (e *basePercentile) AllocPartialResult() (pr PartialResult, memDelta int64) {

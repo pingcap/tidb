@@ -36,8 +36,8 @@ type LoadStatsExec struct {
 
 // LoadStatsInfo saves the information of loading statistic operation.
 type LoadStatsInfo struct {
-	Path string
 	Ctx  sessionctx.Context
+	Path string
 }
 
 // loadStatsVarKeyType is a dummy type to avoid naming collision in context.

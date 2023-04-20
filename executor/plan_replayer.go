@@ -60,12 +60,12 @@ type PlanReplayerCaptureInfo struct {
 
 // PlanReplayerDumpInfo indicates dump info
 type PlanReplayerDumpInfo struct {
+	ctx       sessionctx.Context
+	File      *os.File
+	Path      string
+	FileName  string
 	ExecStmts []ast.StmtNode
 	Analyze   bool
-	Path      string
-	File      *os.File
-	FileName  string
-	ctx       sessionctx.Context
 }
 
 // Next implements the Executor Next interface.
@@ -220,8 +220,8 @@ type PlanReplayerLoadExec struct {
 
 // PlanReplayerLoadInfo contains file path and session context.
 type PlanReplayerLoadInfo struct {
-	Path string
 	Ctx  sessionctx.Context
+	Path string
 }
 
 type planReplayerDumpKeyType int

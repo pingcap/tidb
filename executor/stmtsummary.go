@@ -80,11 +80,11 @@ func (e *dummyRetriever) retrieve(_ context.Context, _ sessionctx.Context) ([][]
 // stmtSummaryRetriever is used to retrieve statements summary.
 type stmtSummaryRetriever struct {
 	table   *model.TableInfo
-	columns []*model.ColumnInfo
 	digests set.StringSet
 
 	// lazily initialized
 	rowsReader *rowsReader
+	columns    []*model.ColumnInfo
 }
 
 func (e *stmtSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -173,12 +173,12 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 type stmtSummaryRetrieverV2 struct {
 	stmtSummary *stmtsummaryv2.StmtSummary
 	table       *model.TableInfo
-	columns     []*model.ColumnInfo
 	digests     set.StringSet
-	timeRanges  []*stmtsummaryv2.StmtTimeRange
 
 	// lazily initialized
 	rowsReader *rowsReader
+	columns    []*model.ColumnInfo
+	timeRanges []*stmtsummaryv2.StmtTimeRange
 }
 
 func (r *stmtSummaryRetrieverV2) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {

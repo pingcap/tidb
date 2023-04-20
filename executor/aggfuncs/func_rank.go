@@ -29,14 +29,14 @@ const (
 
 type rank struct {
 	baseAggFunc
-	isDense bool
 	rowComparer
+	isDense bool
 }
 
 type partialResult4Rank struct {
+	rows     []chunk.Row
 	curIdx   int64
 	lastRank int64
-	rows     []chunk.Row
 }
 
 func (r *rank) AllocPartialResult() (pr PartialResult, memDelta int64) {

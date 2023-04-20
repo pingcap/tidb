@@ -36,37 +36,40 @@ import (
 type UnionScanExec struct {
 	baseExecutor
 
+	table table.Table
+
 	memBuf     kv.MemBuffer
 	memBufSnap kv.Getter
 
-	// usedIndex is the column offsets of the index which Src executor has used.
-	usedIndex            []int
-	desc                 bool
-	conditions           []expression.Expression
-	conditionsWithVirCol []expression.Expression
-	columns              []*model.ColumnInfo
-	table                table.Table
+	// cacheTable not nil means it's reading from cached table.
+	cacheTable kv.MemBuffer
 	// belowHandleCols is the handle's position of the below scan plan.
 	belowHandleCols plannercore.HandleCols
 
-	addedRows           [][]types.Datum
-	cursor4AddRows      int
-	snapshotRows        [][]types.Datum
-	cursor4SnapshotRows int
 	snapshotChunkBuffer *chunk.Chunk
 	mutableRow          chunk.MutRow
+	conditions          []expression.Expression
+	columns             []*model.ColumnInfo
+
+	addedRows            [][]types.Datum
+	snapshotRows         [][]types.Datum
+	conditionsWithVirCol []expression.Expression
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
 
-	// cacheTable not nil means it's reading from cached table.
-	cacheTable kv.MemBuffer
-	collators  []collate.Collator
+	// usedIndex is the column offsets of the index which Src executor has used.
+	usedIndex []int
+	collators []collate.Collator
+
+	cursor4AddRows      int
+	cursor4SnapshotRows int
 
 	// If partitioned table and the physical table id is encoded in the chuck at this column index
 	// used with dynamic prune mode
 	// < 0 if not used.
 	physTblIDIdx int
+	desc         bool
 }
 
 // Open implements the Executor Open interface.

@@ -47,43 +47,46 @@ type ParallelNestedLoopApplyExec struct {
 	baseExecutor
 
 	// outer-side fields
-	outerExec   Executor
+	outerExec Executor
+	freeChkCh chan *chunk.Chunk
+
+	memTracker *memory.Tracker // track memory usage.
+	outerList  *chunk.List
+
+	// fields about cache
+	cache       *applyCache
+	exit        chan struct{}
+	outerRowCh  chan outerRow
+	resultChkCh chan result
+	innerExecs  []Executor
+	innerList   []*chunk.List
+	innerIter   []chunk.Iterator
+	outerRow    []*chunk.Row
+	hasMatch    []bool
+	hasNull     []bool
+	joiners     []joiner
+
 	outerFilter expression.CNFExprs
-	outerList   *chunk.List
-	outer       bool
 
 	// inner-side fields
 	// use slices since the inner side is paralleled
 	corCols       [][]*expression.CorrelatedColumn
 	innerFilter   []expression.CNFExprs
-	innerExecs    []Executor
-	innerList     []*chunk.List
 	innerChunk    []*chunk.Chunk
 	innerSelected [][]bool
-	innerIter     []chunk.Iterator
-	outerRow      []*chunk.Row
-	hasMatch      []bool
-	hasNull       []bool
-	joiners       []joiner
+	workerWg      sync.WaitGroup
+	notifyWg      sync.WaitGroup
 
-	// fields about concurrency control
-	concurrency int
-	started     uint32
-	drained     uint32 // drained == true indicates there is no more data
-	freeChkCh   chan *chunk.Chunk
-	resultChkCh chan result
-	outerRowCh  chan outerRow
-	exit        chan struct{}
-	workerWg    sync.WaitGroup
-	notifyWg    sync.WaitGroup
-
-	// fields about cache
-	cache              *applyCache
-	useCache           bool
 	cacheHitCounter    int64
 	cacheAccessCounter int64
 
-	memTracker *memory.Tracker // track memory usage.
+	// fields about concurrency control
+	concurrency int
+	drained     uint32 // drained == true indicates there is no more data
+	started     uint32
+	outer       bool
+
+	useCache bool
 }
 
 // Open implements the Executor interface.
