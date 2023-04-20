@@ -755,6 +755,10 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool) (model.R
 // there maybe some stale files in the sort path if TiDB is killed during the backfill process.
 func cleanupSortPath(currentJobID int64) error {
 	sortPath := ingest.ConfigSortPath()
+	err := os.MkdirAll(sortPath, 0700)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	entries, err := os.ReadDir(sortPath)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot read sort path", zap.Error(err))
