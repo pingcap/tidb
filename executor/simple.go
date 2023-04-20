@@ -1804,7 +1804,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {
-			fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
+			fields = append(fields, alterField{nil, "password_last_changed=current_timestamp()"})
 			if spec.AuthOpt.AuthPlugin == "" {
 				spec.AuthOpt.AuthPlugin = currentAuthPlugin
 			}
@@ -1895,10 +1895,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if len(spec.User.Username) == 0 && plOptions.passwordExpired == "Y" {
 				return exeerrors.ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
 			}
-			fields = append(fields, alterField{"password_expired=%?", plOptions.passwordExpired})
+			fields = append(fields, alterField{plOptions.passwordExpired, "password_expired=%?"})
 		}
 		if plOptions.passwordLifetime != notSpecified {
-			fields = append(fields, alterField{"password_lifetime=%?", plOptions.passwordLifetime})
+			fields = append(fields, alterField{plOptions.passwordLifetime, "password_lifetime=%?"})
 		}
 
 		var newAttributes []string

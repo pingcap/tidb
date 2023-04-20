@@ -441,7 +441,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 				return
 			case e.taskList <- t:
 			}
-			e.sendParsedSlowLogCh(t, parsedSlowLog{nil, err})
+			e.sendParsedSlowLogCh(t, parsedSlowLog{err, nil})
 		}
 		if len(logs) == 0 || len(logs[0]) == 0 {
 			break
@@ -471,7 +471,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			go func() {
 				defer e.wg.Done()
 				result, err := e.parseLog(ctx, sctx, log, start)
-				e.sendParsedSlowLogCh(t, parsedSlowLog{result, err})
+				e.sendParsedSlowLogCh(t, parsedSlowLog{err, result})
 				<-ch
 			}()
 			offset.offset = e.fileLine
