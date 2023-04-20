@@ -48,6 +48,7 @@ var (
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
+	inSandBoxMode bool
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -58,7 +59,6 @@ type Context struct {
 	cancel        context.CancelFunc
 	pcache        sessionctx.PlanCache
 	level         kvrpcpb.DiskFullOpt
-	inSandBoxMode bool
 	sessionExec   sessionctx.SessionExec
 }
 
