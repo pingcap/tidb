@@ -2120,6 +2120,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			}
 		}
 	}
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		plannercore.DebugTraceReceivedCommand(s, cmdByte, stmtNode)
+	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
 		return nil, err

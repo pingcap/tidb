@@ -842,6 +842,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		return &calibrateResourceExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), 0),
 			workloadType: s.Tp,
+			optionList:   s.DynamicCalibrateResourceOptionList,
 		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
@@ -2496,7 +2497,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		}
 		oldHist = idx.Histogram.Copy()
 	} else {
-		_, bktID := idx.LessRowCountWithBktIdx(idx.LastAnalyzePos)
+		_, bktID := idx.LessRowCountWithBktIdx(nil, idx.LastAnalyzePos)
 		if bktID == 0 {
 			return analyzeTask
 		}
@@ -2834,7 +2835,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 			b.err = err
 			return nil
 		}
-		_, bktID := col.LessRowCountWithBktIdx(d)
+		_, bktID := col.LessRowCountWithBktIdx(nil, d)
 		if bktID == 0 {
 			return analyzeTask
 		}

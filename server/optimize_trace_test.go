@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -97,6 +98,10 @@ func prepareData4OptimizeTrace(t *testing.T, client *testServerClient, statHandl
 }
 
 func TestOptimizerDebugTrace(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/SetBindingTimeToZero", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/SetBindingTimeToZero"))
+	}()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tidbdrv := NewTiDBDriver(store)

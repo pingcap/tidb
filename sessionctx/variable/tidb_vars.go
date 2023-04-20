@@ -855,6 +855,9 @@ const (
 
 	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
 	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
+
+	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
+	TiDBOptFixControl = "tidb_opt_fix_control"
 )
 
 // TiDB vars that have only global scope
@@ -1200,7 +1203,7 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = false
+	DefTiDBEnableNonPreparedPlanCache              = true
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
 	DefTiDBEnableTiFlashReadForWriteStmt           = true
@@ -1253,7 +1256,7 @@ const (
 	DefTiDBEnablePlanCacheForParamLimit              = true
 	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                = true
-	DefTiDBLoadBasedReplicaReadThreshold             = 0
+	DefTiDBLoadBasedReplicaReadThreshold             = time.Second
 	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 )
