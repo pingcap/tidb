@@ -1062,6 +1062,7 @@ const (
 	ErrLoadDataJobNotFound                 = 8170
 	ErrLoadDataInvalidOperation            = 8171
 	ErrLoadDataLocalUnsupportedOption      = 8172
+	ErrLoadDataPreCheckFailed              = 8173
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
