@@ -126,7 +126,7 @@ func TestCalibrateResource(t *testing.T) {
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("38094"))
 
 	// construct data for dynamic calibrate
-	mockData["resource_manager_resource_unit"] = [][]types.Datum{
+	ru1 := [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), 2200.0),
 		types.MakeDatums(datetime("2020-02-12 10:36:00"), 2100.0),
 		types.MakeDatums(datetime("2020-02-12 10:37:00"), 2250.0),
@@ -139,8 +139,9 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-12 10:44:00"), 2300.0),
 		types.MakeDatums(datetime("2020-02-12 10:45:00"), 2280.0),
 	}
+	mockData["resource_manager_resource_unit"] = ru1
 
-	mockData["process_cpu_usage"] = [][]types.Datum{
+	cpu1 := [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "tidb", 1.212),
 		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "tidb", 1.233),
 		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-0", "tidb", 1.234),
@@ -186,11 +187,12 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tikv-2", "tikv", 2.120),
 		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-2", "tikv", 2.281),
 	}
+	mockData["process_cpu_usage"] = cpu1
 
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' DURATION '10m'").Check(testkit.Rows("8161"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'").Check(testkit.Rows("8161"))
 
-	mockData["process_cpu_usage"] = [][]types.Datum{
+	cpu2 := [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "tidb", 3.212),
 		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "tidb", 3.233),
 		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-0", "tidb", 3.234),
@@ -236,12 +238,146 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tikv-2", "tikv", 2.120),
 		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-2", "tikv", 2.281),
 	}
+	mockData["process_cpu_usage"] = cpu2
 
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' DURATION '10m'").Check(testkit.Rows("5616"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'").Check(testkit.Rows("5616"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' DURATION '10m'").Check(testkit.Rows("5616"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE END_TIME '2020-02-12 10:45:00' START_TIME '2020-02-12 10:35:00'").Check(testkit.Rows("5616"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE END_TIME '2020-02-12 10:45:00' DURATION '5m' START_TIME '2020-02-12 10:35:00' ").Check(testkit.Rows("5616"))
+
+	// Statistical time points do not correspond
+	ruModify1 := [][]types.Datum{
+		types.MakeDatums(datetime("2020-02-12 10:25:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:26:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:27:00"), 4.0),
+		types.MakeDatums(datetime("2020-02-12 10:28:00"), 6.0),
+		types.MakeDatums(datetime("2020-02-12 10:29:00"), 3.0),
+		types.MakeDatums(datetime("2020-02-12 10:30:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:31:00"), 7.0),
+		types.MakeDatums(datetime("2020-02-12 10:32:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:33:00"), 7.0),
+		types.MakeDatums(datetime("2020-02-12 10:34:00"), 8.0),
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), 2200.0),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), 2100.0),
+		types.MakeDatums(datetime("2020-02-12 10:37:00"), 2250.0),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), 2300.0),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), 2230.0),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), 2210.0),
+		types.MakeDatums(datetime("2020-02-12 10:41:00"), 2250.0),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), 2330.0),
+		types.MakeDatums(datetime("2020-02-12 10:43:00"), 2330.0),
+		types.MakeDatums(datetime("2020-02-12 10:44:00"), 2300.0),
+		types.MakeDatums(datetime("2020-02-12 10:45:00"), 2280.0),
+		types.MakeDatums(datetime("2020-02-12 10:46:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:47:00"), 7.0),
+		types.MakeDatums(datetime("2020-02-12 10:48:00"), 8.0),
+	}
+	mockData["resource_manager_resource_unit"] = ruModify1
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("5616"))
+
+	ruModify2 := [][]types.Datum{
+		types.MakeDatums(datetime("2020-02-12 10:25:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:26:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:27:00"), 4.0),
+		types.MakeDatums(datetime("2020-02-12 10:28:00"), 6.0),
+		types.MakeDatums(datetime("2020-02-12 10:29:00"), 2200.0),
+		types.MakeDatums(datetime("2020-02-12 10:30:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:31:00"), 7.0),
+		types.MakeDatums(datetime("2020-02-12 10:32:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:33:00"), 7.0),
+		types.MakeDatums(datetime("2020-02-12 10:34:00"), 8.0),
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), 29.0),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), 2100.0),
+		types.MakeDatums(datetime("2020-02-12 10:37:00"), 49.0),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), 2300.0),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), 2230.0),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), 2210.0),
+		types.MakeDatums(datetime("2020-02-12 10:41:00"), 47.0),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), 2330.0),
+		types.MakeDatums(datetime("2020-02-12 10:43:00"), 2330.0),
+		types.MakeDatums(datetime("2020-02-12 10:44:00"), 2300.0),
+		types.MakeDatums(datetime("2020-02-12 10:45:00"), 2280.0),
+		types.MakeDatums(datetime("2020-02-12 10:47:00"), 2250.0),
+		types.MakeDatums(datetime("2020-02-12 10:49:00"), 2250.0),
+	}
+	mockData["resource_manager_resource_unit"] = ruModify2
+	cpu2Mofidy := [][]types.Datum{
+		types.MakeDatums(datetime("2020-02-12 10:29:00"), "tidb-0", "tidb", 3.212),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "tidb", 3.233),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tidb-0", "tidb", 3.213),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tidb-0", "tidb", 3.209),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tidb-0", "tidb", 3.213),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tidb-0", "tidb", 3.228),
+		types.MakeDatums(datetime("2020-02-12 10:43:00"), "tidb-0", "tidb", 3.219),
+		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tidb-0", "tidb", 3.220),
+		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tidb-0", "tidb", 3.221),
+		types.MakeDatums(datetime("2020-02-12 10:46:00"), "tidb-0", "tidb", 3.220),
+		types.MakeDatums(datetime("2020-02-12 10:47:00"), "tidb-0", "tidb", 3.236),
+		types.MakeDatums(datetime("2020-02-12 10:48:00"), "tidb-0", "tidb", 3.220),
+		types.MakeDatums(datetime("2020-02-12 10:49:00"), "tidb-0", "tidb", 3.234),
+		types.MakeDatums(datetime("2020-02-12 10:29:00"), "tikv-1", "tikv", 2.212),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "tikv", 2.233),
+		types.MakeDatums(datetime("2020-02-12 10:49:00"), "tikv-1", "tikv", 2.234),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-1", "tikv", 2.213),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-1", "tikv", 2.209),
+		types.MakeDatums(datetime("2020-02-12 10:46:00"), "tikv-1", "tidb", 3.220),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "tikv", 2.213),
+		types.MakeDatums(datetime("2020-02-12 10:47:00"), "tikv-1", "tikv", 2.236),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tikv-1", "tikv", 2.228),
+		types.MakeDatums(datetime("2020-02-12 10:43:00"), "tikv-1", "tikv", 2.219),
+		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tikv-1", "tikv", 2.220),
+		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-1", "tikv", 2.281),
+		types.MakeDatums(datetime("2020-02-12 10:29:00"), "tikv-0", "tikv", 2.282),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetime("2020-02-12 10:49:00"), "tikv-0", "tikv", 2.284),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0", "tikv", 2.289),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetime("2020-02-12 10:47:00"), "tikv-0", "tikv", 2.286),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tikv-0", "tikv", 2.288),
+		types.MakeDatums(datetime("2020-02-12 10:43:00"), "tikv-0", "tikv", 2.289),
+		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tikv-0", "tikv", 2.280),
+		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-0", "tikv", 2.281),
+		types.MakeDatums(datetime("2020-02-12 10:29:00"), "tikv-2", "tikv", 2.112),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-2", "tikv", 2.133),
+		types.MakeDatums(datetime("2020-02-12 10:49:00"), "tikv-2", "tikv", 2.134),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-2", "tikv", 2.113),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-2", "tikv", 2.109),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-2", "tikv", 2.113),
+		types.MakeDatums(datetime("2020-02-12 10:47:00"), "tikv-2", "tikv", 2.136),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tikv-2", "tikv", 2.128),
+		types.MakeDatums(datetime("2020-02-12 10:43:00"), "tikv-2", "tikv", 2.119),
+		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tikv-2", "tikv", 2.120),
+		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-2", "tikv", 2.281),
+		types.MakeDatums(datetime("2020-02-12 10:48:00"), "tikv-2", "tidb", 3.220),
+	}
+	mockData["process_cpu_usage"] = cpu2Mofidy
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("5616"))
+
+	ru2 := [][]types.Datum{
+		types.MakeDatums(datetime("2020-02-12 10:25:00"), 2200.0),
+		types.MakeDatums(datetime("2020-02-12 10:26:00"), 2100.0),
+		types.MakeDatums(datetime("2020-02-12 10:27:00"), 2250.0),
+		types.MakeDatums(datetime("2020-02-12 10:28:00"), 2300.0),
+		types.MakeDatums(datetime("2020-02-12 10:29:00"), 2230.0),
+		types.MakeDatums(datetime("2020-02-12 10:30:00"), 2210.0),
+		types.MakeDatums(datetime("2020-02-12 10:31:00"), 2250.0),
+		types.MakeDatums(datetime("2020-02-12 10:32:00"), 2330.0),
+		types.MakeDatums(datetime("2020-02-12 10:33:00"), 2330.0),
+		types.MakeDatums(datetime("2020-02-12 10:34:00"), 2300.0),
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), 2280.0),
+	}
+	mockData["resource_manager_resource_unit"] = ru2
+	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'")
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	err = rs.Next(ctx, rs.NewChunk(nil))
+	require.ErrorContains(t, err, "There are too few metrics points available in selected time window")
+
+	// flash back to init data.
+	mockData["resource_manager_resource_unit"] = ru1
+	mockData["process_cpu_usage"] = cpu2
 
 	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00'")
 	require.NoError(t, err)
