@@ -108,7 +108,7 @@ func (e *ChecksumTableExec) buildTasks() ([]*checksumTask, error) {
 			return nil, err
 		}
 		for _, req := range reqs {
-			tasks = append(tasks, &checksumTask{id, req})
+			tasks = append(tasks, &checksumTask{req, id})
 		}
 	}
 	return tasks, nil

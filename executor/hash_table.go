@@ -455,7 +455,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 				// collect the null rows to slice.
 				rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
 				// do not directly ref the null bits map here, because the bit map will be reset and reused in next batch of chunk data.
-				c.hashNANullBucket.entries = append(c.hashNANullBucket.entries, &naEntry{rowPtr, c.hCtx.naColNullBitMap[i].Clone()})
+				c.hashNANullBucket.entries = append(c.hashNANullBucket.entries, &naEntry{c.hCtx.naColNullBitMap[i].Clone(), rowPtr})
 			} else {
 				// insert the not-null rows to hash table.
 				key := c.hCtx.hashVals[i].Sum64()

@@ -524,5 +524,5 @@ func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[str
 }
 
 func newCacheBatchGetter(ctx sessionctx.Context, tid int64, snapshot kv.Snapshot) *cacheBatchGetter {
-	return &cacheBatchGetter{ctx, tid, snapshot}
+	return &cacheBatchGetter{ctx, snapshot, tid}
 }

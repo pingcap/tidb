@@ -2060,7 +2060,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 			for _, tb := range tbs {
 				// For every db.table, check it's privileges.
 				if checker(DB, tb.Meta().Name.L) {
-					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+					e.initialTables = append(e.initialTables, &initialTable{tb.Meta(), DB})
 				}
 			}
 		} else {
@@ -2069,7 +2069,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 				if tb, err := is.TableByName(model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
 					// For every db.table, check it's privileges.
 					if checker(DB, tb.Meta().Name.L) {
-						e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+						e.initialTables = append(e.initialTables, &initialTable{tb.Meta(), DB})
 					}
 				}
 			}
