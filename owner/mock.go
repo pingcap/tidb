@@ -17,8 +17,13 @@ package owner
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/client/v3/concurrency"
+	"go.uber.org/zap"
 )
 
 var _ Manager = &mockManager{}
@@ -77,6 +82,10 @@ func (m *mockManager) GetOwnerID(_ context.Context) (string, error) {
 	return "", errors.New("no owner")
 }
 
+func (m *mockManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
+	return nil
+}
+
 // CampaignOwner implements Manager.CampaignOwner interface.
 func (m *mockManager) CampaignOwner() error {
 	m.toBeOwner()
@@ -103,4 +112,49 @@ func (m *mockManager) SetBeOwnerHook(hook func()) {
 // CampaignCancel implements Manager.CampaignCancel interface
 func (m *mockManager) CampaignCancel() {
 	// do nothing
+}
+
+func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {
+	needCheckOwner := false
+	switch mockCal {
+	case "delOwnerKeyAndNotOwner":
+		se := (*concurrency.Session)(atomic.LoadPointer(&m.session))
+		se.Orphan()
+		// 5s
+		for i := 0; i < 100; i++ {
+			if !m.isCampaigning.Load() {
+				break
+			}
+			logutil.BgLogger().Warn("========================================================================== del, false", zap.Int("num", i))
+			time.Sleep(50 * time.Millisecond)
+		}
+		if m.isCampaigning.Load() {
+			logutil.BgLogger().Warn("========================================================================== del, failed")
+			return errors.New("manager is campaigning")
+		}
+
+	case "onlyDelOwnerKey":
+		needCheckOwner = true
+	}
+
+	err := util.DeleteKeyFromEtcd(ownerKey, m.etcdCli, 1, keyOpDefaultTimeout)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if needCheckOwner {
+		for i := 0; i < 100; i++ {
+			if m.IsOwner() {
+				break
+			}
+			logutil.BgLogger().Warn("========================================================================== del, false", zap.Int("num", i))
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !m.IsOwner() {
+			logutil.BgLogger().Warn("========================================================================== del, failed")
+			return errors.New("manager is campaigning")
+		}
+
+	}
+	logutil.BgLogger().Warn("========================================================================== del")
+	return nil
 }
