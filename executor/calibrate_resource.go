@@ -212,15 +212,15 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	if err != nil {
 		return err
 	}
-	rus, err := getRUPerSec(e.ctx, ctx, exec, startTime, endTime)
+	rus, err := getRUPerSec(ctx, e.ctx, exec, startTime, endTime)
 	if err != nil {
 		return err
 	}
-	tikvCPUs, err := getComponentCPUUsagePerSec(e.ctx, ctx, exec, "tikv", startTime, endTime)
+	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tikv", startTime, endTime)
 	if err != nil {
 		return err
 	}
-	tidbCPUs, err := getComponentCPUUsagePerSec(e.ctx, ctx, exec, "tidb", startTime, endTime)
+	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tidb", startTime, endTime)
 	if err != nil {
 		return err
 	}
@@ -362,14 +362,14 @@ func (t *timeSeriesValues) findTime(target time.Time) bool {
 	return false
 }
 
-func getRUPerSec(sctx sessionctx.Context, ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) (*timeSeriesValues, error) {
+func getRUPerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) (*timeSeriesValues, error) {
 	query := fmt.Sprintf("SELECT time, value FROM METRICS_SCHEMA.resource_manager_resource_unit where time >= '%s' and time <= '%s' ORDER BY time desc", startTime, endTime)
-	return getValuesFromMetrics(sctx, ctx, exec, query, "resource_manager_resource_unit")
+	return getValuesFromMetrics(ctx, sctx, exec, query, "resource_manager_resource_unit")
 }
 
-func getComponentCPUUsagePerSec(sctx sessionctx.Context, ctx context.Context, exec sqlexec.RestrictedSQLExecutor, component, startTime, endTime string) (*timeSeriesValues, error) {
+func getComponentCPUUsagePerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, component, startTime, endTime string) (*timeSeriesValues, error) {
 	query := fmt.Sprintf("SELECT time, sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%%s' GROUP BY time ORDER BY time desc", startTime, endTime, component)
-	return getValuesFromMetrics(sctx, ctx, exec, query, "process_cpu_usage")
+	return getValuesFromMetrics(ctx, sctx, exec, query, "process_cpu_usage")
 }
 
 func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) (float64, error) {
@@ -384,7 +384,7 @@ func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecuto
 	return rows[0].GetFloat64(0), nil
 }
 
-func getValuesFromMetrics(sctx sessionctx.Context, ctx context.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) (*timeSeriesValues, error) {
+func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) (*timeSeriesValues, error) {
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
 	if err != nil {
 		return nil, errors.Trace(err)
