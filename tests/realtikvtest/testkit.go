@@ -43,7 +43,7 @@ import (
 
 var (
 	// WithRealTiKV is a flag identify whether tests run with real TiKV
-	WithRealTiKV = flag.Bool("with-real-tikv", true, "whether tests run with real TiKV")
+	WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
 
 	// TiKVPath is the path of the TiKV Storage.
 	TiKVPath = flag.String("tikv-path", "tikv://127.0.0.1:2379?disableGC=true", "TiKV addr")
