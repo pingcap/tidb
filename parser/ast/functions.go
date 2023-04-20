@@ -75,9 +75,9 @@ const (
 	IsFalsity          = "isfalse" // Avoid name conflict with IsFalse in github/pingcap/check.
 	RowFunc            = "row"
 	SetVar             = "setvar"
-	SetProcedureVar    = "setProcedureVar"
+	SetProcedureVar    = "setprocedureVar"
 	GetVar             = "getvar"
-	GetProcedureVar    = "getProcedureVar"
+	GetProcedureVar    = "getprocedureVar"
 	Values             = "values"
 	BitCount           = "bit_count"
 	GetParam           = "getparam"
