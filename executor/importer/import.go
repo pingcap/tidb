@@ -284,7 +284,7 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 }
 
 // NewLoadDataController create new controller.
-func NewLoadDataController(userCtx sessionctx.Context, plan *Plan, tbl table.Table) (*LoadDataController, error) {
+func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, error) {
 	fullTableName := common.UniqueTable(plan.TableName.Schema.L, plan.TableName.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
