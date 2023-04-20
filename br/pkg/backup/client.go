@@ -1053,7 +1053,7 @@ func (bc *Client) fineGrainedBackup(
 		}
 	})
 
-	bo := tikv.NewBackoffer(ctx, backupFineGrainedMaxBackoff)
+	bo := utils.AdaptTiKVBackoffer(ctx, backupFineGrainedMaxBackoff, berrors.ErrUnknown)
 	for {
 		// Step1, check whether there is any incomplete range
 		incomplete := pr.Res.GetIncompleteRange(req.StartKey, req.EndKey)
@@ -1066,14 +1066,10 @@ func (bc *Client) fineGrainedBackup(
 		errCh := make(chan error, 4)
 		retry := make(chan rtree.Range, 4)
 
-		max := &struct {
-			ms int
-			mu sync.Mutex
-		}{}
 		wg := new(sync.WaitGroup)
 		for i := 0; i < 4; i++ {
 			wg.Add(1)
-			fork, _ := bo.Fork()
+			fork, _ := bo.Inner().Fork()
 			go func(boFork *tikv.Backoffer) {
 				defer wg.Done()
 				for rg := range retry {
@@ -1085,11 +1081,7 @@ func (bc *Client) fineGrainedBackup(
 						return
 					}
 					if backoffMs != 0 {
-						max.mu.Lock()
-						if max.ms < backoffMs {
-							max.ms = backoffMs
-						}
-						max.mu.Unlock()
+						bo.RequestBackOff(backoffMs)
 					}
 				}
 			}(fork)
@@ -1146,13 +1138,9 @@ func (bc *Client) fineGrainedBackup(
 		}
 
 		// Step3. Backoff if needed, then repeat.
-		max.mu.Lock()
-		ms := max.ms
-		max.mu.Unlock()
-		if ms != 0 {
+		if ms := bo.NextBackoffInMS(); ms != 0 {
 			log.Info("handle fine grained", zap.Int("backoffMs", ms))
-			// TODO: fill a meaningful error.
-			err := bo.BackoffWithMaxSleepTxnLockFast(ms, berrors.ErrUnknown)
+			err := bo.BackOff()
 			if err != nil {
 				return errors.Trace(err)
 			}
