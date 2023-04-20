@@ -1259,6 +1259,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
 	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
+	DefTiDBEnableRowLevelChecksum                    = false
 )
 
 // Process global variables.
@@ -1313,7 +1314,7 @@ var (
 	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 	// EnableRowLevelChecksum indicates whether to append checksum to row values.
-	EnableRowLevelChecksum = atomic.NewBool(false)
+	EnableRowLevelChecksum = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.

@@ -1203,6 +1203,11 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	checksumNeeded := false
+	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
+		orig := variable.EnableRowLevelChecksum.Load()
+		defer variable.EnableRowLevelChecksum.Store(orig)
+		variable.EnableRowLevelChecksum.Store(true)
+	})
 	// We use global `EnableRowLevelChecksum` to detect whether checksum is enabled in ddl backfill worker because
 	// `SessionVars.IsRowLevelChecksumEnabled` will filter out internal sessions.
 	if variable.EnableRowLevelChecksum.Load() {

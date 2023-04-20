@@ -1300,7 +1300,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBEnableRowLevelChecksum, Value: BoolToOnOff(false), Type: TypeBool,
+	{Scope: ScopeGlobal, Name: TiDBEnableRowLevelChecksum, Value: BoolToOnOff(DefTiDBEnableRowLevelChecksum), Type: TypeBool,
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return BoolToOnOff(EnableRowLevelChecksum.Load()), nil
 		},
