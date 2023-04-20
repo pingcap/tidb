@@ -36,7 +36,7 @@ func TestConcurrentMap(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < iterations/2; i++ {
 			// Add entry to map.
-			m.Insert(uint64(i%mod), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
+			m.Insert(uint64(i%mod), &entry{nil, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}})
 		}
 	}()
 
@@ -44,7 +44,7 @@ func TestConcurrentMap(t *testing.T) {
 		defer wg.Done()
 		for i := iterations / 2; i < iterations; i++ {
 			// Add entry to map.
-			m.Insert(uint64(i%mod), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
+			m.Insert(uint64(i%mod), &entry{nil, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}})
 		}
 	}()
 	wg.Wait()
@@ -80,7 +80,7 @@ func TestConcurrentMapMemoryUsage(t *testing.T) {
 		var memDelta int64
 		for i := 0; i < iterations/2; i++ {
 			// Add entry to map.
-			memDelta += m.Insert(uint64(i*ShardCount), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
+			memDelta += m.Insert(uint64(i*ShardCount), &entry{nil, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}})
 		}
 		atomic.AddInt64(&memUsage, memDelta)
 	}()
@@ -90,7 +90,7 @@ func TestConcurrentMapMemoryUsage(t *testing.T) {
 		var memDelta int64
 		for i := iterations / 2; i < iterations; i++ {
 			// Add entry to map.
-			memDelta += m.Insert(uint64(i*ShardCount), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
+			memDelta += m.Insert(uint64(i*ShardCount), &entry{nil, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}})
 		}
 		atomic.AddInt64(&memUsage, memDelta)
 	}()
