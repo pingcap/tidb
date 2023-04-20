@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -324,7 +325,7 @@ type ruRuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (e *ruRuntimeStats) String() string {
 	if e.RURuntimeStats != nil {
-		return e.RURuntimeStats.String()
+		return fmt.Sprintf("RU:%f", e.RURuntimeStats.RRU()+e.RURuntimeStats.WRU())
 	}
 	return ""
 }
