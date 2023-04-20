@@ -1379,9 +1379,9 @@ func TestStalePrepare(t *testing.T) {
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 
-	stmtID, _, _, err := tk.Session().PrepareStmt("select * from t as of timestamp now(3) - interval 1000 microsecond")
+	stmtID, _, _, err := tk.Session().PrepareStmt("select * from t as of timestamp now(3) - interval 1000 microsecond order by id asc")
 	require.Nil(t, err)
-	tk.MustExec("prepare stmt from \"select * from t as of timestamp now(3) - interval 1000 microsecond\"")
+	tk.MustExec("prepare stmt from \"select * from t as of timestamp now(3) - interval 1000 microsecond order by id asc\"")
 
 	var expected [][]interface{}
 	for i := 0; i < 20; i++ {
