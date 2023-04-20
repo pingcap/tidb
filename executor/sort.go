@@ -35,29 +35,32 @@ import (
 type SortExec struct {
 	baseExecutor
 
-	ByItems []*util.ByItems
-	Idx     int
-	fetched bool
-	schema  *expression.Schema
-
-	// keyColumns is the column index of the by items.
-	keyColumns []int
-	// keyCmpFuncs is used to compare each ByItem.
-	keyCmpFuncs []chunk.CompareFunc
 	// rowChunks is the chunks to store row values.
 	rowChunks *chunk.SortedRowContainer
 
-	memTracker  *memory.Tracker
-	diskTracker *disk.Tracker
-
-	// partitionList is the chunks to store row values for partitions. Every partition is a sorted list.
-	partitionList []*chunk.SortedRowContainer
+	// spillAction save the Action for spill disk.
+	spillAction *chunk.SortAndSpillDiskAction
 
 	// multiWayMerge uses multi-way merge for spill disk.
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
 	multiWayMerge *multiWayMerge
-	// spillAction save the Action for spill disk.
-	spillAction *chunk.SortAndSpillDiskAction
+	diskTracker   *disk.Tracker
+
+	schema *expression.Schema
+
+	memTracker *memory.Tracker
+	// keyCmpFuncs is used to compare each ByItem.
+	keyCmpFuncs []chunk.CompareFunc
+
+	// keyColumns is the column index of the by items.
+	keyColumns []int
+
+	// partitionList is the chunks to store row values for partitions. Every partition is a sorted list.
+	partitionList []*chunk.SortedRowContainer
+
+	ByItems []*util.ByItems
+	Idx     int
+	fetched bool
 }
 
 // Close implements the Executor Close interface.
@@ -310,15 +313,16 @@ func (h *multiWayMerge) Swap(i, j int) {
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
 	SortExec
-	limit      *plannercore.PhysicalLimit
-	totalLimit uint64
+	limit *plannercore.PhysicalLimit
 
 	// rowChunks is the chunks to store row values.
 	rowChunks *chunk.List
+
+	chkHeap *topNChunkHeap
 	// rowPointer store the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
 
-	chkHeap *topNChunkHeap
+	totalLimit uint64
 }
 
 // topNChunkHeap implements heap.Interface.

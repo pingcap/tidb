@@ -80,15 +80,14 @@ import (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx     sessionctx.Context
-	is      infoschema.InfoSchema
-	err     error // err is set when there is error happened during Executor building process.
-	hasLock bool
-	Ti      *TelemetryInfo
-	// isStaleness means whether this statement use stale read.
-	isStaleness      bool
-	txnScope         string
+	is               infoschema.InfoSchema
+	err              error // err is set when there is error happened during Executor building process.
+	ctx              sessionctx.Context
+	Ti               *TelemetryInfo
 	readReplicaScope string
+	txnScope         string
+	dataReaderTS     uint64
+	hasLock          bool
 	inUpdateStmt     bool
 	inDeleteStmt     bool
 	inInsertStmt     bool
@@ -99,7 +98,8 @@ type executorBuilder struct {
 	// dataReaderBuilder can be used in concurrent goroutines, so we must ensure that getting the ts should be thread safe and
 	// can return a correct value even if the session context has already been destroyed
 	forDataReaderBuilder bool
-	dataReaderTS         uint64
+	// isStaleness means whether this statement use stale read.
+	isStaleness bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -963,7 +963,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) Executor {
 	e := &LoadStatsExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		info:         &LoadStatsInfo{v.Path, b.ctx},
+		info:         &LoadStatsInfo{b.ctx, v.Path},
 	}
 	return e
 }
@@ -4146,9 +4146,9 @@ type dataReaderBuilder struct {
 
 	selectResultHook // for testing
 	once             struct {
-		sync.Once
-		condPruneResult []table.PhysicalTable
 		err             error
+		condPruneResult []table.PhysicalTable
+		sync.Once
 	}
 }
 

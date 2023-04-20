@@ -41,14 +41,14 @@ type PhysicalImportProgress struct {
 
 // Progress is the progress of the LOAD DATA task.
 type Progress struct {
+	*LogicalImportProgress  `json:",inline"`
+	*PhysicalImportProgress `json:",inline"`
 	// SourceFileSize is the size of the source file in bytes. When we can't get
 	// the size of the source file, it will be set to -1.
 	// Currently, the value is read by seek(0, end), when LOAD DATA LOCAL we wrap
 	// SimpleSeekerOnReadCloser on MySQL client connection which doesn't support
 	// it.
-	SourceFileSize          int64
-	*LogicalImportProgress  `json:",inline"`
-	*PhysicalImportProgress `json:",inline"`
+	SourceFileSize int64
 	// LoadedRowCnt is the number of rows that has been loaded.
 	// for physical mode, it's the number of rows that has been imported into TiKV.
 	// in SHOW LOAD JOB we call it Imported_Rows, to make it compatible with 7.0,

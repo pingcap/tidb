@@ -82,9 +82,8 @@ type partialResult4FirstRowFloat64 struct {
 }
 
 type partialResult4FirstRowString struct {
-	basePartialResult4FirstRow
-
 	val string
+	basePartialResult4FirstRow
 }
 
 type partialResult4FirstRowTime struct {
@@ -100,21 +99,18 @@ type partialResult4FirstRowDuration struct {
 }
 
 type partialResult4FirstRowJSON struct {
-	basePartialResult4FirstRow
-
 	val types.BinaryJSON
+	basePartialResult4FirstRow
 }
 
 type partialResult4FirstRowEnum struct {
-	basePartialResult4FirstRow
-
 	val types.Enum
+	basePartialResult4FirstRow
 }
 
 type partialResult4FirstRowSet struct {
-	basePartialResult4FirstRow
-
 	val types.Set
+	basePartialResult4FirstRow
 }
 
 type firstRow4Int struct {

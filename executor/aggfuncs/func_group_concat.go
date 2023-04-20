@@ -50,14 +50,15 @@ const (
 
 type baseGroupConcat4String struct {
 	baseAggFunc
-	byItems []*util.ByItems
-
-	sep    string
-	maxLen uint64
 	// According to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
 	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
 	// generated.
 	truncated *int32
+
+	sep     string
+	byItems []*util.ByItems
+
+	maxLen uint64
 }
 
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -281,10 +282,12 @@ type sortRow struct {
 }
 
 type topNRows struct {
-	rows []sortRow
-	desc []bool
 	sctx sessionctx.Context
 	err  error
+
+	rows      []sortRow
+	desc      []bool
+	collators []collate.Collator
 
 	currSize  uint64
 	limitSize uint64
@@ -294,7 +297,6 @@ type topNRows struct {
 	// ('---', 'ccc') should be poped from heap, so '-' should be appended to result.
 	// eg: 'aaa---bbb---ccc' -> 'aaa---bbb-'
 	isSepTruncated bool
-	collators      []collate.Collator
 }
 
 func (h topNRows) Len() int {

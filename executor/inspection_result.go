@@ -106,11 +106,11 @@ var inspectionRules = []inspectionRule{
 
 type inspectionResultRetriever struct {
 	dummyCloser
-	retrieved               bool
-	extractor               *plannercore.InspectionResultTableExtractor
 	timeRange               plannercore.QueryTimeRange
+	extractor               *plannercore.InspectionResultTableExtractor
 	instanceToStatusAddress map[string]string
 	statusToInstanceAddress map[string]string
+	retrieved               bool
 }
 
 func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -864,10 +864,10 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 		item      string
 		tbl       string
 		condition string
+		detail    string
 		threshold float64
 		factor    float64
 		isMin     bool
-		detail    string
 	}{
 		{
 			tp:        "tidb",

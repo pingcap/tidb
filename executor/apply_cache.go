@@ -26,10 +26,10 @@ import (
 // applyCache is used in the apply executor. When we get the same value of the outer row.
 // We fetch the inner rows in the cache not to fetch them in the inner executor.
 type applyCache struct {
-	lock        syncutil.Mutex
 	cache       *kvcache.SimpleLRUCache // cache.Get/Put are not thread-safe, so it's protected by the lock above
+	memTracker  *memory.Tracker         // track memory usage.
 	memCapacity int64
-	memTracker  *memory.Tracker // track memory usage.
+	lock        syncutil.Mutex
 }
 
 type applyCacheKey []byte

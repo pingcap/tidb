@@ -50,16 +50,17 @@ type WithForeignKeyTrigger interface {
 // When insert/update child table, need to check the row has related row exists in refer table.
 // When insert/update parent table, need to check the row doesn't have related row exists in refer table.
 type FKCheckExec struct {
+	ctx sessionctx.Context
+
 	*plannercore.FKCheck
 	*fkValueHelper
-	ctx sessionctx.Context
+
+	checkRowsCache map[string]bool
+	stats          *FKCheckRuntimeStats
 
 	toBeCheckedKeys       []kv.Key
 	toBeCheckedPrefixKeys []kv.Key
 	toBeLockedKeys        []kv.Key
-
-	checkRowsCache map[string]bool
-	stats          *FKCheckRuntimeStats
 }
 
 // FKCheckRuntimeStats contains the FKCheckExec runtime stats.
@@ -75,19 +76,19 @@ type FKCascadeExec struct {
 	*fkValueHelper
 	plan       *plannercore.FKCascade
 	b          *executorBuilder
-	tp         plannercore.FKCascadeType
 	referredFK *model.ReferredFKInfo
 	childTable *model.TableInfo
 	fk         *model.FKInfo
-	fkCols     []*model.ColumnInfo
 	fkIdx      *model.IndexInfo
-	// On delete statement, fkValues stores the delete foreign key values.
-	// On update statement and the foreign key cascade is `SET NULL`, fkValues stores the old foreign key values.
-	fkValues [][]types.Datum
 	// new-value-key => UpdatedValuesCouple
 	fkUpdatedValuesMap map[string]*UpdatedValuesCouple
 
-	stats *FKCascadeRuntimeStats
+	stats  *FKCascadeRuntimeStats
+	fkCols []*model.ColumnInfo
+	// On delete statement, fkValues stores the delete foreign key values.
+	// On update statement and the foreign key cascade is `SET NULL`, fkValues stores the old foreign key values.
+	fkValues [][]types.Datum
+	tp       plannercore.FKCascadeType
 }
 
 // UpdatedValuesCouple contains the updated new row the old rows, exporting for test.
@@ -430,8 +431,8 @@ func (fkc *FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer k
 }
 
 type fkValueHelper struct {
-	colsOffsets []int
 	fkValuesSet set.StringSet
+	colsOffsets []int
 }
 
 func (h *fkValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row []types.Datum) ([]types.Datum, error) {

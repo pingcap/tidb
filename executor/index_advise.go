@@ -31,8 +31,9 @@ import (
 type IndexAdviseExec struct {
 	baseExecutor
 
-	IsLocal         bool
 	indexAdviseInfo *IndexAdviseInfo
+
+	IsLocal bool
 }
 
 // Next implements the Executor Next interface.
@@ -67,13 +68,13 @@ func (e *IndexAdviseExec) Open(ctx context.Context) error {
 
 // IndexAdviseInfo saves the information of index advise operation.
 type IndexAdviseInfo struct {
-	Path        string
-	MaxMinutes  uint64
+	Ctx         sessionctx.Context
 	MaxIndexNum *ast.MaxIndexNumClause
+	Result      *IndexAdvice
 	core.LineFieldsInfo
-	Ctx       sessionctx.Context
-	StmtNodes [][]ast.StmtNode
-	Result    *IndexAdvice
+	Path       string
+	StmtNodes  [][]ast.StmtNode
+	MaxMinutes uint64
 }
 
 func (e *IndexAdviseInfo) getStmtNodes(data []byte) error {

@@ -25,8 +25,8 @@ import (
 
 type inspectionRuleRetriever struct {
 	dummyCloser
-	retrieved bool
 	extractor *plannercore.InspectionRuleTableExtractor
+	retrieved bool
 }
 
 const (

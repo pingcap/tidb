@@ -63,17 +63,18 @@ var outdatedDuration = types.Duration{
 
 // brieTaskProgress tracks a task's current progress.
 type brieTaskProgress struct {
+	// cmd is the name of the step the BRIE task is currently performing.
+	cmd string
 	// current progress of the task.
 	// this field is atomically updated outside of the lock below.
 	current int64
 
-	// lock is the mutex protected the two fields below.
-	lock syncutil.Mutex
-	// cmd is the name of the step the BRIE task is currently performing.
-	cmd string
 	// total is the total progress of the task.
 	// the percentage of completeness is `(100%) * current / total`.
 	total int64
+
+	// lock is the mutex protected the two fields below.
+	lock syncutil.Mutex
 }
 
 // Inc implements glue.Progress
@@ -99,16 +100,16 @@ func (p *brieTaskProgress) Close() {
 }
 
 type brieTaskInfo struct {
+	storage     string
+	message     string
 	queueTime   types.Time
 	execTime    types.Time
 	finishTime  types.Time
-	kind        ast.BRIEKind
-	storage     string
 	connID      uint64
 	backupTS    uint64
 	restoreTS   uint64
 	archiveSize uint64
-	message     string
+	kind        ast.BRIEKind
 }
 
 type brieQueueItem struct {
@@ -118,12 +119,12 @@ type brieQueueItem struct {
 }
 
 type brieQueue struct {
-	nextID uint64
-	tasks  sync.Map
-
 	lastClearTime time.Time
 
 	workerCh chan struct{}
+	tasks    sync.Map
+
+	nextID uint64
 }
 
 // globalBRIEQueue is the BRIE execution queue. Only one BRIE task can be executed each time.

@@ -71,15 +71,15 @@ var LookupTableTaskChannelSize int32 = 50
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
 type lookupTableTask struct {
-	handles []kv.Handle
-	rowIdx  []int // rowIdx represents the handle index for every row. Only used when keep order.
-	rows    []chunk.Row
-	idxRows *chunk.Chunk
-	cursor  int
 
 	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
 	buildDoneTime time.Time
-	doneCh        chan error
+
+	// partitionTable indicates whether this task belongs to a partition table and which partition table it is.
+	partitionTable table.PhysicalTable
+
+	idxRows *chunk.Chunk
+	doneCh  chan error
 
 	// indexOrder map is used to save the original index order for the handles.
 	// Without this map, the original index order might be lost.
@@ -90,8 +90,11 @@ type lookupTableTask struct {
 	// the same handle of index has multiple values.
 	duplicatedIndexOrder *kv.HandleMap
 
-	// partitionTable indicates whether this task belongs to a partition table and which partition table it is.
-	partitionTable table.PhysicalTable
+	memTracker *memory.Tracker
+	handles    []kv.Handle
+	rowIdx     []int // rowIdx represents the handle index for every row. Only used when keep order.
+	rows       []chunk.Row
+	cursor     int
 
 	// memUsage records the memory usage of this task calculated by table worker.
 	// memTracker is used to release memUsage after task is done and unused.
@@ -104,8 +107,7 @@ type lookupTableTask struct {
 	//
 	// Step 1~3 are completed in "tableWorker.executeTask".
 	// Step 4   is  completed in "IndexLookUpExecutor.Next".
-	memUsage   int64
-	memTracker *memory.Tracker
+	memUsage int64
 }
 
 func (task *lookupTableTask) Len() int {
@@ -167,45 +169,49 @@ type IndexReaderExecutor struct {
 
 	// For a partitioned table, the IndexReaderExecutor works on a partition, so
 	// the type of this table field is actually `table.PhysicalTable`.
-	table           table.Table
-	index           *model.IndexInfo
-	physicalTableID int64
-	ranges          []*ranger.Range
-	partitions      []table.PhysicalTable
-	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
-
-	// kvRanges are only used for union scan.
-	kvRanges         []kv.KeyRange
-	dagPB            *tipb.DAGRequest
-	startTS          uint64
-	txnScope         string
-	readReplicaScope string
-	isStaleness      bool
-	netDataSize      float64
+	table table.Table
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
+	index  *model.IndexInfo
+
+	selectResultHook // for testing
+
+	memTracker *memory.Tracker
+
+	feedback     *statistics.QueryFeedback
+	partRangeMap map[int64][]*ranger.Range // each partition may have different ranges
+
+	dagPB            *tipb.DAGRequest
+	readReplicaScope string
+	txnScope         string
+
+	// kvRanges are only used for union scan.
+	kvRanges []kv.KeyRange
+	idxCols  []*expression.Column
+	ranges   []*ranger.Range
+	plans    []plannercore.PhysicalPlan
+
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 	// outputColumns are only required by union scan.
 	outputColumns []*expression.Column
 
-	feedback *statistics.QueryFeedback
-	paging   bool
-
-	keepOrder bool
-	desc      bool
+	partitions []table.PhysicalTable
+	colLens    []int
 	// byItems only for partition table with orderBy + pushedLimit
 	byItems []*plannerutil.ByItems
 
+	startTS         uint64
+	netDataSize     float64
+	physicalTableID int64
+	desc            bool
+
+	keepOrder bool
+
 	corColInFilter bool
 	corColInAccess bool
-	idxCols        []*expression.Column
-	colLens        []int
-	plans          []plannercore.PhysicalPlan
-
-	memTracker *memory.Tracker
-
-	selectResultHook // for testing
+	isStaleness    bool
+	paging         bool
 
 	// If dummy flag is set, this is not a real IndexReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
@@ -386,68 +392,76 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 type IndexLookUpExecutor struct {
 	baseExecutor
 
-	table   table.Table
-	index   *model.IndexInfo
-	ranges  []*ranger.Range
-	dagPB   *tipb.DAGRequest
-	startTS uint64
-	// handleIdx is the index of handle, which is only used for case of keeping order.
-	handleIdx       []int
-	handleCols      []*expression.Column
-	primaryKeyIndex *model.IndexInfo
-	tableRequest    *tipb.DAGRequest
-	// columns are only required by union scan.
-	columns []*model.ColumnInfo
-	*dataReaderBuilder
-	idxNetDataSize float64
-	avgRowSize     float64
+	table table.Table
 
-	// fields about accessing partition tables
-	partitionTableMode bool                  // if this executor is accessing a partition table
-	prunedPartitions   []table.PhysicalTable // partition tables need to access
-	partitionIDMap     map[int64]struct{}    // partitionIDs that global index access
-	partitionRangeMap  map[int64][]*ranger.Range
-	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
+	resultCh chan *lookupTableTask
+	dagPB    *tipb.DAGRequest
+	feedback *statistics.QueryFeedback
+
+	// cancelFunc is called when close the executor
+	cancelFunc context.CancelFunc
+
+	// checkIndexValue is used to check the consistency of the index data.
+	*checkIndexValue
+
+	// memTracker is used to track the memory usage of this executor.
+	memTracker *memory.Tracker
+
+	primaryKeyIndex *model.IndexInfo
+	resultCurr      *lookupTableTask
+	tableRequest    *tipb.DAGRequest
+	*dataReaderBuilder
+
+	stats *IndexLookUpRunTimeStats
+
+	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
+	PushedLimit *plannercore.PushedDownLimit
+
+	index    *model.IndexInfo
+	finished chan struct{}
+
+	partitionIDMap    map[int64]struct{} // partitionIDs that global index access
+	partitionRangeMap map[int64][]*ranger.Range
+	idxPlans          []plannercore.PhysicalPlan
+	partitionKVRanges [][]kv.KeyRange // kvRanges of each prunedPartitions
+
+	tblPlans         []plannercore.PhysicalPlan
+	prunedPartitions []table.PhysicalTable // partition tables need to access
+	ranges           []*ranger.Range
+	// columns are only required by union scan.
+	columns    []*model.ColumnInfo
+	idxCols    []*expression.Column
+	handleCols []*expression.Column
+	colLens    []int
+
+	kvRanges []kv.KeyRange
+	// handleIdx is the index of handle, which is only used for case of keeping order.
+	handleIdx []int
+
+	byItems []*plannerutil.ByItems
 
 	// All fields above are immutable.
 
 	idxWorkerWg sync.WaitGroup
 	tblWorkerWg sync.WaitGroup
-	finished    chan struct{}
+	avgRowSize  float64
 
-	resultCh   chan *lookupTableTask
-	resultCurr *lookupTableTask
-	feedback   *statistics.QueryFeedback
-
-	// memTracker is used to track the memory usage of this executor.
-	memTracker *memory.Tracker
-
-	// checkIndexValue is used to check the consistency of the index data.
-	*checkIndexValue
-
-	kvRanges      []kv.KeyRange
-	workerStarted bool
-
-	byItems   []*plannerutil.ByItems
-	keepOrder bool
-	desc      bool
-
-	indexPaging bool
+	idxNetDataSize float64
+	startTS        uint64
 
 	corColInIdxSide bool
 	corColInTblSide bool
 	corColInAccess  bool
-	idxPlans        []plannercore.PhysicalPlan
-	tblPlans        []plannercore.PhysicalPlan
-	idxCols         []*expression.Column
-	colLens         []int
-	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
-	PushedLimit *plannercore.PushedDownLimit
 
-	stats *IndexLookUpRunTimeStats
+	indexPaging bool
 
-	// cancelFunc is called when close the executor
-	cancelFunc context.CancelFunc
+	desc bool
+
+	keepOrder     bool
+	workerStarted bool
+
+	// fields about accessing partition tables
+	partitionTableMode bool // if this executor is accessing a partition table
 
 	// If dummy flag is set, this is not a real IndexLookUpReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
@@ -912,19 +926,20 @@ type indexWorker struct {
 	workCh    chan<- *lookupTableTask
 	finished  <-chan struct{}
 	resultCh  chan<- *lookupTableTask
-	keepOrder bool
+
+	// checkIndexValue is used to check the consistency of the index data.
+	*checkIndexValue
+	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
+	PushedLimit *plannercore.PushedDownLimit
 
 	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
 
-	// checkIndexValue is used to check the consistency of the index data.
-	*checkIndexValue
-	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
-	PushedLimit *plannercore.PushedDownLimit
 	// scannedKeys indicates how many keys be scanned
 	scannedKeys uint64
+	keepOrder   bool
 }
 
 func (w *indexWorker) syncErr(err error) {
@@ -1114,14 +1129,15 @@ type tableWorker struct {
 	idxLookup *IndexLookUpExecutor
 	workCh    <-chan *lookupTableTask
 	finished  <-chan struct{}
-	keepOrder bool
-	handleIdx []int
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
 
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
+	handleIdx []int
+
+	keepOrder bool
 }
 
 // pickAndExecTask picks tasks from workCh, and execute them.

@@ -124,10 +124,10 @@ type varPop4DistinctFloat64 struct {
 }
 
 type partialResult4VarPopDistinctFloat64 struct {
+	valSet   set.Float64SetWithMemoryUsage
 	count    int64
 	sum      float64
 	variance float64
-	valSet   set.Float64SetWithMemoryUsage
 }
 
 func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {

@@ -51,10 +51,10 @@ var _ Executor = &AnalyzeExec{}
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	baseExecutor
-	tasks      []*analyzeTask
-	wg         util.WaitGroupWrapper
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
+	tasks      []*analyzeTask
+	wg         util.WaitGroupWrapper
 }
 
 var (
@@ -435,22 +435,22 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 }
 
 type analyzeTask struct {
-	taskType           taskType
 	idxExec            *AnalyzeIndexExec
 	colExec            *AnalyzeColumnsExec
 	fastExec           *AnalyzeFastExec
 	idxIncrementalExec *analyzeIndexIncrementalExec
 	colIncrementalExec *analyzePKIncrementalExec
 	job                *statistics.AnalyzeJob
+	taskType           taskType
 }
 
 type baseAnalyzeExec struct {
 	ctx         sessionctx.Context
-	tableID     statistics.AnalyzeTableID
-	concurrency int
 	analyzePB   *tipb.AnalyzeReq
 	opts        map[ast.AnalyzeOptionType]uint64
 	job         *statistics.AnalyzeJob
+	tableID     statistics.AnalyzeTableID
+	concurrency int
 	snapshot    uint64
 }
 

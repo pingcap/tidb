@@ -29,18 +29,19 @@ import (
 type SQLBindExec struct {
 	baseExecutor
 
-	sqlBindOp    plannercore.SQLBindOpType
-	normdOrigSQL string
+	bindAst      ast.StmtNode
+	db           string
 	bindSQL      string
 	charset      string
 	collation    string
-	db           string
-	isGlobal     bool
-	bindAst      ast.StmtNode
+	normdOrigSQL string
 	newStatus    string
 	source       string // by manual or from history, only in create stmt
 	sqlDigest    string
 	planDigest   string
+
+	sqlBindOp plannercore.SQLBindOpType
+	isGlobal  bool
 }
 
 // Next implements the Executor Next interface.

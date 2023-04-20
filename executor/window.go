@@ -31,18 +31,19 @@ import (
 type WindowExec struct {
 	baseExecutor
 
+	processor windowProcessor
+
 	groupChecker *vecGroupChecker
 	// childResult stores the child chunk
 	childResult *chunk.Chunk
-	// executed indicates the child executor is drained or something unexpected happened.
-	executed bool
 	// resultChunks stores the chunks to return
 	resultChunks []*chunk.Chunk
 	// remainingRowsInChunk indicates how many rows the resultChunks[i] is not prepared.
 	remainingRowsInChunk []int
 
 	numWindowFuncs int
-	processor      windowProcessor
+	// executed indicates the child executor is drained or something unexpected happened.
+	executed bool
 }
 
 // Close implements the Executor Close interface.
@@ -234,10 +235,10 @@ func (p *aggWindowProcessor) resetPartialResult() {
 }
 
 type rowFrameWindowProcessor struct {
-	windowFuncs    []aggfuncs.AggFunc
-	partialResults []aggfuncs.PartialResult
 	start          *core.FrameBound
 	end            *core.FrameBound
+	windowFuncs    []aggfuncs.AggFunc
+	partialResults []aggfuncs.PartialResult
 	curRowIdx      uint64
 }
 
@@ -376,14 +377,14 @@ func (p *rowFrameWindowProcessor) resetPartialResult() {
 }
 
 type rangeFrameWindowProcessor struct {
-	windowFuncs     []aggfuncs.AggFunc
-	partialResults  []aggfuncs.PartialResult
 	start           *core.FrameBound
 	end             *core.FrameBound
+	windowFuncs     []aggfuncs.AggFunc
+	partialResults  []aggfuncs.PartialResult
+	orderByCols     []*expression.Column
 	curRowIdx       uint64
 	lastStartOffset uint64
 	lastEndOffset   uint64
-	orderByCols     []*expression.Column
 	// expectedCmpResult is used to decide if one value is included in the frame.
 	expectedCmpResult int64
 }

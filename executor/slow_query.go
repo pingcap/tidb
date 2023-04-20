@@ -59,23 +59,24 @@ var ParseSlowLogBatchSize = 64
 
 // slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
-	table                 *model.TableInfo
-	outputCols            []*model.ColumnInfo
-	initialized           bool
+	memTracker *memory.Tracker
+
+	taskList              chan slowLogTask
+	cancel                context.CancelFunc
 	extractor             *plannercore.SlowQueryExtractor
-	files                 []logFile
-	fileIdx               int
-	fileLine              int
-	checker               *slowLogChecker
 	columnValueFactoryMap map[string]slowQueryColumnValueFactory
+	table                 *model.TableInfo
+	stats                 *slowQueryRuntimeStats
+	checker               *slowLogChecker
 	instanceFactory       func([]types.Datum)
 
-	taskList      chan slowLogTask
-	stats         *slowQueryRuntimeStats
-	memTracker    *memory.Tracker
-	lastFetchSize int64
-	cancel        context.CancelFunc
+	files         []logFile
+	outputCols    []*model.ColumnInfo
 	wg            sync.WaitGroup
+	fileLine      int
+	fileIdx       int
+	lastFetchSize int64
+	initialized   bool
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -165,8 +166,8 @@ func (e *slowQueryRetriever) close() error {
 }
 
 type parsedSlowLog struct {
-	rows [][]types.Datum
 	err  error
+	rows [][]types.Datum
 }
 
 func (e *slowQueryRetriever) getNextFile() *os.File {
@@ -248,12 +249,12 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx
 }
 
 type slowLogChecker struct {
+	user       *auth.UserIdentity
+	timeRanges []*timeRange
 	// Below fields is used to check privilege.
 	hasProcessPriv bool
-	user           *auth.UserIdentity
 	// Below fields is used to check slow log time valid.
 	enableTimeCheck bool
-	timeRanges      []*timeRange
 }
 
 type timeRange struct {
@@ -440,7 +441,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 				return
 			case e.taskList <- t:
 			}
-			e.sendParsedSlowLogCh(t, parsedSlowLog{nil, err})
+			e.sendParsedSlowLogCh(t, parsedSlowLog{err, nil})
 		}
 		if len(logs) == 0 || len(logs[0]) == 0 {
 			break
@@ -470,7 +471,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			go func() {
 				defer e.wg.Done()
 				result, err := e.parseLog(ctx, sctx, log, start)
-				e.sendParsedSlowLogCh(t, parsedSlowLog{result, err})
+				e.sendParsedSlowLogCh(t, parsedSlowLog{err, result})
 				<-ch
 			}()
 			offset.offset = e.fileLine

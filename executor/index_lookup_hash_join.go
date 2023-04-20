@@ -61,42 +61,42 @@ const numResChkHold = 4
 //
 // 3. The main thread receives the join results.
 type IndexNestedLoopHashJoin struct {
+	resultCh chan *indexHashJoinResult
+	curTask  *indexHashJoinTask
+	// taskCh is only used when `keepOuterOrder` is true.
+	taskCh chan *indexHashJoinTask
+
+	stats *indexLookUpJoinRuntimeStats
 	IndexLookUpJoin
-	resultCh          chan *indexHashJoinResult
 	joinChkResourceCh []chan *chunk.Chunk
 	// We build individual joiner for each inner worker when using chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	joiners        []joiner
 	keepOuterOrder bool
-	curTask        *indexHashJoinTask
-	// taskCh is only used when `keepOuterOrder` is true.
-	taskCh chan *indexHashJoinTask
-
-	stats    *indexLookUpJoinRuntimeStats
-	prepared bool
+	prepared       bool
 }
 
 type indexHashJoinOuterWorker struct {
 	outerWorker
-	innerCh        chan *indexHashJoinTask
-	keepOuterOrder bool
+	innerCh chan *indexHashJoinTask
 	// taskCh is only used when the outer order needs to be promised.
-	taskCh chan *indexHashJoinTask
+	taskCh         chan *indexHashJoinTask
+	keepOuterOrder bool
 }
 
 type indexHashJoinInnerWorker struct {
 	innerWorker
-	matchedOuterPtrs  []chunk.RowPtr
 	joiner            joiner
 	joinChkResourceCh chan *chunk.Chunk
 	// resultCh is valid only when indexNestedLoopHashJoin do not need to keep
 	// order. Otherwise, it will be nil.
-	resultCh       chan *indexHashJoinResult
-	taskCh         <-chan *indexHashJoinTask
-	wg             *sync.WaitGroup
-	joinKeyBuf     []byte
-	outerRowStatus []outerRowStatusFlag
-	rowIter        *chunk.Iterator4Slice
+	resultCh         chan *indexHashJoinResult
+	taskCh           <-chan *indexHashJoinTask
+	wg               *sync.WaitGroup
+	rowIter          *chunk.Iterator4Slice
+	matchedOuterPtrs []chunk.RowPtr
+	joinKeyBuf       []byte
+	outerRowStatus   []outerRowStatusFlag
 }
 
 type indexHashJoinResult struct {
@@ -106,13 +106,12 @@ type indexHashJoinResult struct {
 }
 
 type indexHashJoinTask struct {
+	lookupMap baseHashTable
+	err       error
 	*lookUpJoinTask
-	outerRowStatus [][]outerRowStatusFlag
-	lookupMap      baseHashTable
-	err            error
-	keepOuterOrder bool
 	// resultCh is only used when the outer order needs to be promised.
-	resultCh chan *indexHashJoinResult
+	resultCh       chan *indexHashJoinResult
+	outerRowStatus [][]outerRowStatusFlag
 	// matchedInnerRowPtrs is only valid when the outer order needs to be
 	// promised. Otherwise, it will be nil.
 	// len(matchedInnerRowPtrs) equals to
@@ -120,6 +119,7 @@ type indexHashJoinTask struct {
 	// matchedInnerRowPtrs[chkIdx][rowIdx] indicates the matched inner row ptrs
 	// of the corresponding outer row.
 	matchedInnerRowPtrs [][][]chunk.RowPtr
+	keepOuterOrder      bool
 }
 
 // Open implements the IndexNestedLoopHashJoin Executor interface.

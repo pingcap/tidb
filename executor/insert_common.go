@@ -55,29 +55,40 @@ import (
 type InsertValues struct {
 	baseExecutor
 
-	rowCount       uint64
-	curBatchCnt    uint64
-	maxRowsInBatch uint64
-	lastInsertID   uint64
+	Table table.Table
 
 	SelectExec Executor
 
-	Table   table.Table
-	Columns []*ast.ColumnName
-	Lists   [][]expression.Expression
-	SetList []*expression.Assignment
+	stats *InsertRuntimeStat
+
+	memTracker *memory.Tracker
+
+	evalBuffer chunk.MutRow
+
+	// colDefaultVals is used to store casted default value.
+	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
+	colDefaultVals []defaultVal
+	Columns        []*ast.ColumnName
+	Lists          [][]expression.Expression
+	SetList        []*expression.Assignment
 
 	GenExprs []expression.Expression
 
 	insertColumns []*table.Column
 
-	// colDefaultVals is used to store casted default value.
-	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
-	colDefaultVals  []defaultVal
-	evalBuffer      chunk.MutRow
+	fkCascades []*FKCascadeExec
+
+	// fkChecks contains the foreign key checkers.
+	fkChecks        []*FKCheckExec
 	evalBufferTypes []*types.FieldType
 
-	allAssignmentsAreConstant bool
+	curBatchCnt uint64
+
+	rowLen int
+
+	rowCount       uint64
+	maxRowsInBatch uint64
+	lastInsertID   uint64
 
 	hasRefCols     bool
 	hasExtraHandle bool
@@ -87,15 +98,8 @@ type InsertValues struct {
 	// Other statements like `insert select from` don't guarantee consecutive autoID.
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 	lazyFillAutoID bool
-	memTracker     *memory.Tracker
 
-	rowLen int
-
-	stats *InsertRuntimeStat
-
-	// fkChecks contains the foreign key checkers.
-	fkChecks   []*FKCheckExec
-	fkCascades []*FKCascadeExec
+	allAssignmentsAreConstant bool
 }
 
 type defaultVal struct {

@@ -61,18 +61,19 @@ type MPPGather struct {
 	baseExecutor
 	is           infoschema.InfoSchema
 	originalPlan plannercore.PhysicalPlan
-	startTS      uint64
-	mppQueryID   kv.MPPQueryID
-
-	mppReqs []*kv.MPPDispatchRequest
 
 	respIter distsql.SelectResult
 
 	memTracker *memory.Tracker
 
+	mppReqs []*kv.MPPDispatchRequest
+
 	columns                    []*model.ColumnInfo
 	virtualColumnIndex         []int
 	virtualColumnRetFieldTypes []*types.FieldType
+	mppQueryID                 kv.MPPQueryID
+
+	startTS uint64
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {

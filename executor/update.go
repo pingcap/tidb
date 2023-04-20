@@ -38,7 +38,10 @@ import (
 type UpdateExec struct {
 	baseExecutor
 
-	OrderedList []*expression.Assignment
+	memTracker *memory.Tracker
+
+	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
+	fkCascades map[int64][]*FKCascadeExec
 
 	// updatedRowKeys is a map for unique (TableAlias, handle) pair.
 	// The value is true if the row is changed, or false otherwise
@@ -49,27 +52,29 @@ type UpdateExec struct {
 	mergedRowData          map[int64]*kv.MemAwareHandleMap[[]types.Datum]
 	multiUpdateOnSameTable map[int64]bool
 
-	matched uint64 // a counter of matched rows during update
-	// tblColPosInfos stores relationship between column ordinal to its table handle.
-	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
-	tblColPosInfos            plannercore.TblColPosInfoSlice
-	assignFlag                []int
-	evalBuffer                chunk.MutRow
-	allAssignmentsAreConstant bool
-	virtualAssignmentsOffset  int
-	drained                   bool
-	memTracker                *memory.Tracker
+	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
+	fkChecks map[int64][]*FKCheckExec
 
 	stats *updateRuntimeStats
 
-	handles        []kv.Handle
+	evalBuffer chunk.MutRow
+
+	handles    []kv.Handle
+	assignFlag []int
+	// tblColPosInfos stores relationship between column ordinal to its table handle.
+	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
+	tblColPosInfos plannercore.TblColPosInfoSlice
 	tableUpdatable []bool
 	changed        []bool
 	matches        []bool
-	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
-	fkChecks map[int64][]*FKCheckExec
-	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
-	fkCascades map[int64][]*FKCascadeExec
+
+	OrderedList []*expression.Assignment
+
+	virtualAssignmentsOffset int
+
+	matched                   uint64 // a counter of matched rows during update
+	drained                   bool
+	allAssignmentsAreConstant bool
 }
 
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.

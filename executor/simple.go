@@ -75,27 +75,27 @@ type SimpleExec struct {
 	baseExecutor
 
 	Statement ast.StmtNode
+	is        infoschema.InfoSchema
+
+	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
+	staleTxnStartTS uint64
 	// IsFromRemote indicates whether the statement IS FROM REMOTE TiDB instance in cluster,
 	//   and executing in coprocessor.
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 	IsFromRemote bool
 	done         bool
-	is           infoschema.InfoSchema
-
-	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
-	staleTxnStartTS uint64
 }
 
 type passwordOrLockOptionsInfo struct {
+	passwordLifetime            any
 	lockAccount                 string
 	passwordExpired             string
-	passwordLifetime            any
 	passwordHistory             int64
-	passwordHistoryChange       bool
 	passwordReuseInterval       int64
-	passwordReuseIntervalChange bool
 	failedLoginAttempts         int64
 	passwordLockTime            int64
+	passwordHistoryChange       bool
+	passwordReuseIntervalChange bool
 	failedLoginAttemptsChange   bool
 	passwordLockTimeChange      bool
 }
@@ -1799,12 +1799,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		type alterField struct {
-			expr  string
 			value any
+			expr  string
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {
-			fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
+			fields = append(fields, alterField{nil, "password_last_changed=current_timestamp()"})
 			if spec.AuthOpt.AuthPlugin == "" {
 				spec.AuthOpt.AuthPlugin = currentAuthPlugin
 			}
@@ -1895,10 +1895,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if len(spec.User.Username) == 0 && plOptions.passwordExpired == "Y" {
 				return exeerrors.ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
 			}
-			fields = append(fields, alterField{"password_expired=%?", plOptions.passwordExpired})
+			fields = append(fields, alterField{plOptions.passwordExpired, "password_expired=%?"})
 		}
 		if plOptions.passwordLifetime != notSpecified {
-			fields = append(fields, alterField{"password_lifetime=%?", plOptions.passwordLifetime})
+			fields = append(fields, alterField{plOptions.passwordLifetime, "password_lifetime=%?"})
 		}
 
 		var newAttributes []string

@@ -86,37 +86,41 @@ var etcdDialTimeout = 5 * time.Second
 type ShowExec struct {
 	baseExecutor
 
-	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName            model.CIStr
-	Table             *ast.TableName       // Used for showing columns.
-	Partition         model.CIStr          // Used for showing partition
-	Column            *ast.ColumnName      // Used for `desc table column`.
-	IndexName         model.CIStr          // Used for show table regions.
-	ResourceGroupName model.CIStr          // Used for showing resource group
-	Flag              int                  // Some flag parsed from sql, such as FULL.
-	Roles             []*auth.RoleIdentity // Used for show grants.
-	User              *auth.UserIdentity   // Used by show grants, show create user.
-	Extractor         plannercore.ShowPredicateExtractor
-
 	is infoschema.InfoSchema
 
-	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
+	Extractor plannercore.ShowPredicateExtractor
+
+	User *auth.UserIdentity // Used by show grants, show create user.
 
 	result *chunk.Chunk
+	Column *ast.ColumnName // Used for `desc table column`.
+
+	LoadDataJobID     *int64
+	Table             *ast.TableName // Used for showing columns.
+	IndexName         model.CIStr    // Used for show table regions.
+	ResourceGroupName model.CIStr    // Used for showing resource group
+	DBName            model.CIStr
+	Partition         model.CIStr          // Used for showing partition
+	Roles             []*auth.RoleIdentity // Used for show grants.
+
+	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	cursor int
+
+	Flag int // Some flag parsed from sql, such as FULL.
+
+	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	Full        bool
 	IfNotExists bool // Used for `show create database if not exists`
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
 
-	LoadDataJobID *int64
 }
 
 type showTableRegionRowItem struct {
-	regionMeta
 	schedulingConstraints string
 	schedulingState       string
+	regionMeta
 }
 
 // Next implements the Executor Next interface.
@@ -288,10 +292,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 
 // visibleChecker checks if a stmt is visible for a certain user.
 type visibleChecker struct {
-	defaultDB string
 	ctx       sessionctx.Context
 	is        infoschema.InfoSchema
 	manager   privilege.Manager
+	defaultDB string
 	ok        bool
 }
 

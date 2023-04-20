@@ -182,20 +182,20 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 
 // TableImporter is a table importer.
 type TableImporter struct {
-	*JobImportParam
-	*LoadDataController
-	backend   *local.Backend
-	tableCp   *checkpoints.TableCheckpoint
+	store storage.ExternalStorage
+	// this table has a separate id allocator used to record the max row id allocated.
+	encTable  table.Table
+	kvStore   tidbkv.Storage
 	tableInfo *checkpoints.TidbTableInfo
 	tableMeta *mydump.MDTableMeta
-	// this table has a separate id allocator used to record the max row id allocated.
-	encTable      table.Table
-	dbID          int64
+	*LoadDataController
 	dataDivideCfg *mydump.DataDivideConfig
 
-	store           storage.ExternalStorage
-	kvStore         tidbkv.Storage
+	tableCp *checkpoints.TableCheckpoint
+	*JobImportParam
+	backend         *local.Backend
 	logger          *zap.Logger
+	dbID            int64
 	regionSplitSize int64
 	regionSplitKeys int64
 	// the smallest auto-generated ID in current import.

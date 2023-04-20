@@ -46,13 +46,15 @@ var (
 type PrepareExec struct {
 	baseExecutor
 
+	Stmt interface{}
+
 	name    string
 	sqlText string
 
-	ID         uint32
-	ParamCount int
 	Fields     []*ast.ResultField
-	Stmt       interface{}
+	ParamCount int
+
+	ID uint32
 
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
 	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
@@ -153,13 +155,13 @@ type ExecuteExec struct {
 	baseExecutor
 
 	is            infoschema.InfoSchema
-	name          string
-	usingVars     []expression.Expression
 	stmtExec      Executor
 	stmt          ast.StmtNode
 	plan          plannercore.Plan
-	lowerPriority bool
+	name          string
+	usingVars     []expression.Expression
 	outputNames   []*types.FieldName
+	lowerPriority bool
 }
 
 // Next implements the Executor Next interface.

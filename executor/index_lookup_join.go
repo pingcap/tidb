@@ -58,33 +58,38 @@ var _ Executor = &IndexLookUpJoin{}
 type IndexLookUpJoin struct {
 	baseExecutor
 
-	resultCh   <-chan *lookUpJoinTask
-	cancelFunc context.CancelFunc
-	workerWg   *sync.WaitGroup
+	indexRanges ranger.MutableRanges
 
-	outerCtx outerCtx
-	innerCtx innerCtx
+	joiner    joiner
+	innerIter *chunk.Iterator4Slice
+
+	workerWg *sync.WaitGroup
 
 	task       *lookUpJoinTask
 	joinResult *chunk.Chunk
-	innerIter  *chunk.Iterator4Slice
 
-	joiner      joiner
-	isOuterJoin bool
+	memTracker *memory.Tracker // track memory usage.
 
-	requiredRows int64
+	cancelFunc context.CancelFunc
+	finished   *atomic.Value
 
-	indexRanges   ranger.MutableRanges
-	keyOff2IdxOff []int
-	innerPtrBytes [][]byte
+	stats *indexLookUpJoinRuntimeStats
+
+	resultCh <-chan *lookUpJoinTask
 
 	// lastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
 	lastColHelper *plannercore.ColWithCmpFuncManager
 
-	memTracker *memory.Tracker // track memory usage.
+	outerCtx      outerCtx
+	keyOff2IdxOff []int
+	innerPtrBytes [][]byte
 
-	stats    *indexLookUpJoinRuntimeStats
-	finished *atomic.Value
+	innerCtx innerCtx
+
+	requiredRows int64
+
+	isOuterJoin bool
+
 	prepared bool
 }
 
@@ -111,52 +116,54 @@ type innerCtx struct {
 
 type lookUpJoinTask struct {
 	outerResult *chunk.List
-	outerMatch  [][]bool
 
-	innerResult       *chunk.List
+	innerResult *chunk.List
+	lookupMap   *mvmap.MVMap
+
+	doneCh chan error
+
+	memTracker *memory.Tracker // track memory usage.
+	outerMatch [][]bool
+
 	encodedLookUpKeys []*chunk.Chunk
-	lookupMap         *mvmap.MVMap
 	matchedInners     []chunk.Row
 
-	doneCh   chan error
 	cursor   chunk.RowPtr
 	hasMatch bool
 	hasNull  bool
-
-	memTracker *memory.Tracker // track memory usage.
 }
 
 type outerWorker struct {
-	outerCtx
-
-	lookup *IndexLookUpJoin
-
 	ctx      sessionctx.Context
 	executor Executor
 
-	maxBatchSize int
-	batchSize    int
+	lookup *IndexLookUpJoin
 
 	resultCh chan<- *lookUpJoinTask
 	innerCh  chan<- *lookUpJoinTask
 
 	parentMemTracker *memory.Tracker
+	outerCtx
+
+	maxBatchSize int
+	batchSize    int
 }
 
 type innerWorker struct {
-	innerCtx
+	ctx sessionctx.Context
 
 	taskCh      <-chan *lookUpJoinTask
-	outerCtx    outerCtx
-	ctx         sessionctx.Context
 	executorChk *chunk.Chunk
 	lookup      *IndexLookUpJoin
 
-	indexRanges           []*ranger.Range
 	nextColCompareFilters *plannercore.ColWithCmpFuncManager
-	keyOff2IdxOff         []int
 	stats                 *innerWorkerRuntimeStats
 	memTracker            *memory.Tracker
+	outerCtx              outerCtx
+
+	indexRanges   []*ranger.Range
+	keyOff2IdxOff []int
+	innerCtx
 }
 
 // Open implements the Executor interface.

@@ -41,12 +41,13 @@ import (
 
 // AnalyzeIndexExec represents analyze index push down executor.
 type AnalyzeIndexExec struct {
+	result       distsql.SelectResult
+	countNullRes distsql.SelectResult
+
+	idxInfo *model.IndexInfo
 	baseAnalyzeExec
 
-	idxInfo        *model.IndexInfo
 	isCommonHandle bool
-	result         distsql.SelectResult
-	countNullRes   distsql.SelectResult
 }
 
 func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults {

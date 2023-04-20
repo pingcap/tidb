@@ -66,11 +66,11 @@ func getTiFlashStores(ctx sessionctx.Context) ([]infoschema.ServerInfo, error) {
 type CompactTableTiFlashExec struct {
 	baseExecutor
 
+	tikvStore tikv.Storage
+
 	tableInfo    *model.TableInfo
 	partitionIDs []int64
 	done         bool
-
-	tikvStore tikv.Storage
 }
 
 // Next implements the Executor Next interface.
@@ -117,16 +117,16 @@ func (e *CompactTableTiFlashExec) doCompact(execCtx context.Context) error {
 
 // storeCompactTask compacts a logical table described by parentExec in a targetStore.
 type storeCompactTask struct {
-	ctx         context.Context // Maybe cancelled by other tasks, or parentExec is killed.
-	parentExec  *CompactTableTiFlashExec
-	targetStore infoschema.ServerInfo
-
 	startAt time.Time
+
+	lastProgressOutputAt time.Time
+	ctx                  context.Context // Maybe cancelled by other tasks, or parentExec is killed.
+	parentExec           *CompactTableTiFlashExec
+	targetStore          infoschema.ServerInfo
 
 	// Fields below are used to output the progress in the log.
 	allPhysicalTables       int
 	compactedPhysicalTables int
-	lastProgressOutputAt    time.Time
 }
 
 func (task *storeCompactTask) work() error {

@@ -39,10 +39,10 @@ var _ Executor = &TableSampleExecutor{}
 type TableSampleExecutor struct {
 	baseExecutor
 
-	table   table.Table
-	startTS uint64
+	table table.Table
 
 	sampler rowSampler
+	startTS uint64
 }
 
 // Open initializes necessary variables for using this executor.
@@ -75,15 +75,16 @@ type rowSampler interface {
 type tableRegionSampler struct {
 	ctx        sessionctx.Context
 	table      table.Table
-	startTS    uint64
-	partTables []table.PartitionedTable
 	schema     *expression.Schema
 	fullSchema *expression.Schema
-	isDesc     bool
+
+	rowMap     map[int64]types.Datum
+	partTables []table.PartitionedTable
 	retTypes   []*types.FieldType
 
-	rowMap       map[int64]types.Datum
 	restKVRanges []kv.KeyRange
+	startTS      uint64
+	isDesc       bool
 	isFinished   bool
 }
 
@@ -325,12 +326,12 @@ type sampleKV struct {
 }
 
 type sampleFetcher struct {
-	workerID    int
-	concurrency int
-	kvChan      chan *sampleKV
 	err         error
 	snapshot    kv.Snapshot
+	kvChan      chan *sampleKV
 	ranges      []kv.KeyRange
+	workerID    int
+	concurrency int
 }
 
 func (s *sampleFetcher) run() {
@@ -369,9 +370,9 @@ func (s *sampleFetcher) run() {
 }
 
 type sampleSyncer struct {
+	consumeFn  func(handle kv.Handle, value []byte) error
 	fetchers   []*sampleFetcher
 	totalCount int
-	consumeFn  func(handle kv.Handle, value []byte) error
 }
 
 func (s *sampleSyncer) sync() error {

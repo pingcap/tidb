@@ -51,29 +51,33 @@ import (
 type IndexLookUpMergeJoin struct {
 	baseExecutor
 
+	indexRanges ranger.MutableRanges
+
+	task *lookUpMergeJoinTask
+
 	resultCh   <-chan *lookUpMergeJoinTask
 	cancelFunc context.CancelFunc
 	workerWg   *sync.WaitGroup
 
-	outerMergeCtx outerMergeCtx
-	innerMergeCtx innerMergeCtx
-
-	joiners           []joiner
-	joinChkResourceCh []chan *chunk.Chunk
-	isOuterJoin       bool
-
-	requiredRows int64
-
-	task *lookUpMergeJoinTask
-
-	indexRanges   ranger.MutableRanges
-	keyOff2IdxOff []int
+	memTracker *memory.Tracker // track memory usage
 
 	// lastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
 	lastColHelper *plannercore.ColWithCmpFuncManager
 
-	memTracker *memory.Tracker // track memory usage
-	prepared   bool
+	innerMergeCtx innerMergeCtx
+
+	outerMergeCtx outerMergeCtx
+	keyOff2IdxOff []int
+
+	joinChkResourceCh []chan *chunk.Chunk
+
+	joiners []joiner
+
+	requiredRows int64
+
+	isOuterJoin bool
+
+	prepared bool
 }
 
 type outerMergeCtx struct {
@@ -81,8 +85,8 @@ type outerMergeCtx struct {
 	joinKeys      []*expression.Column
 	keyCols       []int
 	filter        expression.CNFExprs
-	needOuterSort bool
 	compareFuncs  []expression.CompareFunc
+	needOuterSort bool
 }
 
 type innerMergeCtx struct {
@@ -93,37 +97,33 @@ type innerMergeCtx struct {
 	keyCollators            []collate.Collator
 	compareFuncs            []expression.CompareFunc
 	colLens                 []int
-	desc                    bool
 	keyOff2KeyOffOrderByIdx []int
+	desc                    bool
 }
 
 type lookUpMergeJoinTask struct {
-	outerResult   *chunk.List
+	innerIter chunk.Iterator
+
+	sameKeyIter chunk.Iterator
+
+	doneErr     error
+	outerResult *chunk.List
+
+	innerResult *chunk.Chunk
+	results     chan *indexMergeJoinResult
+
+	memTracker    *memory.Tracker
 	outerMatch    [][]bool
 	outerOrderIdx []chunk.RowPtr
 
-	innerResult *chunk.Chunk
-	innerIter   chunk.Iterator
-
 	sameKeyInnerRows []chunk.Row
-	sameKeyIter      chunk.Iterator
-
-	doneErr error
-	results chan *indexMergeJoinResult
-
-	memTracker *memory.Tracker
 }
 
 type outerMergeWorker struct {
-	outerMergeCtx
-
-	lookup *IndexLookUpMergeJoin
-
 	ctx      sessionctx.Context
 	executor Executor
 
-	maxBatchSize int
-	batchSize    int
+	lookup *IndexLookUpMergeJoin
 
 	nextColCompareFilters *plannercore.ColWithCmpFuncManager
 
@@ -131,23 +131,29 @@ type outerMergeWorker struct {
 	innerCh  chan<- *lookUpMergeJoinTask
 
 	parentMemTracker *memory.Tracker
+	outerMergeCtx
+
+	maxBatchSize int
+	batchSize    int
 }
 
 type innerMergeWorker struct {
+	ctx       sessionctx.Context
+	innerExec Executor
+	joiner    joiner
+
+	taskCh                <-chan *lookUpMergeJoinTask
+	joinChkResourceCh     chan *chunk.Chunk
+	nextColCompareFilters *plannercore.ColWithCmpFuncManager
 	innerMergeCtx
 
-	taskCh            <-chan *lookUpMergeJoinTask
-	joinChkResourceCh chan *chunk.Chunk
-	outerMergeCtx     outerMergeCtx
-	ctx               sessionctx.Context
-	innerExec         Executor
-	joiner            joiner
-	retFieldTypes     []*types.FieldType
+	outerMergeCtx outerMergeCtx
+	retFieldTypes []*types.FieldType
 
-	maxChunkSize          int
-	indexRanges           []*ranger.Range
-	nextColCompareFilters *plannercore.ColWithCmpFuncManager
-	keyOff2IdxOff         []int
+	indexRanges   []*ranger.Range
+	keyOff2IdxOff []int
+
+	maxChunkSize int
 }
 
 type indexMergeJoinResult struct {

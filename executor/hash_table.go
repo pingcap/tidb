@@ -455,7 +455,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 				// collect the null rows to slice.
 				rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
 				// do not directly ref the null bits map here, because the bit map will be reset and reused in next batch of chunk data.
-				c.hashNANullBucket.entries = append(c.hashNANullBucket.entries, &naEntry{rowPtr, c.hCtx.naColNullBitMap[i].Clone()})
+				c.hashNANullBucket.entries = append(c.hashNANullBucket.entries, &naEntry{c.hCtx.naColNullBitMap[i].Clone(), rowPtr})
 			} else {
 				// insert the not-null rows to hash table.
 				key := c.hCtx.hashVals[i].Sum64()
@@ -523,13 +523,13 @@ const (
 )
 
 type entry struct {
-	ptr  chunk.RowPtr
 	next *entry
+	ptr  chunk.RowPtr
 }
 
 type naEntry struct {
-	ptr        chunk.RowPtr
 	nullBitMap *bitmap.ConcurrentBitmap
+	ptr        chunk.RowPtr
 }
 
 type entryStore struct {
@@ -640,8 +640,8 @@ func (ht *unsafeHashTable) Iter(traverse func(key uint64, e *entry)) {
 
 // concurrentMapHashTable is a concurrent hash table built on concurrentMap
 type concurrentMapHashTable struct {
-	hashMap    concurrentMap
 	entryStore *entryStore
+	hashMap    concurrentMap
 	length     uint64
 	memDelta   int64 // the memory delta of the concurrentMapHashTable since the last calling GetAndCleanMemoryDelta()
 }

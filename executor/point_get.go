@@ -117,32 +117,36 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 type PointGetExecutor struct {
 	baseExecutor
 
-	tblInfo          *model.TableInfo
-	handle           kv.Handle
-	idxInfo          *model.IndexInfo
-	partInfo         *model.PartitionDefinition
+	txn      kv.Transaction
+	handle   kv.Handle
+	snapshot kv.Snapshot
+	partInfo *model.PartitionDefinition
+
+	stats   *runtimeStatsWithSnapshot
+	idxInfo *model.IndexInfo
+
+	tblInfo    *model.TableInfo
+	rowDecoder *rowcodec.ChunkDecoder
+
+	txnScope         string
+	readReplicaScope string
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
-	txnScope         string
-	readReplicaScope string
-	isStaleness      bool
-	txn              kv.Transaction
-	snapshot         kv.Snapshot
-	done             bool
-	lock             bool
-	lockWaitTime     int64
-	rowDecoder       *rowcodec.ChunkDecoder
 
 	columns []*model.ColumnInfo
-	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
-	// to make sure we can compute the virtual column in right order.
-	virtualColumnIndex []int
 
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *runtimeStatsWithSnapshot
+	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
+	// to make sure we can compute the virtual column in right order.
+	virtualColumnIndex []int
+
+	lockWaitTime int64
+	lock         bool
+	done         bool
+	isStaleness  bool
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field

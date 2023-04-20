@@ -67,9 +67,9 @@ func getAnalyzePanicErr(r interface{}) error {
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup
 // Please add all goroutine count when to `Add` to avoid exiting in advance.
 type analyzeResultsNotifyWaitGroupWrapper struct {
-	sync.WaitGroup
 	notify chan *statistics.AnalyzeResults
-	cnt    atomic.Uint64
+	sync.WaitGroup
+	cnt atomic.Uint64
 }
 
 // NewAnalyzeResultsNotifyWaitGroupWrapper is to create analyzeResultsNotifyWaitGroupWrapper
@@ -99,9 +99,9 @@ func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
 // notifyErrorWaitGroupWrapper is a wrapper for sync.WaitGroup
 // Please add all goroutine count when to `Add` to avoid exiting in advance.
 type notifyErrorWaitGroupWrapper struct {
-	sync.WaitGroup
 	notify chan error
-	cnt    atomic.Uint64
+	sync.WaitGroup
+	cnt atomic.Uint64
 }
 
 // newNotifyErrorWaitGroupWrapper is to create notifyErrorWaitGroupWrapper

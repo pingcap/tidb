@@ -38,17 +38,19 @@ import (
 type DeleteExec struct {
 	baseExecutor
 
-	IsMultiTable bool
-	tblID2Table  map[int64]table.Table
+	tblID2Table map[int64]table.Table
 
-	// tblColPosInfos stores relationship between column ordinal to its table handle.
-	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
-	tblColPosInfos plannercore.TblColPosInfoSlice
-	memTracker     *memory.Tracker
+	memTracker *memory.Tracker
 	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
 	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
 	fkCascades map[int64][]*FKCascadeExec
+
+	// tblColPosInfos stores relationship between column ordinal to its table handle.
+	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
+	tblColPosInfos plannercore.TblColPosInfoSlice
+
+	IsMultiTable bool
 }
 
 // Next implements the Executor Next interface.

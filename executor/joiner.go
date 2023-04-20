@@ -216,20 +216,21 @@ const (
 
 type baseJoiner struct {
 	ctx          sessionctx.Context
-	conditions   []expression.Expression
-	defaultInner chunk.Row
-	outerIsRight bool
 	chk          *chunk.Chunk
+	defaultInner chunk.Row
 	shallowRow   chunk.MutRow
+	conditions   []expression.Expression
 	selected     []bool
 	isNull       []bool
-	maxChunkSize int
 
 	// lUsed/rUsed show which columns are used by father for left child and right child.
 	// NOTE:
 	// 1. every columns are used if lUsed/rUsed is nil.
 	// 2. no columns are used if lUsed/rUsed is not nil but the size of lUsed/rUsed is 0.
 	lUsed, rUsed []int
+	maxChunkSize int
+
+	outerIsRight bool
 }
 
 func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum) {

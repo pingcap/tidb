@@ -46,16 +46,17 @@ type SplitIndexRegionExec struct {
 	baseExecutor
 
 	tableInfo      *model.TableInfo
-	partitionNames []model.CIStr
 	indexInfo      *model.IndexInfo
+	partitionNames []model.CIStr
 	lower          []types.Datum
 	upper          []types.Datum
-	num            int
 	valueLists     [][]types.Datum
 	splitIdxKeys   [][]byte
 
-	done bool
 	splitRegionResult
+	num int
+
+	done bool
 }
 
 // nolint:structcheck
@@ -323,17 +324,19 @@ func datumSliceToString(ds []types.Datum) string {
 type SplitTableRegionExec struct {
 	baseExecutor
 
+	handleCols core.HandleCols
+
 	tableInfo      *model.TableInfo
 	partitionNames []model.CIStr
 	lower          []types.Datum
 	upper          []types.Datum
-	num            int
-	handleCols     core.HandleCols
 	valueLists     [][]types.Datum
 	splitKeys      [][]byte
 
-	done bool
 	splitRegionResult
+	num int
+
+	done bool
 }
 
 // Open implements the Executor Open interface.
@@ -613,11 +616,10 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 // RegionMeta contains a region's peer detail
 type regionMeta struct {
 	region          *metapb.Region
-	leaderID        uint64
-	storeID         uint64 // storeID is the store ID of the leader region.
 	start           string
 	end             string
-	scattering      bool
+	leaderID        uint64
+	storeID         uint64 // storeID is the store ID of the leader region.
 	writtenBytes    uint64
 	readBytes       uint64
 	approximateSize int64
@@ -625,6 +627,7 @@ type regionMeta struct {
 
 	// this is for propagating scheduling info for this region
 	physicalID int64
+	scattering bool
 }
 
 func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
@@ -728,10 +731,10 @@ func decodeRegionsKey(regions []regionMeta, tablePrefix, recordPrefix, indexPref
 }
 
 type regionKeyDecoder struct {
-	physicalTableID      int64
 	tablePrefix          []byte
 	recordPrefix         []byte
 	indexPrefix          []byte
+	physicalTableID      int64
 	indexID              int64
 	hasUnsignedIntHandle bool
 }
