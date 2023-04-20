@@ -1317,7 +1317,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore meta files")
 	}
 
-	rewriteRules := updateRewriteRules(schemasReplace)
+	rewriteRules := initRewriteRules(schemasReplace)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
 	if err := client.RangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
@@ -1694,7 +1694,7 @@ func InitSchemasMap(
 	return backupMeta.GetDbMaps(), nil
 }
 
-func updateRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore.RewriteRules {
+func initRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore.RewriteRules {
 	rules := make(map[int64]*restore.RewriteRules)
 	filter := schemasReplace.TableFilter
 
