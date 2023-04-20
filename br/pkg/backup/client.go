@@ -989,13 +989,13 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
-			log.Error("find region failed", zap.Error(err), zap.Reflect("region", region))
+			logutil.CL(ctx).Error("find region failed", zap.Error(err), zap.Reflect("region", region))
 			time.Sleep(time.Millisecond * time.Duration(100*i))
 			continue
 		}
 		if len(targetStoreIds) == 0 {
 			if region.Leader != nil {
-				log.Info("find leader",
+				logutil.CL(ctx).Info("find leader",
 					zap.Reflect("Leader", region.Leader), logutil.Key("key", key))
 				return region.Leader, nil
 			}
@@ -1008,17 +1008,17 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 			}
 			if len(candidates) > 0 {
 				peer := candidates[rand.Intn(len(candidates))]
-				log.Info("find target peer for backup",
+				logutil.CL(ctx).Info("find target peer for backup",
 					zap.Reflect("Peer", peer), logutil.Key("key", key))
 				return peer, nil
 			}
 		}
 
-		log.Warn("fail to find a target peer", logutil.Key("key", key))
+		logutil.CL(ctx).Warn("fail to find a target peer", logutil.Key("key", key))
 		time.Sleep(time.Millisecond * time.Duration(1000*i))
 		continue
 	}
-	log.Error("can not find a valid target peer", logutil.Key("key", key))
+	logutil.CL(ctx).Error("can not find a valid target peer", logutil.Key("key", key))
 	if len(targetStoreIds) == 0 {
 		return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find a valid leader for key %s", key)
 	}
@@ -1142,7 +1142,7 @@ func (bc *Client) fineGrainedBackup(
 			log.Info("handle fine grained", zap.Int("backoffMs", ms))
 			err := bo.BackOff()
 			if err != nil {
-				return errors.Trace(err)
+				return errors.Annotatef(err, "at fine-grained backup, remained ranges = %d", pr.Res.Len())
 			}
 		}
 	}
