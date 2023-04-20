@@ -159,23 +159,29 @@ else
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./tidb-server
 endif
 
+init-submodule:
+	git submodule init && git submodule update --force
+
 enterprise-prepare:
-	git submodule init && git submodule update && cd extension/enterprise/generate && $(GO) generate -run genfile main.go
+	cd extension/enterprise/generate && $(GO) generate -run genfile main.go
 
 enterprise-clear:
 	cd extension/enterprise/generate && $(GO) generate -run clear main.go
 
-enterprise-docker: enterprise-prepare
+enterprise-docker: init-submodule enterprise-prepare
 	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile.enterprise .
 
 enterprise-server-build:
 ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server tidb-server/main.go
 else
-	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o '$(TARGET)' tidb-server/main.go
 endif
 
-enterprise-server: enterprise-prepare enterprise-server-build
+enterprise-server:
+	@make init-submodule
+	@make enterprise-prepare
+	@make enterprise-server-build
 
 server_check:
 ifeq ($(TARGET), "")
