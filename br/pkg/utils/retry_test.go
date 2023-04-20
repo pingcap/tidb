@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -16,6 +17,7 @@ import (
 func TestRetryAdapter(t *testing.T) {
 	req := require.New(t)
 
+	begin := time.Now()
 	bo := utils.AdaptTiKVBackoffer(context.Background(), 200, errors.New("everything is alright"))
 	// This should sleep for 100ms.
 	bo.Inner().Backoff(tikv.BoTiKVRPC(), errors.New("TiKV is in a deep dream"))
@@ -42,4 +44,6 @@ func TestRetryAdapter(t *testing.T) {
 
 	bo.RequestBackOff(150)
 	req.ErrorContains(bo.BackOff(), "everything is alright", "total = %d / %d", bo.TotalSleepInMS(), bo.MaxSleepInMS())
+
+	req.Greater(time.Since(begin), 200*time.Millisecond)
 }
