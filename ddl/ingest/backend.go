@@ -125,8 +125,6 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 	return nil
 }
 
-const importThreshold = 0.85
-
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
 func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported bool, err error) {
 	ei, exist := bc.Load(indexID)

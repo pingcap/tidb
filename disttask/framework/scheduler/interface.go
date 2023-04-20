@@ -53,6 +53,8 @@ type Scheduler interface {
 	SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error)
 	// CleanupSubtaskExecEnv is used to clean up the environment for the subtask executor.
 	CleanupSubtaskExecEnv(context.Context) error
+	// OnSubtaskFinished is used to handle the subtask when it is finished.
+	OnSubtaskFinished(ctx context.Context, subtask []byte) error
 	// Rollback is used to rollback all subtasks.
 	Rollback(context.Context) error
 }
