@@ -159,6 +159,10 @@
     "name": "TestMPPRightSemiJoin",
     "cases": [
       "set @@session.tidb_allow_mpp=true",
+      "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+      "set @@session.tidb_broadcast_join_threshold_size=0",
+      "set @@session.tidb_broadcast_join_threshold_count=0",
       "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)"
     ]
   },
