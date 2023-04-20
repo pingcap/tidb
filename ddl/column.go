@@ -1385,6 +1385,10 @@ func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
+		// Set source to lossyDDLChangeSource to avoid replication of this transaction in TiCDC.
+		// Now we only care about this column backfilling, so we can use 1024 hard code here.
+		const lossyDDLChangeSource = 1024
+		txn.SetOption(kv.TxnSource, lossyDDLChangeSource)
 		txn.SetOption(kv.Priority, handleRange.priority)
 		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
