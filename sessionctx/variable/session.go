@@ -1870,10 +1870,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 	}
-	// Always disable late materialization for disaggregated TiFlash until it is supported.
-	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		vars.EnableLateMaterialization = false
-	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,

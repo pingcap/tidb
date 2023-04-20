@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -214,7 +213,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
-	if !config.GetGlobalConfig().DisaggregatedTiFlash && p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
+	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
 		buffer.WriteString("pushed down filter:")
 		if len(p.lateMaterializationFilterCondition) > 0 {
 			if normalized {
