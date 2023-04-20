@@ -50,6 +50,14 @@ func TestDoneTaskKeeper(t *testing.T) {
 }
 
 func TestPickBackfillType(t *testing.T) {
+	originMgr := ingest.LitBackCtxMgr
+	originInit := ingest.LitInitialized
+	originFastReorg := variable.EnableFastReorg.Load()
+	defer func() {
+		ingest.LitBackCtxMgr = originMgr
+		ingest.LitInitialized = originInit
+		variable.EnableFastReorg.Store(originFastReorg)
+	}()
 	mockMgr := ingest.NewMockBackendCtxMgr(
 		func() sessionctx.Context {
 			return nil
