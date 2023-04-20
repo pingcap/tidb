@@ -668,6 +668,7 @@ func BuildBackupSchemas(
 			}
 			tableInfo.Indices = tableInfo.Indices[:n]
 
+			logger.Info("add table into schemas")
 			fn(dbInfo, tableInfo)
 			hasTable = true
 
@@ -679,7 +680,7 @@ func BuildBackupSchemas(
 		}
 
 		if !hasTable {
-			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
+			log.Info("add empty database into schemas", zap.Stringer("db", dbInfo.Name))
 			fn(dbInfo, nil)
 		}
 	}

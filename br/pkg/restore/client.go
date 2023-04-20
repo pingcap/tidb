@@ -1695,7 +1695,11 @@ func (rc *Client) execChecksum(
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	logger.Info("success in validate checksum")
+	logger.Info("success in validate checksum",
+		zap.Uint64("Crc64Xor", item.Crc64xor),
+		zap.Uint64("TotalKvs", item.TotalKvs),
+		zap.Uint64("TotalBytes", item.TotalBytes),
+	)
 	loadStatCh <- &tbl
 	return nil
 }
