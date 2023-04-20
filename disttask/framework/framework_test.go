@@ -58,12 +58,16 @@ func (t *testScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return 
 
 func (t *testScheduler) Rollback(_ context.Context) error { return nil }
 
-func (t *testScheduler) SplitSubtask(subtask []byte) ([]proto.MinimalTask, error) {
+func (t *testScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	return []proto.MinimalTask{
 		testMiniTask{},
 		testMiniTask{},
 		testMiniTask{},
 	}, nil
+}
+
+func (t *testScheduler) OnSubtaskFinished(_ context.Context, _ []byte) error {
+	return nil
 }
 
 type testSubtaskExecutor struct {

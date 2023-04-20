@@ -117,7 +117,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 }
 
 // SplitSubtask implements the Scheduler interface.
-func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalTask, error) {
+func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
 	d := b.d
@@ -184,6 +184,11 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 	ingestScheduler.close(false)
 	// TODO: unsafe import.
 	return nil, consumer.getResult()
+}
+
+// OnSubtaskFinished implements the Scheduler interface.
+func (*backfillSchedulerHandle) OnSubtaskFinished(context.Context, []byte) error {
+	return nil
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler interface.

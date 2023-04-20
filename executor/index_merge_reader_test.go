@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestSingleTableRead(t *testing.T) {
@@ -795,7 +797,7 @@ func TestIntersectionMemQuota(t *testing.T) {
 	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("set @@tidb_mem_quota_query = 4000")
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024")
-	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
 }
 
 func setupPartitionTableHelper(tk *testkit.TestKit) {
@@ -936,4 +938,106 @@ func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
 	err = tk.QueryToErr(sql)
 	require.Contains(t, err.Error(), "testIndexMergePartialIndexWorkerCoprLeak")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak"))
+}
+
+type valueStruct struct {
+	a int
+	b int
+	c int
+}
+
+func getResult(values []*valueStruct, a int, b int, limit int, desc bool) []*valueStruct {
+	ret := make([]*valueStruct, 0)
+	for _, value := range values {
+		if value.a == a || value.b == b {
+			ret = append(ret, value)
+		}
+	}
+	slices.SortFunc(ret, func(a, b *valueStruct) bool {
+		if desc {
+			return a.c > b.c
+		}
+		return a.c < b.c
+	})
+	if len(ret) > limit {
+		return ret[:limit]
+	}
+	return ret
+}
+
+func TestOrderByWithLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table thandle(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c))")
+	tk.MustExec("create table tpk(a int, b int, c int, d int auto_increment, primary key(d), index idx_ac(a, c), index idx_bc(b, c))")
+	tk.MustExec("create table tcommon(a int, b int, c int, d int auto_increment, primary key(a, c, d), index idx_ac(a, c), index idx_bc(b, c))")
+	tk.MustExec("create table thash(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c)) PARTITION BY HASH (`a`) PARTITIONS 4")
+
+	valueSlice := make([]*valueStruct, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		a := rand.Intn(32)
+		b := rand.Intn(32)
+		c := rand.Intn(32)
+		tk.MustExec(fmt.Sprintf("insert into thandle values (%v, %v, %v)", a, b, c))
+		tk.MustExec(fmt.Sprintf("insert into tpk(a,b,c) values (%v, %v, %v)", a, b, c))
+		tk.MustExec(fmt.Sprintf("insert into tcommon(a,b,c) values (%v, %v, %v)", a, b, c))
+		tk.MustExec(fmt.Sprintf("insert into thash(a,b,c) values (%v, %v, %v)", a, b, c))
+		valueSlice = append(valueSlice, &valueStruct{a, b, c})
+	}
+
+	tk.MustExec("analyze table thandle")
+	tk.MustExec("analyze table tpk")
+	tk.MustExec("analyze table tcommon")
+	tk.MustExec("analyze table thash")
+
+	for i := 0; i < 100; i++ {
+		a := rand.Intn(32)
+		b := rand.Intn(32)
+		limit := rand.Intn(10) + 1
+		queryHandle := fmt.Sprintf("select /*+ use_index_merge(thandle, idx_ac, idx_bc) */ * from thandle where a = %v or b = %v order by c limit %v", a, b, limit)
+		resHandle := tk.MustQuery(queryHandle).Rows()
+		require.True(t, tk.HasPlan(queryHandle, "IndexMerge"))
+		require.False(t, tk.HasPlan(queryHandle, "TopN"))
+
+		queryPK := fmt.Sprintf("select /*+ use_index_merge(tpk, idx_ac, idx_bc) */ * from tpk where a = %v or b = %v order by c limit %v", a, b, limit)
+		resPK := tk.MustQuery(queryPK).Rows()
+		require.True(t, tk.HasPlan(queryPK, "IndexMerge"))
+		require.False(t, tk.HasPlan(queryPK, "TopN"))
+
+		queryCommon := fmt.Sprintf("select /*+ use_index_merge(tcommon, idx_ac, idx_bc) */ * from tcommon where a = %v or b = %v order by c limit %v", a, b, limit)
+		resCommon := tk.MustQuery(queryCommon).Rows()
+		require.True(t, tk.HasPlan(queryCommon, "IndexMerge"))
+		require.False(t, tk.HasPlan(queryCommon, "TopN"))
+
+		queryTableScan := fmt.Sprintf("select /*+ use_index_merge(tcommon, primary, idx_bc) */ * from tcommon where a = %v or b = %v order by c limit %v", a, b, limit)
+		resTableScan := tk.MustQuery(queryTableScan).Rows()
+		require.True(t, tk.HasPlan(queryTableScan, "IndexMerge"))
+		require.True(t, tk.HasPlan(queryTableScan, "TableRangeScan"))
+		require.False(t, tk.HasPlan(queryTableScan, "TopN"))
+
+		queryHash := fmt.Sprintf("select /*+ use_index_merge(thash, idx_ac, idx_bc) */ * from thash where a = %v or b = %v order by c limit %v", a, b, limit)
+		resHash := tk.MustQuery(queryHash).Rows()
+		require.True(t, tk.HasPlan(queryHash, "IndexMerge"))
+		// not support partition table now.
+		require.True(t, tk.HasPlan(queryHash, "TopN"))
+
+		sliceRes := getResult(valueSlice, a, b, limit, false)
+
+		require.Equal(t, len(sliceRes), len(resHandle))
+		require.Equal(t, len(sliceRes), len(resPK))
+		require.Equal(t, len(sliceRes), len(resCommon))
+		require.Equal(t, len(sliceRes), len(resTableScan))
+		require.Equal(t, len(sliceRes), len(resHash))
+		for i := range sliceRes {
+			expectValue := fmt.Sprintf("%v", sliceRes[i].c)
+			// Only check column `c`
+			require.Equal(t, expectValue, resHandle[i][2])
+			require.Equal(t, expectValue, resPK[i][2])
+			require.Equal(t, expectValue, resCommon[i][2])
+			require.Equal(t, expectValue, resTableScan[i][2])
+			require.Equal(t, expectValue, resHash[i][2])
+		}
+	}
 }

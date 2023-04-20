@@ -124,9 +124,18 @@ func (m *MockScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 }
 
 // SplitSubtask implements Scheduler.SplitSubtask.
-func (m *MockScheduler) SplitSubtask(subtask []byte) ([]proto.MinimalTask, error) {
-	args := m.Called(subtask)
+func (m *MockScheduler) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+	args := m.Called(ctx, subtask)
+	if args.Error(1) != nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).([]proto.MinimalTask), nil
+}
+
+// OnSubtaskFinished implements Scheduler.OnSubtaskFinished.
+func (m *MockScheduler) OnSubtaskFinished(ctx context.Context, subtask []byte) error {
+	args := m.Called(ctx, subtask)
+	return args.Error(0)
 }
 
 // CleanupSubtaskExecEnv implements Scheduler.CleanupSubtaskExecEnv.

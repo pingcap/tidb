@@ -47,9 +47,15 @@ type InternalScheduler interface {
 // Scheduler defines the interface of a scheduler.
 // User should implement this interface to define their own scheduler.
 type Scheduler interface {
+	// InitSubtaskExecEnv is used to initialize the environment for the subtask executor.
 	InitSubtaskExecEnv(context.Context) error
-	SplitSubtask(subtask []byte) ([]proto.MinimalTask, error)
+	// SplitSubtask is used to split the subtask into multiple minimal tasks.
+	SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error)
+	// CleanupSubtaskExecEnv is used to clean up the environment for the subtask executor.
 	CleanupSubtaskExecEnv(context.Context) error
+	// OnSubtaskFinished is used to handle the subtask when it is finished.
+	OnSubtaskFinished(ctx context.Context, subtask []byte) error
+	// Rollback is used to rollback all subtasks.
 	Rollback(context.Context) error
 }
 

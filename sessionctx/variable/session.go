@@ -1318,6 +1318,9 @@ type SessionVars struct {
 	// PlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
 	PlanCacheMaxPlanSize uint64
 
+	// SessionPlanCacheSize controls the size of session plan cache.
+	SessionPlanCacheSize uint64
+
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
 	ConstraintCheckInPlacePessimistic bool
@@ -1338,6 +1341,10 @@ type SessionVars struct {
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
+
+	// InPlanReplayer means we are now executing a statement for a PLAN REPLAYER SQL.
+	// Note that PLAN REPLAYER CAPTURE is not included here.
+	InPlanReplayer bool
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
@@ -1416,6 +1423,9 @@ type SessionVars struct {
 	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
+
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1860,10 +1870,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 	}
-	// Always disable late materialization for disaggregated TiFlash until it is supported.
-	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		vars.EnableLateMaterialization = false
-	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
@@ -2224,7 +2230,7 @@ func (k planCacheStmtKey) Hash() []byte {
 // AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
 func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) {
 	if s.nonPreparedPlanCacheStmts == nil {
-		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.NonPreparedPlanCacheSize), 0, 0)
+		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
 	}
 	s.nonPreparedPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
 }
@@ -2938,7 +2944,6 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	StatsInfos        map[string]uint64
 	CopTasks          *stmtctx.CopTasksDetails
 	ExecDetail        execdetails.ExecDetails
 	MemMax            int64
@@ -2962,8 +2967,7 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
-	// table -> name -> status
-	StatsLoadStatus   map[string]map[string]string
+	UsedStats         map[int64]*stmtctx.UsedStatsInfoForTable
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
 }
@@ -3051,26 +3055,23 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.Digest) > 0 {
 		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if len(logItems.StatsInfos) > 0 {
+	if len(logItems.UsedStats) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
-		vStr := ""
-		for k, v := range logItems.StatsInfos {
-			if v == 0 {
-				vStr = "pseudo"
-			} else {
-				vStr = strconv.FormatUint(v, 10)
+		keys := maps.Keys(logItems.UsedStats)
+		slices.Sort(keys)
+		for _, id := range keys {
+			usedStatsForTbl := logItems.UsedStats[id]
+			if usedStatsForTbl == nil {
+				continue
 			}
 			if firstComma {
-				buf.WriteString("," + k + ":" + vStr)
-			} else {
-				buf.WriteString(k + ":" + vStr)
-				firstComma = true
+				buf.WriteString(",")
 			}
-			if v != 0 && len(logItems.StatsLoadStatus[k]) > 0 {
-				writeStatsLoadStatusItems(&buf, logItems.StatsLoadStatus[k])
-			}
+			usedStatsForTbl.WriteToSlowLog(&buf)
+			firstComma = true
 		}
+
 		buf.WriteString("\n")
 	}
 	if logItems.CopTasks != nil {
@@ -3178,22 +3179,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	return buf.String()
-}
-
-func writeStatsLoadStatusItems(buf *bytes.Buffer, loadStatus map[string]string) {
-	if len(loadStatus) > 0 {
-		buf.WriteString("[")
-		firstComma := false
-		for name, status := range loadStatus {
-			if firstComma {
-				buf.WriteString("," + name + ":" + status)
-			} else {
-				buf.WriteString(name + ":" + status)
-				firstComma = true
-			}
-		}
-		buf.WriteString("]")
-	}
 }
 
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"

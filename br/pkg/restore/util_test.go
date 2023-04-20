@@ -5,6 +5,8 @@ package restore_test
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
+	"math/rand"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -510,4 +512,80 @@ func TestSelectRegionLeader(t *testing.T) {
 	storeScore := make(map[uint64]int, len(peer))
 	leader = restore.SelectRegionLeader(storeScore, peer)
 	require.Equal(t, validPeer3, leader)
+}
+
+func TestLogFilesSkipMap(t *testing.T) {
+	var (
+		metaNum  = 2
+		groupNum = 4
+		fileNum  = 1000
+
+		ratio = 0.1
+	)
+
+	for ratio < 1 {
+		skipmap := restore.NewLogFilesSkipMap()
+		nativemap := make(map[string]map[int]map[int]struct{})
+		count := 0
+		for i := 0; i < int(ratio*float64(metaNum*groupNum*fileNum)); i++ {
+			metaKey := fmt.Sprint(rand.Intn(metaNum))
+			groupOff := rand.Intn(groupNum)
+			fileOff := rand.Intn(fileNum)
+
+			mp, exists := nativemap[metaKey]
+			if !exists {
+				mp = make(map[int]map[int]struct{})
+				nativemap[metaKey] = mp
+			}
+			gp, exists := mp[groupOff]
+			if !exists {
+				gp = make(map[int]struct{})
+				mp[groupOff] = gp
+			}
+			if _, exists := gp[fileOff]; !exists {
+				gp[fileOff] = struct{}{}
+				skipmap.Insert(metaKey, groupOff, fileOff)
+				count += 1
+			}
+		}
+
+		ncount := 0
+		for metaKey, mp := range nativemap {
+			for groupOff, gp := range mp {
+				for fileOff := range gp {
+					require.True(t, skipmap.NeedSkip(metaKey, groupOff, fileOff))
+					ncount++
+				}
+			}
+		}
+
+		require.Equal(t, count, ncount)
+
+		continueFunc := func(metaKey string, groupi, filei int) bool {
+			mp, exists := nativemap[metaKey]
+			if !exists {
+				return false
+			}
+			gp, exists := mp[groupi]
+			if !exists {
+				return false
+			}
+			_, exists = gp[filei]
+			return exists
+		}
+
+		for metai := 0; metai < metaNum; metai++ {
+			metaKey := fmt.Sprint(metai)
+			for groupi := 0; groupi < groupNum; groupi++ {
+				for filei := 0; filei < fileNum; filei++ {
+					if continueFunc(metaKey, groupi, filei) {
+						continue
+					}
+					require.False(t, skipmap.NeedSkip(metaKey, groupi, filei))
+				}
+			}
+		}
+
+		ratio = ratio * 2
+	}
 }

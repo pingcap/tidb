@@ -449,7 +449,9 @@ func (t *Tracker) Consume(bs int64) {
 				currentAction = nextAction
 				nextAction = currentAction.GetFallback()
 			}
-			logutil.BgLogger().Warn("global memory controller, lastAction", zap.Any("action", currentAction))
+			if action, ok := currentAction.(ActionCareInvoker); ok {
+				action.SetInvoker(Instance)
+			}
 			currentAction.Action(tracker)
 		}
 	}
@@ -475,7 +477,6 @@ func (t *Tracker) Consume(bs int64) {
 				}
 				oldTracker = MemUsageTop1Tracker.Load()
 			}
-			logutil.BgLogger().Error("global memory controller, update the Top1 session", zap.Int64("memUsage", memUsage), zap.Uint64("conn", sessionRootTracker.SessionID), zap.Uint64("limitSessMinSize", limitSessMinSize))
 		}
 	}
 

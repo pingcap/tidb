@@ -2520,6 +2520,7 @@ func TestIndexMergeOrderPushDown(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table t (a int, b int, c int, index idx(a, c), index idx2(b, c))")
+	tk.MustExec("create table tcommon (a int, b int, c int, primary key(a, c), index idx2(b, c))")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
