@@ -53,6 +53,10 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	LitMemRoot = mgr.memRoot
 	LitDiskRoot = mgr.diskRoot
 	LitDiskRoot.UpdateUsage()
+	err := LitDiskRoot.StartupCheck()
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] ingest backfill may not be available", zap.Error(err))
+	}
 	return mgr
 }
 
