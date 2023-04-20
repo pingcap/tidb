@@ -662,7 +662,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 
-		if job.MultiSchemaInfo == nil {
+		if job.MultiSchemaInfo == nil && tblInfo.GetPartitionInfo() != nil {
 			initDistReorg(job.ReorgMeta)
 		}
 	case model.StateWriteReorganization:
@@ -1760,8 +1760,24 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgIn
 func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		if t.Meta().Partition != nil && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			return executeDistGlobalTask(reorgInfo)
+		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+			err := executeDistGlobalTask(reorgInfo)
+			if err != nil {
+				return err
+			}
+			indexInfo := model.FindIndexInfoByID(t.Meta().Indices, reorgInfo.currElement.ID)
+			if indexInfo == nil {
+				return errors.New("unexpected error, can't find index info")
+			}
+			if indexInfo.Unique {
+				bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, reorgInfo.ID)
+				if err != nil {
+					return err
+				}
+				defer ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
+				return bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
+			}
+			return nil
 		}
 	}
 
@@ -1858,9 +1874,14 @@ func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			return nil
 		}
 
+		if found.State == proto.TaskStateReverted {
+			logutil.BgLogger().Error("[ddl] global task reverted", zap.Int64("taskID", globalTask.ID), zap.String("error", string(found.Error)))
+			return errors.New(string(found.Error))
+		}
+
 		// TODO: get the original error message.
-		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
-			return errors.Errorf("ddl task stopped with state %s", found.State)
+		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled {
+			return errors.Errorf("ddl task stopped with state %s, err %s", found.State, found.Error)
 		}
 	}
 }

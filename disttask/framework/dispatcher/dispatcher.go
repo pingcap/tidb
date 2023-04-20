@@ -193,40 +193,45 @@ func (d *dispatcher) DispatchTaskLoop() {
 	}
 }
 
-func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr string) {
+func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [][]byte) {
 	// TODO: Consider putting the following operations into a transaction.
 	// TODO: Consider collect some information about the tasks.
 	if gTask.State != proto.TaskStateReverting {
 		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateFailed)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
-			return false, ""
+			return false, nil
 		}
 		if cnt > 0 {
-			return false, proto.TaskStateFailed
+			subTaskErr, err = d.taskMgr.CollectSubTaskError(gTask.ID)
+			if err != nil {
+				logutil.BgLogger().Warn("collate subtask error failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
+				return false, nil
+			}
+			return false, subTaskErr
 		}
 
 		cnt, err = d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
-			return false, ""
+			return false, nil
 		}
 		if cnt > 0 {
 			logutil.BgLogger().Info("check task, subtasks aren't finished", zap.Int64("task ID", gTask.ID), zap.Int64("cnt", cnt))
-			return false, ""
+			return false, nil
 		}
-		return true, ""
+		return true, nil
 	}
 
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
 	if err != nil {
 		logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
-		return false, ""
+		return false, nil
 	}
 	if cnt > 0 {
-		return false, ""
+		return false, nil
 	}
-	return true, ""
+	return true, nil
 }
 
 // DetectTaskLoop monitors the status of the subtasks and processes them.
@@ -257,7 +262,7 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 			// TODO: Consider actively obtaining information about task completion.
 			stepIsFinished, errStr := d.probeTask(gTask)
 			// The global task isn't finished and failed.
-			if !stepIsFinished && errStr == "" {
+			if !stepIsFinished && len(errStr) == 0 {
 				logutil.BgLogger().Debug("detect task, this task keeps current state",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 				break
@@ -276,11 +281,11 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 	}
 }
 
-func (d *dispatcher) processFlow(gTask *proto.Task, errStr string) bool {
+func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) bool {
 	var err error
-	if errStr != "" {
+	if len(errStr) > 0 {
 		// Found an error when task is running.
-		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.String("err msg", errStr))
+		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.Any("err msg", errStr))
 		err = d.processErrFlow(gTask, errStr)
 	} else {
 		if gTask.State == proto.TaskStateReverting {
@@ -326,7 +331,7 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 	return err
 }
 
-func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error {
+func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d.ctx, d, gTask, receiveErr)
 	if err != nil {
