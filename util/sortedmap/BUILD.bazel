@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sortedmap",
+    srcs = [
+        "pebble_map.go",
+        "sorted_map.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/sortedmap",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/arena",
+        "@com_github_cockroachdb_pebble//:pebble",
+        "@com_github_cockroachdb_pebble//sstable",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+go_test(
+    name = "sortedmap_test",
+    timeout = "short",
+    srcs = [
+        "pebble_map_test.go",
+        "sorted_map_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":sortedmap",
+        "@com_github_cockroachdb_pebble//:pebble",
+        "@com_github_cockroachdb_pebble//vfs",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//slices",
+    ],
+)
