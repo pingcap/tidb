@@ -15,6 +15,7 @@ go_library(
         "//parser/ast",
         "//planner/cascades",
         "//planner/core",
+        "//planner/util/debugtrace",
         "//privilege",
         "//sessionctx",
         "//sessionctx/stmtctx",
