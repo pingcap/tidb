@@ -1585,6 +1585,9 @@ func TestNonPreparedPlanCacheDMLSwitch(t *testing.T) {
 	tk.MustExec(`select a from t where a < 2 for update`)
 	tk.MustExec(`select a from t where a < 2 for update`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @x:=1`)
+	tk.MustExec(`set @x:=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
 	tk.MustExec(`insert into t values (1)`)
