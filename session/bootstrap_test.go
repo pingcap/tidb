@@ -2049,6 +2049,36 @@ func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 	require.Equal(t, "ON", row.GetString(1))
 }
 
+func TestTiDBUpgradeToVer143(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ver142 := version142
+	seV142 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver142))
+	require.NoError(t, err)
+	mustExec(t, seV142, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver142))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV142)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver142), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV142)
+	require.NoError(t, err)
+	require.Less(t, int64(ver142), ver)
+	dom.Close()
+}
+
 func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 	ctx := context.Background()
 	store, _ := CreateStoreAndBootstrap(t)
