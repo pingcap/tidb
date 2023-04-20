@@ -33,11 +33,11 @@ type RestoreRunner = CheckpointRunner[RestoreKeyType, RestoreValueType]
 const (
 	CheckpointDataDirForRestoreFormat     = CheckpointDir + "/restore-%s/data"
 	CheckpointChecksumDirForRestoreFormat = CheckpointDir + "/restore-%s/checksum"
-	CheckpointMetaPathForRestore          = CheckpointDir + "/restore-%s/checkpoint.meta"
+	CheckpointMetaPathForRestoreFormat    = CheckpointDir + "/restore-%s/checkpoint.meta"
 )
 
 func getCheckpointMetaPathByName(taskName string) string {
-	return fmt.Sprintf(CheckpointMetaPathForRestore, taskName)
+	return fmt.Sprintf(CheckpointMetaPathForRestoreFormat, taskName)
 }
 
 func getCheckpointDataDirByName(taskName string) string {

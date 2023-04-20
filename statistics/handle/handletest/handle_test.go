@@ -571,7 +571,7 @@ func TestLoadStats(t *testing.T) {
 	topN = idx.TopN
 	require.Equal(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.False(t, idx.IsEssentialStatsLoaded())
-	idx.IsInvalid(false)
+	idx.IsInvalid(testKit.Session(), false)
 	require.NoError(t, h.LoadNeededHistograms())
 	stat = h.GetTableStats(tableInfo)
 	idx = stat.Indices[tableInfo.Indices[0].ID]

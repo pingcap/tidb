@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -362,10 +363,21 @@ func (hg *Histogram) ToString(idxCols int) string {
 
 // equalRowCount estimates the row count where the column equals to value.
 // matched: return true if this returned row count is from Bucket.Repeat or bucket NDV, which is more accurate than if not.
-func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
-	_, bucketIdx, inBucket, match := hg.locateBucket(value)
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (hg *Histogram) equalRowCount(sctx sessionctx.Context, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Count", count, "Matched", matched)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
+	_, bucketIdx, inBucket, match := hg.locateBucket(sctx, value)
 	if !inBucket {
 		return 0, false
+	}
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugTraceBuckets(sctx, hg, []int{bucketIdx})
 	}
 	if match {
 		return float64(hg.Buckets[bucketIdx].Repeat), true
@@ -379,30 +391,35 @@ func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) (count 
 // greaterRowCount estimates the row count where the column greater than value.
 // It's deprecated. Only used for test.
 func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
-	histRowCount, _ := hg.equalRowCount(value, false)
-	gtCount := hg.notNullCount() - hg.lessRowCount(value) - histRowCount
+	histRowCount, _ := hg.equalRowCount(nil, value, false)
+	gtCount := hg.notNullCount() - hg.lessRowCount(nil, value) - histRowCount
 	return math.Max(0, gtCount)
 }
 
 // locateBucket locates where a value falls in the range of the Histogram.
-// Return value:
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 //
-//	exceed: if the value is larger than the upper bound of the last Bucket of the Histogram
-//	bucketIdx: assuming exceed if false, which Bucket does this value fall in (note: the range before a Bucket is also
-//		considered belong to this Bucket)
-//	inBucket: assuming exceed if false, whether this value falls in this Bucket, instead of falls between
-//		this Bucket and the previous Bucket.
-//	matchLastValue: assuming inBucket is true, if this value is the last value in this Bucket, which has a counter (Bucket.Repeat)
+// Return value:
+// exceed: if the value is larger than the upper bound of the last Bucket of the Histogram.
+// bucketIdx: assuming exceed if false, which Bucket does this value fall in (note: the range before a Bucket is also
+// considered belong to this Bucket).
+// inBucket: assuming exceed if false, whether this value falls in this Bucket, instead of falls between
+// this Bucket and the previous Bucket.
+// matchLastValue: assuming inBucket is true, if this value is the last value in this Bucket, which has a counter (Bucket.Repeat).
 //
 // Examples:
-//
-//	val0 |<-[bkt0]->| |<-[bkt1]->val1(last value)| val2 |<--val3--[bkt2]->| |<-[bkt3]->| val4
-//	locateBucket(val0): false, 0, false, false
-//	locateBucket(val1): false, 1, true, true
-//	locateBucket(val2): false, 2, false, false
-//	locateBucket(val3): false, 2, true, false
-//	locateBucket(val4): true, 3, false, false
-func (hg *Histogram) locateBucket(value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
+// val0 |<-[bkt0]->| |<-[bkt1]->val1(last value)| val2 |<--val3--[bkt2]->| |<-[bkt3]->| val4
+// locateBucket(val0): false, 0, false, false
+// locateBucket(val1): false, 1, true, true
+// locateBucket(val2): false, 2, false, false
+// locateBucket(val3): false, 2, true, false
+// locateBucket(val4): true, 3, false, false
+func (hg *Histogram) locateBucket(sctx sessionctx.Context, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		defer func() {
+			debugTraceLocateBucket(sctx, &value, exceed, bucketIdx, inBucket, matchLastValue)
+		}()
+	}
 	// Empty histogram
 	if hg == nil || hg.Bounds.NumRows() == 0 {
 		return true, 0, false, false
@@ -429,14 +446,25 @@ func (hg *Histogram) locateBucket(value types.Datum) (exceed bool, bucketIdx int
 }
 
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
-func (hg *Histogram) LessRowCountWithBktIdx(value types.Datum) (float64, int) {
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types.Datum) (result float64, bucketIdx int) {
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Bucket idx", bucketIdx)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	// All the values are null.
 	if hg.Bounds.NumRows() == 0 {
 		return 0, 0
 	}
-	exceed, bucketIdx, inBucket, match := hg.locateBucket(value)
+	exceed, bucketIdx, inBucket, match := hg.locateBucket(sctx, value)
 	if exceed {
 		return hg.notNullCount(), hg.Len() - 1
+	}
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugTraceBuckets(sctx, hg, []int{bucketIdx - 1, bucketIdx})
 	}
 	preCount := float64(0)
 	if bucketIdx > 0 {
@@ -452,15 +480,17 @@ func (hg *Histogram) LessRowCountWithBktIdx(value types.Datum) (float64, int) {
 	return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
 }
 
-func (hg *Histogram) lessRowCount(value types.Datum) float64 {
-	result, _ := hg.LessRowCountWithBktIdx(value)
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (hg *Histogram) lessRowCount(sctx sessionctx.Context, value types.Datum) float64 {
+	result, _ := hg.LessRowCountWithBktIdx(sctx, value)
 	return result
 }
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (hg *Histogram) BetweenRowCount(a, b types.Datum) float64 {
-	lessCountA := hg.lessRowCount(a)
-	lessCountB := hg.lessRowCount(b)
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (hg *Histogram) BetweenRowCount(sctx sessionctx.Context, a, b types.Datum) float64 {
+	lessCountA := hg.lessRowCount(sctx, a)
+	lessCountB := hg.lessRowCount(sctx, b)
 	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
 	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than
 	// lessCountB or notNullCount-lessCountA.
@@ -795,7 +825,20 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount int64) float64 {
+func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount int64) (result float64) {
+	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
+	if debugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		debugtrace.RecordAnyValuesWithNames(sctx,
+			"lDatum", lDatum.String(),
+			"rDatum", rDatum.String(),
+			"modifyCount", modifyCount,
+		)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	if hg.Len() == 0 {
 		return 0
 	}
@@ -814,16 +857,26 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount
 	// Convert the range we want to estimate to scalar value(float64)
 	l := convertDatumToScalar(lDatum, commonPrefix)
 	r := convertDatumToScalar(rDatum, commonPrefix)
+	unsigned := mysql.HasUnsignedFlag(hg.Tp.GetFlag())
 	// If this is an unsigned column, we need to make sure values are not negative.
 	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
 	// Maybe it's better to do this transformation in the ranger like the normal negative value.
-	if mysql.HasUnsignedFlag(hg.Tp.GetFlag()) {
+	if unsigned {
 		if l < 0 {
 			l = 0
 		}
 		if r < 0 {
 			r = 0
 		}
+	}
+
+	if debugTrace {
+		debugtrace.RecordAnyValuesWithNames(sctx,
+			"commonPrefix", commonPrefix,
+			"lScalar", l,
+			"rScalar", r,
+			"unsigned", unsigned,
+		)
 	}
 
 	// make sure l < r
@@ -840,8 +893,20 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	leftPercent := float64(0)
-	rightPercent := float64(0)
+	var leftPercent, rightPercent, rowCount float64
+	if debugTrace {
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx,
+				"histL", histL,
+				"histR", histR,
+				"boundL", boundL,
+				"boundR", boundR,
+				"lPercent", leftPercent,
+				"rPercent", rightPercent,
+				"rowCount", rowCount,
+			)
+		}()
+	}
 
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
@@ -878,7 +943,7 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount
 	if totalPercent > 1 {
 		totalPercent = 1
 	}
-	rowCount := totalPercent * hg.notNullCount()
+	rowCount = totalPercent * hg.notNullCount()
 
 	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
 	// a rather loose upper bound.
@@ -1124,7 +1189,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 				continue
 			}
 			dataSet[string(prefixColData)] = struct{}{}
-			res := hg.BetweenRowCount(types.NewBytesDatum(prefixColData), types.NewBytesDatum(kv.Key(prefixColData).PrefixNext()))
+			res := hg.BetweenRowCount(nil, types.NewBytesDatum(prefixColData), types.NewBytesDatum(kv.Key(prefixColData).PrefixNext()))
 			if res >= limit {
 				dataCnts = append(dataCnts, dataCnt{prefixColData, uint64(res)})
 			}
@@ -1137,7 +1202,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	topN.TopN = make([]TopNMeta, 0, len(dataCnts))
 	for _, dataCnt := range dataCnts {
 		h1, h2 := murmur3.Sum128(dataCnt.data)
-		realCnt := cms.queryHashValue(h1, h2)
+		realCnt := cms.queryHashValue(nil, h1, h2)
 		cms.SubValue(h1, h2, realCnt)
 		topN.AppendTopN(dataCnt.data, realCnt)
 	}
@@ -1537,7 +1602,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	for _, bucket := range globalBuckets {
 		var repeat float64
 		for _, hist := range hists {
-			histRowCount, _ := hist.equalRowCount(*bucket.upper, isIndex)
+			histRowCount, _ := hist.equalRowCount(nil, *bucket.upper, isIndex)
 			repeat += histRowCount // only hists of indexes have bucket.NDV
 		}
 		if int64(repeat) > bucket.Repeat {
