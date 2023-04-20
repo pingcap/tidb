@@ -770,7 +770,6 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	diskQuota := GetSysVar(TiDBDDLDiskQuota)
 	var (
-		mb  int64 = 1024 * 1024
 		gb  int64 = 1024 * 1024 * 1024
 		pb  int64 = 1024 * 1024 * 1024 * 1024 * 1024
 		err error
