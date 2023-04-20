@@ -639,10 +639,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableProcedure, Value: Off, Type: TypeBool,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			TiDBEnableProcedureVale.Store(TiDBOptOn(val))
+			TiDBEnableProcedureValue.Store(TiDBOptOn(val))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return BoolToOnOff(TiDBEnableProcedureVale.Load()), nil
+			return BoolToOnOff(TiDBEnableProcedureValue.Load()), nil
 		},
 	},
 

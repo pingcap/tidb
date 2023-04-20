@@ -299,7 +299,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
 	case *plannercore.CreateProcedure:
-		if !variable.TiDBEnableProcedureVale.Load() {
+		if !variable.TiDBEnableProcedureValue.Load() {
 			b.err = errors.New("If enterprise edition, please set global tidb_enable_procedure = ON")
 			return nil
 		}
@@ -307,7 +307,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	case *plannercore.DropProcedure:
 		return b.buildDropProcedure(v)
 	case *plannercore.CallStmt:
-		if !variable.TiDBEnableProcedureVale.Load() {
+		if !variable.TiDBEnableProcedureValue.Load() {
 			b.err = errors.New("If enterprise edition, please set global tidb_enable_procedure = ON")
 			return nil
 		}

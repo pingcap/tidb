@@ -25,7 +25,7 @@
               "github.com/pingcap/tidb/planner/core.getStatsTable": {
                 "CountIsZero": false,
                 "HandleIsNil": false,
-                "InputPhysicalID": 88,
+                "InputPhysicalID": 90,
                 "Outdated": false,
                 "StatsTblInfo": {
                   "Columns": [
@@ -62,11 +62,11 @@
                     }
                   ],
                   "ModifyCount": 0,
-                  "PhysicalID": 88,
+                  "PhysicalID": 90,
                   "Version": 0
                 },
                 "TableName": "t",
-                "TblInfoID": 88,
+                "TblInfoID": 90,
                 "Uninitialized": true,
                 "UsePartitionStats": false
               }
@@ -93,7 +93,7 @@
                             "github.com/pingcap/tidb/planner/core.getStatsTable": {
                               "CountIsZero": false,
                               "HandleIsNil": false,
-                              "InputPhysicalID": 88,
+                              "InputPhysicalID": 90,
                               "Outdated": false,
                               "StatsTblInfo": {
                                 "Columns": [
@@ -130,11 +130,11 @@
                                   }
                                 ],
                                 "ModifyCount": 0,
-                                "PhysicalID": 88,
+                                "PhysicalID": 90,
                                 "Version": 0
                               },
                               "TableName": "t",
-                              "TblInfoID": 88,
+                              "TblInfoID": 90,
                               "Uninitialized": true,
                               "UsePartitionStats": false
                             }
@@ -333,7 +333,7 @@
                         "github.com/pingcap/tidb/planner/core.getStatsTable": {
                           "CountIsZero": false,
                           "HandleIsNil": false,
-                          "InputPhysicalID": 88,
+                          "InputPhysicalID": 90,
                           "Outdated": false,
                           "StatsTblInfo": {
                             "Columns": [
@@ -370,11 +370,11 @@
                               }
                             ],
                             "ModifyCount": 0,
-                            "PhysicalID": 88,
+                            "PhysicalID": 90,
                             "Version": 0
                           },
                           "TableName": "t",
-                          "TblInfoID": 88,
+                          "TblInfoID": 90,
                           "Uninitialized": true,
                           "UsePartitionStats": false
                         }
