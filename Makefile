@@ -159,13 +159,16 @@ else
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./tidb-server
 endif
 
+init-submodule:
+	git submodule init && git submodule update --force
+
 enterprise-prepare:
-	git submodule init && git submodule update --force && cd extension/enterprise/generate && $(GO) generate -run genfile main.go
+	cd extension/enterprise/generate && $(GO) generate -run genfile main.go
 
 enterprise-clear:
 	cd extension/enterprise/generate && $(GO) generate -run clear main.go
 
-enterprise-docker: enterprise-prepare
+enterprise-docker: init-submodule enterprise-prepare
 	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile.enterprise .
 
 enterprise-server-build:
@@ -176,6 +179,7 @@ else
 endif
 
 enterprise-server:
+	@make init-submodule
 	@make enterprise-prepare
 	@make enterprise-server-build
 
