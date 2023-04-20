@@ -37,6 +37,7 @@ go_library(
         "@com_github_xitongsys_parquet_go//reader",
         "@com_github_xitongsys_parquet_go//source",
         "@org_golang_x_exp//slices",
+        "@org_golang_x_sync//errgroup",
         "@org_golang_x_text//encoding",
         "@org_golang_x_text//encoding/charmap",
         "@org_golang_x_text//encoding/simplifiedchinese",
