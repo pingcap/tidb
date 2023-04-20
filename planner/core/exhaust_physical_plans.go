@@ -2405,6 +2405,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			// use MPPOuterJoinFixedBuildSide here as a way to disable using left table as build side
 			if !p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide && p.children[1].statsInfo().Count() > p.children[0].statsInfo().Count() {
 				preferredBuildIndex = 0
+				useBCJ = false
 			}
 		} else {
 			preferredBuildIndex = 1
