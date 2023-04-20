@@ -608,7 +608,7 @@ func BuildBackupSchemas(
 			dbInfo.PlacementPolicyRef = nil
 		}
 
-		summary.CollectUint("DBCount", 1)
+		summary.CollectUint("db-count", 1)
 		hasTable := false
 		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
@@ -670,7 +670,7 @@ func BuildBackupSchemas(
 			tableInfo.Indices = tableInfo.Indices[:n]
 
 			logger.Info("add table into schemas")
-			summary.CollectUint("TableCount", 1)
+			summary.CollectUint("table-count", 1)
 			fn(dbInfo, tableInfo)
 			hasTable = true
 
