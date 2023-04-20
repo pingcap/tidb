@@ -28,7 +28,7 @@ import (
 
 // NewDeque inits a new MinMaxDeque
 func NewDeque(isMax bool, cmpFunc func(i, j interface{}) int) *MinMaxDeque {
-	return &MinMaxDeque{[]Pair{}, isMax, cmpFunc}
+	return &MinMaxDeque{cmpFunc, []Pair{}, isMax}
 }
 
 // MinMaxDeque is an array based double end queue
