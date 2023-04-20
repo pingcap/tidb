@@ -127,6 +127,7 @@ func (r *RetryWithBackoffer) TotalSleepInMS() int {
 	return r.totalBackoff + r.bo.GetTotalSleep()
 }
 
+// MaxSleepInMS returns the max sleep time for the retry context in ms.
 func (r *RetryWithBackoffer) MaxSleepInMS() int {
 	return r.maxBackoff
 }

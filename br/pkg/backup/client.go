@@ -1138,7 +1138,7 @@ func (bc *Client) fineGrainedBackup(
 		}
 
 		// Step3. Backoff if needed, then repeat.
-		if ms := bo.NextBackoffInMS(); ms != 0 {
+		if ms := bo.NextSleepInMS(); ms != 0 {
 			log.Info("handle fine grained", zap.Int("backoffMs", ms))
 			err := bo.BackOff()
 			if err != nil {
