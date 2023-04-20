@@ -1194,14 +1194,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 		return nil
 	}
 	var oldCol, newCol *model.ColumnInfo
-	var numNonPubCols int
-	for _, col := range t.Cols() {
-		if col.State != model.StatePublic {
-			numNonPubCols++
-		}
-		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
-			continue
-		}
+	for _, col := range t.WritableCols() {
 		if col.ID == reorgInfo.currElement.ID {
 			newCol = col.ColumnInfo
 			oldCol = table.FindCol(t.Cols(), getChangingColumnOriginName(newCol)).ColumnInfo
@@ -1213,10 +1206,10 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	// We use global `EnableRowLevelChecksum` to detect whether checksum is enabled in ddl backfill worker because
 	// `SessionVars.IsRowLevelChecksumEnabled` will filter out internal sessions.
 	if variable.EnableRowLevelChecksum.Load() {
-		if numNonPubCols > 1 {
-			var cols []*model.ColumnInfo
-			for _, col := range t.Cols() {
-				cols = append(cols, col.ToInfo())
+		if numNonPubCols := len(t.DeletableCols()) - len(t.Cols()); numNonPubCols > 1 {
+			cols := make([]*model.ColumnInfo, len(t.DeletableCols()))
+			for i, col := range t.DeletableCols() {
+				cols[i] = col.ToInfo()
 			}
 			logutil.BgLogger().Warn("skip checksum in update-column backfill since the number of non-public columns is greater than 1",
 				zap.String("jobQuery", reorgInfo.Query), zap.String("reorgInfo", reorgInfo.String()), zap.Any("cols", cols))
@@ -1382,12 +1375,15 @@ func (w *updateColumnWorker) calcChecksums() []uint32 {
 	if !w.checksumNeeded {
 		return nil
 	}
+	// when w.checksumNeeded is true, it indicates that there is only one write-reorg column (the new column) and other
+	// columns are public, thus we have to calculate two checksums that one of which only contains the old column and
+	// the other only contains the new column.
 	var checksums [2]uint32
 	for i, id := range []int64{w.newColInfo.ID, w.oldColInfo.ID} {
 		if len(w.checksumBuffer.Cols) > 0 {
 			w.checksumBuffer.Cols = w.checksumBuffer.Cols[:0]
 		}
-		for _, col := range w.table.Cols() {
+		for _, col := range w.table.DeletableCols() {
 			if col.ID == id || (col.IsGenerated() && !col.GeneratedStored) {
 				continue
 			}
