@@ -124,11 +124,11 @@ func TestParameterize(t *testing.T) {
 
 func TestGetParamSQLFromASTConcurrently(t *testing.T) {
 	n := 100
-	var sqls []string
+	sqls := make([]string, 0, n)
 	for i := 0; i < n; i++ {
 		sqls = append(sqls, fmt.Sprintf(`insert into t values (%d, %d, %d)`, i*3+0, i*3+1, i*3+2))
 	}
-	var stmts []ast.StmtNode
+	stmts := make([]ast.StmtNode, 0, n)
 	for _, sql := range sqls {
 		stmt, err := parser.New().ParseOneStmt(sql, "", "")
 		require.Nil(t, err)
