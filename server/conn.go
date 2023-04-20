@@ -2703,7 +2703,7 @@ func (cc *ClientConn) MultiHanldeNode(ctx context.Context, stmt ast.StmtNode) (e
 	expiredStmtTaskID = sessVars.StmtCtx.TaskID
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	if rs != nil {
-		rs.Close()
+		_ = rs.Close()
 	}
 
 	if err != nil {
@@ -2718,7 +2718,7 @@ func (cc *ClientConn) MultiHanldeNode(ctx context.Context, stmt ast.StmtNode) (e
 			rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
 			if rs != nil {
-				rs.Close()
+				_ = rs.Close()
 			}
 			return err
 		}
