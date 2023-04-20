@@ -94,11 +94,11 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	sqlexec.MustFormatSQL(sql, "select name, sql_mode ,definition_utf8,parameter_str,character_set_client, connection_collation,")
 	sqlexec.MustFormatSQL(sql, "schema_collation from %n.%n where route_schema = %?  and name = %? and type = 'PROCEDURE' ", mysql.SystemDB, mysql.Routines, db, name)
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if recordSet != nil {
+		defer func() { _ = recordSet.Close() }()
+	}
 	if err != nil {
 		return nil, err
-	}
-	if recordSet != nil {
-		defer recordSet.Close()
 	}
 
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
@@ -154,11 +154,11 @@ func (e *ShowExec) getRowsProcedure(ctx context.Context, sqlExecutor sqlexec.SQL
 	sqlexec.MustFormatSQL(sql, "select route_schema, name, type, definer ,last_altered,created,security_type, comment,")
 	sqlexec.MustFormatSQL(sql, "character_set_client, connection_collation,schema_collation from %n.%n where type = %?", mysql.SystemDB, mysql.Routines, showType)
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if recordSet != nil {
+		defer func() { _ = recordSet.Close() }()
+	}
 	if err != nil {
 		return err
-	}
-	if recordSet != nil {
-		defer recordSet.Close()
 	}
 
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 1024)
