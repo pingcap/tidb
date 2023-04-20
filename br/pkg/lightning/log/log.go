@@ -169,7 +169,11 @@ func IsContextCanceledError(err error) bool {
 
 // Begin marks the beginning of a task.
 func (logger Logger) Begin(level zapcore.Level, name string) *Task {
-	if ce := logger.WithOptions(zap.AddCallerSkip(1)).Check(level, name+" start"); ce != nil {
+	return logger.begin(level, name, 2)
+}
+
+func (logger Logger) begin(level zapcore.Level, name string, skip int) *Task {
+	if ce := logger.WithOptions(zap.AddCallerSkip(skip)).Check(level, name+" start"); ce != nil {
 		ce.Write()
 	}
 	return &Task{
@@ -202,7 +206,7 @@ type Task struct {
 
 // BeginTask marks the beginning of a task.
 func BeginTask(logger *zap.Logger, name string) *Task {
-	return Logger{logger}.Begin(zap.InfoLevel, name)
+	return Logger{logger}.begin(zap.InfoLevel, name, 2)
 }
 
 // End marks the end of a task.

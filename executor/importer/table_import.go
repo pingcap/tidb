@@ -301,13 +301,13 @@ func (ti *TableImporter) postProcess(ctx context.Context) (err error) {
 	}()
 	// todo: post process
 	if ti.checksum != config.OpLevelOff {
-		return ti.checksumTable(ctx)
+		return ti.verifyChecksum(ctx)
 	}
 	return nil
 }
 
-func (ti *TableImporter) checksumTable(ctx context.Context) (err error) {
-	task := log.BeginTask(ti.logger, "checksum")
+func (ti *TableImporter) verifyChecksum(ctx context.Context) (err error) {
+	task := log.BeginTask(ti.logger, "verify checksum")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
@@ -332,7 +332,7 @@ func (ti *TableImporter) checksumTable(ctx context.Context) (err error) {
 			remoteChecksum.TotalBytes, localChecksum.SumSize(),
 		)
 		if ti.checksum == config.OpLevelOptional {
-			ti.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err3))
+			ti.logger.Warn("verify checksum failed, but checksum is optional, will skip it", log.ShortError(err3))
 			err3 = nil
 		}
 		return err3
