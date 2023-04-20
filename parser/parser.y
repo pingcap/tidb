@@ -692,6 +692,8 @@ import (
 	defined               "DEFINED"
 	dotType               "DOT"
 	dump                  "DUMP"
+	timeDuration          "DURATION"
+	endTime               "END_TIME"
 	exact                 "EXACT"
 	exprPushdownBlacklist "EXPR_PUSHDOWN_BLACKLIST"
 	extract               "EXTRACT"
@@ -732,6 +734,7 @@ import (
 	s3                    "S3"
 	schedule              "SCHEDULE"
 	staleness             "STALENESS"
+	startTime             "START_TIME"
 	startTS               "START_TS"
 	std                   "STD"
 	stddev                "STDDEV"
@@ -1438,6 +1441,9 @@ import (
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
+	DynamicCalibrateResourceOption         "Dynamic resource calibrate option"
+	CalibrateOption                        "Dynamic or static calibrate option"
+	DynamicCalibrateOptionList             "Anomymous or direct dynamic resource calibrate option list"
 	CalibrateResourceWorkloadOption        "Calibrate Resource workload option"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
@@ -6698,7 +6704,9 @@ NotKeywordToken:
 |	"DEFINED"
 |	"DOT"
 |	"DUMP"
+|	"DURATION"
 |	"EXTRACT"
+|	"END_TIME"
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
 |	"INPLACE"
@@ -6720,6 +6728,7 @@ NotKeywordToken:
 |	"SUBDATE"
 |	"SUBSTRING"
 |	"SUM"
+|	"START_TIME"
 |	"STD"
 |	"STDDEV"
 |	"STDDEV_POP"
@@ -15493,19 +15502,73 @@ DropProcedureStmt:
  * CALIBRATE RESOURCE
  *******************************************************************/
 CalibrateResourceStmt:
-	"CALIBRATE" "RESOURCE" CalibrateResourceWorkloadOption
+	"CALIBRATE" "RESOURCE" CalibrateOption
+	{
+		$$ = $3.(*ast.CalibrateResourceStmt)
+	}
+
+CalibrateOption:
+	{
+		$$ = &ast.CalibrateResourceStmt{}
+	}
+|	DynamicCalibrateOptionList
 	{
 		$$ = &ast.CalibrateResourceStmt{
-			Tp: $3.(ast.CalibrateResourceType),
+			DynamicCalibrateResourceOptionList: $1.([]*ast.DynamicCalibrateResourceOption),
+		}
+	}
+|	CalibrateResourceWorkloadOption
+	{
+		$$ = &ast.CalibrateResourceStmt{
+			Tp: $1.(ast.CalibrateResourceType),
 		}
 	}
 
-CalibrateResourceWorkloadOption:
-	/* empty */
+DynamicCalibrateOptionList:
+	DynamicCalibrateResourceOption
 	{
-		$$ = ast.WorkloadNone
+		$$ = []*ast.DynamicCalibrateResourceOption{$1.(*ast.DynamicCalibrateResourceOption)}
 	}
-|	"WORKLOAD" "TPCC"
+|	DynamicCalibrateOptionList DynamicCalibrateResourceOption
+	{
+		if $1.([]*ast.DynamicCalibrateResourceOption)[0].Tp == $2.(*ast.DynamicCalibrateResourceOption).Tp ||
+			(len($1.([]*ast.DynamicCalibrateResourceOption)) > 1 && $1.([]*ast.DynamicCalibrateResourceOption)[1].Tp == $2.(*ast.DynamicCalibrateResourceOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.DynamicCalibrateResourceOption), $2.(*ast.DynamicCalibrateResourceOption))
+	}
+|	DynamicCalibrateOptionList ',' DynamicCalibrateResourceOption
+	{
+		if $1.([]*ast.DynamicCalibrateResourceOption)[0].Tp == $3.(*ast.DynamicCalibrateResourceOption).Tp ||
+			(len($1.([]*ast.DynamicCalibrateResourceOption)) > 1 && $1.([]*ast.DynamicCalibrateResourceOption)[1].Tp == $3.(*ast.DynamicCalibrateResourceOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.DynamicCalibrateResourceOption), $3.(*ast.DynamicCalibrateResourceOption))
+	}
+
+DynamicCalibrateResourceOption:
+	"START_TIME" EqOpt stringLit
+	{
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateStartTime, Ts: ast.NewValueExpr($3, "", "")}
+	}
+|	"END_TIME" EqOpt stringLit
+	{
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateEndTime, Ts: ast.NewValueExpr($3, "", "")}
+	}
+|	"DURATION" EqOpt stringLit
+	{
+		_, err := duration.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The DURATION option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateDuration, StrValue: $3}
+	}
+
+CalibrateResourceWorkloadOption:
+	"WORKLOAD" "TPCC"
 	{
 		$$ = ast.TPCC
 	}
@@ -15521,4 +15584,5 @@ CalibrateResourceWorkloadOption:
 	{
 		$$ = ast.OLTPWRITEONLY
 	}
+
 %%
