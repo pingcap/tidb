@@ -200,6 +200,11 @@ type Task struct {
 	since time.Time
 }
 
+// BeginTask marks the beginning of a task.
+func BeginTask(logger *zap.Logger, name string) *Task {
+	return Logger{logger}.Begin(zap.InfoLevel, name)
+}
+
 // End marks the end of a task.
 //
 // The `level` is the log level if the task *failed* (i.e. `err != nil`). If the

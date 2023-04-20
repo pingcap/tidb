@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // constants, make it a variable for test
@@ -100,15 +101,6 @@ func (b *deliverKVBatch) add(kvs *kv.Pairs) {
 	}
 }
 
-func firstErr(errors ...error) error {
-	for _, err := range errors {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // chunkProcessor process data chunk, it encodes and writes KV to local disk.
 type chunkProcessor struct {
 	parser      mydump.Parser
@@ -125,37 +117,23 @@ type chunkProcessor struct {
 	startOffset int64
 }
 
-func (p *chunkProcessor) process(ctx context.Context) error {
-	if err := p.initProgress(); err != nil {
-		return err
-	}
-	// todo: use error group pattern to simplify the code
-	deliverCompleteCh := make(chan deliverResult)
-	go func() {
-		defer close(deliverCompleteCh)
-		err := p.deliverLoop(ctx)
-		select {
-		case <-ctx.Done():
-		case deliverCompleteCh <- deliverResult{err: err}:
-		}
+func (p *chunkProcessor) process(ctx context.Context) (err error) {
+	task := log.BeginTask(p.logger, "process chunk")
+	defer func() {
+		task.End(zap.ErrorLevel, err)
 	}()
-
-	p.logger.Info("process chunk")
-
-	encodeErr := p.encodeLoop(ctx, deliverCompleteCh)
-	var deliverErr error
-	select {
-	case result, ok := <-deliverCompleteCh:
-		if ok {
-			deliverErr = result.err
-		} else {
-			// else, this must cause by ctx cancel
-			deliverErr = ctx.Err()
-		}
-	case <-ctx.Done():
-		deliverErr = ctx.Err()
+	if err2 := p.initProgress(); err2 != nil {
+		return err2
 	}
-	return errors.Trace(firstErr(encodeErr, deliverErr))
+
+	group, gCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		return p.deliverLoop(gCtx)
+	})
+	group.Go(func() error {
+		return p.encodeLoop(gCtx)
+	})
+	return group.Wait()
 }
 
 func (p *chunkProcessor) initProgress() error {
@@ -169,7 +147,7 @@ func (p *chunkProcessor) initProgress() error {
 	return nil
 }
 
-func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-chan deliverResult) error {
+func (p *chunkProcessor) encodeLoop(ctx context.Context) error {
 	defer close(p.kvsCh)
 
 	send := func(kvs []deliveredRow) error {
@@ -178,15 +156,6 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
-		case result, ok := <-deliverCompleteCh:
-			if result.err == nil && !ok {
-				result.err = ctx.Err()
-			}
-			if result.err == nil {
-				result.err = errors.New("unexpected premature fulfillment")
-				p.logger.DPanic("unexpected: deliverCompleteCh prematurely fulfilled with no error", zap.Bool("chIsOpen", ok))
-			}
-			return errors.Trace(result.err)
 		}
 	}
 
@@ -307,19 +276,4 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-func (p *chunkProcessor) close(ctx context.Context) {
-	if err2 := p.parser.Close(); err2 != nil {
-		p.logger.Error("failed to close parser", zap.Error(err2))
-	}
-	if err2 := p.encoder.Close(); err2 != nil {
-		p.logger.Error("failed to close encoder", zap.Error(err2))
-	}
-	if _, err2 := p.dataWriter.Close(ctx); err2 != nil {
-		p.logger.Error("failed to close data writer", zap.Error(err2))
-	}
-	if _, err2 := p.indexWriter.Close(ctx); err2 != nil {
-		p.logger.Error("failed to close data writer", zap.Error(err2))
-	}
 }
