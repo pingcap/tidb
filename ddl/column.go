@@ -1209,7 +1209,9 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 		}
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
-	needChecksum := false
+	checksumNeeded := false
+	// We use global `EnableRowLevelChecksum` to detect whether checksum is enabled in ddl backfill worker because
+	// `SessionVars.IsRowLevelChecksumEnabled` will filter out internal sessions.
 	if variable.EnableRowLevelChecksum.Load() {
 		if numNonPubCols > 1 {
 			var cols []*model.ColumnInfo
@@ -1219,7 +1221,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 			logutil.BgLogger().Warn("skip checksum in update-column backfill since the number of non-public columns is greater than 1",
 				zap.String("jobQuery", reorgInfo.Query), zap.String("reorgInfo", reorgInfo.String()), zap.Any("cols", cols))
 		} else {
-			needChecksum = true
+			checksumNeeded = true
 		}
 	}
 	return &updateColumnWorker{
@@ -1228,7 +1230,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 		newColInfo:     newCol,
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-		checksumNeeded: needChecksum,
+		checksumNeeded: checksumNeeded,
 	}
 }
 

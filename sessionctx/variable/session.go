@@ -1610,10 +1610,10 @@ func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
-// IsRowLevelChecksumEnabled indicates whether row level checksum is enabled, that is tidb_enable_row_level_checksum is
-// on and tidb_row_format_version is 2.
+// IsRowLevelChecksumEnabled indicates whether row level checksum is enabled for current session, that is
+// tidb_enable_row_level_checksum is on and tidb_row_format_version is 2 and it's not a internal session.
 func (s *SessionVars) IsRowLevelChecksumEnabled() bool {
-	return s.EnableRowLevelChecksum && s.RowEncoder.Enable
+	return s.EnableRowLevelChecksum && s.RowEncoder.Enable && !s.InRestrictedSQL
 }
 
 // BuildParserConfig generate parser.ParserConfig for initial parser

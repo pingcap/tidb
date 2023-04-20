@@ -1266,12 +1266,19 @@ func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 
 	orig := variable.EnableRowLevelChecksum.Load()
-	variable.EnableRowLevelChecksum.Store(true)
 	defer variable.EnableRowLevelChecksum.Store(orig)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c int)")
+
+	variable.EnableRowLevelChecksum.Store(true)
+	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
+	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", mysql.ErrUnsupportedDDLOperation)
+
+	variable.EnableRowLevelChecksum.Store(false)
+	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
 	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", mysql.ErrUnsupportedDDLOperation)
 }

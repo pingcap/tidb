@@ -484,7 +484,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	checksums, writeBufs.RowValBuf = t.calcChecksums(checksumData, writeBufs.RowValBuf)
+	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, checksumData, writeBufs.RowValBuf)
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	if err != nil {
 		return err
@@ -918,7 +918,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	logutil.BgLogger().Debug("addRecord",
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	checksums, writeBufs.RowValBuf = t.calcChecksums(checksumData, writeBufs.RowValBuf)
+	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, checksumData, writeBufs.RowValBuf)
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	if err != nil {
 		return nil, err
@@ -1707,21 +1707,27 @@ func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation 
 	return ctx.StmtGetMutation(t.tableID)
 }
 
-// initChecksumData allocates data for checksum calculation, returns nil if checksum is disabled or unavailable.
+// initChecksumData allocates data for checksum calculation, returns nil if checksum is disabled or unavailable. The
+// length of returned data can be considered as the number of checksums we need to write.
 func (t *TableCommon) initChecksumData(sctx sessionctx.Context) [][]rowcodec.ColData {
 	if !sctx.GetSessionVars().IsRowLevelChecksumEnabled() {
 		return nil
 	}
 	numNonPubCols := len(t.Columns) - len(t.Cols())
 	if numNonPubCols > 1 {
-		logutil.BgLogger().Warn("skip checksum since the number of non-public columns is greater than 1",
+		logWithContext(sctx, logutil.BgLogger().Warn,
+			"skip checksum since the number of non-public columns is greater than 1",
 			zap.Int64("tblID", t.meta.ID), zap.Any("cols", t.meta.Columns))
 		return nil
 	}
 	return make([][]rowcodec.ColData, 1+numNonPubCols)
 }
 
-func (t *TableCommon) calcChecksums(data [][]rowcodec.ColData, buf []byte) ([]uint32, []byte) {
+// calcChecksums calculates the checksums of input data. The arg `buf` is used to hold the temporary encoded col data
+// and it will be reset for each col, so do NOT pass a buf that contains data you may use later. If the capacity of
+// `buf` is enough, it gets returned directly, otherwise a new bytes with larger capacity will be returned, and you can
+// hold the returned buf for later use (to avoid memory allocation).
+func (t *TableCommon) calcChecksums(sctx sessionctx.Context, data [][]rowcodec.ColData, buf []byte) ([]uint32, []byte) {
 	if len(data) == 0 {
 		return nil, buf
 	}
@@ -1734,7 +1740,8 @@ func (t *TableCommon) calcChecksums(data [][]rowcodec.ColData, buf []byte) ([]ui
 		checksum, err := row.Checksum()
 		buf = row.Data
 		if err != nil {
-			logutil.BgLogger().Warn("skip checksum due to encode error", zap.Int64("tblID", t.meta.ID), zap.Error(err))
+			logWithContext(sctx, logutil.BgLogger().Warn,
+				"skip checksum due to encode error", zap.Int64("tblID", t.meta.ID), zap.Error(err))
 			return nil, buf
 		}
 		checksums[i] = checksum
@@ -1792,6 +1799,17 @@ func appendColForChecksum(dst []rowcodec.ColData, t *TableCommon, c *model.Colum
 		dst = make([]rowcodec.ColData, 0, len(t.Columns))
 	}
 	return append(dst, rowcodec.ColData{ColumnInfo: c, Datum: d})
+}
+
+func logWithContext(sctx sessionctx.Context, log func(msg string, fields ...zap.Field), msg string, fields ...zap.Field) {
+	sessVars := sctx.GetSessionVars()
+	ctxFields := make([]zap.Field, 0, len(fields)+2)
+	ctxFields = append(ctxFields, zap.Uint64("conn", sessVars.ConnectionID))
+	if sessVars.TxnCtx != nil {
+		ctxFields = append(ctxFields, zap.Uint64("txnStartTS", sessVars.TxnCtx.StartTS))
+	}
+	ctxFields = append(ctxFields, fields...)
+	log(msg, ctxFields...)
 }
 
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {

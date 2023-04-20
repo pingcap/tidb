@@ -3309,6 +3309,16 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	return validSpecs, nil
 }
 
+func isMultiSchemaChanges(specs []*ast.AlterTableSpec) bool {
+	if len(specs) > 1 {
+		return true
+	}
+	if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
+		return true
+	}
+	return false
+}
+
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	validSpecs, err := ResolveAlterTableSpec(sctx, stmt.Specs)
@@ -3332,14 +3342,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
 		}
 	}
-	if sctx.GetSessionVars().EnableRowLevelChecksum || variable.EnableRowLevelChecksum.Load() {
-		err := dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change when row level checksum is enabled")
-		if len(validSpecs) > 1 {
-			return err
-		}
-		if len(validSpecs) == 1 && len(validSpecs[0].NewColumns) > 1 && validSpecs[0].Tp == ast.AlterTableAddColumns {
-			return err
-		}
+	if isMultiSchemaChanges(validSpecs) && (sctx.GetSessionVars().EnableRowLevelChecksum || variable.EnableRowLevelChecksum.Load()) {
+		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change when row level checksum is enabled")
 	}
 	// set name for anonymous foreign key.
 	maxForeignKeyID := tb.Meta().MaxForeignKeyID
