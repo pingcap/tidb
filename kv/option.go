@@ -220,8 +220,8 @@ const (
 // SetCdcWriteSource sets the TiCDC write source in the txnOption.
 func SetCdcWriteSource(txnOption *uint64, value uint64) error {
 	if value > cdcWriteSourceBits {
-		return errors.Errorf("value %d is out of TiCDC write source range, should be in [1, %d]",
-			value, cdcWriteSourceMax)
+		return errors.Errorf("value %d is out of TiCDC write source range, should be in [1, 15]",
+			value)
 	}
 	*txnOption |= value
 
