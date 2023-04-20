@@ -48,18 +48,19 @@ var (
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
-	inSandBoxMode bool
-	txn           wrapTxn    // mock global variable
-	Store         kv.Storage // mock global variable
+	//fix fieldalignment
+	txn           wrapTxn
+	Store         kv.Storage
 	ctx           context.Context
 	sm            util.SessionManager
 	is            sessionctx.InfoschemaMetaVersion
+	pcache        sessionctx.PlanCache
+	sessionExec   sessionctx.SessionExec
 	values        map[fmt.Stringer]interface{}
 	sessionVars   *variable.SessionVars
 	cancel        context.CancelFunc
-	pcache        sessionctx.PlanCache
 	level         kvrpcpb.DiskFullOpt
-	sessionExec   sessionctx.SessionExec
+	inSandBoxMode bool
 }
 
 type wrapTxn struct {
