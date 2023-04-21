@@ -219,20 +219,20 @@ func TestTraceDebug(t *testing.T) {
 	encoder := json.NewEncoder(&buf)
 	encoder.SetEscapeHTML(false)
 
-	for i := range in {
+	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i])
 		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
-		require.NoError(t, err)
+		require.NoError(t, err, sql, "For ver2")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
-		require.NoError(t, encoder.Encode(traceInfo))
+		require.NoError(t, encoder.Encode(traceInfo), sql, "For ver2")
 		var res interface{}
-		require.NoError(t, json.Unmarshal(buf.Bytes(), &res))
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &res), sql, "For ver2")
 		testdata.OnRecord(func() {
 			out[i].ResultForV2 = res
 		})
-		require.Equal(t, out[i].ResultForV2, res)
+		require.Equal(t, out[i].ResultForV2, res, sql, "For ver2")
 	}
 
 	tk.MustExec("set tidb_analyze_version = 1")
@@ -242,19 +242,19 @@ func TestTraceDebug(t *testing.T) {
 
 	stmtCtx = sctx.GetSessionVars().StmtCtx
 	stmtCtx.EnableOptimizerDebugTrace = true
-	for i := range in {
+	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i])
 		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
-		require.NoError(t, err)
+		require.NoError(t, err, sql, "For ver1")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
-		require.NoError(t, encoder.Encode(traceInfo))
+		require.NoError(t, encoder.Encode(traceInfo), sql, "For ver1")
 		var res interface{}
-		require.NoError(t, json.Unmarshal(buf.Bytes(), &res))
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &res), sql, "For ver1")
 		testdata.OnRecord(func() {
 			out[i].ResultForV1 = res
 		})
-		require.Equal(t, out[i].ResultForV1, res)
+		require.Equal(t, out[i].ResultForV1, res, sql, "For ver1")
 	}
 }

@@ -16,6 +16,7 @@ package statistics
 
 import (
 	"bytes"
+	"golang.org/x/exp/maps"
 	"math"
 	"math/bits"
 
@@ -249,15 +250,18 @@ func (coll *HistColl) Selectivity(
 
 	extractedCols := make([]*expression.Column, 0, len(coll.Columns))
 	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
-	for id, colInfo := range coll.Columns {
-		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
+	colIDs := maps.Keys(coll.Columns)
+	slices.Sort(colIDs)
+	for _, id := range colIDs {
+		colStats := coll.Columns[id]
+		col := expression.ColInfo2Col(extractedCols, colStats.Info)
 		if col != nil {
 			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
-			if colInfo.IsHandle {
+			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
 				var cnt float64
 				cnt, err = coll.GetRowCountByIntColumnRanges(ctx, id, ranges)
@@ -282,19 +286,22 @@ func (coll *HistColl) Selectivity(
 		}
 		id2Paths[path.Index.ID] = path
 	}
-	for id, idxInfo := range coll.Indices {
-		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxInfo.ID])
+	idxIDs := maps.Keys(coll.Indices)
+	slices.Sort(idxIDs)
+	for _, id := range idxIDs {
+		idxStats := coll.Indices[id]
+		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
-			for i := 0; i < len(idxCols) && i < len(idxInfo.Info.Columns); i++ {
-				lengths = append(lengths, idxInfo.Info.Columns[i].Length)
+			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
+				lengths = append(lengths, idxStats.Info.Columns[i].Length)
 			}
 			// If the found columns are more than the columns held by the index. We are appending the int pk to the tail of it.
 			// When storing index data to key-value store, we use (idx_col1, ...., idx_coln, handle_col) as its key.
-			if len(idxCols) > len(idxInfo.Info.Columns) {
+			if len(idxCols) > len(idxStats.Info.Columns) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
-			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxInfo.ID], idxCols...)
+			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -308,7 +315,7 @@ func (coll *HistColl) Selectivity(
 				ID:          id,
 				mask:        maskCovered,
 				Ranges:      ranges,
-				numCols:     len(idxInfo.Info.Columns),
+				numCols:     len(idxStats.Info.Columns),
 				Selectivity: selectivity,
 				partCover:   partCover,
 			})
