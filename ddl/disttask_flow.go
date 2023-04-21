@@ -15,8 +15,10 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
@@ -75,6 +77,9 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 
 		subTaskMetas = make([][]byte, 0, 100)
 		regionBatch := 100
+		sort.Slice(recordRegionMetas, func(i, j int) bool {
+			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
+		})
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			end := i + regionBatch
 			if end > len(recordRegionMetas) {
