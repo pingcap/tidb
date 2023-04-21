@@ -4623,7 +4623,7 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 	tk.MustExec("create table t2(a int)")
 	tk.MustExec("set @@tidb_allow_mpp=1")
 
-	// default should be 1
+	// Default should be 1
 	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
 	// Set ON
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = ON")
