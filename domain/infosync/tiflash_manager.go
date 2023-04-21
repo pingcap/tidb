@@ -334,7 +334,7 @@ type ruleOp struct {
 	DeleteByIDPrefix bool                   `json:"delete_by_id_prefix"`
 }
 
-// UnmarshalJSON implements json.Unmarshaler interface for RuleOp.
+// marshalJSON implements json.Unmarshaler interface for RuleOp.
 func (r *RuleOp) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&ruleOp{
 		GroupID:          r.GroupID,
