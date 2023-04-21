@@ -660,7 +660,7 @@ func (s *session) doCommit(ctx context.Context) error {
 
 	var txnSource uint64
 	if val := s.txn.GetOption(kv.TxnSource); val != nil {
-		txnSource = val.(uint64)
+		txnSource, _ = val.(uint64)
 	}
 	// If the transaction is started by CDC, we need to set the CDCWriteSource option.
 	if sessVars.CDCWriteSource != 0 {
