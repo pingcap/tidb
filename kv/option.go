@@ -217,40 +217,40 @@ const (
 	lossyDDLReorgSourceShift  = cdcWriteSourceBits
 )
 
-// SetCdcWriteSource sets the TiCDC write source in the txnOption.
-func SetCdcWriteSource(txnOption *uint64, value uint64) error {
+// SetCdcWriteSource sets the TiCDC write source in the txnSource.
+func SetCdcWriteSource(txnSource *uint64, value uint64) error {
 	if value > cdcWriteSourceBits {
 		return errors.Errorf("value %d is out of TiCDC write source range, should be in [1, 15]",
 			value)
 	}
-	*txnOption |= value
+	*txnSource |= value
 
 	return nil
 }
 
-func getCdcWriteSource(txnOption uint64) uint64 {
-	return txnOption & cdcWriteSourceMax
+func getCdcWriteSource(txnSource uint64) uint64 {
+	return txnSource & cdcWriteSourceMax
 }
 
-func isCdcWriteSourceSet(txnOption uint64) bool {
-	return (txnOption & cdcWriteSourceMax) != 0
+func isCdcWriteSourceSet(txnSource uint64) bool {
+	return (txnSource & cdcWriteSourceMax) != 0
 }
 
-// SetLossyDDLReorgSource sets the lossy DDL reorg source in the txnOption.
-func SetLossyDDLReorgSource(txnOption *uint64, value uint64) error {
+// SetLossyDDLReorgSource sets the lossy DDL reorg source in the txnSource.
+func SetLossyDDLReorgSource(txnSource *uint64, value uint64) error {
 	if value > lossyDDLReorgSourceMax {
 		return errors.Errorf("value %d is out of lossy DDL reorg source range, should be in [1, %d]",
 			value, lossyDDLReorgSourceMax)
 	}
-	*txnOption |= value << lossyDDLReorgSourceShift
+	*txnSource |= value << lossyDDLReorgSourceShift
 
 	return nil
 }
 
-func getLossyDDLReorgSource(txnOption uint64) uint64 {
-	return (txnOption >> lossyDDLReorgSourceShift) & lossyDDLReorgSourceMax
+func getLossyDDLReorgSource(txnSource uint64) uint64 {
+	return (txnSource >> lossyDDLReorgSourceShift) & lossyDDLReorgSourceMax
 }
 
-func isLossyDDLReorgSourceSet(txnOption uint64) bool {
-	return (txnOption >> lossyDDLReorgSourceShift) != 0
+func isLossyDDLReorgSourceSet(txnSource uint64) bool {
+	return (txnSource >> lossyDDLReorgSourceShift) != 0
 }
