@@ -1732,11 +1732,11 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
 			}
 		} else {
-			maxPrintLen := mathutil.Min(500, len(sql))
+			logSQL := sql[:mathutil.Min(500, len(sql))]
 			if s.sessionVars.EnableRedactLog {
-				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql[:maxPrintLen]))
+				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
 			} else {
-				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql[:maxPrintLen]))
+				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
 			}
 		}
 		return nil, util.SyntaxError(err)
