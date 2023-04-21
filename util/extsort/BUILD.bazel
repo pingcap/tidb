@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "extsort",
+    srcs = [
+        "external_sorter.go",
+        "pebble_sorter.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/extsort",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/arena",
+        "@com_github_cockroachdb_pebble//:pebble",
+        "@com_github_cockroachdb_pebble//sstable",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+go_test(
+    name = "extsort_test",
+    timeout = "short",
+    srcs = [
+        "external_sorter_test.go",
+        "pebble_sorter_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":extsort",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//slices",
+        "@org_golang_x_sync//errgroup",
+    ],
+)

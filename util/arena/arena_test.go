@@ -24,6 +24,7 @@ const (
 	arenaCap       = 1000
 	allocCapSmall  = 10
 	allocCapMedium = 20
+	allocCapLarge  = 980
 	allocCapOut    = 1024
 )
 
@@ -48,6 +49,10 @@ func TestSimpleArenaAllocator(t *testing.T) {
 	assert.Equal(t, allocCapSmall+allocCapMedium+allocCapSmall, arena.off)
 	assert.Len(t, slice, 2)
 	assert.Equal(t, allocCapSmall, cap(slice))
+
+	slice = arena.AllocWithLen(2, allocCapLarge)
+	assert.Equal(t, allocCapLarge, arena.off)
+	assert.Len(t, slice, 2)
 
 	arena.Reset()
 	assert.Zero(t, arena.off)
