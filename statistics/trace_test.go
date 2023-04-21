@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -135,13 +137,32 @@ func TestTraceDebug(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	statsHandle := dom.StatsHandle()
 
+	// Make the result of v1 analyze result stable
+	// 1. make sure all rows are always collect as samples
+	originalSampleSize := executor.MaxRegionSampleSize
+	executor.MaxRegionSampleSize = 10000
+	defer func() {
+		executor.MaxRegionSampleSize = originalSampleSize
+	}()
+	// 2. make the order of samples for building TopN stable
+	// (the earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count,
+	// see (*SampleCollector).ExtractTopN() for details)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/StabilizeV1AnalyzeTopN", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/StabilizeV1AnalyzeTopN"))
+	}()
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index iab(a, b), index ib(b))")
 	require.NoError(t, statsHandle.HandleDDLEvent(<-statsHandle.DDLEventCh()))
 	start := -1000
+	// For column a, from -1000 to 999, each value appears 1 time,
+	// but if it's dividable by 100, make this value appear 50 times.
+	// For column b, it's always a+500.
 	for i := 0; i < 2000; i += 50 {
 		sql := "insert into t values "
+		// 50 rows as a batch
 		values := make([]string, 0, 50)
 		for j := 0; j < 50; j++ {
 			values = append(values, fmt.Sprintf("(%d,%d)", start+i+j, start+i+j+500))
@@ -161,6 +182,7 @@ func TestTraceDebug(t *testing.T) {
 	tk.MustExec("analyze table t with 1 samplerate, 20 topn")
 	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
 
+	// Add 100 modify count
 	sql := "insert into t values "
 	topNValue := fmt.Sprintf("(%d,%d) ,", 5000, 5000)
 	sql = sql + strings.Repeat(topNValue, 100)

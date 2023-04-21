@@ -101,6 +101,15 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	}
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
 
+	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
+		if val.(bool) {
+			sort.SliceStable(sorted, func(i, j int) bool {
+				return sorted[i].cnt > sorted[j].cnt ||
+					(sorted[i].cnt == sorted[j].cnt && string(sorted[i].data) < string(sorted[j].data))
+			})
+		}
+	})
+
 	var (
 		sumTopN   uint64
 		sampleNDV = uint32(len(sorted))

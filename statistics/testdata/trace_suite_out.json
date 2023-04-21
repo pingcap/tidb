@@ -188,7 +188,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1096
+                    "TopN total count": 1095
                   },
                   {
                     "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
@@ -257,7 +257,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1097
+                    "TopN total count": 1098
                   },
                   {
                     "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
@@ -1121,7 +1121,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1096
+                    "TopN total count": 1095
                   },
                   {
                     "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
@@ -1152,9 +1152,9 @@
                                 "Repeat": -1
                               },
                               {
-                                "Count": 40,
+                                "Count": 50,
                                 "Index": 0,
-                                "Repeat": 39
+                                "Repeat": 50
                               }
                             ]
                           },
@@ -1183,9 +1183,9 @@
                                 "Repeat": -1
                               },
                               {
-                                "Count": 40,
+                                "Count": 50,
                                 "Index": 0,
-                                "Repeat": 39
+                                "Repeat": 50
                               }
                             ]
                           },
@@ -1256,7 +1256,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1097
+                    "TopN total count": 1098
                   },
                   {
                     "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
