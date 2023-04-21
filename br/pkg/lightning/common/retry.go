@@ -35,7 +35,6 @@ import (
 // so we need to check by error message,
 // such as distsql.Checksum which transforms tikv other-error into its own error
 var retryableErrorMsgList = []string{
-	"is not fully replicated",
 	// for cluster >= 4.x, lightning calls distsql.Checksum to do checksum
 	// this error happens on when distsql.Checksum calls TiKV
 	// see https://github.com/pingcap/tidb/blob/2c3d4f1ae418881a95686e8b93d4237f2e76eec6/store/copr/coprocessor.go#L941
@@ -126,11 +125,29 @@ func isSingleRetryableError(err error) bool {
 		}
 		return false
 	default:
+<<<<<<< HEAD
 		switch status.Code(err) {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
+=======
+		rpcStatus, ok := status.FromError(err)
+		if !ok {
+			// non RPC error
+			return isRetryableFromErrorMessage(err)
+		}
+		switch rpcStatus.Code() {
+		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied,
+			codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
+>>>>>>> 69d9a7c735b (lightning: retry on unknown RPC error, log more info to help debug (#43293))
+			return true
+		case codes.Unknown:
+			// cases we have met during import:
+			// 1. in scatter region: rpc error: code = Unknown desc = region 31946583 is not fully replicated
+			// 2. in write TiKV: rpc error: code = Unknown desc = EngineTraits(Engine(Status { code: IoError, sub_code:
+			//    None, sev: NoError, state: \"IO error: No such file or directory: while stat a file for size:
+			//    /...../63992d9c-fbc8-4708-b963-32495b299027_32279707_325_5280_write.sst: No such file or directory\"
 			return true
 		default:
-			return isRetryableFromErrorMessage(err)
+			return false
 		}
 	}
 }
