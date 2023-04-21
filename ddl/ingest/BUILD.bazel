@@ -29,6 +29,7 @@ go_library(
         "//br/pkg/lightning/log",
         "//config",
         "//ddl/internal/session",
+        "//ddl/util",
         "//kv",
         "//meta",
         "//parser/mysql",

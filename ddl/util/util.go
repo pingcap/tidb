@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 
@@ -315,4 +316,12 @@ func IsContextDone(ctx context.Context) bool {
 	default:
 	}
 	return false
+}
+
+// WrapKey2String wraps the key to a string.
+func WrapKey2String(key []byte) string {
+	if len(key) == 0 {
+		return "''"
+	}
+	return fmt.Sprintf("0x%x", key)
 }
