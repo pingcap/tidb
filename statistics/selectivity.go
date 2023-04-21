@@ -16,7 +16,6 @@ package statistics
 
 import (
 	"bytes"
-	"golang.org/x/exp/maps"
 	"math"
 	"math/bits"
 
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
