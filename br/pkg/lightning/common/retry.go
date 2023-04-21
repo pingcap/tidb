@@ -125,10 +125,6 @@ func isSingleRetryableError(err error) bool {
 		}
 		return false
 	default:
-<<<<<<< HEAD
-		switch status.Code(err) {
-		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
-=======
 		rpcStatus, ok := status.FromError(err)
 		if !ok {
 			// non RPC error
@@ -137,7 +133,6 @@ func isSingleRetryableError(err error) bool {
 		switch rpcStatus.Code() {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied,
 			codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
->>>>>>> 69d9a7c735b (lightning: retry on unknown RPC error, log more info to help debug (#43293))
 			return true
 		case codes.Unknown:
 			// cases we have met during import:
