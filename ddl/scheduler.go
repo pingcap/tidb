@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
@@ -41,6 +42,7 @@ type backfillSchedulerHandle struct {
 	jc          *JobContext
 	eleTypeKey  []byte
 	totalRowCnt int64
+	isPartition bool
 }
 
 // BackfillGlobalMeta is the global task meta for backfilling index.
@@ -52,7 +54,9 @@ type BackfillGlobalMeta struct {
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
 type BackfillSubTaskMeta struct {
-	PhysicalTableID int64 `json:"physical_table_id"`
+	PhysicalTableID int64  `json:"physical_table_id"`
+	StartKey        []byte `json:"start_key"`
+	EndKey          []byte `json:"end_key"`
 }
 
 // BackfillMinimalTask is the minimal-task for backfilling index.
@@ -81,6 +85,7 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, e
 	if err != nil {
 		return nil, err
 	}
+	bh.isPartition = tbl.Meta().GetPartitionInfo() != nil
 	bh.db = db
 
 	physicalTable := tbl.(table.PhysicalTable)
@@ -129,13 +134,21 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 		return nil, err
 	}
 
-	pid := sm.PhysicalTableID
-	parTbl := b.ptbl.(table.PartitionedTable)
+	var startKey, endKey kv.Key
+	var tbl table.PhysicalTable
 
-	startKey, endKey, err := getTableRange(b.jc, d.ddlCtx, parTbl.GetPartition(pid), b.job.SnapshotVer, b.job.Priority)
-	if err != nil {
-		logutil.BgLogger().Error("[ddl] get table range error", zap.Error(err))
-		return nil, err
+	if !b.isPartition {
+		startKey, endKey = sm.StartKey, sm.EndKey
+		tbl = b.ptbl
+	} else {
+		pid := sm.PhysicalTableID
+		parTbl := b.ptbl.(table.PartitionedTable)
+		startKey, endKey, err = getTableRange(b.jc, d.ddlCtx, parTbl.GetPartition(pid), b.job.SnapshotVer, b.job.Priority)
+		if err != nil {
+			logutil.BgLogger().Error("[ddl] get table range error", zap.Error(err))
+			return nil, err
+		}
+		tbl = parTbl.GetPartition(pid)
 	}
 
 	mockReorgInfo := &reorgInfo{Job: b.job, d: d.ddlCtx}
@@ -144,7 +157,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 	mockReorgInfo.elements = elements
 	mockReorgInfo.currElement = mockReorgInfo.elements[0]
 
-	ingestScheduler := newIngestBackfillScheduler(d.ctx, mockReorgInfo, d.sessPool, parTbl.GetPartition(pid), true)
+	ingestScheduler := newIngestBackfillScheduler(d.ctx, mockReorgInfo, d.sessPool, tbl, true)
 	defer ingestScheduler.close(true)
 
 	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
@@ -172,7 +185,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
 
-		sendTasks(ingestScheduler, consumer, parTbl.GetPartition(pid), kvRanges, mockReorgInfo, taskIDAlloc)
+		sendTasks(ingestScheduler, consumer, tbl, kvRanges, mockReorgInfo, taskIDAlloc)
 		if consumer.shouldAbort() {
 			break
 		}

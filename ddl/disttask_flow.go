@@ -24,6 +24,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type litBackfillFlowHandle struct {
@@ -61,28 +64,50 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 		return err
 	})
 
+	var subTaskMetas [][]byte
 	if tblInfo.Partition == nil {
-		return nil, errors.New("Non-partition table not supported yet")
-	}
-
-	defs := tblInfo.Partition.Definitions
-	physicalIDs := make([]int64, len(defs))
-	for i := range defs {
-		physicalIDs[i] = defs[i].ID
-	}
-
-	subTaskMetas := make([][]byte, 0, len(physicalIDs))
-	for _, physicalID := range physicalIDs {
-		subTaskMeta := &BackfillSubTaskMeta{
-			PhysicalTableID: physicalID,
-		}
-
-		metaBytes, err := json.Marshal(subTaskMeta)
+		startKey, endKey := tablecodec.GetTableHandleKeyRange(tblInfo.ID)
+		regionCache := d.store.(helper.Storage).GetRegionCache()
+		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 		if err != nil {
 			return nil, err
 		}
 
-		subTaskMetas = append(subTaskMetas, metaBytes)
+		subTaskMetas = make([][]byte, 0, 100)
+		regionBatch := 100
+		for i := 0; i < len(recordRegionMetas); i += regionBatch {
+			end := i + regionBatch
+			if end > len(recordRegionMetas) {
+				end = len(recordRegionMetas)
+			}
+			batch := recordRegionMetas[i:end]
+			subTaskMeta := &BackfillSubTaskMeta{StartKey: batch[0].StartKey(), EndKey: batch[len(batch)-1].EndKey()}
+			metaBytes, err := json.Marshal(subTaskMeta)
+			if err != nil {
+				return nil, err
+			}
+			subTaskMetas = append(subTaskMetas, metaBytes)
+		}
+	} else {
+		defs := tblInfo.Partition.Definitions
+		physicalIDs := make([]int64, len(defs))
+		for i := range defs {
+			physicalIDs[i] = defs[i].ID
+		}
+
+		subTaskMetas = make([][]byte, 0, len(physicalIDs))
+		for _, physicalID := range physicalIDs {
+			subTaskMeta := &BackfillSubTaskMeta{
+				PhysicalTableID: physicalID,
+			}
+
+			metaBytes, err := json.Marshal(subTaskMeta)
+			if err != nil {
+				return nil, err
+			}
+
+			subTaskMetas = append(subTaskMetas, metaBytes)
+		}
 	}
 
 	gTask.Step = proto.StepOne

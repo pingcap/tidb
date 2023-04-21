@@ -666,7 +666,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 
-		if job.MultiSchemaInfo == nil && tblInfo.GetPartitionInfo() != nil {
+		if job.MultiSchemaInfo == nil {
 			initDistReorg(job.ReorgMeta)
 		}
 	case model.StateWriteReorganization:
