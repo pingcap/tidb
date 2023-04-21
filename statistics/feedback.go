@@ -959,11 +959,11 @@ func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback, isUnsigned bool) {
 	for i := 0; i < len(pb.IntRanges); i += 2 {
 		var lower, upper types.Datum
 		if isUnsigned {
-			upper.SetUint64(uint64(pb.IntRanges[i+1]))
 			lower.SetUint64(uint64(pb.IntRanges[i]))
+			upper.SetUint64(uint64(pb.IntRanges[i+1]))
 		} else {
-			upper.SetInt64(pb.IntRanges[i+1])
 			lower.SetInt64(pb.IntRanges[i])
+			upper.SetInt64(pb.IntRanges[i+1])
 		}
 		q.Feedback = append(q.Feedback, Feedback{&lower, &upper, pb.Counts[i/2], 0, pb.Ndvs[i/2]})
 	}
