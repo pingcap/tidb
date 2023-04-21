@@ -413,15 +413,12 @@ func (m *TiFlashReplicaManagerCtx) doSetPlacementRuleBatch(ctx context.Context, 
 			})
 		}
 	}
-	logutil.BgLogger().Info("set placement rule batch", zap.Any("rules", ruleOps))
 	j, err := json.Marshal(ruleOps)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("set placement rule batch", zap.String("json", string(j)))
 	buf := bytes.NewBuffer(j)
 	res, err := doRequest(ctx, "SetPlacementRuleBatch", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rules", "batch"), "POST", buf)
-	logutil.BgLogger().Info("set placement rule batch", zap.String("res", string(res)))
 	if err != nil {
 		return errors.Trace(err)
 	}
