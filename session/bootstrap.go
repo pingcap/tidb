@@ -562,6 +562,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
+		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
 	);`
@@ -862,11 +863,13 @@ const (
 	// version 142 insert "tidb_enable_non_prepared_plan_cache|0" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_non_prepared_plan_cache.
 	// This will only happens when we upgrade a cluster before 6.5.
 	version142 = 142
+	// version 143 add column `error` to `mysql.tidb_global_task` and `mysql.tidb_background_subtask`
+	version143 = 143
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version142
+var currentBootstrapVersion int64 = version143
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -997,6 +1000,7 @@ var (
 		upgradeToVer140,
 		upgradeToVer141,
 		upgradeToVer142,
+		upgradeToVer143,
 	}
 )
 
@@ -2492,6 +2496,14 @@ func upgradeToVer142(s Session, ver int64) {
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache, variable.Off)
+}
+
+func upgradeToVer143(s Session, ver int64) {
+	if ver >= version143 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {
