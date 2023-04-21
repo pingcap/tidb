@@ -1730,6 +1730,12 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 			} else {
 				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
 			}
+		} else {
+			if s.sessionVars.EnableRedactLog {
+				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			} else {
+				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			}
 		}
 		return nil, util.SyntaxError(err)
 	}
