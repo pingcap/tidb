@@ -56,7 +56,7 @@ func (info *binaryParamInfo) MarshalJSON() ([]byte, error) {
 	type binaryParamInfoForMarshal binaryParamInfo
 	infoForMarshal := new(binaryParamInfoForMarshal)
 	quote := `"`
-	// We only need the escape functionality of %q, the quoting is not needed,
+	// We only need the escape functionality of strconv.Quote, the quoting is not needed,
 	// so we trim the \" prefix and suffix here.
 	infoForMarshal.Type = strings.TrimSuffix(
 		strings.TrimPrefix(

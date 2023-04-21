@@ -156,7 +156,7 @@
     ]
   },
   {
-    "Name": "TestTraceDebug",
+    "Name": "TestTraceDebugSelectivity",
     "Cases": [
       {
         "ResultForV1": [
