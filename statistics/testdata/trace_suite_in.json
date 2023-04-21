@@ -8,5 +8,12 @@
       "a = 1 and b = 2",
       "a < 5 or a > 10"
     ]
+  },
+  {
+    "name": "TestTraceDebug",
+    "cases": [
+      "select * from t where a = 100 and b = 350",
+      "select * from t where a < -1500 and b > 400 and b < 403"
+    ]
   }
 ]

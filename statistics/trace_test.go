@@ -15,8 +15,13 @@
 package statistics_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/model"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -24,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/tracing"
@@ -121,5 +127,134 @@ func TestTraceCEPartitionTable(t *testing.T) {
 	require.NoError(t, err)
 	for _, r := range resultJSON {
 		require.Equal(t, "t", r.TableName)
+	}
+}
+
+func TestTraceDebug(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	statsHandle := dom.StatsHandle()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index iab(a, b), index ib(b))")
+	require.NoError(t, statsHandle.HandleDDLEvent(<-statsHandle.DDLEventCh()))
+	start := -1000
+	for i := 0; i < 2000; i += 50 {
+		sql := "insert into t values "
+		values := make([]string, 0, 50)
+		for j := 0; j < 50; j++ {
+			values = append(values, fmt.Sprintf("(%d,%d)", start+i+j, start+i+j+500))
+		}
+		sql = sql + strings.Join(values, ",")
+		tk.MustExec(sql)
+
+		if i%100 == 0 {
+			sql := "insert into t values "
+			topNValue := fmt.Sprintf("(%d,%d) ,", start+i, start+i+500)
+			sql = sql + strings.Repeat(topNValue, 49)
+			sql = sql[0 : len(sql)-1]
+			tk.MustExec(sql)
+		}
+	}
+	require.Nil(t, statsHandle.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t with 1 samplerate, 20 topn")
+	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+
+	sql := "insert into t values "
+	topNValue := fmt.Sprintf("(%d,%d) ,", 5000, 5000)
+	sql = sql + strings.Repeat(topNValue, 100)
+	sql = sql[0 : len(sql)-1]
+	tk.MustExec(sql)
+	require.Nil(t, statsHandle.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+
+	var (
+		in  []string
+		out []struct {
+			ResultForV1 interface{}
+			ResultForV2 interface{}
+		}
+	)
+	traceSuiteData := statistics.GetTraceSuiteData()
+	traceSuiteData.LoadTestCases(t, &in, &out)
+
+	// Load needed statistics.
+	for _, tt := range in {
+		sql := "explain " + tt
+		tk.MustExec(sql)
+	}
+	err := statsHandle.LoadNeededHistograms()
+	require.NoError(t, err)
+
+	sctx := tk.Session().(sessionctx.Context)
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+	statsTbl := statsHandle.GetTableStats(tblInfo)
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmtCtx.EnableOptimizerDebugTrace = true
+
+	p := parser.New()
+	dsColInfos := make([][]*model.ColumnInfo, 0, len(in))
+	dsSchemaCols := make([][]*expression.Column, 0, len(in))
+	selConditions := make([][]expression.Expression, 0, len(in))
+	for _, sql := range in {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(context.Background(), sctx, stmt, plannercore.WithPreprocessorReturn(ret))
+		require.NoError(t, err)
+		p, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, stmt, ret.InfoSchema)
+		require.NoError(t, err)
+
+		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		ds := sel.Children()[0].(*plannercore.DataSource)
+
+		dsColInfos = append(dsColInfos, ds.Columns)
+		dsSchemaCols = append(dsSchemaCols, ds.Schema().Columns)
+		selConditions = append(selConditions, sel.Conditions)
+	}
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+
+	for i, _ := range in {
+		stmtCtx.OptimizerDebugTrace = nil
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i])
+		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
+		require.NoError(t, err)
+		traceInfo := stmtCtx.OptimizerDebugTrace
+		buf.Reset()
+		require.NoError(t, encoder.Encode(traceInfo))
+		var res interface{}
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &res))
+		testdata.OnRecord(func() {
+			out[i].ResultForV2 = res
+		})
+		require.Equal(t, out[i].ResultForV2, res)
+	}
+
+	tk.MustExec("set tidb_analyze_version = 1")
+	tk.MustExec("analyze table t with 20 topn")
+	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+	statsTbl = statsHandle.GetTableStats(tblInfo)
+
+	stmtCtx = sctx.GetSessionVars().StmtCtx
+	stmtCtx.EnableOptimizerDebugTrace = true
+	for i, _ := range in {
+		stmtCtx.OptimizerDebugTrace = nil
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i])
+		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
+		require.NoError(t, err)
+		traceInfo := stmtCtx.OptimizerDebugTrace
+		buf.Reset()
+		require.NoError(t, encoder.Encode(traceInfo))
+		var res interface{}
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &res))
+		testdata.OnRecord(func() {
+			out[i].ResultForV1 = res
+		})
+		require.Equal(t, out[i].ResultForV1, res)
 	}
 }
