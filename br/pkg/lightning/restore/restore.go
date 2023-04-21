@@ -1578,7 +1578,14 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
+<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
 				needPostProcess, err := task.tr.restoreTable(ctx, rc, task.cp)
+=======
+				needPostProcess, err := task.tr.importTable(ctx, rc, task.cp)
+				if err != nil && !common.IsContextCanceledError(err) {
+					task.tr.logger.Error("failed to import table", zap.Error(err))
+				}
+>>>>>>> 69d9a7c735b (lightning: retry on unknown RPC error, log more info to help debug (#43293)):br/pkg/lightning/importer/import.go
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
