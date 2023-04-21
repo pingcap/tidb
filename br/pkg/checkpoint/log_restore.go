@@ -38,8 +38,6 @@ func (l LogRestoreValueType) IdentKey() []byte {
 	return []byte(fmt.Sprint(l.Goff, '.', l.Foff, '.', l.TableID))
 }
 
-type LogRestoreRunner = CheckpointRunner[LogRestoreKeyType, LogRestoreValueType]
-
 // only for test
 func StartCheckpointLogRestoreRunnerForTest(
 	ctx context.Context,
@@ -47,7 +45,7 @@ func StartCheckpointLogRestoreRunnerForTest(
 	cipher *backuppb.CipherInfo,
 	tick time.Duration,
 	taskName string,
-) (*LogRestoreRunner, error) {
+) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
@@ -59,7 +57,7 @@ func StartCheckpointRunnerForLogRestore(ctx context.Context,
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	taskName string,
-) (*LogRestoreRunner, error) {
+) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
@@ -70,7 +68,7 @@ func StartCheckpointRunnerForLogRestore(ctx context.Context,
 
 func AppendRangeForLogRestore(
 	ctx context.Context,
-	r *LogRestoreRunner,
+	r *CheckpointRunner[LogRestoreKeyType, LogRestoreValueType],
 	groupKey LogRestoreKeyType,
 	tableID int64,
 	goff int,

@@ -28,8 +28,6 @@ import (
 type RestoreKeyType = int64
 type RestoreValueType = RangeType
 
-type RestoreRunner = CheckpointRunner[RestoreKeyType, RestoreValueType]
-
 const (
 	CheckpointDataDirForRestoreFormat     = CheckpointDir + "/restore-%s/data"
 	CheckpointChecksumDirForRestoreFormat = CheckpointDir + "/restore-%s/checksum"
@@ -62,7 +60,7 @@ func StartCheckpointRestoreRunnerForTest(
 	cipher *backuppb.CipherInfo,
 	tick time.Duration,
 	taskName string,
-) (*RestoreRunner, error) {
+) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
@@ -75,7 +73,7 @@ func StartCheckpointRunnerForRestore(
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	taskName string,
-) (*RestoreRunner, error) {
+) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
@@ -86,7 +84,7 @@ func StartCheckpointRunnerForRestore(
 
 func AppendRangesForRestore(
 	ctx context.Context,
-	r *RestoreRunner,
+	r *CheckpointRunner[RestoreKeyType, RestoreValueType],
 	tableID RestoreKeyType,
 	ranges []rtree.Range,
 ) error {
