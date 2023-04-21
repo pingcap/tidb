@@ -181,7 +181,7 @@ type Client struct {
 	rewriteMode RewriteMode
 
 	// checkpoint information for snapshot restore
-	checkpointRunner   *checkpoint.RestoreRunner
+	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 
 	// checkpoint information for log restore
@@ -335,11 +335,11 @@ func (rc *Client) WaitForFinishCheckpoint(ctx context.Context) {
 	}
 }
 
-func (rc *Client) GetCheckpointRunner() *checkpoint.RestoreRunner {
+func (rc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType] {
 	return rc.checkpointRunner
 }
 
-func (rc *Client) StartCheckpointRunnerForLogRestore(ctx context.Context, taskName string) (*checkpoint.LogRestoreRunner, error) {
+func (rc *Client) StartCheckpointRunnerForLogRestore(ctx context.Context, taskName string) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
 	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.storage, rc.cipher, taskName)
 	return runner, errors.Trace(err)
 }
@@ -2250,7 +2250,7 @@ func (rc *Client) RestoreKVFiles(
 	rules map[int64]*RewriteRules,
 	idrules map[int64]int64,
 	logIter LogIter,
-	runner *checkpoint.LogRestoreRunner,
+	runner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType],
 	pitrBatchCount uint32,
 	pitrBatchSize uint32,
 	updateStats func(kvCount uint64, size uint64),
