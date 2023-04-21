@@ -687,13 +687,13 @@ func TestIndexMergeReaderClose(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr"))
 	require.Error(t, err)
 	require.Eventually(t, func() bool {
-		return checkGoroutineExists("fetchLoop") == false
+		return !checkGoroutineExists("fetchLoop")
 	}, 5*time.Second, 100*time.Microsecond)
 	require.Eventually(t, func() bool {
-		return checkGoroutineExists("fetchHandles") == false
+		return !checkGoroutineExists("fetchHandles")
 	}, 5*time.Second, 100*time.Microsecond)
 	require.Eventually(t, func() bool {
-		return checkGoroutineExists("waitPartialWorkersAndCloseFetchChan") == false
+		return !checkGoroutineExists("waitPartialWorkersAndCloseFetchChan")
 	}, 5*time.Second, 100*time.Microsecond)
 }
 
