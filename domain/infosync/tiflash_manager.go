@@ -334,7 +334,7 @@ type ruleOp struct {
 	DeleteByIDPrefix bool                   `json:"delete_by_id_prefix"`
 }
 
-// UnmarshalJSON implements json.Unmarshaler interface for RuleOp.
+// MarshalJSON implements json.Marshaler interface for RuleOp.
 func (r *RuleOp) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&ruleOp{
 		GroupID:          r.GroupID,
@@ -353,7 +353,7 @@ func (r *RuleOp) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// UnmarshalJSON implements json.Unmarshaler interface for TiFlashRule.
+// UnmarshalJSON implements json.Unmarshaler interface for RuleOp.
 func (r *RuleOp) UnmarshalJSON(bytes []byte) error {
 	var rule ruleOp
 	if err := json.Unmarshal(bytes, &rule); err != nil {
