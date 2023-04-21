@@ -19,13 +19,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/model"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -219,7 +219,7 @@ func TestTraceDebug(t *testing.T) {
 	encoder := json.NewEncoder(&buf)
 	encoder.SetEscapeHTML(false)
 
-	for i, _ := range in {
+	for i := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i])
 		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
@@ -242,7 +242,7 @@ func TestTraceDebug(t *testing.T) {
 
 	stmtCtx = sctx.GetSessionVars().StmtCtx
 	stmtCtx.EnableOptimizerDebugTrace = true
-	for i, _ := range in {
+	for i := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i])
 		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
