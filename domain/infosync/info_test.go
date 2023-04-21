@@ -298,9 +298,8 @@ func TestRuleOp(t *testing.T) {
 	json.Unmarshal(j, ruleOpExpect)
 	require.Equal(t, ruleOp.Action, ruleOpExpect.Action)
 	require.Equal(t, *ruleOp.TiFlashRule, *ruleOpExpect.TiFlashRule)
-	require.Equal(t, ruleOp.TiFlashRule.ID, ruleOpExpect.TiFlashRule.ID)
 	ruleOps := make([]RuleOp, 0, 2)
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 10; i += 2 {
 		rule := MakeNewRule(int64(i), 2, []string{"a"})
 		ruleOps = append(ruleOps, RuleOp{
 			TiFlashRule:      &rule,
@@ -308,12 +307,20 @@ func TestRuleOp(t *testing.T) {
 			DeleteByIDPrefix: false,
 		})
 	}
+	for i := 1; i < 10; i += 2 {
+		rule := MakeNewRule(int64(i), 2, []string{"b"})
+		ruleOps = append(ruleOps, RuleOp{
+			TiFlashRule:      &rule,
+			Action:           RuleOpDel,
+			DeleteByIDPrefix: false,
+		})
+	}
 	j, err = json.Marshal(ruleOps)
 	require.NoError(t, err)
 	var ruleOpsExpect []RuleOp
 	json.Unmarshal(j, &ruleOpsExpect)
-	require.Equal(t, ruleOps[0].Action, ruleOpsExpect[0].Action)
-	require.Equal(t, *ruleOps[0].TiFlashRule, *ruleOpsExpect[0].TiFlashRule)
-	require.Equal(t, ruleOps[1].Action, ruleOpsExpect[1].Action)
-	require.Equal(t, *ruleOps[1].TiFlashRule, *ruleOpsExpect[1].TiFlashRule)
+	for i := 0; i < len(ruleOps); i++ {
+		require.Equal(t, ruleOps[i].Action, ruleOpsExpect[i].Action)
+		require.Equal(t, *ruleOps[i].TiFlashRule, *ruleOpsExpect[i].TiFlashRule)
+	}
 }
