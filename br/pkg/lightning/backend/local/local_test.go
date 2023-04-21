@@ -1568,7 +1568,7 @@ func TestDoImport(t *testing.T) {
 						{
 							write: injectedWriteBehaviour{
 								// a retryable error
-								err: errors.New("is not fully replicated"),
+								err: status.Error(codes.Unknown, "is not fully replicated"),
 							},
 						},
 					},
