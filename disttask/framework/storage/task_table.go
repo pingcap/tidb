@@ -226,18 +226,6 @@ func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err e
 	return row2GlobeTask(rs[0]), nil
 }
 
-// HasTaskInStates checks if there are task in the states.
-func (stm *TaskManager) HasTaskInStates(taskID int64, states ...interface{}) (bool, error) {
-	args := []interface{}{taskID}
-	args = append(args, states...)
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_global_task where id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
-	if err != nil {
-		return false, err
-	}
-
-	return len(rs) > 0, nil
-}
-
 // GetGlobalTaskByKey gets the task by the task key
 func (stm *TaskManager) GetGlobalTaskByKey(key string) (task *proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where task_key = %?", key)

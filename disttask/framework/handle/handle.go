@@ -18,73 +18,73 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
-	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-// Handle is the handle of the framework.
-type Handle struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     tidbutil.WaitGroupWrapper
-	gm     *storage.TaskManager
-}
-
-// CreateHandle creates a new Handle.
-func CreateHandle(ctx context.Context) (Handle, error) {
-	gm, err := storage.GetTaskManager()
-	if err != nil {
-		return Handle{}, err
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	return Handle{
-		ctx:    ctx,
-		cancel: cancel,
-		gm:     gm,
-	}, nil
-}
-
-// Close closes the handle.
-func (h *Handle) Close() {
-	h.cancel()
-	h.wg.Wait()
-}
+var (
+	checkTaskFinishInterval = 300 * time.Millisecond
+)
 
 // SubmitGlobalTaskAndRun submits a global task and returns a channel that will be closed when the task is done.
-func (h *Handle) SubmitGlobalTaskAndRun(key, tp string, concurrency int, taskMeta []byte) (taskID int64, done chan struct{}, err error) {
-	id, err := h.gm.AddNewGlobalTask(key, tp, concurrency, taskMeta)
+func SubmitGlobalTaskAndRun(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
+	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
-		return 0, nil, err
+		return err
+	}
+	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	if err != nil {
+		return err
 	}
 
-	done = make(chan struct{})
-	h.wg.Run(func() {
-		h.checkGlobalTaskDone(id, done)
-	})
+	if globalTask == nil {
+		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, concurrency, taskMeta)
+		if err != nil {
+			return err
+		}
 
-	return id, done, nil
-}
+		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
+		if err != nil {
+			return err
+		}
 
-func (h *Handle) checkGlobalTaskDone(id int64, ch chan struct{}) {
-	tk := time.Tick(1 * time.Second)
+		if globalTask == nil {
+			return errors.Errorf("cannot find global task with ID %d", taskID)
+		}
+	}
+
+	ticker := time.NewTicker(checkTaskFinishInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
-		case <-h.ctx.Done():
-			logutil.BgLogger().Error("check global task done failed", zap.Error(h.ctx.Err()))
-			return
-		case <-tk:
-			finish, err := h.gm.HasTaskInStates(id, proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateRevertFailed)
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
 			if err != nil {
-				logutil.BgLogger().Error("check global task done failed", zap.Error(err))
+				logutil.BgLogger().Info("get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
 				continue
 			}
-			if finish {
-				close(ch)
-				return
+
+			if found == nil {
+				return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
+			}
+
+			if found.State == proto.TaskStateSucceed {
+				return nil
+			}
+
+			if found.State == proto.TaskStateReverted {
+				logutil.BgLogger().Error("global task reverted", zap.Int64("taskID", globalTask.ID), zap.String("error", string(found.Error)))
+				return errors.New(string(found.Error))
+			}
+
+			if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled {
+				return errors.Errorf("task stopped with state %s, err %s", found.State, found.Error)
 			}
 		}
 	}

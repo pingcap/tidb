@@ -39,29 +39,17 @@ func TestHandle(t *testing.T) {
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
 
-	handle, err := handle.CreateHandle(ctx)
-	require.NoError(t, err)
-	defer handle.Close()
+	err := handle.SubmitGlobalTaskAndRun(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
+	require.EqualError(t, err, "task stopped with state reverted")
 
-	taskID, done, err := handle.SubmitGlobalTaskAndRun("1", proto.TaskTypeExample, 2, []byte("byte"))
+	task, err := mgr.GetGlobalTaskByID(1)
 	require.NoError(t, err)
-
-	task, err := mgr.GetGlobalTaskByID(taskID)
-	require.NoError(t, err)
-	require.Equal(t, taskID, task.ID)
+	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "1", task.Key)
 	require.Equal(t, proto.TaskTypeExample, task.Type)
-	require.Equal(t, proto.TaskStatePending, task.State)
+	// no dispatcher registered
+	require.Equal(t, proto.TaskStateReverted, task.State)
 	require.Equal(t, proto.StepInit, task.Step)
 	require.Equal(t, uint64(2), task.Concurrency)
 	require.Equal(t, []byte("byte"), task.Meta)
-
-	go func() {
-		time.Sleep(3 * time.Second)
-		task.State = proto.TaskStateSucceed
-		err := mgr.UpdateGlobalTaskAndAddSubTasks(task, nil, false)
-		require.NoError(t, err)
-	}()
-
-	<-done
 }

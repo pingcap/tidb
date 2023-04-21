@@ -33,8 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
-	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1846,68 +1845,36 @@ func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if err != nil {
 		return err
 	}
-
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
-	if err != nil {
-		return err
-	}
 
-	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, distPhysicalTableConcurrency, metaData)
-		if err != nil {
-			return nil
-		}
-
-		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
-		if err != nil {
-			return err
-		}
-
-		if globalTask == nil {
-			return errors.Errorf("cannot find global task with ID %d", taskID)
-		}
-	}
-
+	// TODO: handle cancel correctly.
+	var wg util.WaitGroupWrapper
 	ticker := time.NewTicker(CheckBackfillJobFinishInterval)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-		// TODO: handle cancel correctly.
-		if reorgInfo.Job.IsCancelling() {
-			return dbterror.ErrCancelledDDLJob
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		ticker.Stop()
+		wg.Wait()
+	}()
+	wg.Run(func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if reorgInfo.Job.IsCancelling() {
+					cancel()
+					return
+				}
+			}
 		}
+	})
 
-		found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
-		if err != nil {
-			logutil.BgLogger().Info("[ddl] get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
-			continue
-		}
-
-		if found == nil {
-			return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
-		}
-
-		if found.State == proto.TaskStateSucceed {
-			return nil
-		}
-
-		if found.State == proto.TaskStateReverted {
-			logutil.BgLogger().Error("[ddl] global task reverted", zap.Int64("taskID", globalTask.ID), zap.String("error", string(found.Error)))
-			return errors.New(string(found.Error))
-		}
-
-		// TODO: get the original error message.
-		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled {
-			return errors.Errorf("ddl task stopped with state %s, err %s", found.State, found.Error)
-		}
+	err = handle.SubmitGlobalTaskAndRun(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
+	if err == context.Canceled {
+		return dbterror.ErrCancelledDDLJob
 	}
+	return err
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {
