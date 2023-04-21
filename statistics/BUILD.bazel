@@ -90,6 +90,7 @@ go_test(
     deps = [
         "//config",
         "//domain",
+        "//expression",
         "//infoschema",
         "//kv",
         "//parser",
