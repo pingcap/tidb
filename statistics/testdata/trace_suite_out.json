@@ -171,6 +171,75 @@
               {
                 "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
                   {
+                    "ID": 1,
+                    "Ranges": [
+                      "[100,100]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2001,
+                      "TotalCount": 3080
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 3080,
+                    "Increase Factor": 1,
+                    "TopN total count": 1096
+                  },
+                  {
+                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAABk",
+                          "LowValueEncoded": "A4AAAAAAAABk",
+                          "Range": "[100,100]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                          {
+                            "Encoded": "A4AAAAAAAABk",
+                            "Value": "KindInt64 100"
+                          },
+                          {
+                            "github.com/pingcap/tidb/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": 13
+                              },
+                              {
+                                "Found": true,
+                                "Result": 50
+                              }
+                            ]
+                          },
+                          {
+                            "Error": null,
+                            "Result": 50
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 50,
+                          "Type": "Point"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "a",
+                    "Result": 50
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                  {
                     "ID": 2,
                     "Ranges": [
                       "[350,350]"
@@ -253,239 +322,6 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 1
-                  }
-                ]
-              },
-              {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
-                  {
-                    "ID": 1,
-                    "Ranges": [
-                      "[100,100]"
-                    ]
-                  },
-                  {
-                    "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
-                      "EssentialLoaded": true,
-                      "InValidForCollPseudo": false,
-                      "IsInvalid": false,
-                      "NDV": 2001,
-                      "TotalCount": 3080
-                    }
-                  },
-                  {
-                    "Histogram NotNull Count": 3080,
-                    "Increase Factor": 1,
-                    "TopN total count": 1096
-                  },
-                  {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
-                      {
-                        "Start estimate range": {
-                          "CurrentRowCount": 0,
-                          "HighValueEncoded": "A4AAAAAAAABk",
-                          "LowValueEncoded": "A4AAAAAAAABk",
-                          "Range": "[100,100]"
-                        }
-                      },
-                      {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
-                          {
-                            "Encoded": "A4AAAAAAAABk",
-                            "Value": "KindInt64 100"
-                          },
-                          {
-                            "github.com/pingcap/tidb/statistics.(*TopN).QueryTopN": [
-                              {
-                                "FindTopN idx": 13
-                              },
-                              {
-                                "Found": true,
-                                "Result": 50
-                              }
-                            ]
-                          },
-                          {
-                            "Error": null,
-                            "Result": 50
-                          }
-                        ]
-                      },
-                      {
-                        "End estimate range": {
-                          "RowCount": 50,
-                          "Type": "Point"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "Name": "a",
-                    "Result": 50
-                  }
-                ]
-              },
-              {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
-                  {
-                    "ID": 2,
-                    "Ranges": [
-                      "[350,350]"
-                    ]
-                  },
-                  {
-                    "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
-                      "CollPseudo": false,
-                      "IsInvalid": false,
-                      "NotAccurate": true,
-                      "TotalCount": 3080
-                    }
-                  },
-                  {
-                    "Histogram NotNull Count": 3080,
-                    "Increase Factor": 1,
-                    "TopN total count": 0
-                  },
-                  {
-                    "github.com/pingcap/tidb/statistics.(*HistColl).getIndexRowCount": [
-                      {
-                        "Start estimate range": {
-                          "CurrentRowCount": 0,
-                          "HighValueEncoded": null,
-                          "LowValueEncoded": null,
-                          "Range": "[350,350]"
-                        }
-                      },
-                      {
-                        "github.com/pingcap/tidb/statistics.(*HistColl).getEqualCondSelectivity": [
-                          {
-                            "github.com/pingcap/tidb/statistics.(*HistColl).crossValidationSelectivity": [
-                              {
-                                "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
-                                  "EssentialLoaded": true,
-                                  "InValidForCollPseudo": false,
-                                  "IsInvalid": false,
-                                  "NDV": 2001,
-                                  "TotalCount": 3080
-                                }
-                              },
-                              {
-                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
-                                  {
-                                    "Start estimate range": {
-                                      "CurrentRowCount": 0,
-                                      "HighValueEncoded": "A4AAAAAAAAFe",
-                                      "LowValueEncoded": "A4AAAAAAAAFe",
-                                      "Range": "[350,350]"
-                                    }
-                                  },
-                                  {
-                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
-                                      {
-                                        "Encoded": "A4AAAAAAAAFe",
-                                        "Value": "KindInt64 350"
-                                      },
-                                      {
-                                        "github.com/pingcap/tidb/statistics.(*TopN).QueryTopN": [
-                                          {
-                                            "FindTopN idx": -1
-                                          },
-                                          {
-                                            "Found": false,
-                                            "Result": 0
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "github.com/pingcap/tidb/statistics.(*CMSketch).queryHashValue": {
-                                          "Origin Values": [
-                                            3,
-                                            3,
-                                            2,
-                                            1,
-                                            1
-                                          ],
-                                          "Result": 1,
-                                          "Use default value": false,
-                                          "Values": [
-                                            2,
-                                            2,
-                                            3,
-                                            4,
-                                            4
-                                          ]
-                                        }
-                                      },
-                                      {
-                                        "Error": null,
-                                        "Result": 1
-                                      }
-                                    ]
-                                  },
-                                  {
-                                    "End estimate range": {
-                                      "RowCount": 1,
-                                      "Type": "Point"
-                                    }
-                                  }
-                                ]
-                              },
-                              {
-                                "Index Name": "ib",
-                                "crossValidationSelectivity": 0.0003246753246753247,
-                                "error": null,
-                                "minRowCount": 1
-                              }
-                            ]
-                          },
-                          {
-                            "github.com/pingcap/tidb/statistics.(*Index).QueryBytes": [
-                              {
-                                "github.com/pingcap/tidb/statistics.(*CMSketch).queryHashValue": {
-                                  "Origin Values": [
-                                    2,
-                                    2,
-                                    1,
-                                    1,
-                                    1
-                                  ],
-                                  "Result": 1,
-                                  "Use default value": true,
-                                  "Values": [
-                                    1,
-                                    1,
-                                    1,
-                                    2,
-                                    2
-                                  ]
-                                }
-                              },
-                              {
-                                "Result": 1
-                              }
-                            ]
-                          },
-                          {
-                            "Encoded": "A4AAAAAAAAFe",
-                            "Index Name": "ib",
-                            "Range": "[350,350]",
-                            "Result": 0.0003246753246753247,
-                            "UsedColLen": 1,
-                            "error": null
-                          }
-                        ]
-                      },
-                      {
-                        "End estimate range": {
-                          "RowCount": 1,
-                          "Type": "Range"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "Name": "ib",
                     "Result": 1
                   }
                 ]
@@ -705,6 +541,170 @@
                 ]
               },
               {
+                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByIndexRanges": [
+                  {
+                    "ID": 2,
+                    "Ranges": [
+                      "[350,350]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
+                      "CollPseudo": false,
+                      "IsInvalid": false,
+                      "NotAccurate": true,
+                      "TotalCount": 3080
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 3080,
+                    "Increase Factor": 1,
+                    "TopN total count": 0
+                  },
+                  {
+                    "github.com/pingcap/tidb/statistics.(*HistColl).getIndexRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": null,
+                          "LowValueEncoded": null,
+                          "Range": "[350,350]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/statistics.(*HistColl).getEqualCondSelectivity": [
+                          {
+                            "github.com/pingcap/tidb/statistics.(*HistColl).crossValidationSelectivity": [
+                              {
+                                "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
+                                  "EssentialLoaded": true,
+                                  "InValidForCollPseudo": false,
+                                  "IsInvalid": false,
+                                  "NDV": 2001,
+                                  "TotalCount": 3080
+                                }
+                              },
+                              {
+                                "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                                  {
+                                    "Start estimate range": {
+                                      "CurrentRowCount": 0,
+                                      "HighValueEncoded": "A4AAAAAAAAFe",
+                                      "LowValueEncoded": "A4AAAAAAAAFe",
+                                      "Range": "[350,350]"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAFe",
+                                        "Value": "KindInt64 350"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": -1
+                                          },
+                                          {
+                                            "Found": false,
+                                            "Result": 0
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/statistics.(*CMSketch).queryHashValue": {
+                                          "Origin Values": [
+                                            3,
+                                            3,
+                                            2,
+                                            1,
+                                            1
+                                          ],
+                                          "Result": 1,
+                                          "Use default value": false,
+                                          "Values": [
+                                            2,
+                                            2,
+                                            3,
+                                            4,
+                                            4
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 1
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 1,
+                                      "Type": "Point"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "Index Name": "ib",
+                                "crossValidationSelectivity": 0.0003246753246753247,
+                                "error": null,
+                                "minRowCount": 1
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/statistics.(*Index).QueryBytes": [
+                              {
+                                "github.com/pingcap/tidb/statistics.(*CMSketch).queryHashValue": {
+                                  "Origin Values": [
+                                    2,
+                                    2,
+                                    1,
+                                    1,
+                                    1
+                                  ],
+                                  "Result": 1,
+                                  "Use default value": true,
+                                  "Values": [
+                                    1,
+                                    1,
+                                    1,
+                                    2,
+                                    2
+                                  ]
+                                }
+                              },
+                              {
+                                "Result": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Encoded": "A4AAAAAAAAFe",
+                            "Index Name": "ib",
+                            "Range": "[350,350]",
+                            "Result": 0.0003246753246753247,
+                            "UsedColLen": 1,
+                            "error": null
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 1,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "ib",
+                    "Result": 1
+                  }
+                ]
+              },
+              {
                 "Expressions": [
                   "eq(test.t.a, 100)",
                   "eq(test.t.b, 350)"
@@ -725,6 +725,75 @@
                 "Input Expressions": [
                   "eq(test.t.a, 100)",
                   "eq(test.t.b, 350)"
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                  {
+                    "ID": 1,
+                    "Ranges": [
+                      "[100,100]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2000,
+                      "TotalCount": 2980
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 1980,
+                    "Increase Factor": 1.0335570469798658,
+                    "TopN total count": 1000
+                  },
+                  {
+                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAABk",
+                          "LowValueEncoded": "A4AAAAAAAABk",
+                          "Range": "[100,100]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                          {
+                            "Encoded": "A4AAAAAAAABk",
+                            "Value": "KindInt64 100"
+                          },
+                          {
+                            "github.com/pingcap/tidb/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": 11
+                              },
+                              {
+                                "Found": true,
+                                "Result": 50
+                              }
+                            ]
+                          },
+                          {
+                            "Error": null,
+                            "Result": 50
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 51.67785234899329,
+                          "Type": "Point"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "a",
+                    "Result": 51.67785234899329
+                  }
                 ]
               },
               {
@@ -819,75 +888,6 @@
                   {
                     "Name": "b",
                     "Result": 1.0335570469798658
-                  }
-                ]
-              },
-              {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
-                  {
-                    "ID": 1,
-                    "Ranges": [
-                      "[100,100]"
-                    ]
-                  },
-                  {
-                    "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
-                      "EssentialLoaded": true,
-                      "InValidForCollPseudo": false,
-                      "IsInvalid": false,
-                      "NDV": 2000,
-                      "TotalCount": 2980
-                    }
-                  },
-                  {
-                    "Histogram NotNull Count": 1980,
-                    "Increase Factor": 1.0335570469798658,
-                    "TopN total count": 1000
-                  },
-                  {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
-                      {
-                        "Start estimate range": {
-                          "CurrentRowCount": 0,
-                          "HighValueEncoded": "A4AAAAAAAABk",
-                          "LowValueEncoded": "A4AAAAAAAABk",
-                          "Range": "[100,100]"
-                        }
-                      },
-                      {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
-                          {
-                            "Encoded": "A4AAAAAAAABk",
-                            "Value": "KindInt64 100"
-                          },
-                          {
-                            "github.com/pingcap/tidb/statistics.(*TopN).QueryTopN": [
-                              {
-                                "FindTopN idx": 11
-                              },
-                              {
-                                "Found": true,
-                                "Result": 50
-                              }
-                            ]
-                          },
-                          {
-                            "Error": null,
-                            "Result": 50
-                          }
-                        ]
-                      },
-                      {
-                        "End estimate range": {
-                          "RowCount": 51.67785234899329,
-                          "Type": "Point"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "Name": "a",
-                    "Result": 51.67785234899329
                   }
                 ]
               },
@@ -1152,9 +1152,9 @@
                                 "Repeat": -1
                               },
                               {
-                                "Count": 67,
+                                "Count": 40,
                                 "Index": 0,
-                                "Repeat": 66
+                                "Repeat": 39
                               }
                             ]
                           },
@@ -1183,9 +1183,9 @@
                                 "Repeat": -1
                               },
                               {
-                                "Count": 67,
+                                "Count": 40,
                                 "Index": 0,
-                                "Repeat": 66
+                                "Repeat": 39
                               }
                             ]
                           },
@@ -2097,155 +2097,6 @@
               {
                 "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
                   {
-                    "ID": 2,
-                    "Ranges": [
-                      "(400,403)"
-                    ]
-                  },
-                  {
-                    "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
-                      "EssentialLoaded": true,
-                      "InValidForCollPseudo": false,
-                      "IsInvalid": false,
-                      "NDV": 2000,
-                      "TotalCount": 2980
-                    }
-                  },
-                  {
-                    "Histogram NotNull Count": 1980,
-                    "Increase Factor": 1.0335570469798658,
-                    "TopN total count": 1000
-                  },
-                  {
-                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
-                      {
-                        "Start estimate range": {
-                          "CurrentRowCount": 0,
-                          "HighValueEncoded": "A4AAAAAAAAGT",
-                          "LowValueEncoded": "A4AAAAAAAAGQ",
-                          "Range": "(400,403)"
-                        }
-                      },
-                      {
-                        "github.com/pingcap/tidb/statistics.(*Histogram).LessRowCountWithBktIdx": [
-                          {
-                            "Locate value in buckets": {
-                              "BucketIdx": 111,
-                              "Exceed": false,
-                              "InBucket": true,
-                              "MatchLastValue": false,
-                              "Value": "KindInt64 400"
-                            }
-                          },
-                          {
-                            "Related Buckets in Histogram": [
-                              {
-                                "Count": 888,
-                                "Index": 110,
-                                "Repeat": 1
-                              },
-                              {
-                                "Count": 896,
-                                "Index": 111,
-                                "Repeat": 1
-                              }
-                            ]
-                          },
-                          {
-                            "Bucket idx": 111,
-                            "Result": 890.625
-                          }
-                        ]
-                      },
-                      {
-                        "github.com/pingcap/tidb/statistics.(*Histogram).LessRowCountWithBktIdx": [
-                          {
-                            "Locate value in buckets": {
-                              "BucketIdx": 111,
-                              "Exceed": false,
-                              "InBucket": true,
-                              "MatchLastValue": false,
-                              "Value": "KindInt64 403"
-                            }
-                          },
-                          {
-                            "Related Buckets in Histogram": [
-                              {
-                                "Count": 888,
-                                "Index": 110,
-                                "Repeat": 1
-                              },
-                              {
-                                "Count": 896,
-                                "Index": 111,
-                                "Repeat": 1
-                              }
-                            ]
-                          },
-                          {
-                            "Bucket idx": 111,
-                            "Result": 893.25
-                          }
-                        ]
-                      },
-                      {
-                        "github.com/pingcap/tidb/statistics.(*TopN).BetweenCount": [
-                          {
-                            "Related TopN Range": {
-                              "Count": [
-                                50
-                              ],
-                              "FirstEncoded": "A4AAAAAAAAGQ",
-                              "FirstIdx": 9,
-                              "LastEncoded": "A4AAAAAAAAGQ",
-                              "LastIdx": 9
-                            }
-                          },
-                          {
-                            "Result": 50
-                          }
-                        ]
-                      },
-                      {
-                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
-                          {
-                            "Encoded": "A4AAAAAAAAGQ",
-                            "Value": "KindInt64 400"
-                          },
-                          {
-                            "github.com/pingcap/tidb/statistics.(*TopN).QueryTopN": [
-                              {
-                                "FindTopN idx": 9
-                              },
-                              {
-                                "Found": true,
-                                "Result": 50
-                              }
-                            ]
-                          },
-                          {
-                            "Error": null,
-                            "Result": 50
-                          }
-                        ]
-                      },
-                      {
-                        "End estimate range": {
-                          "RowCount": 2.713087248322148,
-                          "Type": "Range"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "Name": "b",
-                    "Result": 2.713087248322148
-                  }
-                ]
-              },
-              {
-                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
-                  {
                     "ID": 1,
                     "Ranges": [
                       "[-inf,-1500)"
@@ -2391,6 +2242,155 @@
                   {
                     "Name": "a",
                     "Result": 100
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/statistics.(*HistColl).GetRowCountByColumnRanges": [
+                  {
+                    "ID": 2,
+                    "Ranges": [
+                      "(400,403)"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2000,
+                      "TotalCount": 2980
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 1980,
+                    "Increase Factor": 1.0335570469798658,
+                    "TopN total count": 1000
+                  },
+                  {
+                    "github.com/pingcap/tidb/statistics.(*Column).GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAAGT",
+                          "LowValueEncoded": "A4AAAAAAAAGQ",
+                          "Range": "(400,403)"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 111,
+                              "Exceed": false,
+                              "InBucket": true,
+                              "MatchLastValue": false,
+                              "Value": "KindInt64 400"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": 888,
+                                "Index": 110,
+                                "Repeat": 1
+                              },
+                              {
+                                "Count": 896,
+                                "Index": 111,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 111,
+                            "Result": 890.625
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 111,
+                              "Exceed": false,
+                              "InBucket": true,
+                              "MatchLastValue": false,
+                              "Value": "KindInt64 403"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": 888,
+                                "Index": 110,
+                                "Repeat": 1
+                              },
+                              {
+                                "Count": 896,
+                                "Index": 111,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 111,
+                            "Result": 893.25
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/statistics.(*TopN).BetweenCount": [
+                          {
+                            "Related TopN Range": {
+                              "Count": [
+                                50
+                              ],
+                              "FirstEncoded": "A4AAAAAAAAGQ",
+                              "FirstIdx": 9,
+                              "LastEncoded": "A4AAAAAAAAGQ",
+                              "LastIdx": 9
+                            }
+                          },
+                          {
+                            "Result": 50
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/statistics.(*Column).equalRowCount": [
+                          {
+                            "Encoded": "A4AAAAAAAAGQ",
+                            "Value": "KindInt64 400"
+                          },
+                          {
+                            "github.com/pingcap/tidb/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": 9
+                              },
+                              {
+                                "Found": true,
+                                "Result": 50
+                              }
+                            ]
+                          },
+                          {
+                            "Error": null,
+                            "Result": 50
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 2.713087248322148,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "b",
+                    "Result": 2.713087248322148
                   }
                 ]
               },
