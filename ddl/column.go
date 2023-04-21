@@ -1391,7 +1391,7 @@ func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 		// avoid TiCDC to replicate this kind of change.
 		var txnSource uint64
 		if val := txn.GetOption(kv.TxnSource); val != nil {
-			txnSource = val.(uint64)
+			txnSource, _ = val.(uint64)
 		}
 		err := kv.SetLossyDDLReorgSource(&txnSource, kv.LossyDDLColumnReorgSource)
 		if err != nil {
