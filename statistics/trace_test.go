@@ -132,7 +132,7 @@ func TestTraceCEPartitionTable(t *testing.T) {
 	}
 }
 
-func TestTraceDebug(t *testing.T) {
+func TestTraceDebugSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	statsHandle := dom.StatsHandle()
@@ -156,10 +156,13 @@ func TestTraceDebug(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index iab(a, b), index ib(b))")
 	require.NoError(t, statsHandle.HandleDDLEvent(<-statsHandle.DDLEventCh()))
-	start := -1000
+
+	// Prepare the data.
+
 	// For column a, from -1000 to 999, each value appears 1 time,
 	// but if it's dividable by 100, make this value appear 50 times.
 	// For column b, it's always a+500.
+	start := -1000
 	for i := 0; i < 2000; i += 50 {
 		sql := "insert into t values "
 		// 50 rows as a batch
@@ -181,7 +184,6 @@ func TestTraceDebug(t *testing.T) {
 	require.Nil(t, statsHandle.DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table t with 1 samplerate, 20 topn")
 	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
-
 	// Add 100 modify count
 	sql := "insert into t values "
 	topNValue := fmt.Sprintf("(%d,%d) ,", 5000, 5000)
@@ -201,7 +203,7 @@ func TestTraceDebug(t *testing.T) {
 	traceSuiteData := statistics.GetTraceSuiteData()
 	traceSuiteData.LoadTestCases(t, &in, &out)
 
-	// Load needed statistics.
+	// Trigger loading needed statistics.
 	for _, tt := range in {
 		sql := "explain " + tt
 		tk.MustExec(sql)
@@ -217,6 +219,7 @@ func TestTraceDebug(t *testing.T) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmtCtx.EnableOptimizerDebugTrace = true
 
+	// Collect common information for the following tests.
 	p := parser.New()
 	dsColInfos := make([][]*model.ColumnInfo, 0, len(in))
 	dsSchemaCols := make([][]*expression.Column, 0, len(in))
@@ -241,6 +244,7 @@ func TestTraceDebug(t *testing.T) {
 	encoder := json.NewEncoder(&buf)
 	encoder.SetEscapeHTML(false)
 
+	// Test using ver2 stats.
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i])
@@ -262,6 +266,7 @@ func TestTraceDebug(t *testing.T) {
 	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
 	statsTbl = statsHandle.GetTableStats(tblInfo)
 
+	// Test using ver1 stats.
 	stmtCtx = sctx.GetSessionVars().StmtCtx
 	stmtCtx.EnableOptimizerDebugTrace = true
 	for i, sql := range in {

@@ -10,7 +10,7 @@
     ]
   },
   {
-    "name": "TestTraceDebug",
+    "name": "TestTraceDebugSelectivity",
     "cases": [
       "select * from t where a = 100 and b = 350",
       "select * from t where a < -1500 and b > 400 and b < 403"
