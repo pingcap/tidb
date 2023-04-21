@@ -1269,7 +1269,7 @@ func restoreStream(
 	}()
 
 	taskName := getStreamRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
-	var checkpointRunner *checkpoint.LogRestoreRunner
+	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
 	if cfg.UseCheckpoint {
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
 		if err != nil {
