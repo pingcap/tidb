@@ -959,11 +959,11 @@ func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback, isUnsigned bool) {
 	for i := 0; i < len(pb.IntRanges); i += 2 {
 		var lower, upper types.Datum
 		if isUnsigned {
-			lower.SetUint64(uint64(pb.IntRanges[i]))
 			upper.SetUint64(uint64(pb.IntRanges[i+1]))
+			lower.SetUint64(uint64(pb.IntRanges[i]))
 		} else {
-			lower.SetInt64(pb.IntRanges[i])
 			upper.SetInt64(pb.IntRanges[i+1])
+			lower.SetInt64(pb.IntRanges[i])
 		}
 		q.Feedback = append(q.Feedback, Feedback{&lower, &upper, pb.Counts[i/2], 0, pb.Ndvs[i/2]})
 	}
@@ -1040,21 +1040,6 @@ func SplitFeedbackByQueryType(feedbacks []Feedback) ([]Feedback, []Feedback) {
 		}
 	}
 	return eqFB, ranFB
-}
-
-// CleanRangeFeedbackByTopN will not update the part containing the TopN.
-func CleanRangeFeedbackByTopN(feedbacks []Feedback, topN *TopN) []Feedback {
-	for i := len(feedbacks) - 1; i >= 0; i-- {
-		lIdx, lMatch := topN.LowerBound(feedbacks[i].Lower.GetBytes())
-		rIdx, _ := topN.LowerBound(feedbacks[i].Upper.GetBytes())
-		// If the LowerBound return the same result for the range's upper bound and lower bound and the lower one isn't matched,
-		// we can indicate that no top-n overlaps the feedback's ranges.
-		if lIdx == rIdx && !lMatch {
-			continue
-		}
-		feedbacks = append(feedbacks[:i], feedbacks[i+1:]...)
-	}
-	return feedbacks
 }
 
 // setNextValue sets the next value for the given datum. For types like float,
