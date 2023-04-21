@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/logutil"
@@ -238,7 +239,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 	ddlSess := sess.NewSession(sessCtx)
 	return ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = %s;"
-		sql := fmt.Sprintf(template, s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
+		sql := fmt.Sprintf(template, s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
 		rows, err := se.Execute(ctx, sql, "get_checkpoint")
 		if err != nil {
@@ -309,7 +310,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		sql := fmt.Sprintf(template, wrapKey2String(rawReorgMeta), s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
+		sql := fmt.Sprintf(template, util.WrapKey2String(rawReorgMeta), s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
 		_, err = se.Execute(ctx, sql, "update_checkpoint")
 		if err != nil {
@@ -354,11 +355,4 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			return
 		}
 	}
-}
-
-func wrapKey2String(key []byte) string {
-	if len(key) == 0 {
-		return "''"
-	}
-	return fmt.Sprintf("0x%x", key)
 }

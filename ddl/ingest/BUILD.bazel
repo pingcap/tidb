@@ -29,6 +29,7 @@ go_library(
         "//br/pkg/lightning/log",
         "//config",
         "//ddl/internal/session",
+        "//ddl/util",
         "//kv",
         "//meta",
         "//parser/mysql",
@@ -58,7 +59,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         ":ingest",
         "//config",
