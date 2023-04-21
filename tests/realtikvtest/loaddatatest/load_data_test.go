@@ -221,25 +221,55 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	}...))
 }
 
-func (s *mockGCSSuite) TestGeneratedCol() {
+func (s *mockGCSSuite) TestGeneratedColumns() {
+	s.testLoadDataForGeneratedColumns(importer.LogicalImportMode)
+	s.testLoadDataForGeneratedColumns(importer.PhysicalImportMode)
+}
+
+func (s *mockGCSSuite) testLoadDataForGeneratedColumns(importMode string) {
+	// For issue https://github.com/pingcap/tidb/issues/39885
+	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec("USE load_csv;")
+	s.tk.MustExec("set @@sql_mode = ''")
+	s.tk.MustExec(`CREATE TABLE load_csv.t_gen1 (a int, b int generated ALWAYS AS (a+1));`)
+
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-multi-load",
-			Name:       "generated-col.csv",
+			BucketName: "test-bucket",
+			Name:       "generated_columns.csv",
 		},
-		Content: []byte(`1,test1,11
-2,test2,22
-3,test3,33`),
+		Content: []byte("1\t2\n2\t3"),
 	})
-	s.prepareAndUseDB("load_data")
-	s.tk.MustExec("drop table if exists t;")
-	s.tk.MustExec("create table t (a bigint, b varchar(100), c int as (a+100));")
-	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/generated-col.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' (a,b,@1) with import_mode='physical'`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
-	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
-		"1 test1 101", "2 test2 102", "3 test3 103",
-	}...))
+
+	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
+		" INTO TABLE load_csv.t_gen1 %s", gcsEndpoint, withOptions))
+	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
+	s.tk.MustExec("delete from t_gen1")
+
+	// Specify the column, this should also work.
+	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
+		" INTO TABLE load_csv.t_gen1 (a) %s", gcsEndpoint, withOptions))
+	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
+
+	// Swap the column and test again.
+	s.tk.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
+	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
+		" INTO TABLE load_csv.t_gen2 %s", gcsEndpoint, withOptions))
+	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
+	s.tk.MustExec(`delete from t_gen2`)
+
+	// Specify the column b
+	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
+		" INTO TABLE load_csv.t_gen2 (b) %s", gcsEndpoint, withOptions))
+	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
+	s.tk.MustExec(`delete from t_gen2`)
+
+	// Specify the column a
+	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
+		" INTO TABLE load_csv.t_gen2 (a) %s", gcsEndpoint, withOptions))
+	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("<nil> <nil>", "<nil> <nil>"))
 }
 
 func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
