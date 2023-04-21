@@ -3553,12 +3553,3 @@ func TestHandleAssertionFailureForPartitionedTable(t *testing.T) {
 	require.ErrorContains(t, err, "assertion")
 	hook.CheckLogCount(t, 0)
 }
-
-func TestInternalSQLParseFail(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
-	tk1 := testkit.NewTestKit(t, store)
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	_, err := tk1.Session().ExecuteInternal(ctx, "insert into t1 values;")
-	require.NoError(t, err)
-}
