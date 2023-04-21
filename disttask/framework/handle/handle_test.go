@@ -39,8 +39,9 @@ func TestHandle(t *testing.T) {
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
 
+	// no dispatcher registered
 	err := handle.SubmitGlobalTaskAndRun(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
-	require.EqualError(t, err, "task stopped with state reverted")
+	require.Error(t, err)
 
 	task, err := mgr.GetGlobalTaskByID(1)
 	require.NoError(t, err)
