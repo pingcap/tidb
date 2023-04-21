@@ -310,9 +310,89 @@ const (
 // RuleOp is for batching placement rule actions. The action type is
 // distinguished by the field `Action`.
 type RuleOp struct {
-	*placement.TiFlashRule            // information of the placement rule to add/delete the operation type
-	Action                 RuleOpType `json:"action"`
-	DeleteByIDPrefix       bool       `json:"delete_by_id_prefix"` // if action == delete, delete by the prefix of id
+	*placement.TiFlashRule // information of the placement rule to add/delete the operation type
+	Action                 RuleOpType
+	DeleteByIDPrefix       bool // if action == delete, delete by the prefix of id
+}
+
+var _ json.Marshaler = (*RuleOp)(nil)
+var _ json.Unmarshaler = (*RuleOp)(nil)
+
+type ruleOp struct {
+	GroupID          string                 `json:"group_id"`
+	ID               string                 `json:"id"`
+	Index            int                    `json:"index,omitempty"`
+	Override         bool                   `json:"override,omitempty"`
+	Role             placement.PeerRoleType `json:"role"`
+	Count            int                    `json:"count"`
+	Constraints      placement.Constraints  `json:"label_constraints,omitempty"`
+	LocationLabels   []string               `json:"location_labels,omitempty"`
+	IsolationLevel   string                 `json:"isolation_level,omitempty"`
+	StartKeyHex      string                 `json:"start_key"`
+	EndKeyHex        string                 `json:"end_key"`
+	Action           RuleOpType             `json:"action"`
+	DeleteByIDPrefix bool                   `json:"delete_by_id_prefix"`
+}
+
+// MarshalJSON implements json.Marshaler interface for RuleOp.
+func (r *RuleOp) MarshalJSON() ([]byte, error) {
+	return json.Marshal(&ruleOp{
+		GroupID:          r.GroupID,
+		ID:               r.ID,
+		Index:            r.Index,
+		Override:         r.Override,
+		Role:             r.Role,
+		Count:            r.Count,
+		Constraints:      r.Constraints,
+		LocationLabels:   r.LocationLabels,
+		IsolationLevel:   r.IsolationLevel,
+		StartKeyHex:      hex.EncodeToString(codec.EncodeBytes(nil, r.StartKey)),
+		EndKeyHex:        hex.EncodeToString(codec.EncodeBytes(nil, r.EndKey)),
+		Action:           r.Action,
+		DeleteByIDPrefix: r.DeleteByIDPrefix,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler interface for RuleOp.
+func (r *RuleOp) UnmarshalJSON(bytes []byte) error {
+	var rule ruleOp
+	if err := json.Unmarshal(bytes, &rule); err != nil {
+		return err
+	}
+	*r = RuleOp{
+		TiFlashRule: &placement.TiFlashRule{
+			GroupID:        rule.GroupID,
+			ID:             rule.ID,
+			Index:          rule.Index,
+			Override:       rule.Override,
+			Role:           rule.Role,
+			Count:          rule.Count,
+			Constraints:    rule.Constraints,
+			LocationLabels: rule.LocationLabels,
+			IsolationLevel: rule.IsolationLevel,
+		},
+		Action:           rule.Action,
+		DeleteByIDPrefix: rule.DeleteByIDPrefix,
+	}
+
+	startKey, err := hex.DecodeString(rule.StartKeyHex)
+	if err != nil {
+		return err
+	}
+
+	endKey, err := hex.DecodeString(rule.EndKeyHex)
+	if err != nil {
+		return err
+	}
+
+	_, r.StartKey, err = codec.DecodeBytes(startKey, nil)
+	if err != nil {
+		return err
+	}
+
+	_, r.EndKey, err = codec.DecodeBytes(endKey, nil)
+
+	return err
 }
 
 func (m *TiFlashReplicaManagerCtx) doSetPlacementRuleBatch(ctx context.Context, rules []placement.TiFlashRule) error {
