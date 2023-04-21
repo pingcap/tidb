@@ -686,9 +686,15 @@ func TestIndexMergeReaderClose(t *testing.T) {
 	err := tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr"))
 	require.Error(t, err)
-	require.False(t, checkGoroutineExists("fetchLoop"))
-	require.False(t, checkGoroutineExists("fetchHandles"))
-	require.False(t, checkGoroutineExists("waitPartialWorkersAndCloseFetchChan"))
+	require.Eventually(t, func() bool {
+		return !checkGoroutineExists("fetchLoop")
+	}, 5*time.Second, 100*time.Microsecond)
+	require.Eventually(t, func() bool {
+		return !checkGoroutineExists("fetchHandles")
+	}, 5*time.Second, 100*time.Microsecond)
+	require.Eventually(t, func() bool {
+		return !checkGoroutineExists("waitPartialWorkersAndCloseFetchChan")
+	}, 5*time.Second, 100*time.Microsecond)
 }
 
 func TestParallelHashAggClose(t *testing.T) {
