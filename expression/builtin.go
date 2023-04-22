@@ -799,7 +799,7 @@ var funcs = map[string]functionClass{
 	ast.UUIDToBin:       &uuidToBinFunctionClass{baseFunctionClass{ast.UUIDToBin, 1, 2}},
 	ast.BinToUUID:       &binToUUIDFunctionClass{baseFunctionClass{ast.BinToUUID, 1, 2}},
 	ast.TiDBShard:       &tidbShardFunctionClass{baseFunctionClass{ast.TiDBShard, 1, 1}},
-	ast.Grouping:        &groupingFunctionClass{baseFunctionClass{ast.Grouping, 1, 1}},
+	ast.Grouping:        &groupingImplFunctionClass{baseFunctionClass{ast.Grouping, 1, 1}},
 
 	ast.GetLock:     &lockFunctionClass{baseFunctionClass{ast.GetLock, 2, 2}},
 	ast.ReleaseLock: &releaseLockFunctionClass{baseFunctionClass{ast.ReleaseLock, 1, 1}},

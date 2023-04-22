@@ -43,7 +43,7 @@ func TestGrouping(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		groupingID   uint64
-		version      uint32
+		mode         tipb.GroupingMode
 		groupingIDs  map[int64]struct{}
 		expectResult uint64
 	}{
@@ -74,11 +74,11 @@ func TestGrouping(t *testing.T) {
 	}
 
 	for _, testCase := range tests {
-		comment := fmt.Sprintf(`for grouping = "%d", version = "%d", groupingIDs = "%v", expectRes = "%d""`, testCase.groupingID, testCase.version, testCase.groupingIDs, testCase.expectResult)
+		comment := fmt.Sprintf(`for grouping = "%d", version = "%d", groupingIDs = "%v", expectRes = "%d""`, testCase.groupingID, testCase.mode, testCase.groupingIDs, testCase.expectResult)
 		args := datumsToConstants(types.MakeDatums(testCase.groupingID))
 
 		groupingFunc, err := createGroupingFunc(ctx, args)
-		groupingFunc.SetMetaVersion(testCase.version)
+		groupingFunc.SetMetaVersion(testCase.mode)
 		groupingFunc.SetMetaGroupingIDs(testCase.groupingIDs)
 		require.NoError(t, err, comment)
 

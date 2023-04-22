@@ -24,18 +24,18 @@ import (
 )
 
 var (
-	_ functionClass = &groupingFunctionClass{}
+	_ functionClass = &groupingImplFunctionClass{}
 )
 
 var (
 	_ builtinFunc = &builtinGroupingSig{}
 )
 
-type groupingFunctionClass struct {
+type groupingImplFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *groupingFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *groupingImplFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -54,20 +54,20 @@ type builtinGroupingSig struct {
 	baseBuiltinFunc
 
 	// TODO these are two temporary fields for tests
-	version     uint32
+	mode        tipb.GroupingMode
 	groupingIDs map[int64]struct{}
 }
 
-func (b *builtinGroupingSig) SetMetaVersion(version uint32) {
-	b.version = version
+func (b *builtinGroupingSig) SetMetaVersion(mode tipb.GroupingMode) {
+	b.mode = mode
 }
 
 func (b *builtinGroupingSig) SetMetaGroupingIDs(groupingIDs map[int64]struct{}) {
 	b.groupingIDs = groupingIDs
 }
 
-func (b *builtinGroupingSig) getMetaVersion() uint32 {
-	return b.version
+func (b *builtinGroupingSig) getMetaVersion() tipb.GroupingMode {
+	return b.mode
 }
 
 // metadata returns the metadata of grouping functions
@@ -81,7 +81,7 @@ func (b *builtinGroupingSig) metadata() proto.Message {
 func (b *builtinGroupingSig) Clone() builtinFunc {
 	newSig := &builtinGroupingSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.version = b.version
+	newSig.mode = b.mode
 	newSig.groupingIDs = b.groupingIDs
 	return newSig
 }
@@ -134,7 +134,7 @@ func (b *builtinGroupingSig) groupingImplV3(groupingID int64) int64 {
 }
 
 func (b *builtinGroupingSig) grouping(groupingID int64) int64 {
-	switch b.version {
+	switch b.mode {
 	case 1:
 		return b.groupingImplV1(groupingID, b.getMetaGroupingID())
 	case 2:
@@ -163,8 +163,19 @@ func (b *builtinGroupingSig) evalInt(row chunk.Row) (int64, bool, error) {
 func (b *builtinGroupingSig) groupingVec(groupingIds *chunk.Column, rowNum int, result *chunk.Column) {
 	result.ResizeInt64(rowNum, false)
 	resContainer := result.Int64s()
-	for i := 0; i < rowNum; i++ {
-		resContainer[i] = b.grouping(groupingIds.GetInt64(i))
+	switch b.mode {
+	case 1:
+		for i := 0; i < rowNum; i++ {
+			resContainer[i] = b.groupingImplV1(groupingIds.GetInt64(i), b.getMetaGroupingID())
+		}
+	case 2:
+		for i := 0; i < rowNum; i++ {
+			resContainer[i] = b.groupingImplV2(groupingIds.GetInt64(i), b.getMetaGroupingID())
+		}
+	case 3:
+		for i := 0; i < rowNum; i++ {
+			resContainer[i] = b.groupingImplV3(groupingIds.GetInt64(i))
+		}
 	}
 }
 
