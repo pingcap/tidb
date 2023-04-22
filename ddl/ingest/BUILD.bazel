@@ -29,6 +29,7 @@ go_library(
         "//br/pkg/lightning/log",
         "//config",
         "//ddl/internal/session",
+        "//ddl/util",
         "//kv",
         "//meta",
         "//parser/mysql",
@@ -38,12 +39,11 @@ go_library(
         "//util",
         "//util/dbterror",
         "//util/generic",
-        "//util/intest",
         "//util/logutil",
-        "//util/mathutil",
         "//util/size",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -59,7 +59,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 8,
     deps = [
         ":ingest",
         "//config",
@@ -68,6 +68,7 @@ go_test(
         "//sessionctx",
         "//testkit",
         "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )

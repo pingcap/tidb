@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -36,9 +38,10 @@ type BackendCtx interface {
 	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
 	Unregister(jobID, indexID int64)
 
+	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	ResetWorkers(jobID, indexID int64)
-	Flush(indexID int64) (imported bool, err error)
+	Flush(indexID int64, force bool) (flushed, imported bool, err error)
 	Done() bool
 	SetDone()
 }
@@ -55,6 +58,33 @@ type litBackendCtx struct {
 	sysVars  map[string]string
 	diskRoot DiskRoot
 	done     bool
+
+	timeOfLastFlush atomicutil.Time
+	updateInterval  time.Duration
+}
+
+// CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
+func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
+	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
+	// backend must be a local backend.
+	// todo: when we can separate local backend completely from tidb backend, will remove this cast.
+	//nolint:forcetypeassert
+	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+		SysVars: bc.sysVars,
+		IndexID: indexID,
+	})
+	if err != nil {
+		logutil.BgLogger().Error(LitInfoRemoteDupCheck, zap.Error(err),
+			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
+		return err
+	} else if hasDupe {
+		logutil.BgLogger().Error(LitErrRemoteDupExistErr,
+			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
+		return tikv.ErrKeyExists
+	}
+	return nil
 }
 
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
@@ -95,43 +125,46 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 	return nil
 }
 
-const importThreshold = 0.85
-
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *litBackendCtx) Flush(indexID int64) (imported bool, err error) {
+func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported bool, err error) {
 	ei, exist := bc.Load(indexID)
 	if !exist {
 		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
-		return false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
+		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	err = bc.diskRoot.UpdateUsageAndQuota()
-	if err != nil {
-		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Int64("index ID", indexID))
-		return false, err
+	bc.diskRoot.UpdateUsage()
+	shouldImport := bc.diskRoot.ShouldImport()
+	shouldFlush := force ||
+		shouldImport ||
+		time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+	if !shouldFlush {
+		return false, false, nil
 	}
 
+	bc.timeOfLastFlush.Store(time.Now())
 	err = ei.Flush()
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 
-	release := ei.acquireFlushLock()
-	if release != nil && bc.diskRoot.CurrentUsage() >= uint64(importThreshold*float64(bc.diskRoot.MaxQuota())) {
+	if force || shouldImport {
+		release := ei.acquireFlushLock()
+		if release == nil {
+			return true, false, nil
+		}
 		defer release()
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
-			zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
-			zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
+			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
 		if err != nil {
 			logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
-				zap.Error(err), zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
-				zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
-			return false, err
+				zap.String("usage info", bc.diskRoot.UsageInfo()))
+			return true, false, err
 		}
-		return true, nil
+		return true, true, nil
 	}
-	return false, nil
+	return true, false, nil
 }
 
 // Done returns true if the lightning backfill is done.

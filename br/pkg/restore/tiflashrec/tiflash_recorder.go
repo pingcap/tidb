@@ -52,6 +52,14 @@ func New() *TiFlashRecorder {
 	}
 }
 
+func (r *TiFlashRecorder) Load(items map[int64]model.TiFlashReplicaInfo) {
+	r.items = items
+}
+
+func (r *TiFlashRecorder) GetItems() map[int64]model.TiFlashReplicaInfo {
+	return r.items
+}
+
 func (r *TiFlashRecorder) AddTable(tableID int64, replica model.TiFlashReplicaInfo) {
 	log.Info("recording tiflash replica", zap.Int64("table", tableID), zap.Any("replica", replica))
 	r.items[tableID] = replica

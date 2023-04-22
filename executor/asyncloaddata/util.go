@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -31,6 +32,14 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+)
+
+// vars used for test.
+var (
+	// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
+	TestSyncCh = make(chan struct{})
+	// TestLastLoadDataJobID last created job id, used in unit test.
+	TestLastLoadDataJobID atomic.Int64
 )
 
 // Job import job.
@@ -84,11 +93,12 @@ func CreateLoadDataJob(
 	if len(rows) != 1 {
 		return nil, errors.Errorf("unexpected result length: %d", len(rows))
 	}
+
+	failpoint.Inject("SaveLastLoadDataJobID", func() {
+		TestLastLoadDataJobID.Store(rows[0].GetInt64(0))
+	})
 	return NewJob(rows[0].GetInt64(0), conn, user), nil
 }
-
-// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
-var TestSyncCh = make(chan struct{})
 
 // StartJob tries to start a not-yet-started job with jobID. It will not return
 // error when there's no matched job.

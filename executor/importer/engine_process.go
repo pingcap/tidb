@@ -143,6 +143,7 @@ func ProcessChunk(
 		indexWriter: indexWriter,
 		encoder:     encoder,
 		kvCodec:     tableImporter.kvStore.GetCodec(),
+		progress:    tableImporter.Progress,
 	}
 	// todo: process in parallel
 	err = cp.process(ctx)
@@ -151,6 +152,7 @@ func ProcessChunk(
 	}
 	// chunk process is responsible to close data/index writer
 	cp.close(ctx)
+	tableImporter.setLastInsertID(encoder.GetLastInsertID())
 	return nil
 }
 

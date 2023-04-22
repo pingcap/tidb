@@ -232,7 +232,7 @@ func (tc *logCollector) Summary(name string) {
 			continue
 		}
 		if name == BackupDataSize {
-			if tc.failureUnitCount+tc.successUnitCount == 0 {
+			if tc.failureUnitCount+tc.successUnitCount == 0 && !tc.successStatus {
 				logFields = append(logFields, zap.String("Result", "Nothing to bakcup"))
 			} else {
 				logFields = append(logFields,
@@ -241,7 +241,7 @@ func (tc *logCollector) Summary(name string) {
 			continue
 		}
 		if name == RestoreDataSize {
-			if tc.failureUnitCount+tc.successUnitCount == 0 {
+			if tc.failureUnitCount+tc.successUnitCount == 0 && !tc.successStatus {
 				logFields = append(logFields, zap.String("Result", "Nothing to restore"))
 			} else {
 				logFields = append(logFields,

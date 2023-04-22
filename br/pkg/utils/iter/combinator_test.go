@@ -41,6 +41,18 @@ func TestFilter(t *testing.T) {
 	require.Equal(t, []int{12, 12, 25, 64}, coll.Item, "%s", coll)
 }
 
+func TestEnumerate(t *testing.T) {
+	items := iter.OfRange(0, 10)
+	enums := iter.Enumerate(items)
+	enums = iter.FilterOut(enums, func(ni iter.Indexed[int]) bool { return ni.Item%2 == 0 })
+	coll := iter.CollectAll(context.Background(), enums)
+	expects := []int{1, 3, 5, 7, 9}
+	for i, col := range coll.Item {
+		require.Equal(t, col.Item, col.Index)
+		require.Equal(t, expects[i], col.Item)
+	}
+}
+
 func TestFailure(t *testing.T) {
 	items := iter.ConcatAll(iter.OfRange(0, 5), iter.Fail[int](errors.New("meow?")), iter.OfRange(5, 10))
 	items = iter.FlatMap(items, func(n int) iter.TryNextor[int] {

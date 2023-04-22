@@ -1071,10 +1071,19 @@ AAAAAAAAAAAA5gm5Mg==
 
 		// for calibrate resource
 		{"calibrate resource", true, "CALIBRATE RESOURCE"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00',END_TIME='2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00',DURATION='20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME='2023-04-01 16:00:00',DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'"},
+		{"calibrate resource workload", false, ""},
 		{"calibrate resource workload tpcc", true, "CALIBRATE RESOURCE WORKLOAD TPCC"},
 		{"calibrate resource workload oltp_read_write", true, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE"},
 		{"calibrate resource workload oltp_read_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY"},
 		{"calibrate resource workload oltp_write_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY"},
+		{"calibrate resource workload = oltp_read_write START_TIME '2023-04-01 13:00:00'", false, ""},
 	}
 	RunTest(t, table, false)
 }
@@ -1111,7 +1120,7 @@ func TestDBAStmt(t *testing.T) {
 		// PROCEDURE and FUNCTION are currently not supported.
 		// And FUNCTION reuse show procedure status process logic.
 		{`SHOW PROCEDURE STATUS WHERE Db='test'`, true, "SHOW PROCEDURE STATUS WHERE `Db`=_UTF8MB4'test'"},
-		{`SHOW FUNCTION STATUS WHERE Db='test'`, true, "SHOW PROCEDURE STATUS WHERE `Db`=_UTF8MB4'test'"},
+		{`SHOW FUNCTION STATUS WHERE Db='test'`, true, "SHOW FUNCTION STATUS WHERE `Db`=_UTF8MB4'test'"},
 		{`SHOW INDEX FROM t;`, true, "SHOW INDEX IN `t`"},
 		{`SHOW KEYS FROM t;`, true, "SHOW INDEX IN `t`"},
 		{`SHOW INDEX IN t;`, true, "SHOW INDEX IN `t`"},

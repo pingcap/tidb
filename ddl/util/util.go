@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 
@@ -55,6 +56,8 @@ const (
 	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
+	// ServerGlobalState is the path on etcd that is used to store the server global state.
+	ServerGlobalState = "/tidb/server/global_state"
 	// SessionTTL is the etcd session's TTL in seconds.
 	SessionTTL = 90
 )
@@ -313,4 +316,12 @@ func IsContextDone(ctx context.Context) bool {
 	default:
 	}
 	return false
+}
+
+// WrapKey2String wraps the key to a string.
+func WrapKey2String(key []byte) string {
+	if len(key) == 0 {
+		return "''"
+	}
+	return fmt.Sprintf("0x%x", key)
 }

@@ -2172,11 +2172,17 @@ func (do *Domain) loadStatsWorker() {
 	}()
 	statsHandle := do.StatsHandle()
 	t := time.Now()
-	err := statsHandle.InitStats(do.InfoSchema())
-	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Duration("take time", time.Since(t)), zap.Error(err))
+	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	var err error
+	if liteInitStats {
+		err = statsHandle.InitStatsLite(do.InfoSchema())
 	} else {
-		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
+		err = statsHandle.InitStats(do.InfoSchema())
+	}
+	if err != nil {
+		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
 	for {
 		select {

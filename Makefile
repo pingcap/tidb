@@ -159,23 +159,29 @@ else
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./tidb-server
 endif
 
+init-submodule:
+	git submodule init && git submodule update --force
+
 enterprise-prepare:
-	git submodule init && git submodule update && cd extension/enterprise/generate && $(GO) generate -run genfile main.go
+	cd extension/enterprise/generate && $(GO) generate -run genfile main.go
 
 enterprise-clear:
 	cd extension/enterprise/generate && $(GO) generate -run clear main.go
 
-enterprise-docker: enterprise-prepare
+enterprise-docker: init-submodule enterprise-prepare
 	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile.enterprise .
 
 enterprise-server-build:
 ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server tidb-server/main.go
 else
-	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o '$(TARGET)' tidb-server/main.go
 endif
 
-enterprise-server: enterprise-prepare enterprise-server-build
+enterprise-server:
+	@make init-submodule
+	@make enterprise-prepare
+	@make enterprise-server-build
 
 server_check:
 ifeq ($(TARGET), "")
@@ -438,7 +444,7 @@ bazel_test: failpoint-enable bazel_prepare
 
 
 bazel_coverage_test: check-bazel-prepare failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) --jobs=35 --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...

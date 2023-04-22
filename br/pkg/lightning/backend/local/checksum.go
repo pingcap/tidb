@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importer
+package local
 
 import (
 	"container/heap"
@@ -28,10 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -43,8 +42,8 @@ import (
 
 const (
 	preUpdateServiceSafePointFactor = 3
-
-	maxErrorRetryCount = 3
+	maxErrorRetryCount              = 3
+	defaultGCLifeTime               = 100 * time.Hour
 )
 
 var (
@@ -62,38 +61,16 @@ type RemoteChecksum struct {
 	TotalBytes uint64
 }
 
+// IsEqual checks whether the checksum is equal to the other.
+func (rc *RemoteChecksum) IsEqual(other *verification.KVChecksum) bool {
+	return rc.Checksum == other.Sum() &&
+		rc.TotalKVs == other.SumKVS() &&
+		rc.TotalBytes == other.SumSize()
+}
+
 // ChecksumManager is a manager that manages checksums.
 type ChecksumManager interface {
 	Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error)
-}
-
-func newChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (ChecksumManager, error) {
-	// if we don't need checksum, just return nil
-	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.PostRestore.Checksum == config.OpLevelOff {
-		return nil, nil
-	}
-
-	pdAddr := rc.cfg.TiDB.PdAddr
-	pdVersion, err := pdutil.FetchPDVersion(ctx, rc.tls, pdAddr)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// for v4.0.0 or upper, we can use the gc ttl api
-	var manager ChecksumManager
-	if pdVersion.Major >= 4 {
-		tlsOpt := rc.tls.ToPDSecurityOption()
-		pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tlsOpt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		manager = newTiKVChecksumManager(store.GetClient(), pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency))
-	} else {
-		manager = newTiDBChecksumExecutor(rc.db)
-	}
-
-	return manager, nil
 }
 
 // fetch checksum for tidb sql client
@@ -102,7 +79,10 @@ type tidbChecksumExecutor struct {
 	manager *gcLifeTimeManager
 }
 
-func newTiDBChecksumExecutor(db *sql.DB) *tidbChecksumExecutor {
+var _ ChecksumManager = (*tidbChecksumExecutor)(nil)
+
+// NewTiDBChecksumExecutor creates a new tidb checksum executor.
+func NewTiDBChecksumExecutor(db *sql.DB) ChecksumManager {
 	return &tidbChecksumExecutor{
 		db:      db,
 		manager: newGCLifeTimeManager(),
@@ -144,26 +124,6 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	return &cs, nil
 }
 
-// DoChecksum do checksum for tables.
-// table should be in <db>.<table>, format.  e.g. foo.bar
-func DoChecksum(ctx context.Context, table *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
-	var err error
-	manager, ok := ctx.Value(&checksumManagerKey).(ChecksumManager)
-	if !ok {
-		return nil, errors.New("No gcLifeTimeManager found in context, check context initialization")
-	}
-
-	task := log.FromContext(ctx).With(zap.String("table", table.Name)).Begin(zap.InfoLevel, "remote checksum")
-
-	cs, err := manager.Checksum(ctx, table)
-	dur := task.End(zap.ErrorLevel, err)
-	if m, ok := metric.FromContext(ctx); ok {
-		m.ChecksumSecondsHistogram.Observe(dur.Seconds())
-	}
-
-	return cs, err
-}
-
 type gcLifeTimeManager struct {
 	runningJobsLock sync.Mutex
 	runningJobs     int
@@ -184,7 +144,7 @@ func (m *gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
 	defer m.runningJobsLock.Unlock()
 
 	if m.runningJobs == 0 {
-		oriGCLifeTime, err := ObtainGCLifeTime(ctx, db)
+		oriGCLifeTime, err := obtainGCLifeTime(ctx, db)
 		if err != nil {
 			return err
 		}
@@ -208,7 +168,7 @@ func (m *gcLifeTimeManager) removeOneJob(ctx context.Context, db *sql.DB) {
 
 	m.runningJobs--
 	if m.runningJobs == 0 {
-		err := UpdateGCLifeTime(ctx, db, m.oriGCLifeTime)
+		err := updateGCLifeTime(ctx, db, m.oriGCLifeTime)
 		if err != nil {
 			query := fmt.Sprintf(
 				"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
@@ -239,7 +199,7 @@ func increaseGCLifeTime(ctx context.Context, manager *gcLifeTimeManager, db *sql
 	}
 
 	if increaseGCLifeTime {
-		err = UpdateGCLifeTime(ctx, db, defaultGCLifeTime.String())
+		err = updateGCLifeTime(ctx, db, defaultGCLifeTime.String())
 		if err != nil {
 			return err
 		}
@@ -250,22 +210,49 @@ func increaseGCLifeTime(ctx context.Context, manager *gcLifeTimeManager, db *sql
 	return nil
 }
 
-type tikvChecksumManager struct {
+// obtainGCLifeTime obtains the current GC lifetime.
+func obtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
+	var gcLifeTime string
+	err := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}.QueryRow(
+		ctx,
+		"obtain GC lifetime",
+		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
+		&gcLifeTime,
+	)
+	return gcLifeTime, err
+}
+
+// updateGCLifeTime updates the current GC lifetime.
+func updateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
+	sql := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.FromContext(ctx).With(zap.String("gcLifeTime", gcLifeTime)),
+	}
+	return sql.Exec(ctx, "update GC lifetime",
+		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
+		gcLifeTime,
+	)
+}
+
+// TiKVChecksumManager is a manager that can compute checksum of a table using TiKV.
+type TiKVChecksumManager struct {
 	client                 kv.Client
 	manager                gcTTLManager
 	distSQLScanConcurrency uint
 }
 
-// newTiKVChecksumManager return a new tikv checksum manager
-func newTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint) *tikvChecksumManager {
-	return &tikvChecksumManager{
+var _ ChecksumManager = &TiKVChecksumManager{}
+
+// NewTiKVChecksumManager return a new tikv checksum manager
+func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint) *TiKVChecksumManager {
+	return &TiKVChecksumManager{
 		client:                 client,
 		manager:                newGCTTLManager(pdClient),
 		distSQLScanConcurrency: distSQLScanConcurrency,
 	}
 }
 
-func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
+func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
 		Build()
@@ -307,7 +294,8 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 	return nil, err
 }
 
-func (e *tikvChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
+// Checksum implements the ChecksumManager interface.
+func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
 	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	physicalTS, logicalTS, err := e.manager.pdClient.GetTS(ctx)
 	if err != nil {

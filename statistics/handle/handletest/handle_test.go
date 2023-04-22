@@ -571,7 +571,7 @@ func TestLoadStats(t *testing.T) {
 	topN = idx.TopN
 	require.Equal(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.False(t, idx.IsEssentialStatsLoaded())
-	idx.IsInvalid(false)
+	idx.IsInvalid(testKit.Session(), false)
 	require.NoError(t, h.LoadNeededHistograms())
 	stat = h.GetTableStats(tableInfo)
 	idx = stat.Indices[tableInfo.Indices[0].ID]
@@ -3510,4 +3510,88 @@ insert into t1 values
 	rows := tk.MustQuery("show analyze status where job_info like 'merge global stats%'").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "finished", rows[0][7])
+}
+
+func checkAllEvicted(t *testing.T, statsTbl *statistics.Table) {
+	for _, col := range statsTbl.Columns {
+		require.True(t, col.IsAllEvicted())
+	}
+	for _, idx := range statsTbl.Indices {
+		require.True(t, idx.IsAllEvicted())
+	}
+}
+
+func TestInitStatsLite(t *testing.T) {
+	oriVal := config.GetGlobalConfig().Performance.LiteInitStats
+	config.GetGlobalConfig().Performance.LiteInitStats = true
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = oriVal
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idxb(b), key idxc(c))")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9)")
+
+	h := dom.StatsHandle()
+	// set lease > 0 to trigger on-demand stats load.
+	h.SetLease(time.Millisecond)
+	defer func() {
+		h.SetLease(0)
+	}()
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	colBID := tblInfo.Columns[1].ID
+	colCID := tblInfo.Columns[2].ID
+	idxBID := tblInfo.Indices[0].ID
+	idxCID := tblInfo.Indices[1].ID
+
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
+	statsTbl0 := h.GetTableStats(tblInfo)
+	checkAllEvicted(t, statsTbl0)
+
+	h.Clear()
+	require.NoError(t, h.InitStatsLite(is))
+	statsTbl1 := h.GetTableStats(tblInfo)
+	checkAllEvicted(t, statsTbl1)
+	internal.AssertTableEqual(t, statsTbl0, statsTbl1)
+
+	// async stats load
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	tk.MustExec("explain select * from t where b > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	statsTbl2 := h.GetTableStats(tblInfo)
+	colBStats1 := statsTbl2.Columns[colBID]
+	require.True(t, colBStats1.IsFullLoad())
+	idxBStats1 := statsTbl2.Indices[idxBID]
+	require.True(t, idxBStats1.IsFullLoad())
+
+	// sync stats load
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
+	tk.MustExec("explain select * from t where c > 1")
+	statsTbl3 := h.GetTableStats(tblInfo)
+	colCStats1 := statsTbl3.Columns[colCID]
+	require.True(t, colCStats1.IsFullLoad())
+	idxCStats1 := statsTbl3.Indices[idxCID]
+	require.True(t, idxCStats1.IsFullLoad())
+
+	// update stats
+	tk.MustExec("analyze table t with 1 topn, 3 buckets")
+	statsTbl4 := h.GetTableStats(tblInfo)
+	colBStats2 := statsTbl4.Columns[colBID]
+	require.True(t, colBStats2.IsFullLoad())
+	require.Greater(t, colBStats2.LastUpdateVersion, colBStats1.LastUpdateVersion)
+	idxBStats2 := statsTbl4.Indices[idxBID]
+	require.True(t, idxBStats2.IsFullLoad())
+	require.Greater(t, idxBStats2.LastUpdateVersion, idxBStats1.LastUpdateVersion)
+	colCStats2 := statsTbl4.Columns[colCID]
+	require.True(t, colCStats2.IsFullLoad())
+	require.Greater(t, colCStats2.LastUpdateVersion, colCStats1.LastUpdateVersion)
+	idxCStats2 := statsTbl4.Indices[idxCID]
+	require.True(t, idxCStats2.IsFullLoad())
+	require.Greater(t, idxCStats2.LastUpdateVersion, idxCStats1.LastUpdateVersion)
 }

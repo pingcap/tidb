@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
@@ -45,7 +46,8 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	controller, err := importer.NewLoadDataController(&s.taskMeta.Plan, tbl)
+	// todo: use real session context
+	controller, err := importer.NewLoadDataController(nil, &s.taskMeta.Plan, tbl)
 	if err != nil {
 		return err
 	}
@@ -55,6 +57,7 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 
 	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
+		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
 	}, controller)
 	if err != nil {
 		return err
@@ -95,6 +98,12 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 		})
 	}
 	return miniTask, nil
+}
+
+// OnSubtaskFinished implements the Scheduler.OnSubtaskFinished interface.
+func (s *ImportScheduler) OnSubtaskFinished(context.Context, []byte) error {
+	logutil.BgLogger().Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
+	return nil
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.

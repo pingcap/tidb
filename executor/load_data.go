@@ -139,7 +139,7 @@ func NewLoadDataWorker(
 	if err != nil {
 		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(importPlan, tbl)
+	controller, err := importer.NewLoadDataController(userSctx, importPlan, tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func NewLoadDataWorker(
 			Columns:     plan.Columns,
 			GenColExprs: plan.GenCols.Exprs,
 		},
-		progress: asyncloaddata.NewProgress(),
+		progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
 	}
 	return loadDataWorker, nil
 }
@@ -189,6 +189,9 @@ func (e *LoadDataWorker) load(ctx context.Context, r io.ReadCloser) (jboID int64
 	}()
 
 	sqlExec := s.(sqlexec.SQLExecutor)
+	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
+		return 0, err2
+	}
 
 	job, err2 := asyncloaddata.CreateLoadDataJob(
 		ctx,
@@ -249,6 +252,8 @@ func (e *LoadDataWorker) importJob(ctx context.Context, jobImporter importer.Job
 
 	// UpdateJobProgress goroutine.
 	group.Go(func() error {
+		// ProgressUpdateRoutineFn must be run in this group, since on job cancel/drop, we depend on it to trigger
+		// the cancel of the other routines in this group.
 		return job.ProgressUpdateRoutineFn(ctx, done, groupCtx.Done(), e.progress)
 	})
 	jobImporter.Import()
@@ -264,6 +269,7 @@ func (e *LoadDataWorker) getJobImporter(ctx context.Context, job *asyncloaddata.
 		Group:    group,
 		GroupCtx: groupCtx,
 		Done:     make(chan struct{}),
+		Progress: e.progress,
 	}
 
 	if e.controller.ImportMode == importer.LogicalImportMode {
@@ -573,23 +579,31 @@ func (ji *logicalJobImporter) mergeAndSetMessage() string {
 
 		warns := make([]stmtctx.SQLWarn, numWarnings)
 		n := 0
-		lastInsertID := uint64(0)
 		for _, w := range ji.encodeWorkers {
 			n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
-			if w.lastInsertID > lastInsertID {
-				lastInsertID = w.lastInsertID
-			}
 		}
 		for _, w := range ji.commitWorkers {
 			n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
-			if w.lastInsertID > lastInsertID {
-				lastInsertID = w.lastInsertID
-			}
 		}
 		userStmtCtx.SetWarnings(warns)
-		userStmtCtx.LastInsertID = lastInsertID
+		userStmtCtx.LastInsertID = ji.getLastInsertID()
 	}
 	return msg
+}
+
+func (ji *logicalJobImporter) getLastInsertID() uint64 {
+	lastInsertID := uint64(0)
+	for _, w := range ji.encodeWorkers {
+		if w.lastInsertID != 0 && (lastInsertID == 0 || w.lastInsertID < lastInsertID) {
+			lastInsertID = w.lastInsertID
+		}
+	}
+	for _, w := range ji.commitWorkers {
+		if w.lastInsertID != 0 && (lastInsertID == 0 || w.lastInsertID < lastInsertID) {
+			lastInsertID = w.lastInsertID
+		}
+	}
+	return lastInsertID
 }
 
 // Close implements the importer.JobImporter interface.
@@ -802,6 +816,12 @@ func (w *encodeWorker) parserData2TableData(
 			continue
 		}
 
+		// Don't set the value for generated columns.
+		if fieldMappings[i].Column.IsGenerated() {
+			row = append(row, types.NewDatum(nil))
+			continue
+		}
+
 		row = append(row, parserData[i])
 	}
 	for i := 0; i < len(w.controller.ColumnAssignments); i++ {
@@ -830,9 +850,6 @@ func (w *encodeWorker) parserData2TableData(
 
 	return newRow, nil
 }
-
-// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
-var TestSyncCh = make(chan struct{})
 
 // commitWorker is a sub-worker of LoadDataWorker that dedicated to commit data.
 type commitWorker struct {
@@ -886,8 +903,8 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 			)
 			failpoint.Inject("AfterCommitOneTask", nil)
 			failpoint.Inject("SyncAfterCommitOneTask", func() {
-				TestSyncCh <- struct{}{}
-				<-TestSyncCh
+				importer.TestSyncCh <- struct{}{}
+				<-importer.TestSyncCh
 			})
 		}
 	}

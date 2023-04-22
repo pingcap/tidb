@@ -20,6 +20,7 @@ go_library(
         "//disttask/framework/dispatcher",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
+        "//executor/asyncloaddata",
         "//executor/importer",
         "//table/tables",
         "//util/logutil",

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
@@ -69,8 +70,9 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandl
 }
 
 // ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
-func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, errMsg string) ([]byte, error) {
-	logutil.BgLogger().Info("process error flow", zap.String("error message", errMsg))
+func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
+	logutil.BgLogger().Info("process error flow", zap.ByteStrings("error message", receiveErr))
+	gTask.Error = receiveErr[0]
 	return nil, nil
 }
 
@@ -80,7 +82,8 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) ([]*SubtaskMe
 	if err != nil {
 		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl)
+	// todo: use real session context
+	controller, err := importer.NewLoadDataController(nil, &taskMeta.Plan, tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +93,7 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) ([]*SubtaskMe
 
 	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
+		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
 	}, controller)
 	if err != nil {
 		return nil, err

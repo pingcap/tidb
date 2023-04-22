@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -118,11 +119,27 @@ func (idx *Index) TotalRowCount() float64 {
 }
 
 // IsInvalid checks if this index is invalid.
-func (idx *Index) IsInvalid(collPseudo bool) bool {
+func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
 	if !collPseudo {
 		idx.checkStats()
 	}
-	return (collPseudo && idx.ErrorRate.NotAccurate()) || idx.TotalRowCount() == 0
+	var notAccurate bool
+	var totalCount float64
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx,
+				"IsInvalid", res,
+				"CollPseudo", collPseudo,
+				"NotAccurate", notAccurate,
+				"TotalCount", totalCount,
+			)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
+	notAccurate = idx.ErrorRate.NotAccurate()
+	totalCount = idx.TotalRowCount()
+	return (collPseudo && notAccurate) || totalCount == 0
 }
 
 // EvictAllStats evicts all stats
@@ -160,7 +177,15 @@ func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 
-func (idx *Index) equalRowCount(b []byte, realtimeRowCount int64) float64 {
+func (idx *Index) equalRowCount(sctx sessionctx.Context, b []byte, realtimeRowCount int64) (result float64) {
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	if len(idx.Info.Columns) == 1 {
 		if bytes.Equal(b, nullKeyBytes) {
 			return float64(idx.Histogram.NullCount)
@@ -169,24 +194,24 @@ func (idx *Index) equalRowCount(b []byte, realtimeRowCount int64) float64 {
 	val := types.NewBytesDatum(b)
 	if idx.StatsVer < Version2 {
 		if idx.Histogram.NDV > 0 && idx.outOfRange(val) {
-			return outOfRangeEQSelectivity(idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
+			return outOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 		}
 		if idx.CMSketch != nil {
-			return float64(idx.QueryBytes(b))
+			return float64(idx.QueryBytes(sctx, b))
 		}
-		histRowCount, _ := idx.Histogram.equalRowCount(val, false)
+		histRowCount, _ := idx.Histogram.equalRowCount(sctx, val, false)
 		return histRowCount
 	}
 	// stats version == 2
 	// 1. try to find this value in TopN
 	if idx.TopN != nil {
-		count, found := idx.TopN.QueryTopN(b)
+		count, found := idx.TopN.QueryTopN(sctx, b)
 		if found {
 			return float64(count)
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
-	histCnt, matched := idx.Histogram.equalRowCount(val, true)
+	histCnt, matched := idx.Histogram.equalRowCount(sctx, val, true)
 	if matched {
 		return histCnt
 	}
@@ -199,18 +224,26 @@ func (idx *Index) equalRowCount(b []byte, realtimeRowCount int64) float64 {
 }
 
 // QueryBytes is used to query the count of specified bytes.
-func (idx *Index) QueryBytes(d []byte) uint64 {
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) {
 	idx.checkStats()
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	h1, h2 := murmur3.Sum128(d)
 	if idx.TopN != nil {
-		if count, ok := idx.TopN.QueryTopN(d); ok {
+		if count, ok := idx.TopN.QueryTopN(sctx, d); ok {
 			return count
 		}
 	}
 	if idx.CMSketch != nil {
-		return idx.CMSketch.queryHashValue(h1, h2)
+		return idx.CMSketch.queryHashValue(sctx, h1, h2)
 	}
-	v, _ := idx.Histogram.equalRowCount(types.NewBytesDatum(d), idx.StatsVer >= Version2)
+	v, _ := idx.Histogram.equalRowCount(sctx, types.NewBytesDatum(d), idx.StatsVer >= Version2)
 	return uint64(v)
 }
 
@@ -219,6 +252,11 @@ func (idx *Index) QueryBytes(d []byte) uint64 {
 func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	idx.checkStats()
 	sc := sctx.GetSessionVars().StmtCtx
+	debugTrace := sc.EnableOptimizerDebugTrace
+	if debugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
+	}
 	totalCount := float64(0)
 	isSingleCol := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
@@ -231,21 +269,33 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 		if err != nil {
 			return 0, err
 		}
+		if debugTrace {
+			debugTraceStartEstimateRange(sctx, indexRange, lb, rb, totalCount)
+		}
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
 		if bytes.Equal(lb, rb) {
 			// case 1: it's a point
 			if indexRange.LowExclude || indexRange.HighExclude {
+				if debugTrace {
+					debugTraceEndEstimateRange(sctx, 0, debugTraceImpossible)
+				}
 				continue
 			}
 			if fullLen {
 				// At most 1 in this case.
 				if idx.Info.Unique {
 					totalCount++
+					if debugTrace {
+						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+					}
 					continue
 				}
-				count = idx.equalRowCount(lb, realtimeRowCount)
+				count = idx.equalRowCount(sctx, lb, realtimeRowCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
+				if debugTrace {
+					debugTraceEndEstimateRange(sctx, count, debugTracePoint)
+				}
 				totalCount += count
 				continue
 			}
@@ -280,8 +330,11 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				upperLimit := expBackoffCnt
 				// Use the multi-column stats to calculate the max possible row count of [l, r)
 				if idx.Histogram.Len() > 0 {
-					_, lowerBkt, _, _ := idx.Histogram.locateBucket(l)
-					_, upperBkt, _, _ := idx.Histogram.locateBucket(r)
+					_, lowerBkt, _, _ := idx.Histogram.locateBucket(sctx, l)
+					_, upperBkt, _, _ := idx.Histogram.locateBucket(sctx, r)
+					if debugTrace {
+						debugTraceBuckets(sctx, &idx.Histogram, []int{lowerBkt - 1, upperBkt})
+					}
 					// Use Count of the Bucket before l as the lower bound.
 					preCount := float64(0)
 					if lowerBkt > 0 {
@@ -290,7 +343,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 					// Use Count of the Bucket where r exists as the upper bound.
 					upperCnt := float64(idx.Histogram.Buckets[upperBkt].Count)
 					upperLimit = upperCnt - preCount
-					upperLimit += float64(idx.TopN.BetweenCount(lb, rb))
+					upperLimit += float64(idx.TopN.BetweenCount(sctx, lb, rb))
 				}
 
 				// If the result of exponential backoff strategy is larger than the result from multi-column stats,
@@ -302,7 +355,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			}
 		}
 		if !expBackoffSuccess {
-			count += idx.BetweenRowCount(l, r)
+			count += idx.BetweenRowCount(sctx, l, r)
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
@@ -310,7 +363,11 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 
 		// handling the out-of-range part
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			count += idx.Histogram.outOfRangeRowCount(&l, &r, modifyCount)
+			count += idx.Histogram.outOfRangeRowCount(sctx, &l, &r, modifyCount)
+		}
+
+		if debugTrace {
+			debugTraceEndEstimateRange(sctx, count, debugTraceRange)
 		}
 		totalCount += count
 	}
@@ -319,7 +376,18 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
-func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, indexRange *ranger.Range) (float64, bool, error) {
+func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, indexRange *ranger.Range) (sel float64, success bool, err error) {
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx,
+				"Result", sel,
+				"Success", success,
+				"error", err,
+			)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	tmpRan := []*ranger.Range{
 		{
 			LowVal:    make([]types.Datum, 1),
@@ -399,7 +467,8 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 }
 
 func (idx *Index) checkStats() {
-	if idx.IsFullLoad() {
+	// When we are using stats from PseudoTable(), all column/index ID will be -1.
+	if idx.IsFullLoad() || idx.PhysicalID <= 0 {
 		return
 	}
 	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
@@ -473,12 +542,13 @@ func (idx *Index) GetIncreaseFactor(realtimeRowCount int64) float64 {
 }
 
 // BetweenRowCount estimates the row count for interval [l, r).
-func (idx *Index) BetweenRowCount(l, r types.Datum) float64 {
-	histBetweenCnt := idx.Histogram.BetweenRowCount(l, r)
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (idx *Index) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum) float64 {
+	histBetweenCnt := idx.Histogram.BetweenRowCount(sctx, l, r)
 	if idx.StatsVer == Version1 {
 		return histBetweenCnt
 	}
-	return float64(idx.TopN.BetweenCount(l.GetBytes(), r.GetBytes())) + histBetweenCnt
+	return float64(idx.TopN.BetweenCount(sctx, l.GetBytes(), r.GetBytes())) + histBetweenCnt
 }
 
 // matchPrefix checks whether ad is the prefix of value

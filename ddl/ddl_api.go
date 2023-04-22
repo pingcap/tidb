@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -2859,7 +2860,7 @@ func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 // checkPartitionByRange checks validity of a "BY RANGE" partition.
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	failpoint.Inject("CheckPartitionByRangeErr", func() {
-		panic("Out Of Memory Quota!")
+		panic(memory.PanicMemoryExceedWarnMsg)
 	})
 	pi := tbInfo.Partition
 
@@ -3868,6 +3869,19 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
+	if pi.Type == model.PartitionTypeHash || pi.Type == model.PartitionTypeKey {
+		// Add partition for hash/key is actually a reorganize partition
+		// operation and not a metadata only change!
+		switch spec.Tp {
+		case ast.AlterTableAddLastPartition:
+			return errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION of HASH/KEY partitioned table"))
+		case ast.AlterTableAddPartitions:
+		// only thing supported
+		default:
+			return errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of HASH/KEY partitioned table"))
+		}
+		return d.hashPartitionManagement(ctx, ident, spec, pi)
+	}
 
 	partInfo, err := BuildAddedPartitionInfo(ctx, meta, spec)
 	if err != nil {
@@ -3984,10 +3998,16 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
 		}
 	}
-	if pi.Type == model.PartitionTypeRange {
+	switch pi.Type {
+	case model.PartitionTypeRange:
 		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
 			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"REORGANIZE PARTITION of RANGE; not adjacent partitions"))
+		}
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		if len(idMap) != len(pi.Definitions) {
+			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"REORGANIZE PARTITION of HASH/RANGE; must reorganize all partitions"))
 		}
 	}
 
@@ -4008,6 +4028,11 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	}
 	switch pi.Type {
 	case model.PartitionTypeRange, model.PartitionTypeList:
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		if spec.Tp != ast.AlterTableCoalescePartitions &&
+			spec.Tp != ast.AlterTableAddPartitions {
+			return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+		}
 	default:
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 	}
@@ -4110,7 +4135,7 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, p
 }
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
-func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -4121,24 +4146,62 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
-	meta := t.Meta()
-	if meta.GetPartitionInfo() == nil {
+	pi := t.Meta().GetPartitionInfo()
+	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	switch meta.Partition.Type {
-	// We don't support coalesce partitions hash type partition now.
-	case model.PartitionTypeHash:
-		return errors.Trace(dbterror.ErrUnsupportedCoalescePartition)
-
-	// Key type partition cannot be constructed currently, ignoring it for now.
-	case model.PartitionTypeKey:
-		return errors.Trace(dbterror.ErrUnsupportedCoalescePartition)
+	switch pi.Type {
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		return d.hashPartitionManagement(sctx, ident, spec, pi)
 
 	// Coalesce partition can only be used on hash/key partitions.
 	default:
 		return errors.Trace(dbterror.ErrCoalesceOnlyOnHashPartition)
 	}
+}
+
+func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, pi *model.PartitionInfo) error {
+	newSpec := *spec
+	newSpec.PartitionNames = make([]model.CIStr, len(pi.Definitions))
+	for i := 0; i < len(pi.Definitions); i++ {
+		// reorganize ALL partitions into the new number of partitions
+		newSpec.PartitionNames[i] = pi.Definitions[i].Name
+	}
+	for i := 0; i < len(newSpec.PartDefinitions); i++ {
+		switch newSpec.PartDefinitions[i].Clause.(type) {
+		case *ast.PartitionDefinitionClauseNone:
+			// OK, expected
+		case *ast.PartitionDefinitionClauseIn:
+			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("LIST", "IN"))
+		case *ast.PartitionDefinitionClauseLessThan:
+			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("RANGE", "LESS THAN"))
+		case *ast.PartitionDefinitionClauseHistory:
+			return errors.Trace(ast.ErrPartitionWrongValues.FastGenByArgs("SYSTEM_TIME", "HISTORY"))
+
+		default:
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"partitioning clause")
+		}
+	}
+	if newSpec.Num < uint64(len(newSpec.PartDefinitions)) {
+		newSpec.Num = uint64(len(newSpec.PartDefinitions))
+	}
+	if spec.Tp == ast.AlterTableCoalescePartitions {
+		if newSpec.Num < 1 {
+			return ast.ErrCoalescePartitionNoPartition
+		}
+		if newSpec.Num >= uint64(len(pi.Definitions)) {
+			return dbterror.ErrDropLastPartition
+		}
+		if isNonDefaultPartitionOptionsUsed(pi.Definitions) {
+			// The partition definitions will be copied in buildHashPartitionDefinitions()
+			// if there is a non-empty list of definitions
+			newSpec.PartDefinitions = []*ast.PartitionDefinition{{}}
+		}
+	}
+
+	return d.ReorganizePartitions(sctx, ident, &newSpec)
 }
 
 func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
@@ -5045,7 +5108,7 @@ func GetModifiableColumnJob(
 			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate.Load()
 			sv.TruncateAsWarning = false
 			sv.IgnoreTruncate.Store(false)
-			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo)
+			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
 			sv.TruncateAsWarning = oldTruncAsWarn
 			sv.IgnoreTruncate.Store(oldIgnoreTrunc)
 			if err != nil {
@@ -7067,6 +7130,7 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+	numParts := uint64(0)
 	switch meta.Partition.Type {
 	case model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
@@ -7084,6 +7148,20 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
 			}
 		}
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		switch spec.Tp {
+		case ast.AlterTableCoalescePartitions:
+			if int(spec.Num) >= len(meta.Partition.Definitions) {
+				return nil, dbterror.ErrDropLastPartition
+			}
+			numParts = uint64(len(meta.Partition.Definitions)) - spec.Num
+		case ast.AlterTableAddPartitions:
+			if len(spec.PartDefinitions) > 0 {
+				numParts = uint64(len(meta.Partition.Definitions)) + uint64(len(spec.PartDefinitions))
+			} else {
+				numParts = uint64(len(meta.Partition.Definitions)) + spec.Num
+			}
+		}
 	default:
 		// we don't support ADD PARTITION for all other partition types yet.
 		return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
@@ -7096,7 +7174,7 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		Enable:  meta.Partition.Enable,
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta)
+	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta, numParts)
 	if err != nil {
 		return nil, err
 	}
