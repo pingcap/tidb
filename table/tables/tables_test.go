@@ -1154,7 +1154,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				}
 				col3 := []col{
 					{1, mysql.TypeLong, types.NewDatum(seq)},
-					{3, mysql.TypeDouble, types.NewDatum(float64(v))},
+					{3, mysql.TypeDouble, types.NewDatum(v)},
 				}
 				if isDMLBeforeDDL(seq) {
 					return key, [][]col{col1}
@@ -1181,7 +1181,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(seq))
 				col1 := []col{
 					{1, mysql.TypeLong, types.NewDatum(seq)},
-					{2, mysql.TypeDouble, types.NewDatum(float64(v))},
+					{2, mysql.TypeDouble, types.NewDatum(v)},
 				}
 				col2 := []col{
 					{1, mysql.TypeLong, types.NewDatum(seq)},
@@ -1361,9 +1361,8 @@ func TestWriteWithChecksums(t *testing.T) {
 				}
 				if job.SchemaState == model.StateWriteOnly {
 					return key, [][]col{col1, col3}
-				} else {
-					return key, [][]col{col2, col3}
 				}
+				return key, [][]col{col2, col3}
 			},
 		},
 		{
@@ -1401,9 +1400,8 @@ func TestWriteWithChecksums(t *testing.T) {
 				}
 				if job.SchemaState == model.StateWriteOnly {
 					return key, [][]col{col1, col3}
-				} else {
-					return key, [][]col{col2, col3}
 				}
+				return key, [][]col{col2, col3}
 			},
 		},
 		{
@@ -1460,7 +1458,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				}
 				col3 := []col{
 					{1, mysql.TypeLong, types.NewDatum(1)},
-					{3, mysql.TypeDouble, types.NewDatum(float64(v))},
+					{3, mysql.TypeDouble, types.NewDatum(v)},
 				}
 				if isDMLBeforeDDL(seq) {
 					return key, [][]col{col1}
@@ -1487,7 +1485,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
 				col1 := []col{
 					{1, mysql.TypeLong, types.NewDatum(1)},
-					{2, mysql.TypeDouble, types.NewDatum(float64(v))},
+					{2, mysql.TypeDouble, types.NewDatum(v)},
 				}
 				col2 := []col{
 					{1, mysql.TypeLong, types.NewDatum(1)},

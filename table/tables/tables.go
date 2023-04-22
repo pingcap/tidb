@@ -1814,7 +1814,7 @@ func (t *TableCommon) appendNonPublicColForChecksum(
 // there is a non-public column. The first checksum should be calculate with the old version of this column and the extra
 // checksum should be calculated with the new version of column.
 func (t *TableCommon) appendInChangeColForChecksum(
-	sctx sessionctx.Context, data [][]rowcodec.ColData, c *model.ColumnInfo, old *types.Datum, new *types.Datum,
+	sctx sessionctx.Context, data [][]rowcodec.ColData, c *model.ColumnInfo, oldVal *types.Datum, newVal *types.Datum,
 ) [][]rowcodec.ColData {
 	if size := len(data); size == 0 { // no need for checksum
 		return nil
@@ -1829,9 +1829,9 @@ func (t *TableCommon) appendInChangeColForChecksum(
 		return nil
 	}
 	// calculate the checksum with the old version of col
-	data[0] = appendColForChecksum(data[0], t, t.meta.Columns[c.DependencyColumnOffset], old)
+	data[0] = appendColForChecksum(data[0], t, t.meta.Columns[c.DependencyColumnOffset], oldVal)
 	// calculate the extra checksum with the new version of col
-	data[1] = appendColForChecksum(data[1], t, c, new)
+	data[1] = appendColForChecksum(data[1], t, c, newVal)
 
 	return data
 }

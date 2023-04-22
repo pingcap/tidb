@@ -122,6 +122,7 @@ go_library(
         "//util/ranger",
         "//util/resourcegrouptag",
         "//util/rowDecoder",
+        "//util/rowcodec",
         "//util/set",
         "//util/slice",
         "//util/sqlexec",

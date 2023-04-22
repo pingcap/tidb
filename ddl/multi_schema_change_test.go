@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1274,13 +1273,13 @@ func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 
 	variable.EnableRowLevelChecksum.Store(true)
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
-	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
 
 	variable.EnableRowLevelChecksum.Store(false)
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
-	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
 }
 
 type cancelOnceHook struct {
