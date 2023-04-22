@@ -1039,6 +1039,46 @@ func TestWriteWithChecksums(t *testing.T) {
 			},
 		},
 		{
+			name: "AddRecord/AddColumnNotNull",
+			init: []string{"create table t (id int primary key, c1 int)"},
+			schema: []col{
+				{ID: 1, Type: mysql.TypeLong},
+				{ID: 2, Type: mysql.TypeLong},
+				{ID: 3, Type: mysql.TypeLong},
+			},
+			ddl: "alter table t add column c2 int not null",
+			dml: func(seq int64, job *model.Job) ([]byte, [][]col) {
+				if isDMLAfterDDL(seq) {
+					tkDML.MustExec("insert into t (id, c1, c2) values (?, ?, ?)", seq, seq+1, seq+2)
+				} else {
+					tkDML.MustExec("insert into t (id, c1) values (?, ?)", seq, seq+1)
+				}
+				tbl := external.GetTableByName(t, tkDML, "test", "t")
+				key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(seq))
+				col1 := []col{
+					{1, mysql.TypeLong, types.NewDatum(seq)},
+					{2, mysql.TypeLong, types.NewDatum(seq + 1)},
+				}
+				col2 := []col{
+					{1, mysql.TypeLong, types.NewDatum(seq)},
+					{2, mysql.TypeLong, types.NewDatum(seq + 1)},
+					{3, mysql.TypeLong, types.NewDatum(0)},
+				}
+				col3 := []col{
+					{1, mysql.TypeLong, types.NewDatum(seq)},
+					{2, mysql.TypeLong, types.NewDatum(seq + 1)},
+					{3, mysql.TypeLong, types.NewDatum(seq + 2)},
+				}
+				if isDMLBeforeDDL(seq) {
+					return key, [][]col{col1}
+				}
+				if isDMLAfterDDL(seq) {
+					return key, [][]col{col3}
+				}
+				return key, [][]col{col2, col1}
+			},
+		},
+		{
 			name: "AddRecord/DropColumn",
 			init: []string{"create table t (id int primary key, c1 int, c2 int)"},
 			schema: []col{
@@ -1090,14 +1130,59 @@ func TestWriteWithChecksums(t *testing.T) {
 				col2 := []col{
 					{1, mysql.TypeLong, types.NewDatum(seq)},
 					{2, mysql.TypeLong, types.NewDatum(seq + 1)},
+					{3, mysql.TypeLong, types.NewDatum(nil)},
+				}
+				col3 := []col{
+					{1, mysql.TypeLong, types.NewDatum(seq)},
+					{2, mysql.TypeLong, types.NewDatum(seq + 1)},
 				}
 				if isDMLBeforeDDL(seq) {
 					return key, [][]col{col1}
 				}
 				if isDMLAfterDDL(seq) {
-					return key, [][]col{col2}
+					return key, [][]col{col3}
 				}
-				return key, [][]col{col1, col2}
+				return key, [][]col{col2, col3}
+			},
+		},
+		{
+			name: "AddRecord/DropColumnNotNull",
+			init: []string{"create table t (id int primary key, c1 int, c2 int not null)"},
+			schema: []col{
+				{ID: 1, Type: mysql.TypeLong},
+				{ID: 2, Type: mysql.TypeLong},
+				{ID: 3, Type: mysql.TypeLong},
+			},
+			ddl: "alter table t drop column c2",
+			dml: func(seq int64, job *model.Job) ([]byte, [][]col) {
+				if isDMLBeforeDDL(seq) {
+					tkDML.MustExec("insert into t (id, c1, c2) values (?, ?, ?)", seq, seq+1, seq+2)
+				} else {
+					tkDML.MustExec("insert into t (id, c1) values (?, ?)", seq, seq+1)
+				}
+				tbl := external.GetTableByName(t, tkDML, "test", "t")
+				key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(seq))
+				col1 := []col{
+					{1, mysql.TypeLong, types.NewDatum(seq)},
+					{2, mysql.TypeLong, types.NewDatum(seq + 1)},
+					{3, mysql.TypeLong, types.NewDatum(seq + 2)},
+				}
+				col2 := []col{
+					{1, mysql.TypeLong, types.NewDatum(seq)},
+					{2, mysql.TypeLong, types.NewDatum(seq + 1)},
+					{3, mysql.TypeLong, types.NewDatum(0)},
+				}
+				col3 := []col{
+					{1, mysql.TypeLong, types.NewDatum(seq)},
+					{2, mysql.TypeLong, types.NewDatum(seq + 1)},
+				}
+				if isDMLBeforeDDL(seq) {
+					return key, [][]col{col1}
+				}
+				if isDMLAfterDDL(seq) {
+					return key, [][]col{col3}
+				}
+				return key, [][]col{col2, col3}
 			},
 		},
 		{
@@ -1327,6 +1412,37 @@ func TestWriteWithChecksums(t *testing.T) {
 			},
 		},
 		{
+			name: "UpdateRecord/AddColumnNotNull",
+			init: []string{"create table t (id int primary key, c1 int)", "insert into t values (1, 0)"},
+			schema: []col{
+				{ID: 1, Type: mysql.TypeLong},
+				{ID: 2, Type: mysql.TypeLong},
+				{ID: 3, Type: mysql.TypeLong},
+			},
+			ddl: "alter table t add column c2 int not null",
+			dml: func(seq int64, job *model.Job) ([]byte, [][]col) {
+				tkDML.MustExec("update t set c1 = ? where id = 1", seq)
+				tbl := external.GetTableByName(t, tkDML, "test", "t")
+				key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
+				col1 := []col{
+					{1, mysql.TypeLong, types.NewDatum(1)},
+					{2, mysql.TypeLong, types.NewDatum(seq)},
+				}
+				col2 := []col{
+					{1, mysql.TypeLong, types.NewDatum(1)},
+					{2, mysql.TypeLong, types.NewDatum(seq)},
+					{3, mysql.TypeLong, types.NewDatum(0)},
+				}
+				if isDMLBeforeDDL(seq) {
+					return key, [][]col{col1}
+				}
+				if isDMLAfterDDL(seq) {
+					return key, [][]col{col2}
+				}
+				return key, [][]col{col2, col1}
+			},
+		},
+		{
 			name: "UpdateRecord/DropColumn",
 			init: []string{"create table t (id int primary key, c1 int, c2 int)", "insert into t values (1, 0, 0)"},
 			schema: []col{
@@ -1386,7 +1502,46 @@ func TestWriteWithChecksums(t *testing.T) {
 				col2 := []col{
 					{1, mysql.TypeLong, types.NewDatum(1)},
 					{2, mysql.TypeLong, types.NewDatum(seq)},
-					{3, mysql.TypeLong, types.NewDatum(42)},
+					{3, mysql.TypeLong, types.NewDatum(nil)},
+				}
+				col3 := []col{
+					{1, mysql.TypeLong, types.NewDatum(1)},
+					{2, mysql.TypeLong, types.NewDatum(seq)},
+				}
+				if isDMLBeforeDDL(seq) {
+					return key, [][]col{col1}
+				}
+				if isDMLAfterDDL(seq) {
+					return key, [][]col{col3}
+				}
+				if job.SchemaState == model.StateWriteOnly {
+					return key, [][]col{col1, col3}
+				}
+				return key, [][]col{col2, col3}
+			},
+		},
+		{
+			name: "UpdateRecord/DropColumnNotNull",
+			init: []string{"create table t (id int primary key, c1 int, c2 int not null)", "insert into t values (1, 0, 10)"},
+			schema: []col{
+				{ID: 1, Type: mysql.TypeLong},
+				{ID: 2, Type: mysql.TypeLong},
+				{ID: 3, Type: mysql.TypeLong},
+			},
+			ddl: "alter table t drop column c2",
+			dml: func(seq int64, job *model.Job) ([]byte, [][]col) {
+				tkDML.MustExec("update t set c1 = ? where id = 1", seq)
+				tbl := external.GetTableByName(t, tkDML, "test", "t")
+				key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
+				col1 := []col{
+					{1, mysql.TypeLong, types.NewDatum(1)},
+					{2, mysql.TypeLong, types.NewDatum(seq)},
+					{3, mysql.TypeLong, types.NewDatum(10)},
+				}
+				col2 := []col{
+					{1, mysql.TypeLong, types.NewDatum(1)},
+					{2, mysql.TypeLong, types.NewDatum(seq)},
+					{3, mysql.TypeLong, types.NewDatum(0)},
 				}
 				col3 := []col{
 					{1, mysql.TypeLong, types.NewDatum(1)},

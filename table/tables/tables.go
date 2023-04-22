@@ -430,7 +430,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 					}
 					checksumData = t.appendInChangeColForChecksum(sctx, checksumData, col.ToInfo(), &newData[col.DependencyColumnOffset], &v)
 				} else {
-					v, err := table.GetColDefaultValue(sctx, col.ToInfo())
+					v, err := table.GetColOriginDefaultValue(sctx, col.ToInfo())
 					if err != nil {
 						return err
 					}
@@ -860,7 +860,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 					}
 					checksumData = t.appendInChangeColForChecksum(sctx, checksumData, col.ToInfo(), &r[col.DependencyColumnOffset], &v)
 				} else {
-					v, err := table.GetColDefaultValue(sctx, col.ToInfo())
+					v, err := table.GetColOriginDefaultValue(sctx, col.ToInfo())
 					if err != nil {
 						return nil, err
 					}
@@ -901,7 +901,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			} else {
 				// If `AddRecord` is called by an insert and the col is in write only or write reorganization state, we must
 				// add it with its default value.
-				value, err = table.GetColDefaultValue(sctx, col.ToInfo())
+				value, err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
 				if err != nil {
 					return nil, err
 				}
