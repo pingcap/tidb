@@ -217,6 +217,12 @@ var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPl
 
 // NonPreparedPlanCacheableWithCtx checks whether this SQL is cacheable for non-prepared plan cache.
 func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (ok bool, reason string) {
+	selStmt, isSelect := node.(*ast.SelectStmt)
+	if !sctx.GetSessionVars().EnableNonPreparedPlanCacheForDML &&
+		(!isSelect || selStmt.LockInfo != nil) {
+		return false, "not a SELECT statement"
+	}
+
 	var tableNames []*ast.TableName
 	switch x := node.(type) {
 	case *ast.SelectStmt:
@@ -225,6 +231,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			return ok, reason
 		}
 	case *ast.UpdateStmt:
+		if len(x.TableHints) > 0 {
+			return false, "not support update statement with table hints"
+		}
 		if x.MultipleTable {
 			return false, "not support multiple tables update statements"
 		}
@@ -233,6 +242,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			return ok, reason
 		}
 	case *ast.InsertStmt:
+		if len(x.TableHints) > 0 {
+			return false, "not support insert statement with table hints"
+		}
 		if x.Select == nil { // `insert into t values (...)`
 			nRows := len(x.Lists)
 			nCols := 0
@@ -261,6 +273,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			}
 		}
 	case *ast.DeleteStmt:
+		if len(x.TableHints) > 0 {
+			return false, "not support insert statement with table hints"
+		}
 		if x.IsMultiTable {
 			return false, "not support multiple tables delete statements"
 		}

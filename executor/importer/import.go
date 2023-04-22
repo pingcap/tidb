@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -63,10 +64,10 @@ const (
 	// LogicalImportMode represents the import mode is SQL-like.
 	LogicalImportMode = "logical"
 	// PhysicalImportMode represents the import mode is KV-like.
-	PhysicalImportMode  = "physical"
-	unlimitedWriteSpeed = config.ByteSize(math.MaxInt64)
+	PhysicalImportMode = "physical"
+	// 0 means no limit
+	unlimitedWriteSpeed = config.ByteSize(0)
 	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
-	minWriteSpeed       = config.ByteSize(1 << 10)  // 1KiB/s
 
 	importModeOption    = "import_mode"
 	diskQuotaOption     = "disk_quota"
@@ -129,6 +130,41 @@ type LoadDataReaderInfo struct {
 	Remote *mydump.SourceFileMeta
 }
 
+// Plan describes the plan of LOAD DATA.
+type Plan struct {
+	TableName *ast.TableName
+	TableInfo *model.TableInfo
+
+	FileLocRef         ast.FileLocRefTp
+	Path               string
+	Format             string
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	ColumnAssignments  []*ast.Assignment
+	OnDuplicate        ast.OnDuplicateKeyHandlingType
+	FieldsInfo         *ast.FieldsClause
+	LinesInfo          *ast.LinesClause
+	Restrictive        bool
+	IgnoreLines        *uint64
+
+	SQLMode          mysql.SQLMode
+	Charset          *string
+	ImportantSysVars map[string]string
+
+	ImportMode        string
+	DiskQuota         config.ByteSize
+	Checksum          config.PostOpLevel
+	AddIndex          bool
+	Analyze           config.PostOpLevel
+	ThreadCnt         int64
+	BatchSize         int64
+	MaxWriteSpeed     config.ByteSize
+	SplitFile         bool
+	MaxRecordedErrors int64
+	Detached          bool
+
+	DistSQLScanConcurrency int
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
@@ -186,6 +222,10 @@ type LoadDataController struct {
 	dataFiles        []*mydump.SourceFileMeta
 	// total data file size in bytes, only initialized when load from remote.
 	TotalFileSize int64
+	// user session context. DO NOT use it if load is in DETACHED mode.
+	UserCtx sessionctx.Context
+	// used for checksum in physical mode
+	distSQLScanConcurrency int
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -207,8 +247,8 @@ func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 	return res
 }
 
-// NewLoadDataController create new controller.
-func NewLoadDataController(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*LoadDataController, error) {
+// NewPlan creates a new load data plan.
+func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*Plan, error) {
 	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
 	var format string
@@ -231,26 +271,70 @@ func NewLoadDataController(userSctx sessionctx.Context, plan *plannercore.LoadDa
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-	c := &LoadDataController{
+
+	p := &Plan{
+		TableName: plan.Table,
+		TableInfo: tbl.Meta(),
+
 		FileLocRef:         plan.FileLocRef,
 		Path:               plan.Path,
 		Format:             format,
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
 		ColumnAssignments:  plan.ColumnAssignments,
 		OnDuplicate:        plan.OnDuplicate,
-		DBName:             plan.Table.Schema.O,
-		DBID:               plan.Table.DBInfo.ID,
+		FieldsInfo:         plan.FieldsInfo,
+		LinesInfo:          plan.LinesInfo,
+		Restrictive:        restrictive,
+		IgnoreLines:        plan.IgnoreLines,
+
+		SQLMode:          userSctx.GetSessionVars().SQLMode,
+		Charset:          charset,
+		ImportantSysVars: getImportantSysVars(userSctx),
+
+		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
+	}
+	if err := p.initOptions(userSctx, plan.Options); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// NewLoadDataController create new controller.
+func NewLoadDataController(userCtx sessionctx.Context, plan *Plan, tbl table.Table) (*LoadDataController, error) {
+	fullTableName := common.UniqueTable(plan.TableName.Schema.L, plan.TableName.Name.L)
+	logger := log.L().With(zap.String("table", fullTableName))
+	c := &LoadDataController{
+		FileLocRef:         plan.FileLocRef,
+		Path:               plan.Path,
+		Format:             plan.Format,
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		OnDuplicate:        plan.OnDuplicate,
+		DBName:             plan.TableName.Schema.O,
+		DBID:               plan.TableName.DBInfo.ID,
 		Table:              tbl,
 		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
-		Restrictive:        restrictive,
+		Restrictive:        plan.Restrictive,
+
+		ImportMode:        plan.ImportMode,
+		diskQuota:         plan.DiskQuota,
+		checksum:          plan.Checksum,
+		addIndex:          plan.AddIndex,
+		analyze:           plan.Analyze,
+		ThreadCnt:         plan.ThreadCnt,
+		BatchSize:         plan.BatchSize,
+		maxWriteSpeed:     plan.MaxWriteSpeed,
+		splitFile:         plan.SplitFile,
+		maxRecordedErrors: plan.MaxRecordedErrors,
+		Detached:          plan.Detached,
 
 		logger:           logger,
-		sqlMode:          userSctx.GetSessionVars().SQLMode,
-		charset:          charset,
-		importantSysVars: getImportantSysVars(userSctx),
-	}
-	if err := c.initOptions(userSctx, plan.Options); err != nil {
-		return nil, err
+		sqlMode:          plan.SQLMode,
+		charset:          plan.Charset,
+		importantSysVars: plan.ImportantSysVars,
+		UserCtx:          userCtx,
+
+		distSQLScanConcurrency: plan.DistSQLScanConcurrency,
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
@@ -263,7 +347,7 @@ func NewLoadDataController(userSctx sessionctx.Context, plan *plannercore.LoadDa
 	return c, nil
 }
 
-func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
+func (e *LoadDataController) initFieldParams(plan *Plan) error {
 	if e.Path == "" {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
@@ -338,30 +422,30 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 
 var ignoreInTest = false
 
-func (e *LoadDataController) initDefaultOptions() {
+func (p *Plan) initDefaultOptions() {
 	threadCnt := runtime.NumCPU()
 	if intest.InTest && !ignoreInTest {
 		threadCnt = 1
 	}
-	if e.Format == LoadDataFormatParquet {
+	if p.Format == LoadDataFormatParquet {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
 
-	e.ImportMode = LogicalImportMode
-	_ = e.diskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
-	e.checksum = config.OpLevelRequired
-	e.addIndex = true
-	e.analyze = config.OpLevelOptional
-	e.ThreadCnt = int64(threadCnt)
-	e.BatchSize = 1000
-	e.maxWriteSpeed = unlimitedWriteSpeed
-	e.splitFile = false
-	e.maxRecordedErrors = 100
-	e.Detached = false
+	p.ImportMode = LogicalImportMode
+	_ = p.DiskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
+	p.Checksum = config.OpLevelRequired
+	p.AddIndex = true
+	p.Analyze = config.OpLevelOptional
+	p.ThreadCnt = int64(threadCnt)
+	p.BatchSize = 1000
+	p.MaxWriteSpeed = unlimitedWriteSpeed
+	p.SplitFile = false
+	p.MaxRecordedErrors = 100
+	p.Detached = false
 }
 
-func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	e.initDefaultOptions()
+func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
+	p.initDefaultOptions()
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
@@ -392,14 +476,14 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if v != LogicalImportMode && v != PhysicalImportMode {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		e.ImportMode = v
+		p.ImportMode = v
 	}
 
-	if e.ImportMode == LogicalImportMode {
+	if p.ImportMode == LogicalImportMode {
 		// some options are only allowed in physical mode
 		for _, opt := range specifiedOptions {
 			if _, ok := optionsForPhysicalImport[opt.Name]; ok {
-				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, e.ImportMode)
+				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, p.ImportMode)
 			}
 		}
 	}
@@ -408,7 +492,7 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.diskQuota.UnmarshalText([]byte(v)); err != nil || e.diskQuota <= 0 {
+		if err = p.DiskQuota.UnmarshalText([]byte(v)); err != nil || p.DiskQuota <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -417,7 +501,7 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.checksum.FromStringValue(v); err != nil {
+		if err = p.Checksum.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -430,27 +514,27 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		e.addIndex = vInt == 1
+		p.AddIndex = vInt == 1
 	}
 	if opt, ok := specifiedOptions[analyzeOption]; ok {
 		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.analyze.FromStringValue(v); err != nil {
+		if err = p.Analyze.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
 	if opt, ok := specifiedOptions[threadOption]; ok {
 		// boolean true will be taken as 1
-		e.ThreadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || e.ThreadCnt <= 0 {
+		p.ThreadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || p.ThreadCnt <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
 	if opt, ok := specifiedOptions[batchSizeOption]; ok {
-		e.BatchSize, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || e.BatchSize < 0 {
+		p.BatchSize, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || p.BatchSize < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -459,7 +543,7 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.maxWriteSpeed.UnmarshalText([]byte(v)); err != nil || e.maxWriteSpeed <= 0 {
+		if err = p.MaxWriteSpeed.UnmarshalText([]byte(v)); err != nil || p.MaxWriteSpeed < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -472,34 +556,31 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		e.splitFile = vInt == 1
+		p.SplitFile = vInt == 1
 	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
-		e.maxRecordedErrors, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || e.maxRecordedErrors < -1 {
+		p.MaxRecordedErrors, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || p.MaxRecordedErrors < -1 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		// todo: set a max value for this param?
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
-		e.Detached = true
+		p.Detached = true
 	}
 
-	e.adjustOptions()
+	p.adjustOptions()
 	return nil
 }
 
-func (e *LoadDataController) adjustOptions() {
-	if e.diskQuota < minDiskQuota {
-		e.diskQuota = minDiskQuota
+func (p *Plan) adjustOptions() {
+	if p.DiskQuota < minDiskQuota {
+		p.DiskQuota = minDiskQuota
 	}
 	// max value is cpu-count
 	numCPU := int64(runtime.NumCPU())
-	if e.ThreadCnt > numCPU {
-		e.ThreadCnt = numCPU
-	}
-	if e.maxWriteSpeed < minWriteSpeed {
-		e.maxWriteSpeed = minWriteSpeed
+	if p.ThreadCnt > numCPU {
+		p.ThreadCnt = numCPU
 	}
 }
 
@@ -512,6 +593,7 @@ func (e *LoadDataController) initFieldMappings() []string {
 
 	if len(e.ColumnsAndUserVars) == 0 {
 		for _, v := range tableCols {
+			// Data for generated column is generated from the other rows rather than from the parsed data.
 			fieldMapping := &FieldMapping{
 				Column: v,
 			}
@@ -560,12 +642,7 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 		return dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
 	}
 
-	for _, col := range cols {
-		if !col.IsGenerated() {
-			// todo: should report error here, since in reorderColumns we report error if en(cols) != len(columnNames)
-			e.InsertColumns = append(e.InsertColumns, col)
-		}
-	}
+	e.InsertColumns = append(e.InsertColumns, cols...)
 
 	// e.InsertColumns is appended according to the original tables' column sequence.
 	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
@@ -670,6 +747,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	dataFiles := []*mydump.SourceFileMeta{}
 	idx := strings.IndexByte(path, '*')
 	// simple path when the INFILE represent one file
+	sourceType := e.getSourceType()
 	if idx == -1 {
 		fileReader, err2 := s.Open(ctx, path)
 		if err2 != nil {
@@ -687,6 +765,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Path:        path,
 			FileSize:    size,
 			Compression: compressTp,
+			Type:        sourceType,
+			// todo: if we support compression for physical mode, should set it to size * compressRatio to better split
+			// engines
+			RealSize: size,
 		})
 		totalSize = size
 	} else {
@@ -706,6 +788,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Path:        remotePath,
 					FileSize:    size,
 					Compression: compressTp,
+					Type:        sourceType,
+					RealSize:    size,
 				})
 				totalSize += size
 				return nil
@@ -719,6 +803,18 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
+}
+
+func (e *LoadDataController) getSourceType() mydump.SourceType {
+	switch e.Format {
+	case LoadDataFormatParquet:
+		return mydump.SourceTypeParquet
+	case LoadDataFormatDelimitedData:
+		return mydump.SourceTypeCSV
+	default:
+		// LoadDataFormatSQLDump
+		return mydump.SourceTypeSQL
+	}
 }
 
 // GetLoadDataReaderInfos returns the LoadDataReaderInfo for each data file.
@@ -843,6 +939,8 @@ type JobImportParam struct {
 	GroupCtx context.Context
 	// should be closed in the end of the job.
 	Done chan struct{}
+
+	Progress *asyncloaddata.Progress
 }
 
 // JobImporter is the interface for importing a job.
@@ -876,3 +974,6 @@ func GetMsgFromBRError(err error) string {
 	}
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
+
+// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
+var TestSyncCh = make(chan struct{})

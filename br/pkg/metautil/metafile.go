@@ -55,9 +55,9 @@ const (
 	MetaV2
 )
 
-// CreateMetaFileName is the name of meta file.
-func CreateMetaFileName(ts uint64) string {
-	return fmt.Sprintf("%s_%d", MetaFile, ts)
+// PitrIDMapsFilename is filename that used to save id maps in pitr.
+func PitrIDMapsFilename(clusterID, restoreTS uint64) string {
+	return fmt.Sprintf("%s/%d.%d", "pitr_id_maps", clusterID, restoreTS)
 }
 
 // Encrypt encrypts the content according to CipherInfo.

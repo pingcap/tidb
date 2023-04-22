@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
@@ -117,7 +118,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 }
 
 // SplitSubtask implements the Scheduler interface.
-func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalTask, error) {
+func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
 	d := b.d
@@ -182,18 +183,26 @@ func (b *backfillSchedulerHandle) SplitSubtask(subtask []byte) ([]proto.MinimalT
 		}
 	}
 	ingestScheduler.close(false)
-	// TODO: unsafe import.
+
+	_, _, err = b.bc.Flush(b.index.ID, true)
+	if err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
+		}
+		logutil.BgLogger().Error("[ddl] flush error", zap.Error(err))
+		return nil, err
+	}
 	return nil, consumer.getResult()
+}
+
+// OnSubtaskFinished implements the Scheduler interface.
+func (*backfillSchedulerHandle) OnSubtaskFinished(context.Context, []byte) error {
+	return nil
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler interface.
 func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
-
-	err := b.bc.FinishImport(b.index.ID, b.index.Unique, b.ptbl)
-	if err != nil {
-		return err
-	}
 
 	b.bc.Unregister(b.job.ID, b.index.ID)
 	return nil

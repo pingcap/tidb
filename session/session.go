@@ -94,6 +94,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sli"
@@ -221,8 +222,7 @@ type session struct {
 
 	store kv.Storage
 
-	preparedPlanCache    sessionctx.PlanCache
-	nonPreparedPlanCache sessionctx.PlanCache
+	sessionPlanCache sessionctx.PlanCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -366,7 +366,7 @@ func (s *session) cleanRetryInfo() {
 				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				s.GetPlanCache(false).Delete(cacheKey)
+				s.GetSessionPlanCache().Delete(cacheKey)
 			}
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
@@ -425,27 +425,16 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
-	if isNonPrepared { // use the non-prepared plan cache
-		if !s.GetSessionVars().EnableNonPreparedPlanCache {
-			return nil
-		}
-		if s.nonPreparedPlanCache == nil { // lazy construction
-			s.nonPreparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().NonPreparedPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, true)
-		}
-		return s.nonPreparedPlanCache
-	}
-
+func (s *session) GetSessionPlanCache() sessionctx.PlanCache {
 	// use the prepared plan cache
-	if !s.GetSessionVars().EnablePreparedPlanCache {
+	if !s.GetSessionVars().EnablePreparedPlanCache && !s.GetSessionVars().EnableNonPreparedPlanCache {
 		return nil
 	}
-	if s.preparedPlanCache == nil { // lazy construction
-		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
+	if s.sessionPlanCache == nil { // lazy construction
+		s.sessionPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().SessionPlanCacheSize),
 			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, false)
 	}
-	return s.preparedPlanCache
+	return s.sessionPlanCache
 }
 
 func (s *session) SetSessionManager(sm util.SessionManager) {
@@ -1734,14 +1723,11 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	}
 	if err != nil {
 		s.rollbackOnError(ctx)
-		// Only print log message when this SQL is from the user.
-		// Mute the warning for internal SQLs.
-		if !s.sessionVars.InRestrictedSQL {
-			if s.sessionVars.EnableRedactLog {
-				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-			} else {
-				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-			}
+		logSQL := sql[:mathutil.Min(500, len(sql))]
+		if s.sessionVars.EnableRedactLog {
+			logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
+		} else {
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
 		}
 		return nil, util.SyntaxError(err)
 	}
@@ -2112,9 +2098,28 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
+	cmdByte := byte(atomic.LoadUint32(&s.GetSessionVars().CommandValue))
 	if topsqlstate.TopSQLEnabled() {
 		s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
 		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, s.sessionVars.InRestrictedSQL)
+	}
+	if sessVars.InPlanReplayer {
+		sessVars.StmtCtx.EnableOptimizerDebugTrace = true
+	} else if dom := domain.GetDomain(s); dom != nil && !sessVars.InRestrictedSQL {
+		// This is the earliest place we can get the SQL digest for this execution.
+		// If we find this digest is registered for PLAN REPLAYER CAPTURE, we need to enable optimizer debug trace no matter
+		// the plan digest will be matched or not.
+		if planReplayerHandle := dom.GetPlanReplayerHandle(); planReplayerHandle != nil {
+			tasks := planReplayerHandle.GetTasks()
+			for _, task := range tasks {
+				if task.SQLDigest == digest.String() {
+					sessVars.StmtCtx.EnableOptimizerDebugTrace = true
+				}
+			}
+		}
+	}
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		plannercore.DebugTraceReceivedCommand(s, cmdByte, stmtNode)
 	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
@@ -2122,9 +2127,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
-	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
 	s.currentPlan = nil // reset current plan
-	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
+	s.SetProcessInfo(stmtNode.Text(), time.Now(), cmdByte, 0)
 	s.txn.onStmtStart(digest.String())
 	defer sessiontxn.GetTxnManager(s).OnStmtEnd()
 	defer s.txn.onStmtEnd()
@@ -2571,11 +2575,8 @@ func (s *session) Close() {
 		s.stmtStats.SetFinished()
 	}
 	s.ClearDiskFullOpt()
-	if s.preparedPlanCache != nil {
-		s.preparedPlanCache.Close()
-	}
-	if s.nonPreparedPlanCache != nil {
-		s.nonPreparedPlanCache.Close()
+	if s.sessionPlanCache != nil {
+		s.sessionPlanCache.Close()
 	}
 }
 
@@ -3542,7 +3543,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if opt != nil && opt.PreparedPlanCache != nil {
-		s.preparedPlanCache = opt.PreparedPlanCache
+		s.sessionPlanCache = opt.PreparedPlanCache
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
