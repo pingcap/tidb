@@ -20,62 +20,83 @@ import (
 )
 
 var (
-	ErrSorted    = errors.New("already sorted")
+	// ErrSorted is returned when the items are already sorted,
+	// ew items are not allowed to be added.
+	ErrSorted = errors.New("already sorted")
+	// ErrNotSorted is returned when the items are not sorted,
+	// iterator is not allowed to be created.
 	ErrNotSorted = errors.New("not sorted")
 )
 
+// Item is an interface for items to be sorted.
+type Item[T any] interface {
+	// Compare compares the item with the given item.
+	// It returns -1 if receiver is lesser, 0 if equal, 1 if greater.
+	Compare(other T) int
+}
+
+// ItemCodec is an interface for transforming items to bytes and vice versa.
+type ItemCodec[T Item[T]] interface {
+	// Encode encodes the item to bytes, appends the encoded bytes to
+	// the given buffer and returns the final buffer.
+	Encode(appendTo []byte, item T) []byte
+	// Decode decodes the item from the given bytes. If target is non-nil,
+	// the decoded item is stored in target and returned.
+	//
+	// The result may or may not be the same as target. So the caller should
+	// always use the returned value.
+	Decode(data []byte, target T) (T, error)
+}
+
 // ExternalSorter is an interface for external sorting.
-type ExternalSorter interface {
-	// NewWriter creates a new writer for writing key/value pairs before sorting.
+type ExternalSorter[T Item[T]] interface {
+	// NewWriter creates a new writer for writing items before sorting.
 	// It should be called before calling Sort().
-	NewWriter(ctx context.Context) (Writer, error)
-	// Sort sorts the key/value pairs written by the writer.
+	NewWriter(ctx context.Context) (Writer[T], error)
+	// Sort sorts all items written by the writers.
 	// It should be called after all open writers are closed.
 	Sort(ctx context.Context) error
-	// NewIterator creates a new iterator for iterating over the key/value pairs after sorting.
-	// It should be called after calling Sort().
-	NewIterator(ctx context.Context) (Iterator, error)
-	// Close releases running resources held by the external sorter.
+	// NewIterator creates a new iterator for iterating over the items
+	// after sorting. It should be called after calling Sort().
+	NewIterator(ctx context.Context) (Iterator[T], error)
+	// Close closes all open resources held by the sorter.
 	Close() error
-	// CloseAndCleanup closes the external sorter and cleans up all resources created by the sorter.
+	// CloseAndCleanup closes the external sorter and cleans up all
+	// resources created by the sorter.
 	CloseAndCleanup() error
 }
 
-// Writer is an interface for writing key/value pairs to the external sorter.
-type Writer interface {
-	// Put adds a key/value pair to the writer.
-	Put(key, value []byte) error
-	// Size returns the total size of buffered key/value pairs.
-	Size() int64
-	// Flush flushes all buffered key/value pairs to the external sorter.
+// Writer is an interface for writing items before sorting.
+type Writer[T Item[T]] interface {
+	// Put adds the given item to the writer. The caller should not
+	// modify the item after calling Put().
+	Put(item T) error
+	// Flush flushes all buffered data to the external sorter,
 	// the writer can be reused after calling Flush().
 	Flush() error
-	// Close flushes remaining buffered key/value pairs to the external sorter,
+	// Close flushes remaining data to the external sorter
 	// and releases all resources held by the writer.
 	Close() error
 }
 
-// Iterator is an interface for iterating over the key/value pairs after sorting.
-type Iterator interface {
-	// Seek moves the iterator to the first key/value pair whose key is greater
-	// than or equal to the given key.
-	Seek(key []byte) bool
-	// First moves the iterator to the first key/value pair.
+// Iterator is an interface for iterating over the items after sorting.
+type Iterator[T Item[T]] interface {
+	// Seek moves the iterator to the first item which is greater than
+	// or equal to the given item.
+	Seek(item T) bool
+	// First moves the iterator to the first item.
 	First() bool
-	// Next moves the iterator to the next key/value pair.
+	// Next moves the iterator to the next item.
 	Next() bool
-	// Last moves the iterator to the last key/value pair.
+	// Last moves the iterator to the last item.
 	Last() bool
-	// Valid returns true if the iterator is positioned at a valid key/value pair.
+	// Valid returns true if the iterator is positioned at a valid item.
 	Valid() bool
 	// Error returns the error, if any, that was encountered during iteration.
 	Error() error
-	// UnsafeKey returns the key of the current key/value pair, without copying.
-	// The memory is only valid until the next call to change the iterator.
-	UnsafeKey() []byte
-	// UnsafeValue returns the value of the current key/value pair, without copying.
-	// The memory is only valid until the next call to change the iterator.
-	UnsafeValue() []byte
+	// Item returns the current item. The caller should not modify the item.
+	// It may change on the next call to move the iterator.
+	Item() T
 	// Close releases all resources held by the iterator.
 	Close() error
 }
