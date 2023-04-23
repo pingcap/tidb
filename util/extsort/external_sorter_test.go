@@ -32,29 +32,10 @@ type keyValue struct {
 	value []byte
 }
 
-func (kv keyValue) Compare(other keyValue) int {
-	return bytes.Compare(kv.key, other.key)
-}
-
-type kvCodec struct{}
-
-func (kvCodec) Encode(appendTo []byte, kv keyValue) []byte {
-	appendTo = append(appendTo, kv.key...)
-	appendTo = append(appendTo, kv.value...)
-	return binary.BigEndian.AppendUint32(appendTo, uint32(len(kv.key)))
-}
-
-func (kvCodec) Decode(data []byte, target keyValue) (keyValue, error) {
-	keyLen := binary.BigEndian.Uint32(data[len(data)-4:])
-	target.key = append(target.key[:0], data[:keyLen]...)
-	target.value = append(target.value[:0], data[keyLen:len(data)-4]...)
-	return target, nil
-}
-
-func runCommonTest(t *testing.T, sorter extsort.ExternalSorter[keyValue]) {
+func runCommonTest(t *testing.T, sorter extsort.ExternalSorter) {
 	const (
-		numKeys       = 1000
-		flushInterval = 100
+		numKeys    = 1000
+		maxBufSize = 4096
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -75,10 +56,11 @@ func runCommonTest(t *testing.T, sorter extsort.ExternalSorter[keyValue]) {
 		rng.Read(kv.value)
 		kv.key = binary.BigEndian.AppendUint32(kv.key, uint32(i))
 		kvs = append(kvs, kv)
-		err := w.Put(kv)
+		err := w.Put(kv.key, kv.value)
 		require.NoError(t, err)
-		if len(kvs)%flushInterval == 0 {
+		if w.Size() >= maxBufSize {
 			require.NoError(t, w.Flush())
+			require.Zero(t, w.Size())
 		}
 	}
 	require.NoError(t, w.Close())
@@ -96,16 +78,15 @@ func runCommonTest(t *testing.T, sorter extsort.ExternalSorter[keyValue]) {
 
 	kvCnt := 0
 	for iter.First(); iter.Valid(); iter.Next() {
-		kv := iter.Item()
-		require.Equal(t, kvs[kvCnt].key, kv.key)
-		require.Equal(t, kvs[kvCnt].value, kv.value)
+		require.Equal(t, kvs[kvCnt].key, iter.UnsafeKey())
+		require.Equal(t, kvs[kvCnt].value, iter.UnsafeValue())
 		kvCnt++
 	}
 	require.Equal(t, len(kvs), kvCnt)
 	require.NoError(t, iter.Close())
 }
 
-func runParallelTest(t *testing.T, sorter extsort.ExternalSorter[keyValue]) {
+func runParallelTest(t *testing.T, sorter extsort.ExternalSorter) {
 	const (
 		numKeys    = 10000
 		numWriters = 10
@@ -131,7 +112,7 @@ func runParallelTest(t *testing.T, sorter extsort.ExternalSorter[keyValue]) {
 			}()
 
 			for kv := range kvCh {
-				if err := w.Put(kv); err != nil {
+				if err := w.Put(kv.key, kv.value); err != nil {
 					return err
 				}
 			}
@@ -167,9 +148,8 @@ func runParallelTest(t *testing.T, sorter extsort.ExternalSorter[keyValue]) {
 
 	kvCnt := 0
 	for iter.First(); iter.Valid(); iter.Next() {
-		kv := iter.Item()
-		require.Equal(t, kvs[kvCnt].key, kv.key)
-		require.Equal(t, kvs[kvCnt].value, kv.value)
+		require.Equal(t, kvs[kvCnt].key, iter.UnsafeKey())
+		require.Equal(t, kvs[kvCnt].value, iter.UnsafeValue())
 		kvCnt++
 	}
 	require.Equal(t, len(kvs), kvCnt)
