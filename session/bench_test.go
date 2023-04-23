@@ -75,6 +75,16 @@ func prepareBenchData(se Session, colType string, valueFormat string, valueCount
 	mustExecute(se, "commit")
 }
 
+func prepareNonclusteredBenchData(se Session, colType string, valueFormat string, valueCount int) {
+	mustExecute(se, "drop table if exists t")
+	mustExecute(se, fmt.Sprintf("create table t (pk int primary key /*T![clustered_index] NONCLUSTERED */ auto_increment, col %s, index idx (col))", colType))
+	mustExecute(se, "begin")
+	for i := 0; i < valueCount; i++ {
+		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
+	}
+	mustExecute(se, "commit")
+}
+
 func prepareSortBenchData(se Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
@@ -113,6 +123,26 @@ func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
 		count -= req.NumRows()
 	}
 	rs.Close()
+}
+
+func hasPlan(ctx context.Context, b *testing.B, se Session, plan string) {
+	find := false
+	rs, err := se.Execute(ctx, "explain select * from t where col = 'hello 64'")
+	if err != nil {
+		b.Fatal(err)
+	}
+	rows, err := ResultSetToStringSlice(ctx, se, rs[0])
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := range rows {
+		if strings.Contains(rows[i][0], plan) {
+			find = true
+		}
+	}
+	if !find {
+		b.Fatal(fmt.Printf("plan not contain `%s`", plan))
+	}
 }
 
 func BenchmarkBasic(b *testing.B) {
@@ -348,7 +378,9 @@ func BenchmarkStringIndexLookup(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	prepareBenchData(se, "varchar(255)", "'hello %d'", smallCount)
+	prepareNonclusteredBenchData(se, "varchar(255)", "'hello %d'", smallCount)
+	hasPlan(ctx, b, se, "IndexLookUp")
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where col = 'hello 64'")
@@ -388,7 +420,9 @@ func BenchmarkIntegerIndexLookup(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	prepareBenchData(se, "int", "%v", smallCount)
+	prepareNonclusteredBenchData(se, "int", "%v", smallCount)
+	hasPlan(ctx, b, se, "IndexLookUp")
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where col = 64")
@@ -428,7 +462,9 @@ func BenchmarkDecimalIndexLookup(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	prepareBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
+	prepareNonclusteredBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
+	hasPlan(ctx, b, se, "IndexLookUp")
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where col = 64.1234")
