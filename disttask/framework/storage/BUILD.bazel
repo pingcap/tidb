@@ -25,6 +25,7 @@ go_test(
     timeout = "short",
     srcs = ["table_test.go"],
     flaky = True,
+    race = "on",
     shard_count = 3,
     deps = [
         ":storage",
