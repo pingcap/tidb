@@ -377,7 +377,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			}
 			results = append(results, result)
 		}
-		e.result = distsql.NewSortedSelectResults(results, nil, e.Schema(), e.byItems, e.memTracker)
+		e.result = distsql.NewSortedSelectResults(results, e.Schema(), e.byItems, e.memTracker)
 	}
 	return nil
 }
@@ -585,7 +585,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 }
 
 func (e *IndexLookUpExecutor) hasExtralPidCol() bool {
-	return e.index.Global || len(e.byItems) > 0
+	return e.partitionTableMode && len(e.byItems) > 0
 }
 
 func (e *IndexLookUpExecutor) isCommonHandle() bool {
@@ -606,7 +606,7 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	} else {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
-	if e.index.Global {
+	if e.index.Global || e.hasExtralPidCol() {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	if e.checkIndexValue != nil {
@@ -666,8 +666,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		pids := make([]int64, 0, len(kvRanges))
-		for partTblIdx, kvRange := range kvRanges {
+		for _, kvRange := range kvRanges {
 			// check if executor is closed
 			finished := false
 			select {
@@ -695,14 +694,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				break
 			}
 			results = append(results, result)
-			if e.partitionTableMode {
-				pids = append(pids, e.prunedPartitions[partTblIdx].GetPhysicalID())
-			}
 		}
 		worker.batchSize = mathutil.Min(initBatchSize, worker.maxBatchSize)
 		if len(results) > 1 && len(e.byItems) != 0 {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
-			ssr := distsql.NewSortedSelectResults(results, pids, nil, e.byItems, e.memTracker)
+			ssr := distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)
@@ -947,12 +943,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			}
 		}
 	}()
-	retTps := w.idxLookup.getRetTpsForIndexReader()
-	// for sortedSelectResult, add pids in last column
-	if !w.idxLookup.index.Global && len(w.idxLookup.byItems) > 0 {
-		retTps = append(retTps, types.NewFieldType(mysql.TypeLonglong))
-	}
-	chk := w.idxLookup.ctx.GetSessionVars().GetNewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize, w.idxLookup.maxChunkSize, w.idxLookup.AllocPool)
+	chk := w.idxLookup.ctx.GetSessionVars().GetNewChunkWithCapacity(w.idxLookup.getRetTpsForIndexReader(), w.idxLookup.maxChunkSize, w.idxLookup.maxChunkSize, w.idxLookup.AllocPool)
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if idxID != w.idxLookup.id && w.idxLookup.stats != nil {
@@ -1000,7 +991,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	numColsWithoutPid := chk.NumCols()
-	if w.idxLookup.hasExtralPidCol() {
+	if w.idxLookup.index.Global || w.idxLookup.hasExtralPidCol() {
 		numColsWithoutPid = numColsWithoutPid - 1
 	}
 	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
@@ -1191,9 +1182,8 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
 	}
-	if e.hasExtralPidCol() {
-		pidOffset := row.Len() - 1
-		pid := row.GetInt64(pidOffset)
+	if e.index.Global || e.hasExtralPidCol() {
+		pid := row.GetInt64(row.Len() - 1)
 		handle = kv.NewPartitionHandle(pid, handle)
 	}
 	return
