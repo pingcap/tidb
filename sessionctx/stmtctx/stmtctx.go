@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"io"
 	"math"
 	"strconv"
@@ -640,6 +641,9 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	if !sc.UseCache {
 		return // avoid unnecessary warnings
 	}
+
+	logutil.BgLogger().Error("[plan cache] cache miss", zap.String("reason", reason.Error()), zap.String("sql", sc.OriginalSQL))
+
 	sc.UseCache = false
 	switch sc.CacheType {
 	case DefaultNoCache:
