@@ -47,8 +47,22 @@ Usage: ./run-tests.sh [options]
 ## Prerequisite
 1. Build TiDB binary for test. See [Makefile](https://github.com/pingcap/tidb/blob/master/tests/globalkilltest/Makefile) for detail.
 
-2. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=ip:port[,ip:port]`.
+2. Prepare `pd-server` and `tikv-server` to setup a cluster for tests. You can download the binaries by `TiUP`
 
+```bash
+cd tests/globalkilltest
+mkdir -p bin
+tiup install pd:nightly tikv:nightly
+cp ~/.tiup/components/pd/$(ls ~/.tiup/components/pd | tail -1)/pd-server bin/
+cp ~/.tiup/components/tikv/$(ls ~/.tiup/components/pd | tail -1)/tikv-server bin
+```
+
+Alternatively, if you have Docker environment, you can run `up.sh`, which will prepare binaries & run `make` for you:
+
+```sh
+cd tests/globalkilltest
+./up.sh
+```
 
 ## Test Scenarios
 
@@ -83,10 +97,8 @@ In Integration Test after commit and before merge, run these commands under TiDB
 ```sh
 cd tests/globalkilltest
 make
-./run-tests.sh --pd=<pd client path>
+./run-tests.sh
 ```
-
-Again, before testing, establish a cluster with PD & TiKV and provide `pd client path` by `--pd=<pd client path>`.
 
 ### Manual Test
 

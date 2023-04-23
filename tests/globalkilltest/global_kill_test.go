@@ -130,12 +130,13 @@ func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 func (s *GlobalKillSuite) startTiKV(dataDir string) (err error) {
 	s.tikvProc = exec.Command(*tikvBinaryPath,
 		fmt.Sprintf("--pd=%s", *pdClientPath),
-		fmt.Sprintf("--data-dir=tikv-%s", dataDir),
-		"--addr=0.0.0.0:20160",
-		"--log-file=tikv.log",
+		fmt.Sprintf("--data-dir=%s/tikv-%s", *tmpPath, dataDir),
+		"--addr=127.0.0.1:20160",
+		fmt.Sprintf("--log-file=%s/tikv.log", *tmpPath),
 		"--advertise-addr=127.0.0.1:20160",
+		"--config=tikv.toml",
 	)
-	log.Info("starting tikv")
+	log.Info("starting tikv", zap.Any("cmd", s.tikvProc))
 	err = s.tikvProc.Start()
 	if err != nil {
 		return errors.Trace(err)
@@ -147,10 +148,10 @@ func (s *GlobalKillSuite) startTiKV(dataDir string) (err error) {
 func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
 	s.pdProc = exec.Command(*pdBinaryPath,
 		"--name=pd",
-		"--log-file=pd.log",
+		fmt.Sprintf("--log-file=%s/pd.log", *tmpPath),
 		fmt.Sprintf("--client-urls=http://%s", *pdClientPath),
-		fmt.Sprintf("--data-dir=pd-%s", dataDir))
-	log.Info("starting pd")
+		fmt.Sprintf("--data-dir=%s/pd-%s", *tmpPath, dataDir))
+	log.Info("starting pd", zap.Any("cmd", s.pdProc))
 	err = s.pdProc.Start()
 	if err != nil {
 		return errors.Trace(err)
@@ -212,6 +213,7 @@ func (s *GlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exe
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
+		fmt.Sprintf("--log-slow-query=%s/tidb-slow%d.log", *tmpPath, port),
 		fmt.Sprintf("--config=%s", "./config.toml"))
 	log.Info("starting tidb", zap.Any("cmd", cmd))
 	err = cmd.Start()
