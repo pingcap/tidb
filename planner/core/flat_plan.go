@@ -357,7 +357,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		copiedCTE := *plan
 		copiedCTE.probeParents = nil
 		if info.isRoot {
-			// If it's executed in TiDB, we need to record it since we don't have producer and consumer 
+			// If it's executed in TiDB, we need to record it since we don't have producer and consumer
 			f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
 		}
 	case *Insert:
