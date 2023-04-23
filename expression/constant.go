@@ -217,11 +217,16 @@ func (c *Constant) Eval(row chunk.Row) (types.Datum, error) {
 		if c.DeferredExpr != nil {
 			sf, sfOk := c.DeferredExpr.(*ScalarFunction)
 			if sfOk {
-				val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
-				if err != nil {
+				if dt.Kind() == types.KindMysqlDecimal {
+					err := c.adjustDecimal(dt.GetMysqlDecimal())
 					return dt, err
+				} else {
+					val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
+					if err != nil {
+						return dt, err
+					}
+					return val, nil
 				}
-				return val, nil
 			}
 		}
 		return dt, nil
@@ -304,12 +309,19 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.My
 	if err != nil {
 		return nil, false, err
 	}
-	// The decimal may be modified during plan building.
-	_, frac := res.PrecisionAndFrac()
-	if frac < c.GetType().GetDecimal() {
-		err = res.Round(res, c.GetType().GetDecimal(), types.ModeHalfUp)
+	if err := c.adjustDecimal(res); err != nil {
+		return nil, false, err
 	}
-	return res, false, err
+	return res, false, nil
+}
+
+func (c *Constant) adjustDecimal(d *types.MyDecimal) error {
+	// Decimal Value's precision and frac may be modified during plan building.
+	_, frac := d.PrecisionAndFrac()
+	if frac < c.GetType().GetDecimal() {
+		return d.Round(d, c.GetType().GetDecimal(), types.ModeHalfUp)
+	}
+	return nil
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
