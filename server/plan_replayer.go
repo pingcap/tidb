@@ -16,7 +16,12 @@ package server
 
 import (
 	"fmt"
+<<<<<<< HEAD
 	"io/ioutil"
+=======
+	"io"
+	"net"
+>>>>>>> 96fa4692b09 (fix join address on ipv6 (#43259))
 	"net/http"
 	"os"
 	"path/filepath"
@@ -74,7 +79,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 	name := params[pFileName]
 	path := handler.filePath
 	isForwarded := len(req.URL.Query().Get("forward")) > 0
-	localAddr := fmt.Sprintf("%s:%v", handler.address, handler.statusPort)
+	localAddr := net.JoinHostPort(handler.address, strconv.Itoa(int(handler.statusPort)))
 	exist, err := isExists(path)
 	if err != nil {
 		writeError(w, err)
@@ -126,7 +131,11 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 		if topo.IP == handler.address && topo.StatusPort == handler.statusPort {
 			continue
 		}
+<<<<<<< HEAD
 		remoteAddr := fmt.Sprintf("%s/%v", topo.IP, topo.StatusPort)
+=======
+		remoteAddr := net.JoinHostPort(topo.IP, strconv.Itoa(int(topo.StatusPort)))
+>>>>>>> 96fa4692b09 (fix join address on ipv6 (#43259))
 		url := fmt.Sprintf("%s://%s/%s?forward=true", handler.scheme, remoteAddr, handler.urlPath)
 		resp, err := http.Get(url) // #nosec G107
 		if err != nil {
