@@ -1680,10 +1680,18 @@ func writeOneKVToLocal(writer ingest.Writer,
 		if err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.Inject("mockLocalWriterPanic", func(val failpoint.Value) {
+			if val.(bool) {
+				panic("mock panic")
+			}
+		})
 		err = writer.WriteRow(key, idxVal, handle)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.Inject("mockLocalWriterError", func() {
+			failpoint.Return(errors.New("mock engine error"))
+		})
 		writeBufs.IndexKeyBuf = key
 	}
 	return nil
