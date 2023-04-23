@@ -229,8 +229,9 @@ func (c *Constant) Eval(row chunk.Row) (types.Datum, error) {
 			sf, sfOk := c.DeferredExpr.(*ScalarFunction)
 			if sfOk {
 				if dt.Kind() == types.KindMysqlDecimal {
-					err := c.adjustDecimal(dt.GetMysqlDecimal())
-					return dt, err
+					if err := c.adjustDecimal(dt.GetMysqlDecimal()); err != nil {
+						return dt, err
+					}
 				} else {
 					val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
 					if err != nil {
