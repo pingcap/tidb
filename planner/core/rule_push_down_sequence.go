@@ -19,7 +19,7 @@ import "context"
 type pushDownSequenceSolver struct {
 }
 
-func (pdss *pushDownSequenceSolver) name() string {
+func (*pushDownSequenceSolver) name() string {
 	return "push_down_sequence"
 }
 

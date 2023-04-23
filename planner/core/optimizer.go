@@ -282,6 +282,19 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 // DoOptimizeAndLogicAsRet optimizes a logical plan to a physical plan and return the optimized logical plan.
 func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (LogicalPlan, PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
+	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
+	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
+		flag |= flagPrunColumnsAgain
+	}
+	if checkStableResultMode(logic.SCtx()) {
+		flag |= flagStabilizeResults
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
+		// When we use the straight Join Order hint, we should disable the join reorder optimization.
+		flag &= ^flagJoinReOrder
+	}
+	flag |= flagCollectPredicateColumnsPoint
+	flag |= flagSyncWaitStatsLoadPoint
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, nil, 0, err
@@ -314,6 +327,11 @@ func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag 
 
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+	sessVars := sctx.GetSessionVars()
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
+	}
 	_, finalPlan, cost, err := DoOptimizeAndLogicAsRet(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
 }
@@ -1075,19 +1093,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
-	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
-		flag |= flagPrunColumnsAgain
-	}
-	if checkStableResultMode(logic.SCtx()) {
-		flag |= flagStabilizeResults
-	}
-	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
-		// When we use the straight Join Order hint, we should disable the join reorder optimization.
-		flag &= ^flagJoinReOrder
-	}
-	flag |= flagCollectPredicateColumnsPoint
-	flag |= flagSyncWaitStatsLoadPoint
 	opt := defaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {

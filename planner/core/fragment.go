@@ -343,7 +343,10 @@ func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchange
 
 func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
 	for _, cteReader := range f.CTEReaders {
-		e.generateTasksForCTEReader(cteReader)
+		err := e.generateTasksForCTEReader(cteReader)
+		if err != nil {
+			return nil, err
+		}
 	}
 	for _, r := range f.ExchangeReceivers {
 		// chain call: to get lower fragments and tasks

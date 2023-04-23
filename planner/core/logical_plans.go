@@ -2068,7 +2068,7 @@ func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 //
 //	Suppose that the sequence has 4 children, naming c0, c1, c2, c3.
 //	From the definition, c3 is the main query. c0, c1, c2 are CTE producers.
-//	It's possible that c1 referneces c0, c2 references c1 and c2.
+//	It's possible that c1 references c0, c2 references c1 and c2.
 //	But it's no possible that c0 references c1 or c2.
 //
 // We use this property to do complex optimizations for CTEs.

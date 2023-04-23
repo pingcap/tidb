@@ -203,7 +203,10 @@ func (e *MPPGather) fixTaskForCTEStorageAndReader(exec *tipb.Executor, meta kv.M
 		return errors.Errorf("unknown new tipb protocol %d", exec.Tp)
 	}
 	for _, child := range children {
-		e.fixTaskForCTEStorageAndReader(child, meta)
+		err := e.fixTaskForCTEStorageAndReader(child, meta)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

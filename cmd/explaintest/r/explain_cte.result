@@ -194,7 +194,7 @@ CTE_0	100.00	root		Non-Recursive CTE
         └─IndexFullScan_31	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1;
 id	estRows	task	access object	operator info
-CTEFullScan_18	0.00	root	CTE:cte1	data:CTE_0
+CTEFullScan_19	0.00	root	CTE:cte1	data:CTE_0
 CTE_0	0.00	root		Non-Recursive CTE
 └─TableDual_16(Seed Part)	0.00	root		rows:0
 CREATE TABLE `customer` (

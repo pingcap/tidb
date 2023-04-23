@@ -2778,7 +2778,6 @@ func (p *PhysicalSequence) attach2Task(tasks ...task) task {
 		tblColHists: lastTask.tblColHists,
 	}
 	return mppTask
-
 }
 
 // mppTask can not :

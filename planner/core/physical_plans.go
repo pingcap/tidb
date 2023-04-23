@@ -2495,7 +2495,7 @@ func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 	})
 }
 
-// Clone implementes PhysicalPlan interface.
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalCTE) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalCTE)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -2614,7 +2614,7 @@ func (p *CTEDefinition) MemoryUsage() (sum int64) {
 type PhysicalCTEStorage PhysicalCTE
 
 // ExplainInfo overrides the ExplainInfo
-func (p *PhysicalCTEStorage) ExplainInfo() string {
+func (*PhysicalCTEStorage) ExplainInfo() string {
 	return "Non-Recursive CTE Storage"
 }
 
@@ -2688,7 +2688,7 @@ func (p *PhysicalSequence) ExplainID() fmt.Stringer {
 }
 
 // ExplainInfo overrides the ExplainInfo.
-func (p *PhysicalSequence) ExplainInfo() string {
+func (*PhysicalSequence) ExplainInfo() string {
 	res := "Sequence Node"
 	return res
 }
