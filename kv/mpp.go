@@ -49,7 +49,7 @@ func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	return meta
 }
 
-//MppTaskStates denotes the state of mpp tasks
+// MppTaskStates denotes the state of mpp tasks
 type MppTaskStates uint8
 
 const (

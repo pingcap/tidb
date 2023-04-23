@@ -1395,12 +1395,15 @@ func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
 
 // PhysicalShuffle represents a shuffle plan.
 // `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
-//  to build the child executors chain.
+//
+//	to build the child executors chain.
+//
 // Take `Window` operator for example:
-//  Shuffle -> Window -> Sort -> DataSource, will be separated into:
-//    ==> Shuffle: for main thread
-//    ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
-//    ==> DataSource: for `fetchDataAndSplit` thread
+//
+//	Shuffle -> Window -> Sort -> DataSource, will be separated into:
+//	  ==> Shuffle: for main thread
+//	  ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
+//	  ==> DataSource: for `fetchDataAndSplit` thread
 type PhysicalShuffle struct {
 	basePhysicalPlan
 

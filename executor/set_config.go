@@ -167,8 +167,9 @@ func isValidInstance(instance string) bool {
 
 // ConvertConfigItem2JSON converts the config item specified by key and val to json.
 // For example:
-// 	set config x key="val" ==> {"key":"val"}
-// 	set config x key=233 ==> {"key":233}
+//
+//	set config x key="val" ==> {"key":"val"}
+//	set config x key=233 ==> {"key":233}
 func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.Expression) (body string, err error) {
 	if val == nil {
 		return "", errors.Errorf("cannot set config to null")

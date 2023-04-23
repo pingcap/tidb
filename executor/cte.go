@@ -41,22 +41,25 @@ var _ Executor = &CTEExec{}
 // which will be the input for new iteration.
 // At the end of each iteration, data in `iterOutTbl` will also be added into `resTbl`.
 // `resTbl` stores data of all iteration.
-//                                   +----------+
-//                     write         |iterOutTbl|
-//       CTEExec ------------------->|          |
-//          |                        +----+-----+
-//    -------------                       | write
-//    |           |                       v
+//
+//	                               +----------+
+//	                 write         |iterOutTbl|
+//	   CTEExec ------------------->|          |
+//	      |                        +----+-----+
+//	-------------                       | write
+//	|           |                       v
+//
 // other op     other op             +----------+
 // (seed)       (recursive)          |  resTbl  |
-//                  ^                |          |
-//                  |                +----------+
-//            CTETableReaderExec
-//                   ^
-//                   |  read         +----------+
-//                   +---------------+iterInTbl |
-//                                   |          |
-//                                   +----------+
+//
+//	      ^                |          |
+//	      |                +----------+
+//	CTETableReaderExec
+//	       ^
+//	       |  read         +----------+
+//	       +---------------+iterInTbl |
+//	                       |          |
+//	                       +----------+
 type CTEExec struct {
 	baseExecutor
 

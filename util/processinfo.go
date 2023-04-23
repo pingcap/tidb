@@ -184,13 +184,17 @@ type SessionManager interface {
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
 // 64 bits version:
-//  63 62                 41 40                                   1   0
+//
+//	63 62                 41 40                                   1   0
+//
 // +--+---------------------+--------------------------------------+------+
 // |  |      serverId       |             local connId             |markup|
 // |=0|       (22b)         |                 (40b)                |  =1  |
 // +--+---------------------+--------------------------------------+------+
 // 32 bits version(coming soon):
-//  31                          1   0
+//
+//	31                          1   0
+//
 // +-----------------------------+------+
 // |             ???             |markup|
 // |             ???             |  =0  |
@@ -250,7 +254,8 @@ func (g *GlobalConnID) NextID() uint64 {
 }
 
 // ParseGlobalConnID parses an uint64 to GlobalConnID.
-//   `isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
+//
+//	`isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
 func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) {
 	if id&0x80000000_00000000 > 0 {
 		return GlobalConnID{}, false, errors.New("Unexpected connectionID excceeds int64")

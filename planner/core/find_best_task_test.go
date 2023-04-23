@@ -48,13 +48,13 @@ func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, planCoun
 
 // mockLogicalPlan4Test is a LogicalPlan which is used for unit test.
 // The basic assumption:
-// 1. mockLogicalPlan4Test can generate tow kinds of physical plan: physicalPlan1 and
-//    physicalPlan2. physicalPlan1 can pass the property only when they are the same
-//    order; while physicalPlan2 cannot match any of the property(in other words, we can
-//    generate it only when then property is empty).
-// 2. We have a hint for physicalPlan2.
-// 3. If the property is empty, we still need to check `canGeneratePlan2` to decide
-//    whether it can generate physicalPlan2.
+//  1. mockLogicalPlan4Test can generate tow kinds of physical plan: physicalPlan1 and
+//     physicalPlan2. physicalPlan1 can pass the property only when they are the same
+//     order; while physicalPlan2 cannot match any of the property(in other words, we can
+//     generate it only when then property is empty).
+//  2. We have a hint for physicalPlan2.
+//  3. If the property is empty, we still need to check `canGeneratePlan2` to decide
+//     whether it can generate physicalPlan2.
 type mockLogicalPlan4Test struct {
 	baseLogicalPlan
 	// hasHintForPlan2 indicates whether this mockPlan contains hint.
