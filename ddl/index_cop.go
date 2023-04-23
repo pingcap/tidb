@@ -123,7 +123,7 @@ func (c *copReqSender) run() {
 			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
 			return
 		}
-		failpoint.Inject("MockCopSenderPanic", func(val failpoint.Value) {
+		failpoint.Inject("mockCopSenderPanic", func(val failpoint.Value) {
 			if val.(bool) {
 				panic("mock panic")
 			}
@@ -145,7 +145,7 @@ func (c *copReqSender) run() {
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
-			failpoint.Inject("MockCopSenderError", func() {
+			failpoint.Inject("mockCopSenderError", func() {
 				idxRs.err = errors.New("mock cop error")
 			})
 			p.chunkSender.AddTask(idxRs)

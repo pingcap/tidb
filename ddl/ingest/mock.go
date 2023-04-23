@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/hex"
 	"sync"
 
 	"github.com/pingcap/tidb/kv"
@@ -159,7 +160,9 @@ type MockWriter struct {
 
 // WriteRow implements Writer.WriteRow interface.
 func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
-	logutil.BgLogger().Info("mock writer write row", zap.Binary("key", key), zap.Binary("idxVal", idxVal))
+	logutil.BgLogger().Info("mock writer write row",
+		zap.String("key", hex.EncodeToString(key)),
+		zap.String("idxVal", hex.EncodeToString(idxVal)))
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	txn, err := m.sessCtx.Txn(true)
