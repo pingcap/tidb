@@ -1862,7 +1862,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
 		MaxAllowedPacket:              DefMaxAllowedPacket,
 		TiFlashFastScan:               DefTiFlashFastScan,
-		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
+		EnableTiFlashReadForWriteStmt: true,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,

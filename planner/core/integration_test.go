@@ -4623,8 +4623,16 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 	tk.MustExec("create table t2(a int)")
 	tk.MustExec("set @@tidb_allow_mpp=1")
 
+	// Default should be 1
+	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
+	// Set ON
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = ON")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
+	// Set OFF
+	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = OFF")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
 
 	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)

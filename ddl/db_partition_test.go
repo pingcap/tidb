@@ -2722,6 +2722,7 @@ func TestTiDBEnableExchangePartition(t *testing.T) {
         PARTITION p2 values less than (9)
 		);`)
 	// default
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec(`create table nt(a int primary key auto_increment);`)
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
@@ -2729,12 +2730,14 @@ func TestTiDBEnableExchangePartition(t *testing.T) {
 	// set tidb_enable_exchange_partition = 0
 	tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 
 	// set tidb_enable_exchange_partition = 1
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
