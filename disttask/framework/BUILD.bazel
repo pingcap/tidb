@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = ["framework_test.go"],
     flaky = True,
+    race = "on",
     deps = [
         "//disttask/framework/dispatcher",
         "//disttask/framework/proto",
