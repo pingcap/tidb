@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/hex"
 	"sync"
 
 	"github.com/pingcap/tidb/kv"
@@ -39,9 +40,9 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
-// Available implements BackendCtxMgr.Available interface.
-func (*MockBackendCtxMgr) Available() bool {
-	return true
+// CheckAvailable implements BackendCtxMgr.Available interface.
+func (*MockBackendCtxMgr) CheckAvailable() (bool, error) {
+	return true, nil
 }
 
 // Register implements BackendCtxMgr.Register interface.
@@ -95,6 +96,12 @@ func (*MockBackendCtx) Unregister(jobID, indexID int64) {
 	logutil.BgLogger().Info("mock backend ctx unregister", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 }
 
+// CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
+func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
+	logutil.BgLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
+	return nil
+}
+
 // FinishImport implements BackendCtx.FinishImport interface.
 func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error {
 	logutil.BgLogger().Info("mock backend ctx finish import", zap.Int64("indexID", indexID))
@@ -106,8 +113,8 @@ func (*MockBackendCtx) ResetWorkers(_, _ int64) {
 }
 
 // Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(_ int64) (bool, error) {
-	return false, nil
+func (*MockBackendCtx) Flush(_ int64, _ bool) (flushed bool, imported bool, err error) {
+	return false, false, nil
 }
 
 // Done implements BackendCtx.Done interface.
@@ -153,7 +160,9 @@ type MockWriter struct {
 
 // WriteRow implements Writer.WriteRow interface.
 func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
-	logutil.BgLogger().Info("mock writer write row", zap.Binary("key", key), zap.Binary("idxVal", idxVal))
+	logutil.BgLogger().Info("mock writer write row",
+		zap.String("key", hex.EncodeToString(key)),
+		zap.String("idxVal", hex.EncodeToString(idxVal)))
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	txn, err := m.sessCtx.Txn(true)

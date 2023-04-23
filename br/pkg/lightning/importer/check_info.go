@@ -21,6 +21,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
@@ -46,7 +47,7 @@ func (rc *Controller) isSourceInLocal() bool {
 	return strings.HasPrefix(rc.store.URI(), storage.LocalURIPrefix)
 }
 
-func (rc *Controller) doPreCheckOnItem(ctx context.Context, checkItemID CheckItemID) error {
+func (rc *Controller) doPreCheckOnItem(ctx context.Context, checkItemID precheck.CheckItemID) error {
 	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(checkItemID)
 	if err != nil {
 		return errors.Trace(err)
@@ -67,21 +68,21 @@ func (rc *Controller) clusterResource(ctx context.Context) error {
 	if rc.taskMgr != nil {
 		checkCtx = WithPrecheckKey(ctx, taskManagerKey, rc.taskMgr)
 	}
-	return rc.doPreCheckOnItem(checkCtx, CheckTargetClusterSize)
+	return rc.doPreCheckOnItem(checkCtx, precheck.CheckTargetClusterSize)
 }
 
 // ClusterIsAvailable check cluster is available to import data. this test can be skipped.
 func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
-	return rc.doPreCheckOnItem(ctx, CheckTargetClusterVersion)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckTargetClusterVersion)
 }
 
 func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
-	return rc.doPreCheckOnItem(ctx, CheckTargetClusterEmptyRegion)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckTargetClusterEmptyRegion)
 }
 
 // checkRegionDistribution checks if regions distribution is unbalanced.
 func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
-	return rc.doPreCheckOnItem(ctx, CheckTargetClusterRegionDist)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckTargetClusterRegionDist)
 }
 
 // checkClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
@@ -110,55 +111,55 @@ func (rc *Controller) checkClusterRegion(ctx context.Context) error {
 
 // StoragePermission checks whether Lightning has enough permission to storage.
 func (rc *Controller) StoragePermission(ctx context.Context) error {
-	return rc.doPreCheckOnItem(ctx, CheckSourcePermission)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckSourcePermission)
 }
 
 // HasLargeCSV checks whether input csvs is fit for Lightning import.
 // If strictFormat is false, and csv file is large. Lightning will have performance issue.
 // this test cannot be skipped.
 func (rc *Controller) HasLargeCSV(ctx context.Context) error {
-	return rc.doPreCheckOnItem(ctx, CheckLargeDataFile)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckLargeDataFile)
 }
 
 // localResource checks the local node has enough resources for this import when local backend enabled;
 func (rc *Controller) localResource(ctx context.Context) error {
 	if rc.isSourceInLocal() {
-		if err := rc.doPreCheckOnItem(ctx, CheckLocalDiskPlacement); err != nil {
+		if err := rc.doPreCheckOnItem(ctx, precheck.CheckLocalDiskPlacement); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	return rc.doPreCheckOnItem(ctx, CheckLocalTempKVDir)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckLocalTempKVDir)
 }
 
 func (rc *Controller) checkCSVHeader(ctx context.Context) error {
-	return rc.doPreCheckOnItem(ctx, CheckCSVHeader)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckCSVHeader)
 }
 
 func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.TikvImporter.IncrementalImport {
 		return nil
 	}
-	return rc.doPreCheckOnItem(ctx, CheckTargetTableEmpty)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckTargetTableEmpty)
 }
 
 func (rc *Controller) checkCheckpoints(ctx context.Context) error {
 	if !rc.cfg.Checkpoint.Enable {
 		return nil
 	}
-	return rc.doPreCheckOnItem(ctx, CheckCheckpoints)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckCheckpoints)
 }
 
 func (rc *Controller) checkSourceSchema(ctx context.Context) error {
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB {
 		return nil
 	}
-	return rc.doPreCheckOnItem(ctx, CheckSourceSchemaValid)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckSourceSchemaValid)
 }
 
 func (rc *Controller) checkCDCPiTR(ctx context.Context) error {
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB {
 		return nil
 	}
-	return rc.doPreCheckOnItem(ctx, CheckTargetUsingCDCPITR)
+	return rc.doPreCheckOnItem(ctx, precheck.CheckTargetUsingCDCPITR)
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -173,6 +174,7 @@ type IndexReaderExecutor struct {
 	ranges          []*ranger.Range
 	partitions      []table.PhysicalTable
 	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
+	partitionIDMap  map[int64]struct{}        // partitionIDs that global index access
 
 	// kvRanges are only used for union scan.
 	kvRanges         []kv.KeyRange
@@ -325,6 +327,42 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		}
 	}
 
+	if e.index.Global {
+		idxScanExec := e.dagPB.Executors[0]
+		args := make([]expression.Expression, 0, len(e.partitionIDMap))
+		column := &expression.Column{
+			UniqueID: model.ExtraPidColID,
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Index:    len(idxScanExec.IdxScan.Columns) - 1,
+			OrigName: model.ExtraPartitionIdName.L,
+		}
+		args = append(args, column)
+		for pid := range e.partitionIDMap {
+			args = append(args, expression.NewInt64Const(pid))
+		}
+
+		inCondition, err := expression.NewFunction(e.ctx, ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+		if err != nil {
+			return err
+		}
+		pbConditions, err := expression.ExpressionsToPBList(e.ctx.GetSessionVars().StmtCtx, []expression.Expression{inCondition}, e.ctx.GetClient())
+		if err != nil {
+			return err
+		}
+		if len(e.dagPB.Executors) > 1 && e.dagPB.Executors[1].Tp == tipb.ExecType_TypeSelection {
+			e.dagPB.Executors[1].Selection.Conditions = append(e.dagPB.Executors[1].Selection.Conditions, pbConditions...)
+		} else {
+			selExec := &tipb.Selection{
+				Conditions: pbConditions,
+			}
+			executors := make([]*tipb.Executor, 0, len(e.dagPB.Executors)+1)
+			executors = append(executors, e.dagPB.Executors[0])
+			executors = append(executors, &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec})
+			executors = append(executors, e.dagPB.Executors[1:]...)
+			e.dagPB.Executors = executors
+		}
+	}
+
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
@@ -377,7 +415,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			}
 			results = append(results, result)
 		}
-		e.result = distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
+		e.result = distsql.NewSortedSelectResults(results, nil, e.Schema(), e.byItems, e.memTracker)
 	}
 	return nil
 }
@@ -695,16 +733,14 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				break
 			}
 			results = append(results, result)
-			worker.batchSize = initBatchSize
-			if worker.batchSize > worker.maxBatchSize {
-				worker.batchSize = worker.maxBatchSize
-			}
 			if e.partitionTableMode {
 				pids = append(pids, e.prunedPartitions[partTblIdx].GetPhysicalID())
 			}
 		}
+		worker.batchSize = mathutil.Min(initBatchSize, worker.maxBatchSize)
 		if len(results) > 1 && len(e.byItems) != 0 {
-			ssr := distsql.NewSortedSelectResults(results, pids, e.byItems, e.memTracker)
+			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
+			ssr := distsql.NewSortedSelectResults(results, pids, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)

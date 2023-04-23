@@ -313,7 +313,7 @@ func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 		"└─TableFullScan 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"))
 
 	_, err := tk.Exec("select * from t")
-	require.EqualError(t, err, "[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tikv'. Please check tiflash replica or ensure the query is readonly.")
+	require.EqualError(t, err, "[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tikv'. Please check tiflash replica.")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
@@ -1122,15 +1122,15 @@ func TestNotReadOnlySQLOnTiFlash(t *testing.T) {
 		}
 	}
 	err := tk.ExecToErr("select * from t for update")
-	require.EqualError(t, err, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or ensure the query is readonly.`)
+	require.EqualError(t, err, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or check if the query is not readonly and sql mode is strict.`)
 
 	err = tk.ExecToErr("insert into t select * from t")
-	require.EqualError(t, err, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or ensure the query is readonly.`)
+	require.EqualError(t, err, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or check if the query is not readonly and sql mode is strict.`)
 
 	tk.MustExec("prepare stmt_insert from 'insert into t select * from t where t.a = ?'")
 	tk.MustExec("set @a=1")
 	err = tk.ExecToErr("execute stmt_insert using @a")
-	require.EqualError(t, err, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or ensure the query is readonly.`)
+	require.EqualError(t, err, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or check if the query is not readonly and sql mode is strict.`)
 }
 
 func TestSelectLimit(t *testing.T) {
@@ -4611,7 +4611,7 @@ func TestPartitionTableFallBackStatic(t *testing.T) {
 	tk.MustQuery("explain format='brief' select  * from t union all select * from t2;").CheckAt([]int{0, 3, 4}, rows)
 }
 
-func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
+func TestTiFlashReadForWriteStmt(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -4621,9 +4621,18 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	tk.MustExec("insert into t values(1, 2)")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int)")
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
-	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_allow_mpp=1")
+
+	// Default should be 1
+	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
+	// Set ON
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = ON")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
+	// Set OFF
+	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = OFF")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
 
 	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
@@ -4635,10 +4644,10 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	checkMpp := func(r [][]interface{}) {
+	checkRes := func(r [][]interface{}, pos int, expected string) {
 		check := false
 		for i := range r {
-			if r[i][2] == "mpp[tiflash]" {
+			if r[i][pos] == expected {
 				check = true
 				break
 			}
@@ -4646,20 +4655,38 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 		require.Equal(t, check, true)
 	}
 
-	// Insert into ... select
-	rs := tk.MustQuery("explain insert into t2 select a+b from t").Rows()
-	checkMpp(rs)
+	check := func(query string) {
+		// If sql mode is strict, read does not push down to tiflash
+		tk.MustExec("set @@sql_mode = 'strict_trans_tables'")
+		tk.MustExec("set @@tidb_enforce_mpp=0")
+		rs := tk.MustQuery(query).Rows()
+		checkRes(rs, 2, "cop[tikv]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
 
-	rs = tk.MustQuery("explain insert into t2 select t.a from t2 join t on t2.a = t.a").Rows()
-	checkMpp(rs)
+		// If sql mode is strict and tidb_enforce_mpp is on, read does not push down to tiflash
+		// and should return a warning.
+		tk.MustExec("set @@tidb_enforce_mpp=1")
+		rs = tk.MustQuery(query).Rows()
+		checkRes(rs, 2, "cop[tikv]")
+		rs = tk.MustQuery("show warnings").Rows()
+		checkRes(rs, 2, "MPP mode may be blocked because the query is not readonly and sql mode is strict.")
+
+		// If sql mode is not strict, read should push down to tiflash
+		tk.MustExec("set @@sql_mode = ''")
+		rs = tk.MustQuery(query).Rows()
+		checkRes(rs, 2, "mpp[tiflash]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
+
+	// Insert into ... select
+	check("explain insert into t2 select a+b from t")
+	check("explain insert into t2 select t.a from t2 join t on t2.a = t.a")
 
 	// Replace into ... select
-	rs = tk.MustQuery("explain replace into t2 select a+b from t").Rows()
-	checkMpp(rs)
+	check("explain replace into t2 select a+b from t")
 
 	// CTE
-	rs = tk.MustQuery("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)").Rows()
-	checkMpp(rs)
+	check("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)")
 }
 
 func TestPointGetWithSelectLock(t *testing.T) {
@@ -4686,6 +4713,7 @@ func TestPointGetWithSelectLock(t *testing.T) {
 		"explain select c, d from t1 where c in (1,2,3,4) for update;",
 	}
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
+	tk.MustExec("set @@sql_mode='';")
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
 	tk.MustExec("begin;")
 	// assert point get / batch point get can't work with tiflash in interaction txn

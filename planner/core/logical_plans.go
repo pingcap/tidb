@@ -28,6 +28,7 @@ import (
 	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -1440,6 +1441,10 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 // deriveTablePathStats will fulfill the information that the AccessPath need.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) error {
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
+	}
 	if path.IsCommonHandlePath {
 		return ds.deriveCommonHandleTablePathStats(path, conds, isIm)
 	}
@@ -1518,6 +1523,10 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 }
 
 func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Expression) error {
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
+	}
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.statisticTable.RealtimeCount)
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
@@ -1550,6 +1559,10 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 // conds is the conditions used to generate the DetachRangeResult for path.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression.Expression, isIm bool) {
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
+	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)

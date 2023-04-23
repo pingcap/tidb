@@ -21,6 +21,7 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 type LogRestoreKeyType = string
@@ -37,8 +38,6 @@ func (l LogRestoreValueType) IdentKey() []byte {
 	return []byte(fmt.Sprint(l.Goff, '.', l.Foff, '.', l.TableID))
 }
 
-type LogRestoreRunner = CheckpointRunner[LogRestoreKeyType, LogRestoreValueType]
-
 // only for test
 func StartCheckpointLogRestoreRunnerForTest(
 	ctx context.Context,
@@ -46,7 +45,7 @@ func StartCheckpointLogRestoreRunnerForTest(
 	cipher *backuppb.CipherInfo,
 	tick time.Duration,
 	taskName string,
-) (*LogRestoreRunner, error) {
+) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
@@ -58,7 +57,7 @@ func StartCheckpointRunnerForLogRestore(ctx context.Context,
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	taskName string,
-) (*LogRestoreRunner, error) {
+) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
@@ -69,7 +68,7 @@ func StartCheckpointRunnerForLogRestore(ctx context.Context,
 
 func AppendRangeForLogRestore(
 	ctx context.Context,
-	r *LogRestoreRunner,
+	r *CheckpointRunner[LogRestoreKeyType, LogRestoreValueType],
 	groupKey LogRestoreKeyType,
 	tableID int64,
 	goff int,
@@ -85,4 +84,84 @@ func AppendRangeForLogRestore(
 			},
 		},
 	})
+}
+
+const (
+	CheckpointTaskInfoForLogRestorePathFormat = CheckpointDir + "/restore-%d/taskInfo.meta"
+)
+
+func getCheckpointTaskInfoPathByID(clusterID uint64) string {
+	return fmt.Sprintf(CheckpointTaskInfoForLogRestorePathFormat, clusterID)
+}
+
+// A progress type for snapshot + log restore.
+//
+// Before the id-maps is persist into external storage, the snapshot restore and
+// id-maps constructure can be repeated. So if the progress is in `InSnapshotRestore`,
+// it can retry from snapshot restore.
+//
+// After the id-maps is persist into external storage, there are some meta-kvs has
+// been restored into the cluster, such as `rename ddl`. Where would be a situation:
+//
+// the first execution:
+//
+//	table A created in snapshot restore is renamed to table B in log restore
+//	     table A (id 80)       -------------->        table B (id 80)
+//	  ( snapshot restore )                            ( log restore )
+//
+// the second execution if don't skip snasphot restore:
+//
+//	table A is created again in snapshot restore, because there is no table named A
+//	     table A (id 81)       -------------->   [not in id-maps, so ignored]
+//	  ( snapshot restore )                            ( log restore )
+//
+// Finally, there is a duplicated table A in the cluster.
+// Therefore, need to skip snapshot restore when the progress is `InLogRestoreAndIdMapPersist`.
+type RestoreProgress int
+
+const (
+	InSnapshotRestore RestoreProgress = iota
+	// Only when the id-maps is persist, status turns into it.
+	InLogRestoreAndIdMapPersist
+)
+
+// CheckpointTaskInfo is unique information within the same cluster id. It represents the last
+// restore task executed for this cluster.
+type CheckpointTaskInfoForLogRestore struct {
+	// the progress for this task
+	Progress RestoreProgress `json:"progress"`
+	// a task marker to distinguish the different tasks
+	StartTS   uint64 `json:"start-ts"`
+	RestoreTS uint64 `json:"restore-ts"`
+	// updated in the progress of `InLogRestoreAndIdMapPersist`
+	RewriteTS uint64 `json:"rewrite-ts"`
+	// tiflash recorder items with snapshot restore records
+	TiFlashItems map[int64]model.TiFlashReplicaInfo `json:"tiflash-recorder,omitempty"`
+}
+
+func LoadCheckpointTaskInfoForLogRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	clusterID uint64,
+) (*CheckpointTaskInfoForLogRestore, error) {
+	m := &CheckpointTaskInfoForLogRestore{}
+	err := loadCheckpointMeta(ctx, s, getCheckpointTaskInfoPathByID(clusterID), m)
+	return m, err
+}
+
+func SaveCheckpointTaskInfoForLogRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	meta *CheckpointTaskInfoForLogRestore,
+	clusterID uint64,
+) error {
+	return saveCheckpointMetadata(ctx, s, meta, getCheckpointTaskInfoPathByID(clusterID))
+}
+
+func ExistsCheckpointTaskInfo(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	clusterID uint64,
+) (bool, error) {
+	return s.FileExists(ctx, getCheckpointTaskInfoPathByID(clusterID))
 }

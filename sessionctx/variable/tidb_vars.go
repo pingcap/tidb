@@ -780,6 +780,8 @@ const (
 
 	// TiDBEnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
+	// TiDBEnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
+	TiDBEnableNonPreparedPlanCacheForDML = "tidb_enable_non_prepared_plan_cache_for_dml"
 	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	// This variable is deprecated, use tidb_session_plan_cache_size instead.
 	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
@@ -858,6 +860,8 @@ const (
 
 	// TiDBOptEnableMPPSharedCTEExecution indicates whehter the optimizer try to build shared CTE scan during MPP execution.
 	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
+	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
+	TiDBOptFixControl = "tidb_opt_fix_control"
 )
 
 // TiDB vars that have only global scope
@@ -1128,7 +1132,6 @@ const (
 	DefTiDBAutoAnalyzePartitionBatchSize           = 1
 	DefTiDBEnableIndexMergeJoin                    = false
 	DefTiDBTrackAggregateMemoryUsage               = true
-	DefTiDBEnableExchangePartition                 = true
 	DefCTEMaxRecursionDepth                        = 1000
 	DefTiDBTmpTableMaxSize                         = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                          = false
@@ -1203,10 +1206,10 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = false
+	DefTiDBEnableNonPreparedPlanCache              = true
+	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
-	DefTiDBEnableTiFlashReadForWriteStmt           = false
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
@@ -1256,7 +1259,7 @@ const (
 	DefTiDBEnablePlanCacheForParamLimit              = true
 	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                = true
-	DefTiDBLoadBasedReplicaReadThreshold             = 0
+	DefTiDBLoadBasedReplicaReadThreshold             = time.Second
 	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 	DefTiDBOptEnableMPPSharedCTEExecution            = false

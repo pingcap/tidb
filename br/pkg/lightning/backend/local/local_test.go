@@ -1047,7 +1047,7 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	jobOutCh := make(chan *regionJob, 1)
 	err := bak.startWorker(context.Background(), jobCh, jobOutCh, nil)
 	require.Error(t, err)
-	require.Regexp(t, "The available disk of TiKV.*", err.Error())
+	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	require.Len(t, jobCh, 0)
 }
 
@@ -1403,6 +1403,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 			panicSplitRegionClient{}, // make sure no further split region
 		),
 	}
+	local.BackendConfig.RangeConcurrency = 1
 	db, tmpPath := makePebbleDB(t, nil)
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	ctx := context.Background()
@@ -1567,7 +1568,7 @@ func TestDoImport(t *testing.T) {
 						{
 							write: injectedWriteBehaviour{
 								// a retryable error
-								err: errors.New("is not fully replicated"),
+								err: status.Error(codes.Unknown, "is not fully replicated"),
 							},
 						},
 					},
@@ -1596,7 +1597,10 @@ func TestDoImport(t *testing.T) {
 
 	ctx := context.Background()
 	l := &Backend{
-		BackendConfig: BackendConfig{WorkerConcurrency: 2},
+		BackendConfig: BackendConfig{
+			RangeConcurrency:  1,
+			WorkerConcurrency: 2,
+		},
 	}
 	e := &Engine{}
 	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
