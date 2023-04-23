@@ -329,7 +329,7 @@ func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 		lastChildProp := pp.GetChildReqProps(lastIdx).CloneEssentialFields()
 		if lastChildProp.IsFlashProp() {
-			lastChildProp.CTEConsumerStatus = property.AllCTECanMpp
+			lastChildProp.CTEProducerStatus = property.AllCTECanMpp
 		}
 		lastChildTask, cnt, err := p.Children()[lastIdx].findBestTask(lastChildProp, &PlanCounterDisabled, opt)
 		childCnts[lastIdx] = cnt
@@ -341,7 +341,7 @@ func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			continue
 		}
 
-		if _, ok := lastChildTask.(*mppTask); !ok && lastChildProp.CTEConsumerStatus == property.AllCTECanMpp {
+		if _, ok := lastChildTask.(*mppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
 			continue
 		}
 
@@ -2670,8 +2670,8 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, counter *Plan
 	// The physical plan has been build when derive stats.
 	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName, cteName: p.cteName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	if prop.IsFlashProp() && prop.CTEConsumerStatus == property.AllCTECanMpp {
-		pcte.readerRecevier = PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.ctx, p.stats)
+	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
+		pcte.readerReceiver = PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.ctx, p.stats)
 		if prop.MPPPartitionTp != property.AnyType {
 			return invalidTask, 1, nil
 		}

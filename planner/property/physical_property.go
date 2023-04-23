@@ -213,7 +213,7 @@ type PhysicalProperty struct {
 	// Non-MPP tasks do not care about it.
 	RejectSort bool
 
-	CTEConsumerStatus cteProducerStatus
+	CTEProducerStatus cteProducerStatus
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -344,7 +344,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = append(p.hashcode, col.hashCode(nil)...)
 		}
 	}
-	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEConsumerStatus))...)
+	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)
 	return p.hashcode
 }
 
@@ -364,7 +364,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
-		CTEConsumerStatus:     p.CTEConsumerStatus,
+		CTEProducerStatus:     p.CTEProducerStatus,
 	}
 	return prop
 }

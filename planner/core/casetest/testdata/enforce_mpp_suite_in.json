@@ -172,5 +172,18 @@
       "EXPLAIN select *, (t.a, t.b) not in (select s.a, s.b from s) from t; -- 7. left anti semi join, two join key",
       "EXPLAIN select *, (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c) from t; -- 8. left anti semi join, two join key + other condition"
     ]
+  },
+  {
+    "name": "TestMPPSharedCTEScan",
+    "cases": [
+      // The most simple case.
+      "explain with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b ",
+      "explain with c1 as (select * from t) select c1.* from c1, c1 c2 where c1.b=c2.c",
+      // Can work when there's global limit/topn
+      "explain with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b limit 10",
+      "explain with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b order by c1.a limit 10",
+      // The c2 references c1, c1 can mpp, and then c2 can mpp, so the main query can mpp.
+      "explain with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2 where c1.a=c2.b"
+    ]
   }
 ]

@@ -2446,7 +2446,7 @@ type PhysicalCTE struct {
 	cteAsName model.CIStr
 	cteName   model.CIStr
 
-	readerRecevier *PhysicalExchangeReceiver
+	readerReceiver *PhysicalExchangeReceiver
 	storageSender  *PhysicalExchangeSender
 }
 
@@ -2515,12 +2515,12 @@ func (p *PhysicalCTE) Clone() (PhysicalPlan, error) {
 		}
 		cloned.storageSender = clonedSender.(*PhysicalExchangeSender)
 	}
-	if p.readerRecevier != nil {
-		clonedReceiver, err := p.readerRecevier.Clone()
+	if p.readerReceiver != nil {
+		clonedReceiver, err := p.readerReceiver.Clone()
 		if err != nil {
 			return nil, err
 		}
-		cloned.readerRecevier = clonedReceiver.(*PhysicalExchangeReceiver)
+		cloned.readerReceiver = clonedReceiver.(*PhysicalExchangeReceiver)
 	}
 	return cloned, nil
 }
@@ -2680,8 +2680,7 @@ func (p *PhysicalSequence) ExplainID() fmt.Stringer {
 
 // ExplainInfo overrides the ExplainInfo.
 func (p *PhysicalSequence) ExplainInfo() string {
-	var res string
-	res = "Sequence Node"
+	res := "Sequence Node"
 	return res
 }
 

@@ -60,8 +60,8 @@ type cteGroupInFragment struct {
 	CTEStorage *PhysicalCTEStorage
 	CTEReader  []*PhysicalCTE
 
-	StroageTasks     []*kv.MPPTask
-	StroageFragments []*Fragment
+	StorageTasks     []*kv.MPPTask
+	StorageFragments []*Fragment
 }
 
 const emptyFragmentSize = int64(unsafe.Sizeof(Fragment{}))
@@ -271,7 +271,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, fo
 		}
 	case *PhysicalSequence:
 		lastChildIdx := len(x.children) - 1
-		// except the last child, those previous ones are all cte producer. 
+		// except the last child, those previous ones are all cte producer.
 		for i := 0; i < lastChildIdx; i++ {
 			if e.CTEGroups == nil {
 				e.CTEGroups = make(map[int]*cteGroupInFragment)
@@ -412,16 +412,16 @@ func (f *Fragment) flipCTEReader(currentPlan PhysicalPlan) {
 
 func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (err error) {
 	group := e.CTEGroups[cteReader.CTE.IDForStorage]
-	if group.StroageFragments == nil {
+	if group.StorageFragments == nil {
 		group.CTEStorage.storageSender.SetChildren(group.CTEStorage.children...)
-		group.StroageTasks, group.StroageFragments, err = e.generateMPPTasksForExchangeSender(group.CTEStorage.storageSender)
+		group.StorageTasks, group.StorageFragments, err = e.generateMPPTasksForExchangeSender(group.CTEStorage.storageSender)
 		if err != nil {
 			return err
 		}
 	}
-	receiver := cteReader.readerRecevier
-	receiver.Tasks = group.StroageTasks
-	receiver.frags = group.StroageFragments
+	receiver := cteReader.readerReceiver
+	receiver.Tasks = group.StorageTasks
+	receiver.frags = group.StorageFragments
 	cteReader.SetChildren(receiver)
 	receiver.SetChildren(group.CTEStorage.children[0])
 	inconsistenceNullable := false
@@ -446,7 +446,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 
 func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*kv.MPPTask) {
 	group := e.CTEGroups[storageID]
-	for _, frag := range group.StroageFragments {
+	for _, frag := range group.StorageFragments {
 		frag.ExchangeSender.TargetCTEReaderTasks = append(frag.ExchangeSender.TargetCTEReaderTasks, tasks)
 	}
 }

@@ -1588,5 +1588,112 @@
         "Warn": null
       }
     ]
+  },
+  {
+    "Name": "TestMPPSharedCTEScan",
+    "Cases": [
+      {
+        "SQL": "explain with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b ",
+        "Plan": [
+          "TableReader_70 8000.00 root  MppVersion: 1, data:ExchangeSender_69",
+          "└─ExchangeSender_69 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Sequence_68 8000.00 mpp[tiflash]  Sequence Node",
+          "    ├─CTE_0 8000.00 mpp[tiflash]  Non-Recursive CTE Storage",
+          "    │ └─Selection_53 8000.00 mpp[tiflash]  or(not(isnull(test.t.a)), not(isnull(test.t.b)))",
+          "    │   └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─HashJoin_54 8000.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "      ├─ExchangeReceiver_62(Build) 6400.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender_61 6400.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─Selection_56 6400.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "      │     └─CTEFullScan_59 8000.00 mpp[tiflash] CTE:c1 data:CTE_0",
+          "      └─Selection_63(Probe) 6400.00 mpp[tiflash]  not(isnull(test.t.b))",
+          "        └─CTEFullScan_64 8000.00 mpp[tiflash] CTE:c1 AS c2 data:CTE_0"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain with c1 as (select * from t) select c1.* from c1, c1 c2 where c1.b=c2.c",
+        "Plan": [
+          "TableReader_70 8000.00 root  MppVersion: 1, data:ExchangeSender_69",
+          "└─ExchangeSender_69 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_30 8000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c",
+          "    └─Sequence_68 8000.00 mpp[tiflash]  Sequence Node",
+          "      ├─CTE_0 8000.00 mpp[tiflash]  Non-Recursive CTE Storage",
+          "      │ └─Selection_53 8000.00 mpp[tiflash]  or(not(isnull(test.t.b)), not(isnull(test.t.c)))",
+          "      │   └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─HashJoin_54 8000.00 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.c)]",
+          "        ├─ExchangeReceiver_62(Build) 6400.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender_61 6400.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "        │   └─Selection_56 6400.00 mpp[tiflash]  not(isnull(test.t.b))",
+          "        │     └─CTEFullScan_59 8000.00 mpp[tiflash] CTE:c1 data:CTE_0",
+          "        └─Selection_63(Probe) 6400.00 mpp[tiflash]  not(isnull(test.t.c))",
+          "          └─CTEFullScan_64 8000.00 mpp[tiflash] CTE:c1 AS c2 data:CTE_0"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b limit 10",
+        "Plan": [
+          "Limit_36 10.00 root  offset:0, count:10",
+          "└─TableReader_89 10.00 root  MppVersion: 1, data:ExchangeSender_88",
+          "  └─ExchangeSender_88 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Limit_87 10.00 mpp[tiflash]  offset:0, count:10",
+          "      └─Sequence_82 8000.00 mpp[tiflash]  Sequence Node",
+          "        ├─CTE_0 8000.00 mpp[tiflash]  Non-Recursive CTE Storage",
+          "        │ └─Selection_67 8000.00 mpp[tiflash]  or(not(isnull(test.t.a)), not(isnull(test.t.b)))",
+          "        │   └─TableFullScan_24 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─HashJoin_83 8000.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "          ├─ExchangeReceiver_76(Build) 6400.00 mpp[tiflash]  ",
+          "          │ └─ExchangeSender_75 6400.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "          │   └─Selection_70 6400.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "          │     └─CTEFullScan_73 8000.00 mpp[tiflash] CTE:c1 data:CTE_0",
+          "          └─Selection_84(Probe) 8.00 mpp[tiflash]  not(isnull(test.t.b))",
+          "            └─CTEFullScan_85 8000.00 mpp[tiflash] CTE:c1 AS c2 data:CTE_0"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b order by c1.a limit 10",
+        "Plan": [
+          "TopN_36 10.00 root  test.t.a, offset:0, count:10",
+          "└─TableReader_80 10.00 root  MppVersion: 1, data:ExchangeSender_79",
+          "  └─ExchangeSender_79 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN_78 10.00 mpp[tiflash]  test.t.a, offset:0, count:10",
+          "      └─Sequence_77 8000.00 mpp[tiflash]  Sequence Node",
+          "        ├─CTE_0 8000.00 mpp[tiflash]  Non-Recursive CTE Storage",
+          "        │ └─Selection_62 8000.00 mpp[tiflash]  or(not(isnull(test.t.a)), not(isnull(test.t.b)))",
+          "        │   └─TableFullScan_24 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─HashJoin_63 8000.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "          ├─ExchangeReceiver_71(Build) 6400.00 mpp[tiflash]  ",
+          "          │ └─ExchangeSender_70 6400.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "          │   └─Selection_65 6400.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "          │     └─CTEFullScan_68 8000.00 mpp[tiflash] CTE:c1 data:CTE_0",
+          "          └─Selection_72(Probe) 6400.00 mpp[tiflash]  not(isnull(test.t.b))",
+          "            └─CTEFullScan_73 8000.00 mpp[tiflash] CTE:c1 AS c2 data:CTE_0"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2 where c1.a=c2.b",
+        "Plan": [
+          "HashJoin_60 12500.00 root  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "├─Selection_72(Build) 8000.00 root  not(isnull(test.t.b))",
+          "│ └─CTEFullScan_74 10000.00 root CTE:c2 data:CTE_1",
+          "└─Selection_68(Probe) 8000.00 root  not(isnull(test.t.a))",
+          "  └─CTEFullScan_70 10000.00 root CTE:c2 AS c1 data:CTE_1",
+          "CTE_1 10000.00 root  Non-Recursive CTE",
+          "└─HashJoin_34(Seed Part) 10000.00 root  inner join, equal:[eq(test.t.b, test.t.c)]",
+          "  ├─Selection_46(Build) 8000.00 root  not(isnull(test.t.c))",
+          "  │ └─CTEFullScan_48 10000.00 root CTE:c1 AS c2 data:CTE_0",
+          "  └─Selection_42(Probe) 8000.00 root  not(isnull(test.t.b)), or(not(isnull(test.t.a)), not(isnull(test.t.b)))",
+          "    └─CTEFullScan_44 10000.00 root CTE:c1 data:CTE_0",
+          "CTE_0 10000.00 root  Non-Recursive CTE",
+          "└─TableReader_29(Seed Part) 10000.00 root  MppVersion: 1, data:ExchangeSender_28",
+          "  └─ExchangeSender_28 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan_27 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
   }
 ]
