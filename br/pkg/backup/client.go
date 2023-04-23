@@ -793,7 +793,7 @@ func (bc *Client) fineGrainedBackup(
 	}
 }
 
-// OnBackupResjonse checks the backup resp, decides whether to retry and generate the error.
+// OnBackupResponse checks the backup resp, decides whether to retry and generate the error.
 func OnBackupResponse(
 	storeID uint64,
 	bo *tikv.Backoffer,
