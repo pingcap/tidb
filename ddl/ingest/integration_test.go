@@ -158,7 +158,7 @@ func TestAddIndexIngestPanic(t *testing.T) {
 
 	// Mock panic on local engine writer.
 	tk.MustExec("drop table t;")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockLocalWriterPanic", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockLocalWriterPanic", "return"))
 	tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
 	tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
 	tk.MustExec("alter table t add index idx(b);")
