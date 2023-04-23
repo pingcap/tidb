@@ -152,6 +152,7 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockCopSenderPanic"))
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
+	//nolint: forcetypeassert
 	jobTp := rows[0][3].(string)
 	// Fallback to txn-merge process.
 	require.True(t, strings.Contains(jobTp, "txn-merge"), jobTp)
@@ -165,6 +166,7 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockLocalWriterPanic"))
 	rows = tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
+	//nolint: forcetypeassert
 	jobTp = rows[0][3].(string)
 	// Fallback to txn-merge process.
 	require.True(t, strings.Contains(jobTp, "txn-merge"), jobTp)
