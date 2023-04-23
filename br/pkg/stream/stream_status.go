@@ -230,7 +230,8 @@ var logCountSumRe = regexp.MustCompile(`tikv_stream_handle_kv_batch_sum ([0-9]+)
 
 // MaybeQPS get a number like the QPS of last seconds for each store via the prometheus interface.
 // TODO: this is a temporary solution(aha, like in a Hackthon),
-//       we MUST find a better way for providing this information.
+//
+//	we MUST find a better way for providing this information.
 func MaybeQPS(ctx context.Context, mgr *conn.Mgr) (float64, error) {
 	c := mgr.GetPDClient()
 	prefix := "http://"

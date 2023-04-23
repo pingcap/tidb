@@ -607,8 +607,9 @@ func (f FileFormat) String() string {
 }
 
 // Extension returns the extension for specific format.
-//  text -> "sql"
-//  csv  -> "csv"
+//
+//	text -> "sql"
+//	csv  -> "csv"
 func (f FileFormat) Extension() string {
 	switch f {
 	case FileFormatSQLText:

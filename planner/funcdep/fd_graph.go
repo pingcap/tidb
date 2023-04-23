@@ -603,118 +603,119 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //
 // Notification:
 // 1: the origin FD from the left side (rows-supplying) over the result of outer join filtered are preserved because
-//    it may be duplicated by multi-matching, but actually, they are the same left rows (don't violate FD definition).
+//
+//	it may be duplicated by multi-matching, but actually, they are the same left rows (don't violate FD definition).
 //
 // 2: the origin FD from the right side (nulls-supplying) over the result of outer join filtered may not be valid anymore.
 //
-//		<1> strict FD may be wakened as a lax one. But if at least one non-NULL column is part of the determinant, the
-//			strict FD can be preserved.
-//	        a  b  |  c     d     e
-//			------+----------------
-//		 	1  1  |  1    NULL   1
-//		    1  2  | NULL  NULL  NULL
-//		    2  1  | NULL  NULL  NULL
-//			left join with (a,b) * (c,d,e) on (a=c and b=1), if there is a strict FD {d} -> {e} on the rhs. After supplied
-//			with null values, {d} -> {e} are degraded to a lax one {d} ~~> {e} as you see. the origin and supplied null value
-//			for d column determine different dependency.  NULL -> 1 and NULL -> NULL which breaks strict FD definition.
+//			<1> strict FD may be wakened as a lax one. But if at least one non-NULL column is part of the determinant, the
+//				strict FD can be preserved.
+//		        a  b  |  c     d     e
+//				------+----------------
+//			 	1  1  |  1    NULL   1
+//			    1  2  | NULL  NULL  NULL
+//			    2  1  | NULL  NULL  NULL
+//				left join with (a,b) * (c,d,e) on (a=c and b=1), if there is a strict FD {d} -> {e} on the rhs. After supplied
+//				with null values, {d} -> {e} are degraded to a lax one {d} ~~> {e} as you see. the origin and supplied null value
+//				for d column determine different dependency.  NULL -> 1 and NULL -> NULL which breaks strict FD definition.
 //
-//			If the determinant contains at least a not null column for example c here, FD like {c,d} -> {e} can survive
-//			after the left join. Because you can not find two same key, one from the origin rows and the other one from the
-//			supplied rows.
+//				If the determinant contains at least a not null column for example c here, FD like {c,d} -> {e} can survive
+//				after the left join. Because you can not find two same key, one from the origin rows and the other one from the
+//				supplied rows.
 //
-//			for lax FD, the supplied rows of null values don't affect lax FD itself. So we can keep it.
+//				for lax FD, the supplied rows of null values don't affect lax FD itself. So we can keep it.
 //
-//		<2> The FDSet should remove constant FD since null values may be substituted for some unmatched left rows. NULL is not a
-//			constant anymore.
+//			<2> The FDSet should remove constant FD since null values may be substituted for some unmatched left rows. NULL is not a
+//				constant anymore.
 //
-//      <3> equivalence FD should be removed since substituted null values are not equal to the other substituted null value.
+//	     <3> equivalence FD should be removed since substituted null values are not equal to the other substituted null value.
 //
 // 3: the newly added FD from filters should take some consideration as below:
 //
-//	 	<1> strict/lax FD: join key filter conditions can not produce new strict/lax FD yet (knowledge: 1&2).
+//		 	<1> strict/lax FD: join key filter conditions can not produce new strict/lax FD yet (knowledge: 1&2).
 //
-//		<2> constant FD from the join conditions is only used for checking other FD. We cannot keep itself.
-//			a   b  |  c     d
-//          -------+---------
-//          1   1  |  1     1
-//          1   2  | NULL NULL
-//          left join with (a,b) * (c,d) on (a=c and d=1), some rhs rows will be substituted with null values, and FD on rhs
-//          {d=1} are lost.
+//			<2> constant FD from the join conditions is only used for checking other FD. We cannot keep itself.
+//				a   b  |  c     d
+//	         -------+---------
+//	         1   1  |  1     1
+//	         1   2  | NULL NULL
+//	         left join with (a,b) * (c,d) on (a=c and d=1), some rhs rows will be substituted with null values, and FD on rhs
+//	         {d=1} are lost.
 //
-//          a   b  |  c     d
-//  		-------+---------
-//		    1   1  |  1     1
-//          1   2  | NULL NULL
-//          left join with (a,b) * (c,d) on (a=c and b=1), it only gives the pass to the first matching, lhs other rows are still
-//          kept and appended with null values. So the FD on rhs {b=1} are not applicable to lhs rows.
+//	         a   b  |  c     d
+//	 		-------+---------
+//			    1   1  |  1     1
+//	         1   2  | NULL NULL
+//	         left join with (a,b) * (c,d) on (a=c and b=1), it only gives the pass to the first matching, lhs other rows are still
+//	         kept and appended with null values. So the FD on rhs {b=1} are not applicable to lhs rows.
 //
-//          above all: constant FD are lost
+//	         above all: constant FD are lost
 //
-//		<3.1> equivalence FD: when the left join conditions only contain equivalence FD (EFD for short below) across left and right
-//			cols and no other `LEFT` condition on the (left-side cols except the cols in EFD's from) to filter the left join results. We can maintain the strict
-//			FD from EFD's `from` side to EFD's `to` side over the left join result.
-//			a  b  |  c     d     e
-//			------+----------------
-//		 	1  1  |  1    NULL   1
-//		    1  2  | NULL  NULL  NULL
-//		    2  1  | NULL  NULL  NULL
-//			Neg eg: left join with (a,b) * (c,d,e) on (a=c and b=1), other b=1 will filter the result, causing the left row (1, 2)
-//			miss matched with right row (1, null 1) by a=c, consequently leading the left row appended as (1,2,null,null,null), which
-//			will break the FD: {a} -> {c} for key a=1 with different c=1/null.
-//			a  b  |  c     d     e
-//			------+----------------
-//		 	1  1  | NULL  NULL  NULL
-//		    2  1  | NULL  NULL  NULL
-//			Pos eg: if the filter is on EFD's `from` cols, it's ok. Let's say: (a,b) * (c,d,e) on (a=c and a=2), a=2 only won't leading
-//			same key a with matched c and mismatched NULL, neg case result is changed as above, so strict FD {a} -> {c} can exist.
-//			a  b  |  c     d     e
-//			------+----------------
-//		 	1  1  |  1    NULL   1
-//		    1  2  | NULL  NULL  NULL
-//			2  1  | NULL  NULL  NULL
-//			Neg eg: left join with (a,b) * (c,d,e) on (a=c and b=c), two EFD here, where b=c can also refuse some rows joined by a=c,
-//			consequently applying it with NULL as (1  2  | NULL  NULL  NULL), leading the same key a has different value 1/NULL. But
-//			macroscopically, we can combine {a,b} together as the strict FD's from side, so new FD {a,b} -> {c} is secured. For case
-//			of (a=c and b=ce), the FD is {a, b} -> {c, e}
+//			<3.1> equivalence FD: when the left join conditions only contain equivalence FD (EFD for short below) across left and right
+//				cols and no other `LEFT` condition on the (left-side cols except the cols in EFD's from) to filter the left join results. We can maintain the strict
+//				FD from EFD's `from` side to EFD's `to` side over the left join result.
+//				a  b  |  c     d     e
+//				------+----------------
+//			 	1  1  |  1    NULL   1
+//			    1  2  | NULL  NULL  NULL
+//			    2  1  | NULL  NULL  NULL
+//				Neg eg: left join with (a,b) * (c,d,e) on (a=c and b=1), other b=1 will filter the result, causing the left row (1, 2)
+//				miss matched with right row (1, null 1) by a=c, consequently leading the left row appended as (1,2,null,null,null), which
+//				will break the FD: {a} -> {c} for key a=1 with different c=1/null.
+//				a  b  |  c     d     e
+//				------+----------------
+//			 	1  1  | NULL  NULL  NULL
+//			    2  1  | NULL  NULL  NULL
+//				Pos eg: if the filter is on EFD's `from` cols, it's ok. Let's say: (a,b) * (c,d,e) on (a=c and a=2), a=2 only won't leading
+//				same key a with matched c and mismatched NULL, neg case result is changed as above, so strict FD {a} -> {c} can exist.
+//				a  b  |  c     d     e
+//				------+----------------
+//			 	1  1  |  1    NULL   1
+//			    1  2  | NULL  NULL  NULL
+//				2  1  | NULL  NULL  NULL
+//				Neg eg: left join with (a,b) * (c,d,e) on (a=c and b=c), two EFD here, where b=c can also refuse some rows joined by a=c,
+//				consequently applying it with NULL as (1  2  | NULL  NULL  NULL), leading the same key a has different value 1/NULL. But
+//				macroscopically, we can combine {a,b} together as the strict FD's from side, so new FD {a,b} -> {c} is secured. For case
+//				of (a=c and b=ce), the FD is {a, b} -> {c, e}
 //
-// 			conclusion: without this kind of limited left conditions to judge the join match, we can say: FD {a} -> {c} exists.
+//				conclusion: without this kind of limited left conditions to judge the join match, we can say: FD {a} -> {c} exists.
 //
-//		<3.2> equivalence FD: when the determinant and dependencies from an equivalence FD of join condition are each covering a strict
-//			FD of the left / right side. After joining, we can extend the left side strict FD's dependencies to all cols.
-//			a  b  |  c     d     e
-//			------+----------------
-//		 	1  1  |  1    NULL   1
-//		    2  2  | NULL  NULL  NULL
-//		    3  1  | NULL  NULL  NULL
-//			left join with (a,b) * (c,d,e) on (a=c and b=1). Supposing that left `a` are strict Key and right `c` are strict Key too.
-//			Key means the strict FD can determine all cols from that table.
-//			case 1: left join matched
-//				one left row match one / multi rows from right side, since `c` is strict determine all cols from right table, so
-//              {a} == {b} --> {all cols in right}, according to the transitive rule of strict FD, we get {a} --> {all cols in right}
-//			case 2: left join miss match
-//				miss matched rows from left side are unique originally, even appended with NULL value from right side, they are still
-//				strictly determine themselves and even the all rows after left join.
-//			conclusion combined:
-//				If there is an equivalence covering both strict Key from the right and left, we can create a new strict FD: {columns of the left side of the join in the equivalence} -> {all columns after join}.
+//			<3.2> equivalence FD: when the determinant and dependencies from an equivalence FD of join condition are each covering a strict
+//				FD of the left / right side. After joining, we can extend the left side strict FD's dependencies to all cols.
+//				a  b  |  c     d     e
+//				------+----------------
+//			 	1  1  |  1    NULL   1
+//			    2  2  | NULL  NULL  NULL
+//			    3  1  | NULL  NULL  NULL
+//				left join with (a,b) * (c,d,e) on (a=c and b=1). Supposing that left `a` are strict Key and right `c` are strict Key too.
+//				Key means the strict FD can determine all cols from that table.
+//				case 1: left join matched
+//					one left row match one / multi rows from right side, since `c` is strict determine all cols from right table, so
+//	             {a} == {b} --> {all cols in right}, according to the transitive rule of strict FD, we get {a} --> {all cols in right}
+//				case 2: left join miss match
+//					miss matched rows from left side are unique originally, even appended with NULL value from right side, they are still
+//					strictly determine themselves and even the all rows after left join.
+//				conclusion combined:
+//					If there is an equivalence covering both strict Key from the right and left, we can create a new strict FD: {columns of the left side of the join in the equivalence} -> {all columns after join}.
 //
-//		<3.3> equivalence FD: let's see equivalence FD as double-directed strict FD from join equal conditions, and we  only keep the
-//			rhs ~~> lhs.
-//			a  b  |  c     d     e
-//			------+----------------
-//		 	1  1  |  1    NULL   1
-//		    1  2  | NULL  NULL  NULL
-//		    2  1  | NULL  NULL  NULL
-//			left join with (a,b) * (c,d,e) on (a=c and b=1). From the join equivalence condition can derive a new FD {ac} == {ac}.
-//			while since there are some supplied null value in the c column, we don't guarantee {ac} == {ac} yet, so do {a} -> {c}
-//			because two same determinant key {1} can point to different dependency {1} & {NULL}. But in return, FD like {c} -> {a}
-//			are degraded to the corresponding lax one.
+//			<3.3> equivalence FD: let's see equivalence FD as double-directed strict FD from join equal conditions, and we  only keep the
+//				rhs ~~> lhs.
+//				a  b  |  c     d     e
+//				------+----------------
+//			 	1  1  |  1    NULL   1
+//			    1  2  | NULL  NULL  NULL
+//			    2  1  | NULL  NULL  NULL
+//				left join with (a,b) * (c,d,e) on (a=c and b=1). From the join equivalence condition can derive a new FD {ac} == {ac}.
+//				while since there are some supplied null value in the c column, we don't guarantee {ac} == {ac} yet, so do {a} -> {c}
+//				because two same determinant key {1} can point to different dependency {1} & {NULL}. But in return, FD like {c} -> {a}
+//				are degraded to the corresponding lax one.
 //
 // 4: the new formed FD {left primary key, right primary key} -> {all columns} are preserved in spite of the null-supplied rows.
 // 5: There's no join key and no filters from the outer side. The join case is a cartesian product. In this case,
-//    the strict equivalence classes still exist.
-//      - If the right side has no row, we will supply null-extended rows, then the value of any column is NULL, and the equivalence class exists.
-//      - If the right side has rows, no row is filtered out after the filters since no row of the outer side is filtered out. Hence, the equivalence class remains.
 //
+//	the strict equivalence classes still exist.
+//	  - If the right side has no row, we will supply null-extended rows, then the value of any column is NULL, and the equivalence class exists.
+//	  - If the right side has rows, no row is filtered out after the filters since no row of the outer side is filtered out. Hence, the equivalence class remains.
 func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols FastIntSet, opt *ArgOpts) {
 	//  copy down the left PK and right PK before the s has changed for later usage.
 	leftPK, ok1 := s.FindPrimaryKey()
@@ -924,9 +925,9 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 // MaxOneRow will regard every column in the fdSet as a constant. Since constant is stronger that strict FD, it will
 // take over all existed strict/lax FD, only keeping the equivalence. Because equivalence is stronger than constant.
 //
-//   f:      {a}--> {b,c}, {abc} == {abc}
-//   cols:   {a,c}
-//   result: {} --> {a,c}, {a,c} == {a,c}
+//	f:      {a}--> {b,c}, {abc} == {abc}
+//	cols:   {a,c}
+//	result: {} --> {a,c}, {a,c} == {a,c}
 func (s *FDSet) MaxOneRow(cols FastIntSet) {
 	cnt := 0
 	for i := 0; i < len(s.fdEdges); i++ {

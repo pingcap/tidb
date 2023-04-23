@@ -30,12 +30,12 @@ var _ Storage = &StorageRC{}
 //
 // Common usage as follows:
 //
-//  storage.Lock()
-//  if !storage.Done() {
-//      fill all data into storage
-//  }
-//  storage.UnLock()
-//  read data from storage
+//	storage.Lock()
+//	if !storage.Done() {
+//	    fill all data into storage
+//	}
+//	storage.UnLock()
+//	read data from storage
 type Storage interface {
 	// If is first called, will open underlying storage. Otherwise will add ref count by one.
 	OpenAndRef() error

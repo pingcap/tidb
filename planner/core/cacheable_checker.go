@@ -52,8 +52,9 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 }
 
 // cacheableChecker checks whether a query's plan can be cached, querys that:
-//	 1. have ExistsSubqueryExpr, or
-//	 2. have VariableExpr
+//  1. have ExistsSubqueryExpr, or
+//  2. have VariableExpr
+//
 // will not be cached currently.
 // NOTE: we can add more rules in the future.
 type cacheableChecker struct {

@@ -117,8 +117,8 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
 // |-bindings.sql
 // |-sqls.sql
 // |_explain
-//     |-explain.txt
 //
+//	|-explain.txt
 func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err error) {
 	// Create path
 	err = os.MkdirAll(path, os.ModePerm)
