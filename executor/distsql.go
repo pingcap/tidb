@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -173,6 +174,7 @@ type IndexReaderExecutor struct {
 	ranges          []*ranger.Range
 	partitions      []table.PhysicalTable
 	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
+	partitionIDMap  map[int64]struct{}        // partitionIDs that global index access
 
 	// kvRanges are only used for union scan.
 	kvRanges         []kv.KeyRange
@@ -322,6 +324,42 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.dagPB.Executors, err = constructDistExec(e.ctx, e.plans)
 		if err != nil {
 			return err
+		}
+	}
+
+	if e.index.Global {
+		idxScanExec := e.dagPB.Executors[0]
+		args := make([]expression.Expression, 0, len(e.partitionIDMap))
+		column := &expression.Column{
+			UniqueID: model.ExtraPidColID,
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Index:    len(idxScanExec.IdxScan.Columns) - 1,
+			OrigName: model.ExtraPartitionIdName.L,
+		}
+		args = append(args, column)
+		for pid := range e.partitionIDMap {
+			args = append(args, expression.NewInt64Const(pid))
+		}
+
+		inCondition, err := expression.NewFunction(e.ctx, ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+		if err != nil {
+			return err
+		}
+		pbConditions, err := expression.ExpressionsToPBList(e.ctx.GetSessionVars().StmtCtx, []expression.Expression{inCondition}, e.ctx.GetClient())
+		if err != nil {
+			return err
+		}
+		if len(e.dagPB.Executors) > 1 && e.dagPB.Executors[1].Tp == tipb.ExecType_TypeSelection {
+			e.dagPB.Executors[1].Selection.Conditions = append(e.dagPB.Executors[1].Selection.Conditions, pbConditions...)
+		} else {
+			selExec := &tipb.Selection{
+				Conditions: pbConditions,
+			}
+			executors := make([]*tipb.Executor, 0, len(e.dagPB.Executors)+1)
+			executors = append(executors, e.dagPB.Executors[0])
+			executors = append(executors, &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec})
+			executors = append(executors, e.dagPB.Executors[1:]...)
+			e.dagPB.Executors = executors
 		}
 	}
 

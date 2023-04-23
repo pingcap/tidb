@@ -1603,9 +1603,10 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		}
 	}
 
-	if isDoubleRead {
+	if isDoubleRead || is.Index.Global {
 		// If it's double read case, the first index must return handle. So we should add extra handle column
 		// if there isn't a handle column.
+		// If it's global index, handle and PidColID columns has to be added, so that needed pids can be filtered.
 		if !setHandle {
 			if !is.Table.IsCommonHandle {
 				indexCols = append(indexCols, &expression.Column{
