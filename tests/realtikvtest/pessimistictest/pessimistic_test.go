@@ -50,11 +50,14 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	"go.uber.org/zap"
 )
 
 func createAsyncCommitTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
@@ -3391,14 +3394,53 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 func TestIssue43243(t *testing.T) {
 	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 
+	require.NoError(t, failpoint.Enable("tikvclient/afterSendReqToRegion", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/afterSendReqToRegion"))
+	}()
+
+	ctx := context.WithValue(context.Background(), "sendReqToRegionFinishHook", func(req *tikvrpc.Request, resp *tikvrpc.Response, err error) {
+		var respInner fmt.Stringer
+		if resp != nil && resp.Resp != nil {
+			respInner = resp.Resp.(fmt.Stringer)
+		}
+		logutil.BgLogger().Info("sent request", zap.Stringer("type", req.Type), zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("resp", respInner), zap.Error(err))
+	})
+
+	{
+		// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
+		// TODO: Remove this after supporting scan lock for in-memory pessimistic lock.
+		tkcfg := testkit.NewTestKit(t, store)
+		res := tkcfg.MustQuery("show config where name = 'pessimistic-txn.in-memory' and type = 'tikv'").Rows()
+		if len(res) > 0 && res[0][3].(string) == "true" {
+			tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"false\"")
+			tkcfg.MustQuery("show warnings").Check(testkit.Rows())
+			defer func() {
+				tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"true\"")
+			}()
+			time.Sleep(time.Second)
+		} else {
+			t.Log("skip disabling in-memory pessimistic lock, current config:", res)
+		}
+	}
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int primary key, v int)")
-	tk.MustExec("create table t2 (id int primary key, v int, index(v))")
+	tk.MustExec("create table t2 (id int primary key, v int)")
 	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
 	tk.MustExec("set @@tidb_enable_async_commit=0")
 	tk.MustExec("set @@tidb_enable_1pc=0")
+
+	// Split region
+	{
+		tableID, err := strconv.ParseInt(tk.MustQuery(`select tidb_table_id from information_schema.tables where table_schema = "test" and table_name = "t2"`).Rows()[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		key := tablecodec.EncodeTablePrefix(tableID)
+		_, err = domain.GetPDClient().SplitRegions(context.Background(), [][]byte{key})
+		require.NoError(t, err)
+	}
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
@@ -3414,34 +3456,38 @@ func TestIssue43243(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
 	}()
 
-	tk.MustExec("begin pessimistic")
-	tk2.MustExec("begin pessimistic")
-	tk2.MustExec("update t2 set v = v + 1 where id = 2")
-	ch := mustExecAsync(tk, `
+	tk.MustExecWithContext(ctx, "begin pessimistic")
+	tk2.MustExecWithContext(ctx, "begin pessimistic")
+	tk2.MustExecWithContext(ctx, "update t2 set v = v + 1 where id = 2")
+	ch := make(chan struct{})
+	go func() {
+		tk.MustExecWithContext(ctx, `
 		with
 			c as (select /*+ MERGE() */ v from t1 where id in (1, 2))
 		update c join t2 on c.v = t2.id set t2.v = t2.v + 10`)
+		ch <- struct{}{}
+	}()
 	// tk blocked on row 2
 	mustTimeout(t, ch, time.Millisecond*100)
 	// Change the rows that should be locked by tk.
-	tk3.MustExec("update t1 set v = v + 3")
+	tk3.MustExecWithContext(ctx, "update t1 set v = v + 3")
 	// Release row 2 and resume tk.
-	tk2.MustExec("commit")
+	tk2.MustExecWithContext(ctx, "commit")
 	mustRecv(t, ch)
 
 	// tk should have updated row 4 and row 5, and 4 should be the primary.
 	// At the same time row 1 should be the old primary, row2 points to row 1.
 	// Add another secondary that's smaller than the current primary.
-	tk.MustExec("update t2 set v = v + 10 where id = 3")
-	tk.MustExec("commit")
+	tk.MustExecWithContext(ctx, "update t2 set v = v + 10 where id = 3")
+	tk.MustExecWithContext(ctx, "commit")
 
 	// Simulate a later GC that should resolve all stale lock produced in above steps.
 	currentTS, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	_, err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-issue43243", 1, false)
+	_, err = gcworker.RunResolveLocks(ctx, store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-issue43243", 1, false)
 	require.NoError(t, err)
 
 	// Check data consistency
-	tk.MustExec("admin check table t2")
-	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 3", "3 13", "4 14", "5 15"))
+	tk.MustQueryWithContext(ctx, "select * from t2 order by id").Check(testkit.Rows("1 1", "2 3", "3 13", "4 14", "5 15"))
+
 }

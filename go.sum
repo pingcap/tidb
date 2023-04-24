@@ -82,6 +82,8 @@ github.com/Masterminds/semver/v3 v3.1.1 h1:hLg3sBzpNErnxhQtUy/mmLR2I9foDujNK030I
 github.com/Masterminds/semver/v3 v3.1.1/go.mod h1:VPu/7SZ7ePZ3QOrcuXROw5FAcLl4a0cBrbBpGY/8hQs=
 github.com/Masterminds/sprig/v3 v3.2.2 h1:17jRggJu518dr3QaafizSXOjKYp94wKfABxUmyxvxX8=
 github.com/Masterminds/sprig/v3 v3.2.2/go.mod h1:UoaO7Yp8KlPnJIYWTFkMaqPUYKTfGFPhxNuwnnxkKlk=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20230424080848-1686fe5eeb13 h1:/yAtlD4oTnIEWhU8AunzYppKarzHeCKx7xAnIjJwwoY=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20230424080848-1686fe5eeb13/go.mod h1:JhXnkzPnxpgXj9Tww4P6sayf9TtsnB9XrtS71jfzq+U=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/OneOfOne/xxhash v1.2.5 h1:zl/OfRA6nftbBK9qTohYBJ5xvw6C/oNKizR7cZGl3cI=
 github.com/OneOfOne/xxhash v1.2.5/go.mod h1:eZbhyaAYD41SGSSsnmcpxVoRiQ/MPUTjUdIIOT9Um7Q=
@@ -947,8 +949,6 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20230419123920-35c1ee47c4f9 h1:b6sIFrhNA8R5Q+geziSnAenDphJ+BZtHMkGgHyj472I=
-github.com/tikv/client-go/v2 v2.0.8-0.20230419123920-35c1ee47c4f9/go.mod h1:JhXnkzPnxpgXj9Tww4P6sayf9TtsnB9XrtS71jfzq+U=
 github.com/tikv/pd/client v0.0.0-20230419153320-f1d1a80feb95 h1:177X/S43/qjxDyFq9CBB4Nts0nwLvjJFXzoav2XCUSA=
 github.com/tikv/pd/client v0.0.0-20230419153320-f1d1a80feb95/go.mod h1:5vgcvO020ZCdMZkTrRdS/wFZQUab82BSfKE38T61ro0=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=
