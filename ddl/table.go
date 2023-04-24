@@ -1176,9 +1176,14 @@ func finishJobRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error
 
 func finishJobRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job,
 	tableNames []*model.CIStr, tableIDs, newSchemaIDs []int64) (int64, error) {
+	tblSchemaIDs := make(map[int64]int64, len(tableIDs))
+	for i := range tableIDs {
+		tblSchemaIDs[tableIDs[i]] = newSchemaIDs[i]
+	}
 	tblInfos := make([]*model.TableInfo, 0, len(tableNames))
 	for i := range newSchemaIDs {
-		tblInfo, err := getTableInfo(t, tableIDs[i], newSchemaIDs[i])
+		tblID := tableIDs[i]
+		tblInfo, err := getTableInfo(t, tblID, tblSchemaIDs[tblID])
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return 0, errors.Trace(err)
