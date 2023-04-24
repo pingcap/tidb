@@ -4907,6 +4907,24 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	return GetModifiableColumnJob(ctx, sctx, is, ident, originalColName, schema, t, spec)
 }
 
+func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName model.CIStr) error {
+	for _, col := range allCols {
+		if col.GeneratedExpr == nil {
+			continue
+		}
+		dependedColNames := FindColumnNamesInExpr(col.GeneratedExpr)
+		for _, name := range dependedColNames {
+			if name.Name.L == oldColName.L {
+				if col.Hidden {
+					return dbterror.ErrDependentByFunctionalIndex.GenWithStackByArgs(oldColName.O)
+				}
+				return dbterror.ErrDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
+			}
+		}
+	}
+	return nil
+}
+
 // GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
 func GetModifiableColumnJob(
 	ctx context.Context,
@@ -4934,6 +4952,12 @@ func GetModifiableColumnJob(
 		c := table.FindCol(t.Cols(), newColName.L)
 		if c != nil {
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
+		}
+
+		// And also check the generated columns dependency.
+		err := checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
@@ -5409,21 +5433,10 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	}
 
 	// Check generated expression.
-	for _, col := range allCols {
-		if col.GeneratedExpr == nil {
-			continue
-		}
-		dependedColNames := FindColumnNamesInExpr(col.GeneratedExpr)
-		for _, name := range dependedColNames {
-			if name.Name.L == oldColName.L {
-				if col.Hidden {
-					return dbterror.ErrDependentByFunctionalIndex.GenWithStackByArgs(oldColName.O)
-				}
-				return dbterror.ErrDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
-			}
-		}
+	err = checkModifyColumnWithGeneratedColumnsConstraint(allCols, oldColName)
+	if err != nil {
+		return errors.Trace(err)
 	}
-
 	err = checkDropColumnWithPartitionConstraint(tbl, oldColName)
 	if err != nil {
 		return errors.Trace(err)
