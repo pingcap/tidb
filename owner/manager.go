@@ -35,7 +35,6 @@ import (
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
-	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -70,17 +69,19 @@ const (
 	keyOpDefaultTimeout = 5 * time.Second
 )
 
+// OpType is the owner key value operation type.
 type OpType byte
 
+// List operation of types.
 const (
-	OpNone             OpType = 0
-	OpGetUpgrdingState OpType = 1
+	OpNone              OpType = 0
+	OpGetUpgradingState OpType = 1
 )
 
 // String implements fmt.Stringer interface.
 func (ot OpType) String() string {
 	switch ot {
-	case OpGetUpgrdingState:
+	case OpGetUpgradingState:
 		return "get upgrading state"
 	default:
 		return "none"
@@ -104,11 +105,9 @@ type ownerManager struct {
 	etcdCli        *clientv3.Client
 	cancel         context.CancelFunc
 	elec           unsafe.Pointer
-	session        unsafe.Pointer
 	wg             sync.WaitGroup
 	beOwnerHook    func()
 	campaignCancel context.CancelFunc
-	isCampaigning  atomicutil.Bool
 }
 
 // NewOwnerManager creates a new Manager.
@@ -153,9 +152,7 @@ func (m *ownerManager) SetBeOwnerHook(hook func()) {
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
-var ManagerSessionTTL = 6
-
-// var ManagerSessionTTL = 60
+var ManagerSessionTTL = 60
 
 // setManagerSessionTTL sets the ManagerSessionTTL value, it's used for testing.
 func setManagerSessionTTL() error {
@@ -179,7 +176,6 @@ func (m *ownerManager) CampaignOwner() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	atomic.StorePointer(&m.session, unsafe.Pointer(session))
 	m.wg.Add(1)
 	go m.campaignLoop(session)
 	return nil
@@ -224,14 +220,12 @@ func (m *ownerManager) CampaignCancel() {
 func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 	var campaignContext context.Context
 	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
-	m.isCampaigning.Store(true)
 	defer func() {
 		m.campaignCancel()
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.Stack("buffer"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
 		}
-		m.isCampaigning.Store(false)
 		m.wg.Done()
 	}()
 
@@ -245,12 +239,6 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 
 		select {
 		case <-etcdSession.Done():
-			failpoint.Inject("MockDelOwnerKey", func(v failpoint.Value) {
-				if v.(string) == "delOwnerKeyAndNotOwner" {
-					logutil.Logger(logCtx).Info("etcd session is done, return")
-					return
-				}
-			})
 			logutil.Logger(logCtx).Info("etcd session is done, creates a new one")
 			leaseID := etcdSession.Lease()
 			etcdSession, err = util2.NewSession(campaignContext, logPrefix, m.etcdCli, util2.NewSessionRetryUnlimited, ManagerSessionTTL)
@@ -259,8 +247,13 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 				m.revokeSession(logPrefix, leaseID)
 				return
 			}
-			atomic.StorePointer(&m.session, unsafe.Pointer(etcdSession))
 		case <-campaignContext.Done():
+			failpoint.Inject("MockDelOwnerKey", func(v failpoint.Value) {
+				if v.(string) == "delOwnerKeyAndNotOwner" {
+					logutil.Logger(logCtx).Info("mock break campaign and don't clear related info")
+					return
+				}
+			})
 			logutil.Logger(logCtx).Info("break campaign loop, context is done")
 			m.revokeSession(logPrefix, etcdSession.Lease())
 			return
@@ -278,15 +271,13 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 		}
 
 		elec := concurrency.NewElection(etcdSession, m.key)
-		logutil.BgLogger().Info("----------------------------^^ campaign 11")
 		err = elec.Campaign(campaignContext, m.id)
-		logutil.BgLogger().Info("----------------------------^^ campaign 22")
 		if err != nil {
 			logutil.Logger(logCtx).Info("failed to campaign", zap.Error(err))
 			continue
 		}
 
-		ownerKey, err := GetOwnerKey(campaignContext, m.etcdCli, logCtx, m.key, m.id)
+		ownerKey, err := GetOwnerKey(campaignContext, logCtx, m.etcdCli, m.key, m.id)
 		if err != nil {
 			continue
 		}
@@ -312,11 +303,11 @@ func (m *ownerManager) revokeSession(_ string, leaseID clientv3.LeaseID) {
 
 // GetOwnerID implements Manager.GetOwnerID interface.
 func (m *ownerManager) GetOwnerID(ctx context.Context) (string, error) {
-	_, ownerID, _, _, err := getOwnerInfo(ctx, m.etcdCli, m.key, m.logCtx)
+	_, ownerID, _, _, err := getOwnerInfo(ctx, m.logCtx, m.etcdCli, m.key)
 	return string(ownerID), errors.Trace(err)
 }
 
-func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath string, logCtx context.Context) (string, []byte, OpType, int64, error) {
+func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPath string) (string, []byte, OpType, int64, error) {
 	var op OpType
 	resp, err := etcdCli.Get(ctx, ownerPath, clientv3.WithFirstCreate()...)
 	if err != nil {
@@ -335,8 +326,8 @@ func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath strin
 }
 
 // GetOwnerKey gets the owner key information.
-func GetOwnerKey(ctx context.Context, etcdCli *clientv3.Client, logCtx context.Context, etcdKey, id string) (string, error) {
-	ownerKey, ownerID, _, _, err := getOwnerInfo(ctx, etcdCli, etcdKey, logCtx)
+func GetOwnerKey(ctx, logCtx context.Context, etcdCli *clientv3.Client, etcdKey, id string) (string, error) {
+	ownerKey, ownerID, _, _, err := getOwnerInfo(ctx, logCtx, etcdCli, etcdKey)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -364,7 +355,7 @@ func joinOwnerValues(vals ...[]byte) []byte {
 // SetOwnerOpValue implements Manager.SetOwnerOpValue interface.
 func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 	// owner don't change.
-	ownerKey, ownerID, currOp, modRevision, err := getOwnerInfo(ctx, m.etcdCli, m.key, m.logCtx)
+	ownerKey, ownerID, currOp, modRevision, err := getOwnerInfo(ctx, m.logCtx, m.etcdCli, m.key)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -385,13 +376,11 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 		}
 	})
 
-	logutil.BgLogger().Info("xxx before------------set owner op value", zap.String("owner key", ownerKey),
-		zap.ByteString("ownerID", ownerID), zap.Stringer("op", op), zap.Int64("mod", modRevision), zap.Error(err))
 	resp, err := m.etcdCli.Txn(ctx).
 		If(clientv3.Compare(clientv3.ModRevision(ownerKey), "=", modRevision)).
 		Then(clientv3.OpPut(ownerKey, string(newOwnerVal))).
 		Commit()
-	logutil.BgLogger().Info("xxx after------------set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
+	logutil.BgLogger().Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
 		zap.Stringer("old Op", op), zap.Stringer("op", op), zap.Bool("isSuc", resp.Succeeded), zap.Error(err))
 	if !resp.Succeeded {
 		err = errors.New("put owner key failed, cmp is false")
@@ -403,7 +392,7 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 // GetOwnerOpValue gets the owner op value.
 func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath, logPrefix string) (OpType, error) {
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-	_, _, op, _, err := getOwnerInfo(ctx, etcdCli, ownerPath, logCtx)
+	_, _, op, _, err := getOwnerInfo(ctx, logCtx, etcdCli, ownerPath)
 	return op, errors.Trace(err)
 }
 
