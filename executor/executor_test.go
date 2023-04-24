@@ -5545,7 +5545,7 @@ func TestStrToDateBuiltinWithWarnings(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1411 Incorrect datetime value: '0000-1-01' for function str_to_date"))
 	tk.MustQuery("SELECT CAST('4#,8?Q' AS DATE);").Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
-		`Incorrect datetime value: '4#,8?Q'`,
+		`Warning 8034 Incorrect datetime value: '4#,8?Q'`,
 	))
 }
 
