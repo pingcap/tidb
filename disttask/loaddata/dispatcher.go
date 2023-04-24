@@ -82,8 +82,12 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 	if err != nil {
 		return nil, err
 	}
-	// todo: use real session context
-	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl)
+
+	astArgs, err := importer.ASTArgsFromStmt(taskMeta.Stmt)
+	if err != nil {
+		return nil, err
+	}
+	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs)
 	if err != nil {
 		return nil, err
 	}

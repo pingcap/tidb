@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -138,17 +139,12 @@ type LoadDataReaderInfo struct {
 
 // Plan describes the plan of LOAD DATA.
 type Plan struct {
-	TableName *ast.TableName
+	DBName    string
+	DBID      int64
 	TableInfo *model.TableInfo
 
-	FileLocRef         ast.FileLocRefTp
-	Path               string
-	Format             string
-	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
-	ColumnAssignments  []*ast.Assignment
-	OnDuplicate        ast.OnDuplicateKeyHandlingType
-	FieldsInfo         *ast.FieldsClause
-	LinesInfo          *ast.LinesClause
+	Path   string
+	Format string
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
 	// operation.
@@ -179,14 +175,24 @@ type Plan struct {
 	Distributed bool `json:"-"`
 }
 
+// ASTArgs is the arguments for ast.LoadDataStmt.
+// TODO: remove this struct and use the struct which can be serialized.
+type ASTArgs struct {
+	FileLocRef         ast.FileLocRefTp
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	ColumnAssignments  []*ast.Assignment
+	OnDuplicate        ast.OnDuplicateKeyHandlingType
+	FieldsInfo         *ast.FieldsClause
+	LinesInfo          *ast.LinesClause
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
 	*Plan
+	*ASTArgs
 
-	Table  table.Table
-	DBName string
-	DBID   int64
+	Table table.Table
 
 	// how input field(or input column) from data file is mapped, either to a column or variable.
 	// if there's NO column list clause in load data statement, then it's table's columns
@@ -257,19 +263,14 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
 
 	p := &Plan{
-		TableName: plan.Table,
 		TableInfo: tbl.Meta(),
+		DBName:    plan.Table.Schema.O,
+		DBID:      plan.Table.DBInfo.ID,
 
-		FileLocRef:         plan.FileLocRef,
-		Path:               plan.Path,
-		Format:             format,
-		ColumnsAndUserVars: plan.ColumnsAndUserVars,
-		ColumnAssignments:  plan.ColumnAssignments,
-		OnDuplicate:        plan.OnDuplicate,
-		FieldsInfo:         plan.FieldsInfo,
-		LinesInfo:          plan.LinesInfo,
-		Restrictive:        restrictive,
-		IgnoreLines:        plan.IgnoreLines,
+		Path:        plan.Path,
+		Format:      format,
+		Restrictive: restrictive,
+		IgnoreLines: plan.IgnoreLines,
 
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		Charset:          charset,
@@ -283,16 +284,47 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 	return p, nil
 }
 
+// ASTArgsFromPlan creates ASTArgs from plan.
+func ASTArgsFromPlan(plan *plannercore.LoadData) *ASTArgs {
+	return &ASTArgs{
+		FileLocRef:         plan.FileLocRef,
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		OnDuplicate:        plan.OnDuplicate,
+		FieldsInfo:         plan.FieldsInfo,
+		LinesInfo:          plan.LinesInfo,
+	}
+}
+
+// ASTArgsFromStmt creates ASTArgs from statement.
+func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
+	stmtNode, err := parser.New().ParseOneStmt(stmt, "", "")
+	if err != nil {
+		return nil, err
+	}
+	loadDataStmt, ok := stmtNode.(*ast.LoadDataStmt)
+	if !ok {
+		return nil, errors.Errorf("stmt %s is not load data stmt", stmt)
+	}
+	return &ASTArgs{
+		FileLocRef:         loadDataStmt.FileLocRef,
+		ColumnsAndUserVars: loadDataStmt.ColumnsAndUserVars,
+		ColumnAssignments:  loadDataStmt.ColumnAssignments,
+		OnDuplicate:        loadDataStmt.OnDuplicate,
+		FieldsInfo:         loadDataStmt.FieldsInfo,
+		LinesInfo:          loadDataStmt.LinesInfo,
+	}, nil
+}
+
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *Plan, tbl table.Table) (*LoadDataController, error) {
-	fullTableName := common.UniqueTable(plan.TableName.Schema.L, plan.TableName.Name.L)
+func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*LoadDataController, error) {
+	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
 		Plan:           plan,
-		DBName:         plan.TableName.Schema.O,
-		DBID:           plan.TableName.DBInfo.ID,
+		ASTArgs:        astArgs,
 		Table:          tbl,
-		LineFieldsInfo: plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
+		LineFieldsInfo: plannercore.NewLineFieldsInfo(astArgs.FieldsInfo, astArgs.LinesInfo),
 		logger:         logger,
 	}
 	if err := c.initFieldParams(plan); err != nil {
@@ -331,7 +363,7 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 	}
 
 	if e.Format != LoadDataFormatDelimitedData {
-		if plan.FieldsInfo != nil || plan.LinesInfo != nil || plan.IgnoreLines != nil {
+		if e.FieldsInfo != nil || e.LinesInfo != nil || plan.IgnoreLines != nil {
 			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs(fmt.Sprintf("cannot specify FIELDS ... or LINES ... or IGNORE N LINES for format '%s'", e.Format))
 		}
 		// no need to init those param for sql/parquet
@@ -349,9 +381,9 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 
 	// todo: move null defined into plannercore.LineFieldsInfo
 	// in load data, there maybe multiple null def, but in SELECT ... INTO OUTFILE there's only one
-	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
-		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
-		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
+	if e.FieldsInfo != nil && e.FieldsInfo.DefinedNullBy != nil {
+		nullDef = append(nullDef, *e.FieldsInfo.DefinedNullBy)
+		nullValueOptEnclosed = e.FieldsInfo.NullValueOptEnclosed
 	} else if len(e.FieldsEnclosedBy) != 0 {
 		nullDef = append(nullDef, "NULL")
 	}

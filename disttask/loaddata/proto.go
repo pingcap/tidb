@@ -30,6 +30,7 @@ const (
 type TaskMeta struct {
 	Plan  importer.Plan
 	JobID int64
+	Stmt  string
 }
 
 // SubtaskMeta is the subtask of LoadData.

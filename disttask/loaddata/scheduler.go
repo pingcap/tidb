@@ -48,8 +48,11 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// todo: use real session context
-	controller, err := importer.NewLoadDataController(&s.taskMeta.Plan, tbl)
+	astArgs, err := importer.ASTArgsFromStmt(s.taskMeta.Stmt)
+	if err != nil {
+		return err
+	}
+	controller, err := importer.NewLoadDataController(&s.taskMeta.Plan, tbl, astArgs)
 	if err != nil {
 		return err
 	}

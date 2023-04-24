@@ -569,7 +569,7 @@ func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/emoji.tsv?endpoint=%s'
 		INTO TABLE load_charset.gbk CHARACTER SET utf8mb4 %s`, gcsEndpoint, withOptions)
 	err := s.tk.ExecToErr(sql)
-	// FIXME: waiting https://github.com/pingcap/tidb/pull/43075
+	// FIXME: handle error
 	if distributed {
 		require.EqualError(s.T(), err, "task stopped with state reverted")
 	} else {
@@ -790,4 +790,37 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
 	}...))
+}
+
+func (s *mockGCSSuite) TestColumnsAndUserVars() {
+	s.testColumnsAndUserVars(importer.LogicalImportMode, false)
+	s.testColumnsAndUserVars(importer.PhysicalImportMode, false)
+	s.testColumnsAndUserVars(importer.PhysicalImportMode, true)
+}
+
+func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed bool) {
+	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	withOptions = adjustOptions(withOptions, distributed)
+	s.prepareVariables(distributed)
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
+	s.tk.MustExec("CREATE DATABASE load_data;")
+	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT);`)
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load",
+			Name:       "cols_and_vars.tsv",
+		},
+		Content: []byte("1\n2\n3\n4\n5\n"),
+	})
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/cols_and_vars.tsv?endpoint=%s'
+		INTO TABLE load_data.cols_and_vars(@V1) set a=@V1, b=@V1*100 %s`, gcsEndpoint, withOptions)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_data.cols_and_vars;").Check(testkit.Rows(
+		"1 100",
+		"2 200",
+		"3 300",
+		"4 400",
+		"5 500",
+	))
 }

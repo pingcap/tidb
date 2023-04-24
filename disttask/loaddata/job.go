@@ -37,15 +37,17 @@ var (
 type DistImporter struct {
 	*importer.JobImportParam
 	plan *importer.Plan
+	stmt string
 }
 
 var _ importer.JobImporter = &DistImporter{}
 
 // NewDistImporter creates a new DistImporter.
-func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan) (*DistImporter, error) {
+func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt string) (*DistImporter, error) {
 	return &DistImporter{
 		JobImportParam: param,
 		plan:           plan,
+		stmt:           stmt,
 	}, nil
 }
 
@@ -73,10 +75,11 @@ func (*DistImporter) Close() error {
 	return nil
 }
 
-func buildDistTask(plan *importer.Plan, jobID int64) TaskMeta {
+func buildDistTask(plan *importer.Plan, jobID int64, stmt string) TaskMeta {
 	return TaskMeta{
 		Plan:  *plan,
 		JobID: jobID,
+		Stmt:  stmt,
 	}
 }
 
@@ -139,7 +142,7 @@ func submitGlobalTaskAndRun(ctx context.Context, taskKey, taskType string, concu
 }
 
 func (ti *DistImporter) doImport(ctx context.Context) error {
-	task := buildDistTask(ti.plan, ti.Job.ID)
+	task := buildDistTask(ti.plan, ti.Job.ID, ti.stmt)
 	taskMeta, err := json.Marshal(task)
 	if err != nil {
 		return err

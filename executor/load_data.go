@@ -118,6 +118,8 @@ type LoadDataWorker struct {
 	importPlan *importer.Plan
 	controller *importer.LoadDataController
 	planInfo   planInfo
+	// only use in distributed load data
+	stmt string
 
 	table    table.Table
 	progress *asyncloaddata.Progress
@@ -141,7 +143,8 @@ func NewLoadDataWorker(
 	if err != nil {
 		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(importPlan, tbl)
+	astArgs := importer.ASTArgsFromPlan(plan)
+	controller, err := importer.NewLoadDataController(importPlan, tbl, astArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +157,7 @@ func NewLoadDataWorker(
 		UserSctx:   userSctx,
 		table:      tbl,
 		importPlan: importPlan,
+		stmt:       plan.Stmt,
 		controller: controller,
 		planInfo: planInfo{
 			ID:          plan.ID(),
@@ -287,7 +291,7 @@ func (e *LoadDataWorker) getJobImporter(ctx context.Context, job *asyncloaddata.
 	}
 
 	if variable.EnableDistTask.Load() && e.importPlan.Distributed {
-		return loaddata.NewDistImporter(param, e.importPlan)
+		return loaddata.NewDistImporter(param, e.importPlan, e.stmt)
 	}
 
 	if e.controller.ImportMode == importer.LogicalImportMode {
