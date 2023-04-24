@@ -76,12 +76,20 @@ func (d *diskRootImpl) ShouldImport() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	if d.bcUsed > variable.DDLDiskQuota.Load() {
+		logutil.BgLogger().Info("disk usage is over quota, start importing",
+			zap.Uint64("quota", variable.DDLDiskQuota.Load()),
+			zap.String("usage", d.UsageInfo()))
 		return true
 	}
 	if d.used == 0 && d.capacity == 0 {
 		return false
 	}
-	return float64(d.used) >= float64(d.capacity)*capacityThreshold
+	if float64(d.used) >= float64(d.capacity)*capacityThreshold {
+		logutil.BgLogger().Warn("available disk space is less than 10%, start importing, this may degrade the performance",
+			zap.String("usage", d.UsageInfo()))
+		return true
+	}
+	return false
 }
 
 // UsageInfo implements DiskRoot interface.
