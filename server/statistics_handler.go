@@ -34,7 +34,9 @@ import (
 
 func compressJSON(w http.ResponseWriter, statsFileName string, js []byte) error {
 	zw := zip.NewWriter(w)
-	defer zw.Close()
+	defer func() {
+		_ = zw.Close()
+	}()
 
 	fw, err := zw.Create(statsFileName)
 	if err != nil {
