@@ -979,7 +979,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	if job.SchemaState == model.StatePublic {
-		return finishJobRenameTable(t, job)
+		return finishJobRenameTable(d, t, job)
 	}
 	newSchemaID := job.SchemaID
 	err := checkTableNotExists(d, t, newSchemaID, tableName.L)
@@ -1025,7 +1025,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	}
 
 	if job.SchemaState == model.StatePublic {
-		return finishJobRenameTables(t, job, tableNames, tableIDs, newSchemaIDs)
+		return finishJobRenameTables(d, t, job, tableNames, tableIDs, newSchemaIDs)
 	}
 
 	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
@@ -1160,18 +1160,21 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 //     there may be DMLs that use the old schema.
 //   - TiCDC cannot handle the DMLs that use the old schema, because
 //     the commit TS of the DMLs are greater than the job state updating TS.
-func finishJobRenameTable(t *meta.Meta, job *model.Job) (int64, error) {
+func finishJobRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	tblInfo, err := getTableInfo(t, job.TableID, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
-	// Finish this job in a separate transaction.
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, 0, tblInfo)
-	return 0, nil
+	ver, err := updateSchemaVersion(d, t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
 }
 
-func finishJobRenameTables(t *meta.Meta, job *model.Job,
+func finishJobRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job,
 	tableNames []*model.CIStr, tableIDs, newSchemaIDs []int64) (int64, error) {
 	tblInfos := make([]*model.TableInfo, 0, len(tableNames))
 	for i := range newSchemaIDs {
@@ -1182,8 +1185,12 @@ func finishJobRenameTables(t *meta.Meta, job *model.Job,
 		}
 		tblInfos = append(tblInfos, tblInfo)
 	}
-	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, 0, tblInfos)
-	return 0, nil
+	ver, err := updateSchemaVersion(d, t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
+	return ver, nil
 }
 
 func onModifyTableComment(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
