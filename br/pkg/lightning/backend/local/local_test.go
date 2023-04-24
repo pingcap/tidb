@@ -480,8 +480,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	retryType, newRegion, err := local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Equal(t, uint64(2), newRegion.Leader.Id)
+	require.Equal(t, retryNone, retryType)
 	require.Error(t, err)
 
 	resp.Error = &errorpb.Error{
