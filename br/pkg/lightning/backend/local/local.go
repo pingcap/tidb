@@ -979,19 +979,23 @@ func (local *local) WriteToTiKV(
 		},
 	}
 
+	annotateErr := func(in error, peer *metapb.Peer) error {
+		// annotate the error with peer/store/region info to help debug.
+		return errors.Annotatef(in, "peer %d, store %d, region %d, epoch %s", peer.Id, peer.StoreId, region.Region.Id, region.Region.RegionEpoch.String())
+	}
 	leaderID := region.Leader.GetId()
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
-	storeIDs := make([]uint64, 0, len(region.Region.GetPeers()))
+	allPeers := make([]*metapb.Peer, 0, len(region.Region.GetPeers()))
 	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
 	for _, peer := range region.Region.GetPeers() {
 		cli, err := local.getImportClient(ctx, peer.StoreId)
 		if err != nil {
-			return nil, Range{}, stats, err
+			return nil, Range{}, stats, annotateErr(err, peer)
 		}
 
 		wstream, err := cli.Write(ctx)
 		if err != nil {
-			return nil, Range{}, stats, errors.Trace(err)
+			return nil, Range{}, stats, annotateErr(err, peer)
 		}
 
 		// Bind uuid for this write request
@@ -1001,7 +1005,7 @@ func (local *local) WriteToTiKV(
 			},
 		}
 		if err = wstream.Send(req); err != nil {
-			return nil, Range{}, stats, errors.Trace(err)
+			return nil, Range{}, stats, annotateErr(err, peer)
 		}
 		req.Chunk = &sst.WriteRequest_Batch{
 			Batch: &sst.WriteBatch{
@@ -1010,7 +1014,7 @@ func (local *local) WriteToTiKV(
 		}
 		clients = append(clients, wstream)
 		requests = append(requests, req)
-		storeIDs = append(storeIDs, peer.StoreId)
+		allPeers = append(allPeers, peer)
 	}
 
 	bytesBuf := local.bufferPool.NewBuffer()
@@ -1031,12 +1035,12 @@ func (local *local) WriteToTiKV(
 
 	flushKVs := func() error {
 		for i := range clients {
-			if err := local.writeLimiter.WaitN(ctx, storeIDs[i], int(size)); err != nil {
+			if err := local.writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size)); err != nil {
 				return errors.Trace(err)
 			}
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
-				return errors.Trace(err)
+				return annotateErr(err, allPeers[i])
 			}
 		}
 		return nil
@@ -1090,10 +1094,10 @@ func (local *local) WriteToTiKV(
 	for i, wStream := range clients {
 		resp, closeErr := wStream.CloseAndRecv()
 		if closeErr != nil {
-			return nil, Range{}, stats, errors.Trace(closeErr)
+			return nil, Range{}, stats, annotateErr(closeErr, allPeers[i])
 		}
 		if resp.Error != nil {
-			return nil, Range{}, stats, errors.New(resp.Error.Message)
+			return nil, Range{}, stats, annotateErr(errors.New(resp.Error.Message), allPeers[i])
 		}
 		if leaderID == region.Region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
@@ -1359,7 +1363,7 @@ WriteAndIngest:
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
 				if !local.isRetryableImportTiKVError(err) {
-					return err
+					return errors.Trace(err)
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
 				// if we have at least succeeded one region, retry without increasing the retry count
@@ -1987,22 +1991,7 @@ func (local *local) isIngestRetryable(
 	var err error
 	switch errPb := resp.GetError(); {
 	case errPb.NotLeader != nil:
-		if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
-			newRegion = &split.RegionInfo{
-				Leader: newLeader,
-				Region: region.Region,
-			}
-		} else {
-			newRegion, err = getRegion()
-			if err != nil {
-				return retryNone, nil, errors.Trace(err)
-			}
-		}
-		// TODO: because in some case, TiKV may return retryable error while the ingest is succeeded.
-		// Thus directly retry ingest may cause TiKV panic. So always return retryWrite here to avoid
-		// this issue.
-		// See: https://github.com/tikv/tikv/issues/9496
-		return retryWrite, newRegion, common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
+		return retryNone, nil, common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
