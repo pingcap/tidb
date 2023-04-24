@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
@@ -180,6 +181,16 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 }
 
 // TableImporter is a table importer.
+// Note: in lightning we use import to mean write&ingest data into TiKV, but we use import to mean import table too,
+// which is confusing. So we clarify the meaning of each word(only take effects in LOAD DATA physical mode):
+// - import: import the data into a table of TiDB cluster, which is separated into 3 steps:
+//   - sort: encode the data into kv pairs and sort them.
+//   - ingest: write the sorted kv pairs into TiKV, and let TiKV ingest them.
+//   - post-process: checksum, analyze table, etc.
+//
+// to speed up import, data is divided into multiple engines, and each engine can do sort&ingest on its own,
+// so we can do sort and ingest in a pipelined way.
+// post-process can only be done after all engines are imported, so it's done after all engines are processed.
 type TableImporter struct {
 	*JobImportParam
 	*LoadDataController
@@ -285,7 +296,7 @@ func (ti *TableImporter) importTable(ctx context.Context) (err error) {
 	if _, err2 := ti.PopulateChunks(ctx); err2 != nil {
 		return err2
 	}
-	if err2 := ti.preprocessAndImportEngines(ctx); err2 != nil {
+	if err2 := ti.sortAndIngestEngines(ctx); err2 != nil {
 		return err2
 	}
 	return ti.postProcess(ctx)
@@ -444,8 +455,8 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 	return mgr.OpenEngine(ctx, dataEngineCfg, ti.tableMeta.FullTableName(), engineID)
 }
 
-func (ti *TableImporter) preprocessAndImportEngines(ctx context.Context) (err error) {
-	task := log.BeginTask(ti.logger, "preprocess and import engines")
+func (ti *TableImporter) sortAndIngestEngines(ctx context.Context) (err error) {
+	task := log.BeginTask(ti.logger, "sort and ingest engines")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
@@ -453,51 +464,100 @@ func (ti *TableImporter) preprocessAndImportEngines(ctx context.Context) (err er
 	if err3 != nil {
 		return errors.Trace(err3)
 	}
+	defer func() {
+		closedIndexEngine, err4 := indexEngine.Close(ctx)
+		if err == nil {
+			if err4 == nil {
+				err = ti.IngestAndCleanup(ctx, closedIndexEngine)
+			} else {
+				err = err4
+			}
+		} else if err4 != nil {
+			ti.logger.Error("failed to close index engine", zap.Error(err4))
+		}
+	}()
 
+	encodePool := worker.NewPool(ctx, int(ti.ThreadCnt), "encoder")
+	engineCh := make(chan *engine, len(ti.tableCp.Engines))
+	defer close(engineCh)
+
+	importTableCtx, importTableCancelFn := context.WithCancel(ctx)
+	ingestGroup, _ := errgroup.WithContext(importTableCtx)
+	ingestGroup.Go(func() error {
+		return ti.ingestAndCleanupEngines(importTableCtx, importTableCancelFn, engineCh)
+	})
+engineLoop:
 	for id, engineCP := range ti.tableCp.Engines {
 		// skip index engine
 		if id == common.IndexEngineID {
 			continue
 		}
-		dataClosedEngine, err2 := ti.preprocessEngine(ctx, indexEngine, id, engineCP.Chunks)
+		select {
+		case <-importTableCtx.Done():
+			break engineLoop
+		default:
+		}
+
+		en, err2 := ti.createEngine(importTableCtx, importTableCancelFn, engineCP.Chunks, id)
 		if err2 != nil {
-			return err2
+			if !common.IsContextCanceledError(err2) {
+				ti.logger.Error("failed to create engine", zap.Error(err2), zap.Int32("engineID", id))
+			}
+			importTableCancelFn()
+			break
 		}
-		if err2 = ti.ImportAndCleanup(ctx, dataClosedEngine); err2 != nil {
-			return err2
-		}
-
-		failpoint.Inject("AfterImportDataEngine", nil)
-		failpoint.Inject("SyncAfterImportDataEngine", func() {
-			TestSyncCh <- struct{}{}
-			<-TestSyncCh
-		})
+		en.asyncSort(ti, encodePool, indexEngine)
+		engineCh <- en
 	}
 
-	closedIndexEngine, err3 := indexEngine.Close(ctx)
-	if err3 != nil {
-		return errors.Trace(err3)
-	}
-	return ti.ImportAndCleanup(ctx, closedIndexEngine)
+	return ingestGroup.Wait()
 }
 
-func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *backend.OpenedEngine, engineID int32, chunks []*checkpoints.ChunkCheckpoint) (*backend.ClosedEngine, error) {
-	processor := engineProcessor{
-		engineID:      engineID,
-		fullTableName: ti.tableMeta.FullTableName(),
-		backend:       ti.backend,
-		tableInfo:     ti.tableInfo,
-		logger:        ti.logger.With(zap.Int32("engine-id", engineID)),
-		tableImporter: ti,
-		rowOrdered:    ti.tableMeta.IsRowOrdered,
-		indexEngine:   indexEngine,
-		chunks:        chunks,
+func (ti *TableImporter) createEngine(ctx context.Context, cancel context.CancelFunc, chunks []*checkpoints.ChunkCheckpoint, engineID int32) (*engine, error) {
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(int(ti.ThreadCnt))
+	dataEngineCfg := &backend.EngineConfig{
+		TableInfo: ti.tableInfo,
 	}
-	return processor.process(ctx)
+	if !ti.tableMeta.IsRowOrdered {
+		dataEngineCfg.Local.Compact = true
+		dataEngineCfg.Local.CompactConcurrency = 4
+		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
+	}
+	mgr := backend.MakeEngineManager(ti.backend)
+	dataEngine, err := mgr.OpenEngine(ctx, dataEngineCfg, ti.tableMeta.FullTableName(), engineID)
+	if err != nil {
+		return nil, err
+	}
+	en := &engine{
+		importTableCancel: cancel,
+		chunks:            chunks,
+		logger:            ti.logger.With(zap.Int32("engine-id", engineID)),
+		dataEngine:        dataEngine,
+		sortEG:            eg,
+		sortEGCtx:         egCtx,
+	}
+	en.sortTask = log.BeginTask(en.logger, "sort engine")
+	return en, nil
 }
 
-// ImportAndCleanup imports the engine and cleanup the engine data.
-func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
+func (ti *TableImporter) ingestAndCleanupEngines(ctx context.Context, sortCancelFunc context.CancelFunc, engineCh chan *engine) error {
+	onceErr := common.OnceError{}
+	for en := range engineCh {
+		// only one engine can do ingest at a time.
+		// since ingest already has a large concurrency inside.
+		// we need to call ingestAndCleanup for each engine, since we need wait all its sub-routines to finish.
+		if err := en.ingestAndCleanup(ctx, ti); err != nil {
+			onceErr.Set(err)
+			// cancel goroutines used for encoding & sorting
+			sortCancelFunc()
+		}
+	}
+	return onceErr.Get()
+}
+
+// IngestAndCleanup imports the engine and cleanup the engine data.
+func (ti *TableImporter) IngestAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.

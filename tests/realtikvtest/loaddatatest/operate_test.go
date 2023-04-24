@@ -68,7 +68,7 @@ func (s *mockGCSSuite) testOperateRunningJob(importMode string) {
 	if importMode == importer.LogicalImportMode {
 		s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCommitOneTask", `sleep(1000)`)
 	} else {
-		s.enableFailpoint("github.com/pingcap/tidb/executor/importer/AfterImportDataEngine", `sleep(1000)`)
+		s.enableFailpoint("github.com/pingcap/tidb/executor/importer/AfterIngestDataEngine", `sleep(1000)`)
 	}
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-operate/t.tsv?endpoint=%s'
 		INTO TABLE test_operate.t %s;`, gcsEndpoint, withOptions)

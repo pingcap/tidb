@@ -17,55 +17,75 @@ package importer
 import (
 	"context"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // encode and write all data in this engine as sst files, and write index in indexEngine
 // todo: would be better if merge with backend/local/Engine
-type engineProcessor struct {
-	engineID      int32
-	fullTableName string
-	backend       *local.Backend
-	tableInfo     *checkpoints.TidbTableInfo
-	logger        *zap.Logger
-	tableImporter *TableImporter
-	rowOrdered    bool
-	indexEngine   *backend.OpenedEngine
-	chunks        []*checkpoints.ChunkCheckpoint
+type engine struct {
+	importTableCancel context.CancelFunc
+
+	chunks     []*checkpoints.ChunkCheckpoint
+	logger     *zap.Logger
+	dataEngine *backend.OpenedEngine
+	// the group used to encode and sort the engine data.
+	sortEG    *errgroup.Group
+	sortEGCtx context.Context
+	sortTask  *log.Task
 }
 
-func (ep *engineProcessor) process(ctx context.Context) (*backend.ClosedEngine, error) {
-	dataEngineCfg := &backend.EngineConfig{
-		TableInfo: ep.tableInfo,
+func (en *engine) asyncSort(importer *TableImporter, pool *worker.Pool, indexEngine *backend.OpenedEngine) {
+	for _, chunkCP := range en.chunks {
+		en.sortEG.Go(func() error {
+			w := pool.Apply()
+			defer pool.Recycle(w)
+			if err := ProcessChunk(en.sortEGCtx, chunkCP, importer, en.dataEngine, indexEngine, en.logger); err != nil {
+				// there might be multiple engine sorting at the same time, we need cancel other engines too.
+				en.importTableCancel()
+				return err
+			}
+			return nil
+		})
 	}
-	if !ep.rowOrdered {
-		dataEngineCfg.Local.Compact = true
-		dataEngineCfg.Local.CompactConcurrency = 4
-		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
-	}
-	mgr := backend.MakeEngineManager(ep.backend)
-	dataEngine, err := mgr.OpenEngine(ctx, dataEngineCfg, ep.fullTableName, ep.engineID)
-	if err != nil {
-		return nil, err
-	}
+}
 
-	err = ep.localSort(ctx, dataEngine)
+func (en *engine) ingestAndCleanup(ctx context.Context, importer *TableImporter) error {
+	err := en.sortEG.Wait()
+	en.sortTask.End(zap.ErrorLevel, err)
 	// ctx maybe canceled, so to avoid Close engine failed, we use `context.Background()` here
 	// todo: remove ctx param in Close()
 	closeCtx := ctx
 	if common.IsContextCanceledError(err) {
 		closeCtx = context.Background()
 	}
-	closedDataEngine, err2 := dataEngine.Close(closeCtx)
+	// close the engine even when sort failed
+	closedDataEngine, err2 := en.dataEngine.Close(closeCtx)
 	if err2 != nil {
-		ep.logger.Warn("close data engine failed", zap.Error(err2))
+		en.logger.Warn("close data engine failed", zap.Error(err2))
 	}
-	return closedDataEngine, err
+	if err != nil {
+		return err
+	}
+	if err2 != nil {
+		return err2
+	}
+	if err2 = importer.IngestAndCleanup(ctx, closedDataEngine); err2 != nil {
+		return err2
+	}
+
+	failpoint.Inject("AfterIngestDataEngine", nil)
+	failpoint.Inject("SyncAfterIngestDataEngine", func() {
+		TestSyncCh <- struct{}{}
+		<-TestSyncCh
+	})
+	return nil
 }
 
 // ProcessChunk processes a chunk, and write kv pairs to dataEngine and indexEngine.
@@ -144,19 +164,5 @@ func ProcessChunk(
 		return err
 	}
 	tableImporter.setLastInsertID(encoder.GetLastInsertID())
-	return nil
-}
-
-// sort data in all chunks, then close the opened data engine
-func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.OpenedEngine) (err error) {
-	task := log.BeginTask(ep.logger, "encode & sort engine")
-	defer func() {
-		task.End(zap.ErrorLevel, err)
-	}()
-	for _, chunk := range ep.chunks {
-		if err = ProcessChunk(ctx, chunk, ep.tableImporter, dataEngine, ep.indexEngine, ep.logger); err != nil {
-			return err
-		}
-	}
 	return nil
 }

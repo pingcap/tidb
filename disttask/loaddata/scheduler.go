@@ -128,7 +128,7 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 	if err != nil {
 		return err
 	}
-	return s.tableImporter.ImportAndCleanup(ctx, closedEngine)
+	return s.tableImporter.IngestAndCleanup(ctx, closedEngine)
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.
@@ -146,7 +146,7 @@ func (s *ImportScheduler) CleanupSubtaskExecEnv(ctx context.Context) (err error)
 	if err != nil {
 		return err
 	}
-	return s.tableImporter.ImportAndCleanup(ctx, closedIndexEngine)
+	return s.tableImporter.IngestAndCleanup(ctx, closedIndexEngine)
 }
 
 // Rollback implements the Scheduler.Rollback interface.
