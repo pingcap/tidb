@@ -880,7 +880,27 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	if err == nil {
 		return nil
 	}
+<<<<<<< HEAD
 	if sc.IgnoreTruncate {
+=======
+
+	err = errors.Cause(err)
+	if e, ok := err.(*errors.Error); !ok ||
+		(e.Code() != errno.ErrTruncatedWrongValue &&
+			e.Code() != errno.ErrDataTooLong &&
+			e.Code() != errno.ErrTruncatedWrongValueForField &&
+			e.Code() != errno.ErrWarnDataOutOfRange &&
+			e.Code() != errno.ErrDataOutOfRange &&
+			e.Code() != errno.ErrBadNumber &&
+			e.Code() != errno.ErrWrongValueForType &&
+			e.Code() != errno.ErrDatetimeFunctionOverflow &&
+			e.Code() != errno.WarnDataTruncated &&
+			e.Code() != errno.ErrIncorrectDatetimeValue) {
+		return err
+	}
+
+	if sc.IgnoreTruncate.Load() {
+>>>>>>> 4f2ef40a0fe (*: fix warning message when to meet strconv.ErrSyntax (#43358))
 		return nil
 	}
 	if sc.TruncateAsWarning {
