@@ -3751,6 +3751,18 @@
     "Name": "TestSingleConsumerCTE",
     "Cases": [
       {
+        "SQL": "with base1 as (WITH RECURSIVE cte(a) AS (with tmp as (select 1 as a) SELECT a from tmp UNION SELECT a+1 FROM cte) SELECT * FROM cte) select * from base1; -- issue #43318",
+        "Plan": [
+          "CTEFullScan 2.00 root CTE:cte data:CTE_3",
+          "CTE_3 2.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#15",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 1.00 root  cast(plus(Column#16, 1), bigint(1) BINARY)->Column#18",
+          "  └─CTETable 1.00 root  Scan on CTE_3"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "with cte as (select 1) select * from cte; -- inline cte",
         "Plan": [
           "Projection 1.00 root  1->Column#3",
