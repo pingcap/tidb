@@ -1359,7 +1359,7 @@ WriteAndIngest:
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
 				if !local.isRetryableImportTiKVError(err) {
-					return err
+					return errors.Trace(err)
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
 				// if we have at least succeeded one region, retry without increasing the retry count
@@ -1987,22 +1987,7 @@ func (local *local) isIngestRetryable(
 	var err error
 	switch errPb := resp.GetError(); {
 	case errPb.NotLeader != nil:
-		if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
-			newRegion = &split.RegionInfo{
-				Leader: newLeader,
-				Region: region.Region,
-			}
-		} else {
-			newRegion, err = getRegion()
-			if err != nil {
-				return retryNone, nil, errors.Trace(err)
-			}
-		}
-		// TODO: because in some case, TiKV may return retryable error while the ingest is succeeded.
-		// Thus directly retry ingest may cause TiKV panic. So always return retryWrite here to avoid
-		// this issue.
-		// See: https://github.com/tikv/tikv/issues/9496
-		return retryWrite, newRegion, common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
+		return retryNone, nil, common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
