@@ -1169,7 +1169,6 @@ func finishJobRenameTable(t *meta.Meta, job *model.Job) (int64, error) {
 	// Finish this job in a separate transaction.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, 0, tblInfo)
 	return 0, nil
-
 }
 
 func finishJobRenameTables(t *meta.Meta, job *model.Job,
