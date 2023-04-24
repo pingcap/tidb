@@ -474,7 +474,8 @@
       "planner/core/optimizer.go": "planner/core/optimizer.go", 
       "planner/core/common_plans.go": "planner/core/common_plans.go", 
       "planner/core/plan_cost_ver2.go": "planner/core/plan_cost_ver2.go", 
-      "planner/core/logical_plans.go": "planner/core/logical_plans.go"
+      "planner/core/logical_plans.go": "planner/core/logical_plans.go",
+      "plugin/conn_ip_example/": "plugin/conn_ip_example/",
     },
     "only_files": {
       "br/pkg/lightning/": "br/pkg/lightning/",
