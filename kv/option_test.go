@@ -86,7 +86,7 @@ func TestSetLossyDDLReorgSource(t *testing.T) {
 		{
 			name:                "lossy ddl reorg source is not valid",
 			currentSource:       12, // SetCdcWriteSource
-			lossyDDLReorgSource: 16,
+			lossyDDLReorgSource: 256,
 			expectedError:       ".*out of lossy DDL reorg source range.*",
 		},
 	} {
