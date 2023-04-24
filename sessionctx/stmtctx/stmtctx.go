@@ -929,7 +929,8 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 			e.Code() != errno.ErrBadNumber &&
 			e.Code() != errno.ErrWrongValueForType &&
 			e.Code() != errno.ErrDatetimeFunctionOverflow &&
-			e.Code() != errno.WarnDataTruncated) {
+			e.Code() != errno.WarnDataTruncated &&
+			e.Code() != errno.ErrIncorrectDatetimeValue) {
 		return err
 	}
 
