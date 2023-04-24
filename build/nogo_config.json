@@ -474,7 +474,8 @@
       "planner/core/optimizer.go": "planner/core/optimizer.go", 
       "planner/core/common_plans.go": "planner/core/common_plans.go", 
       "planner/core/plan_cost_ver2.go": "planner/core/plan_cost_ver2.go", 
-      "planner/core/logical_plans.go": "planner/core/logical_plans.go"
+      "planner/core/logical_plans.go": "planner/core/logical_plans.go",
+      "plugin/conn_ip_example/": "plugin/conn_ip_example/"
     },
     "only_files": {
       "br/pkg/lightning/": "br/pkg/lightning/",
@@ -488,6 +489,7 @@
       "ddl/ttl_test.go": "ddl/ttl_test.go",
       "ddl/ingest/": "ddl/ingest/",
       "ddl/internal/": "ddl/internal/",
+      "ddl/syncer/": "ddl/syncer/",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
@@ -500,9 +502,10 @@
       "errno/": "errno code",
       "structure/": "structure code",
       "telemetry/": "telemetry code",
-      "planner/": "planner code",
-      "util/": "util code",
       "parser/": "parser code",
+      "planner/": "planner code",
+      "plugin/": "plugin code",
+      "util/": "util code",
       "meta/": "parser code",
       "extension/": "extension code",
       "resourcemanager/": "resourcemanager code",
