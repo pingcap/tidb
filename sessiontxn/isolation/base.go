@@ -550,6 +550,12 @@ func (p *basePessimisticTxnContextProvider) OnPessimisticStmtEnd(ctx context.Con
 			}
 		}
 	}
+
+	if isSuccessful {
+		p.sctx.GetSessionVars().TxnCtx.FlushStmtPessimisticLockCache()
+	} else {
+		p.sctx.GetSessionVars().TxnCtx.CurrentStmtPessimisticLockCache = nil
+	}
 	return nil
 }
 
