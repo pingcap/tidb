@@ -3440,12 +3440,12 @@ func TestIssue43243(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
 	}()
 
-	tk.MustExecWithContext(ctx, "begin pessimistic")
-	tk2.MustExecWithContext(ctx, "begin pessimistic")
-	tk2.MustExecWithContext(ctx, "update t2 set v = v + 1 where id = 2")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t2 set v = v + 1 where id = 2")
 	ch := make(chan struct{})
 	go func() {
-		tk.MustExecWithContext(ctx, `
+		tk.MustExec(`
 		with
 			c as (select /*+ MERGE() */ v from t1 where id in (1, 2))
 		update c join t2 on c.v = t2.id set t2.v = t2.v + 10`)
@@ -3454,24 +3454,24 @@ func TestIssue43243(t *testing.T) {
 	// tk blocked on row 2
 	mustTimeout(t, ch, time.Millisecond*100)
 	// Change the rows that should be locked by tk.
-	tk3.MustExecWithContext(ctx, "update t1 set v = v + 3")
+	tk3.MustExec("update t1 set v = v + 3")
 	// Release row 2 and resume tk.
-	tk2.MustExecWithContext(ctx, "commit")
+	tk2.MustExec("commit")
 	mustRecv(t, ch)
 
 	// tk should have updated row 4 and row 5, and 4 should be the primary.
 	// At the same time row 1 should be the old primary, row2 points to row 1.
 	// Add another secondary that's smaller than the current primary.
-	tk.MustExecWithContext(ctx, "update t2 set v = v + 10 where id = 3")
-	tk.MustExecWithContext(ctx, "commit")
+	tk.MustExec("update t2 set v = v + 10 where id = 3")
+	tk.MustExec("commit")
 
 	// Simulate a later GC that should resolve all stale lock produced in above steps.
 	currentTS, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	_, err = gcworker.RunResolveLocks(ctx, store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-issue43243", 1, false)
+	_, err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-issue43243", 1, false)
 	require.NoError(t, err)
 
 	// Check data consistency
-	tk.MustQueryWithContext(ctx, "select * from t2 order by id").Check(testkit.Rows("1 1", "2 3", "3 13", "4 14", "5 15"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 3", "3 13", "4 14", "5 15"))
 
 }
