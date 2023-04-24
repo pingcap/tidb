@@ -321,7 +321,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-12 10:49:00"), "tikv-1", "tikv", 2.234),
 		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-1", "tikv", 2.213),
 		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-1", "tikv", 2.209),
-		types.MakeDatums(datetime("2020-02-12 10:46:00"), "tikv-1", "tidb", 3.220),
+		types.MakeDatums(datetime("2020-02-12 10:46:00"), "tikv-1", "tikv", 3.220),
 		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "tikv", 2.213),
 		types.MakeDatums(datetime("2020-02-12 10:47:00"), "tikv-1", "tikv", 2.236),
 		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tikv-1", "tikv", 2.228),
@@ -350,7 +350,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-12 10:43:00"), "tikv-2", "tikv", 2.119),
 		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tikv-2", "tikv", 2.120),
 		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-2", "tikv", 2.281),
-		types.MakeDatums(datetime("2020-02-12 10:48:00"), "tikv-2", "tidb", 3.220),
+		types.MakeDatums(datetime("2020-02-12 10:48:00"), "tikv-2", "tikv", 3.220),
 	}
 	mockData["process_cpu_usage"] = cpu2Mofidy
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("5616"))
