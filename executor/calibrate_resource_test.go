@@ -382,7 +382,7 @@ func TestCalibrateResource(t *testing.T) {
 	}
 	mockData["resource_manager_resource_unit"] = ruModify3
 	// because there are 20s difference in two time points, the result is changed.
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("4987"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("5613"))
 
 	ru2 := [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:25:00"), 2200.0),
@@ -398,6 +398,46 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), 2280.0),
 	}
 	mockData["resource_manager_resource_unit"] = ru2
+	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'")
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	err = rs.Next(ctx, rs.NewChunk(nil))
+	require.ErrorContains(t, err, "There are too few metrics points available in selected time window")
+
+	ru3 := [][]types.Datum{
+		types.MakeDatums(datetime("2020-02-12 10:25:00"), 2200.0),
+		types.MakeDatums(datetime("2020-02-12 10:27:00"), 2100.0),
+		types.MakeDatums(datetime("2020-02-12 10:28:00"), 2250.0),
+		types.MakeDatums(datetime("2020-02-12 10:30:00"), 2300.0),
+		types.MakeDatums(datetime("2020-02-12 10:31:00"), 2230.0),
+		types.MakeDatums(datetime("2020-02-12 10:33:00"), 2210.0),
+		types.MakeDatums(datetime("2020-02-12 10:34:00"), 2250.0),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), 2330.0),
+		types.MakeDatums(datetime("2020-02-12 10:37:00"), 2330.0),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), 2280.0),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), 2280.0),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), 2280.0),
+		types.MakeDatums(datetime("2020-02-12 10:43:00"), 2280.0),
+	}
+	mockData["resource_manager_resource_unit"] = ru3
+	cpu3 := [][]types.Datum{
+		types.MakeDatums(datetime("2020-02-12 10:26:00"), "tidb-0", "tidb", 3.212),
+		types.MakeDatums(datetime("2020-02-12 10:29:00"), "tidb-0", "tidb", 3.233),
+		types.MakeDatums(datetime("2020-02-12 10:32:00"), "tidb-0", "tidb", 3.213),
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "tidb", 3.209),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tidb-0", "tidb", 3.213),
+		types.MakeDatums(datetime("2020-02-12 10:41:00"), "tidb-0", "tidb", 3.228),
+		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tidb-0", "tidb", 3.219),
+
+		types.MakeDatums(datetime("2020-02-12 10:26:00"), "tikv-0", "tikv", 2.282),
+		types.MakeDatums(datetime("2020-02-12 10:29:00"), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetime("2020-02-12 10:32:00"), "tikv-0", "tikv", 2.284),
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0", "tikv", 2.289),
+		types.MakeDatums(datetime("2020-02-12 10:41:00"), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tikv-0", "tikv", 2.286),
+	}
+	mockData["process_cpu_usage"] = cpu3
 	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'")
 	require.NoError(t, err)
 	require.NotNil(t, rs)

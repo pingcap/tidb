@@ -231,15 +231,15 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 			break
 		}
 		// make time point match
-		minTime := rus.getTime()
-		if tikvCPUs.getTime().Before(minTime) {
-			minTime = tikvCPUs.getTime()
+		maxTime := rus.getTime()
+		if tikvCPUs.getTime().After(maxTime) {
+			maxTime = tikvCPUs.getTime()
 		}
-		if tidbCPUs.getTime().Before(minTime) {
-			minTime = tidbCPUs.getTime()
+		if tidbCPUs.getTime().After(maxTime) {
+			maxTime = tidbCPUs.getTime()
 		}
-		if !rus.advance(minTime) || !tikvCPUs.advance(minTime) || !tidbCPUs.advance(minTime) {
-			break
+		if !rus.advance(maxTime) || !tikvCPUs.advance(maxTime) || !tidbCPUs.advance(maxTime) {
+			continue
 		}
 		tikvQuota, tidbQuota := tikvCPUs.getValue()/totalKVCPUQuota, tidbCPUs.getValue()/totalTiDBCPU
 		// If one of the two cpu usage is greater than the `valuableUsageThreshold`, we can accept it.
@@ -355,20 +355,20 @@ func (t *timeSeriesValues) getValue() float64 {
 
 func (t *timeSeriesValues) advance(target time.Time) bool {
 	for ; t.idx < len(t.vals); t.idx++ {
-		if t.vals[t.idx].tp.Add(-time.Second * 10).Before(target) {
-			return true
+		if t.vals[t.idx].tp.Add(time.Second * 10).After(target) {
+			return t.vals[t.idx].tp.Add(-time.Second * 10).Before(target)
 		}
 	}
 	return false
 }
 
 func getRUPerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) (*timeSeriesValues, error) {
-	query := fmt.Sprintf("SELECT time, value FROM METRICS_SCHEMA.resource_manager_resource_unit where time >= '%s' and time <= '%s' ORDER BY time desc", startTime, endTime)
+	query := fmt.Sprintf("SELECT time, value FROM METRICS_SCHEMA.resource_manager_resource_unit where time >= '%s' and time <= '%s' ORDER BY time asc", startTime, endTime)
 	return getValuesFromMetrics(ctx, sctx, exec, query, "resource_manager_resource_unit")
 }
 
 func getComponentCPUUsagePerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, component, startTime, endTime string) (*timeSeriesValues, error) {
-	query := fmt.Sprintf("SELECT time, sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%%s' GROUP BY time ORDER BY time desc", startTime, endTime, component)
+	query := fmt.Sprintf("SELECT time, sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%%s' GROUP BY time ORDER BY time asc", startTime, endTime, component)
 	return getValuesFromMetrics(ctx, sctx, exec, query, "process_cpu_usage")
 }
 
