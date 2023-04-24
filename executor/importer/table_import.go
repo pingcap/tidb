@@ -125,7 +125,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		ShouldCheckTiKV:         true,
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
-		StoreWriteBWLimit:       int(e.maxWriteSpeed),
+		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
 		// todo: we can set it false when we support switch import mode.
 		ShouldCheckWriteStall: true,
 		MaxOpenFiles:          int(util.GenRLimit()),
@@ -219,7 +219,7 @@ func (ti *TableImporter) Import() {
 }
 
 // Result implements JobImporter.Result.
-func (ti *TableImporter) Result() string {
+func (ti *TableImporter) Result() JobImportResult {
 	var (
 		numWarnings uint64
 		numRecords  uint64
@@ -230,13 +230,11 @@ func (ti *TableImporter) Result() string {
 	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
 	// we can have it when there's duplicate detection.
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	if !ti.Detached {
-		userStmtCtx := ti.UserCtx.GetSessionVars().StmtCtx
-		userStmtCtx.SetMessage(msg)
-		userStmtCtx.SetAffectedRows(ti.Progress.LoadedRowCnt.Load())
-		userStmtCtx.LastInsertID = ti.lastInsertID
+	return JobImportResult{
+		Msg:          msg,
+		Affected:     ti.Progress.LoadedRowCnt.Load(),
+		LastInsertID: ti.lastInsertID,
 	}
-	return msg
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -263,9 +261,9 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
-			SQLMode:        ti.sqlMode,
+			SQLMode:        ti.SQLMode,
 			Timestamp:      chunk.Timestamp,
-			SysVars:        ti.importantSysVars,
+			SysVars:        ti.ImportantSysVars,
 			AutoRandomSeed: chunk.Chunk.PrevRowIDMax,
 		},
 		Path:   chunk.FileMeta.Path,
@@ -292,7 +290,7 @@ func (ti *TableImporter) importTable(ctx context.Context) error {
 
 func (ti *TableImporter) postProcess(ctx context.Context) error {
 	// todo: post process
-	if ti.checksum != config.OpLevelOff {
+	if ti.Checksum != config.OpLevelOff {
 		return ti.checksumTable(ctx)
 	}
 	return nil
@@ -306,7 +304,7 @@ func (ti *TableImporter) checksumTable(ctx context.Context) error {
 		}
 	}
 	ti.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.distSQLScanConcurrency))
+	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.DistSQLScanConcurrency))
 	remoteChecksum, err := manager.Checksum(ctx, ti.tableInfo)
 	if err != nil {
 		return err
@@ -319,7 +317,7 @@ func (ti *TableImporter) checksumTable(ctx context.Context) error {
 			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
 			remoteChecksum.TotalBytes, localChecksum.SumSize(),
 		)
-		if ti.checksum == config.OpLevelOptional {
+		if ti.Checksum == config.OpLevelOptional {
 			ti.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err2))
 			err2 = nil
 		}

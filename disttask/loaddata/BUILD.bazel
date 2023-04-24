@@ -4,6 +4,7 @@ go_library(
     name = "loaddata",
     srcs = [
         "dispatcher.go",
+        "job.go",
         "proto.go",
         "scheduler.go",
         "subtask_executor.go",
@@ -20,6 +21,7 @@ go_library(
         "//disttask/framework/dispatcher",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
+        "//disttask/framework/storage",
         "//executor/asyncloaddata",
         "//executor/importer",
         "//table/tables",
