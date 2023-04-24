@@ -506,8 +506,8 @@
       "meta/": "parser code",
       "extension/": "extension code",
       "resourcemanager/": "resourcemanager code",
-      "keyspace": "keyspace code",
-      "owner": "owner code"
+      "keyspace/": "keyspace code",
+      "owner/": "owner code"
     }
   },
   "shift": {
