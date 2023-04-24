@@ -355,6 +355,35 @@ func TestCalibrateResource(t *testing.T) {
 	mockData["process_cpu_usage"] = cpu2Mofidy
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("5616"))
 
+	ruModify3 := [][]types.Datum{
+		types.MakeDatums(datetime("2020-02-12 10:25:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:26:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:27:00"), 4.0),
+		types.MakeDatums(datetime("2020-02-12 10:28:00"), 6.0),
+		types.MakeDatums(datetime("2020-02-12 10:29:00"), 2200.0),
+		types.MakeDatums(datetime("2020-02-12 10:30:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:31:00"), 7.0),
+		types.MakeDatums(datetime("2020-02-12 10:32:00"), 5.0),
+		types.MakeDatums(datetime("2020-02-12 10:33:00"), 7.0),
+		types.MakeDatums(datetime("2020-02-12 10:34:00"), 8.0),
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), 29.0),
+		types.MakeDatums(datetime("2020-02-12 10:36:20"), 2100.0),
+		types.MakeDatums(datetime("2020-02-12 10:37:00"), 49.0),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), 2300.0),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), 2230.0),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), 2210.0),
+		types.MakeDatums(datetime("2020-02-12 10:41:00"), 47.0),
+		types.MakeDatums(datetime("2020-02-12 10:42:20"), 2330.0),
+		types.MakeDatums(datetime("2020-02-12 10:43:00"), 2330.0),
+		types.MakeDatums(datetime("2020-02-12 10:44:00"), 2300.0),
+		types.MakeDatums(datetime("2020-02-12 10:45:00"), 2280.0),
+		types.MakeDatums(datetime("2020-02-12 10:47:00"), 2250.0),
+		types.MakeDatums(datetime("2020-02-12 10:49:00"), 2250.0),
+	}
+	mockData["resource_manager_resource_unit"] = ruModify3
+	// because there are 20s difference in two time points, the result is changed.
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("4987"))
+
 	ru2 := [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:25:00"), 2200.0),
 		types.MakeDatums(datetime("2020-02-12 10:26:00"), 2100.0),

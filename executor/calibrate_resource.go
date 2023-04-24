@@ -238,7 +238,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		if tidbCPUs.getTime().Before(minTime) {
 			minTime = tidbCPUs.getTime()
 		}
-		if !rus.findTime(minTime) || !tikvCPUs.findTime(minTime) || !tidbCPUs.findTime(minTime) {
+		if !rus.advance(minTime) || !tikvCPUs.advance(minTime) || !tidbCPUs.advance(minTime) {
 			break
 		}
 		tikvQuota, tidbQuota := tikvCPUs.getValue()/totalKVCPUQuota, tidbCPUs.getValue()/totalTiDBCPU
@@ -353,7 +353,7 @@ func (t *timeSeriesValues) getValue() float64 {
 	return t.vals[t.idx].val
 }
 
-func (t *timeSeriesValues) findTime(target time.Time) bool {
+func (t *timeSeriesValues) advance(target time.Time) bool {
 	for ; t.idx < len(t.vals); t.idx++ {
 		if t.vals[t.idx].tp.Add(-time.Second * 10).Before(target) {
 			return true
