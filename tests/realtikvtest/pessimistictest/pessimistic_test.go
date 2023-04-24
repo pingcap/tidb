@@ -50,14 +50,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	"go.uber.org/zap"
 )
 
 func createAsyncCommitTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
@@ -3393,19 +3390,6 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 
 func TestIssue43243(t *testing.T) {
 	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
-
-	require.NoError(t, failpoint.Enable("tikvclient/afterSendReqToRegion", "return"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("tikvclient/afterSendReqToRegion"))
-	}()
-
-	ctx := context.WithValue(context.Background(), "sendReqToRegionFinishHook", func(req *tikvrpc.Request, resp *tikvrpc.Response, err error) {
-		var respInner fmt.Stringer
-		if resp != nil && resp.Resp != nil {
-			respInner = resp.Resp.(fmt.Stringer)
-		}
-		logutil.BgLogger().Info("sent request", zap.Stringer("type", req.Type), zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("resp", respInner), zap.Error(err))
-	})
 
 	{
 		// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
