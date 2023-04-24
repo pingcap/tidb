@@ -21,9 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/client/v3/concurrency"
-	"go.uber.org/zap"
 )
 
 var _ Manager = &mockManager{}
@@ -115,24 +112,29 @@ func (m *mockManager) CampaignCancel() {
 }
 
 func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {
+	checkIsOwner := func(m *ownerManager, checkTrue bool) error {
+		// 5s
+		for i := 0; i < 100; i++ {
+			if m.IsOwner() == checkTrue {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if m.IsOwner() != checkTrue {
+			return errors.Errorf("expect manager state:%v", checkTrue)
+		}
+		return nil
+	}
+
 	needCheckOwner := false
 	switch mockCal {
 	case "delOwnerKeyAndNotOwner":
-		se := (*concurrency.Session)(atomic.LoadPointer(&m.session))
-		se.Orphan()
-		// 5s
-		for i := 0; i < 100; i++ {
-			if !m.isCampaigning.Load() {
-				break
-			}
-			logutil.BgLogger().Warn("========================================================================== del, false", zap.Int("num", i))
-			time.Sleep(50 * time.Millisecond)
+		m.CampaignCancel()
+		// Make sure the manager is not owner. And it will exit campaignLoop.
+		err := checkIsOwner(m, false)
+		if err != nil {
+			return err
 		}
-		if m.isCampaigning.Load() {
-			logutil.BgLogger().Warn("========================================================================== del, failed")
-			return errors.New("manager is campaigning")
-		}
-
 	case "onlyDelOwnerKey":
 		needCheckOwner = true
 	}
@@ -142,19 +144,12 @@ func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {
 		return errors.Trace(err)
 	}
 	if needCheckOwner {
-		for i := 0; i < 100; i++ {
-			if m.IsOwner() {
-				break
-			}
-			logutil.BgLogger().Warn("========================================================================== del, false", zap.Int("num", i))
-			time.Sleep(50 * time.Millisecond)
+		// Mock the manager become not owner because the owner is deleted(like TTL is timeout).
+		// And then the manager campaigns the owner again, and become the owner.
+		err = checkIsOwner(m, true)
+		if err != nil {
+			return err
 		}
-		if !m.IsOwner() {
-			logutil.BgLogger().Warn("========================================================================== del, failed")
-			return errors.New("manager is campaigning")
-		}
-
 	}
-	logutil.BgLogger().Warn("========================================================================== del")
 	return nil
 }

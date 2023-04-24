@@ -138,46 +138,42 @@ func TestSetAndGetOwnerOpValue(t *testing.T) {
 	op, err := owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpNone)
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgrdingState)
+	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgradingState)
 	require.NoError(t, err)
 	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
 	require.NoError(t, err)
-	require.Equal(t, op, owner.OpGetUpgrdingState)
+	require.Equal(t, op, owner.OpGetUpgradingState)
 	// update the same as the original value
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgrdingState)
+	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgradingState)
 	require.NoError(t, err)
 	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
 	require.NoError(t, err)
-	require.Equal(t, op, owner.OpGetUpgrdingState)
+	require.Equal(t, op, owner.OpGetUpgradingState)
 	// test del owner key when SetOwnerOpValue
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/MockDelOwnerKey", `return("delOwnerKeyAndNotOwner")`))
-	logutil.BgLogger().Warn("========================================================================== set")
 	err = manager.SetOwnerOpValue(context.Background(), owner.OpNone)
 	require.Error(t, err, "put owner key failed, cmp is false")
-	logutil.BgLogger().Warn("========================================================================== get")
 	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
 	require.NotNil(t, err)
 	require.Equal(t, concurrency.ErrElectionNoLeader.Error(), err.Error())
 	require.Equal(t, op, owner.OpNone)
-	logutil.BgLogger().Warn("========================================================================== get end")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/MockDelOwnerKey"))
 
 	// Let ddl run for the owner again.
 	require.NoError(t, tInfo.ddl.OwnerManager().CampaignOwner())
 	isOwner = checkOwner(tInfo.ddl, true)
 	require.True(t, isOwner)
+	// Mock the manager become not owner because the owner is deleted(like TTL is timeout).
+	// And then the manager campaigns the owner again, and become the owner.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/MockDelOwnerKey", `return("onlyDelOwnerKey")`))
-	logutil.BgLogger().Warn("========================================================================== set")
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgrdingState)
+	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgradingState)
 	require.Error(t, err, "put owner key failed, cmp is false")
-	logutil.BgLogger().Warn("========================================================================== get")
 	isOwner = checkOwner(tInfo.ddl, true)
 	require.True(t, isOwner)
 	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpNone)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/MockDelOwnerKey"))
-	logutil.BgLogger().Warn("========================================================================== get end")
 }
 
 func TestCluster(t *testing.T) {
@@ -246,7 +242,7 @@ func TestCluster(t *testing.T) {
 
 	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-	_, err = owner.GetOwnerKey(context.Background(), cliRW, logCtx, DDLOwnerKey, "useless id")
+	_, err = owner.GetOwnerKey(context.Background(), logCtx, cliRW, DDLOwnerKey, "useless id")
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
 	op, err := owner.GetOwnerOpValue(context.Background(), cliRW, DDLOwnerKey, logPrefix)
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
