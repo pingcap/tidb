@@ -193,6 +193,7 @@ func (d *sqlDigester) normalize(sql string, keepHint bool) {
 		}
 
 		d.reduceLit(&currTok)
+		d.aggressiveReduceList(&currTok)
 
 		if currTok.tok == identifier {
 			if strings.HasPrefix(currTok.lit, "_") {
@@ -304,6 +305,29 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 	// 2 => ?
 	currTok.tok = genericSymbol
 	currTok.lit = "?"
+}
+
+func (d *sqlDigester) aggressiveReduceList(currTok *token) {
+	last4 := d.tokens.back(4)
+	if len(last4) < 4 {
+		return
+	}
+	if !(last4[0].tok == genericSymbol || last4[0].tok == genericSymbolList) {
+		return
+	}
+	if last4[1].lit != ")" {
+		return
+	}
+	if !d.isComma(last4[2]) {
+		return
+	}
+	if last4[3].lit != "(" {
+		return
+	}
+	d.tokens.popBack(4)
+	currTok.tok = genericSymbolList
+	currTok.lit = "..."
+	return
 }
 
 func (d *sqlDigester) isPrefixByUnary(currTok int) (isUnary bool) {
