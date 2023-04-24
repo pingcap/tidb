@@ -118,6 +118,8 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	all, desc := prop.AllSameOrder()
 	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, desc, math.MaxFloat64, false)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, desc, math.MaxFloat64, false)
+	lProp.CTEProducerStatus = prop.CTEProducerStatus
+	rProp.CTEProducerStatus = prop.CTEProducerStatus
 	if !prop.IsSortItemEmpty() {
 		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
 		if !all {
@@ -440,8 +442,8 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 
 func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
 	chReqProps := make([]*property.PhysicalProperty, 2)
-	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus}
+	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.ExpectedCnt < p.stats.RowCount {
 		expCntScale := prop.ExpectedCnt / p.stats.RowCount
 		chReqProps[1-innerIdx].ExpectedCnt = p.children[1-innerIdx].statsInfo().RowCount * expCntScale
@@ -484,7 +486,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		return nil
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
-	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems}
+	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.ExpectedCnt < p.stats.RowCount {
 		expCntScale := prop.ExpectedCnt / p.stats.RowCount
 		chReqProps[outerIdx].ExpectedCnt = p.children[outerIdx].statsInfo().RowCount * expCntScale
@@ -2620,7 +2622,7 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 	return ret
 }
 
-func (lt *LogicalTopN) getPhysLimits(_ *property.PhysicalProperty) []PhysicalPlan {
+func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []PhysicalPlan {
 	p, canPass := GetPropByOrderByItems(lt.ByItems)
 	if !canPass {
 		return nil
@@ -2632,7 +2634,7 @@ func (lt *LogicalTopN) getPhysLimits(_ *property.PhysicalProperty) []PhysicalPla
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
-		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems}
+		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
 		limit := PhysicalLimit{
 			Count:       lt.Count,
 			Offset:      lt.Offset,
@@ -2708,8 +2710,8 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}.Init(la.ctx,
 		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),
 		la.blockOffset,
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems},
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
 	apply.SetSchema(la.schema)
 	return []PhysicalPlan{apply}, true, nil
 }
@@ -2840,7 +2842,7 @@ func (lw *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) (
 	var byItems []property.SortItem
 	byItems = append(byItems, lw.PartitionBy...)
 	byItems = append(byItems, lw.OrderBy...)
-	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, CanAddEnforcer: true}
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
 	if !prop.IsPrefix(childProperty) {
 		return nil, true, nil
 	}
@@ -3259,7 +3261,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 				hashAggs = append(hashAggs, mppAggs...)
 			}
 		} else {
-			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp, CTEProducerStatus: prop.CTEProducerStatus})
 			agg.SetSchema(la.schema.Clone())
 			hashAggs = append(hashAggs, agg)
 		}
@@ -3410,7 +3412,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 				CTEProducerStatus: prop.CTEProducerStatus,
 			})
 		} else {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt, RejectSort: true})
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus})
 		}
 	}
 	ua := PhysicalUnionAll{
@@ -3424,6 +3426,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 				ExpectedCnt: prop.ExpectedCnt,
 				TaskTp:      property.MppTaskType,
 				RejectSort:  true,
+				CTEProducerStatus: prop.CTEProducerStatus,
 			})
 		}
 		mppUA := PhysicalUnionAll{mpp: true}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
@@ -3489,7 +3492,7 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
 		return nil, true, nil
 	}
-	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2})
+	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2, CTEProducerStatus: prop.CTEProducerStatus})
 	return []PhysicalPlan{mor}, true, nil
 }
 
@@ -3507,15 +3510,17 @@ func (p *LogicalCTE) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]Ph
 
 func (p *LogicalSequence) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
-	childProp := prop.CloneEssentialFields()
 	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.TaskTp == property.MppTaskType {
 		if prop.CTEProducerStatus == property.SomeCTEFailedMpp {
 			return nil, true, nil
 		}
-		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType, childProp})
+		anyType.CTEProducerStatus = property.AllCTECanMpp
+		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType, prop.CloneEssentialFields()})
 	} else {
-		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64}, childProp})
+		copied := prop.CloneEssentialFields()
+		copied.CTEProducerStatus = property.SomeCTEFailedMpp
+		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: property.SomeCTEFailedMpp}, copied})
 	}
 
 	if prop.TaskTp != property.MppTaskType && prop.CTEProducerStatus != property.SomeCTEFailedMpp &&

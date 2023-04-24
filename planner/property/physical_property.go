@@ -166,7 +166,7 @@ type cteProducerStatus int
 
 // Constants for CTE status.
 const (
-	NoCTE cteProducerStatus = iota
+	NoCTEOrAllProducerCanMPP cteProducerStatus = iota
 	SomeCTEFailedMpp
 	AllCTECanMpp
 )

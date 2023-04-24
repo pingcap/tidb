@@ -177,13 +177,26 @@
     "name": "TestMPPSharedCTEScan",
     "cases": [
       // The most simple case.
-      "explain with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b ",
-      "explain with c1 as (select * from t) select c1.* from c1, c1 c2 where c1.b=c2.c",
+      "explain format = 'brief' with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b ",
+      "explain format = 'brief' with c1 as (select /*+ read_from_storage(tikv[t]) */ * from t) select * from c1, c1 c2 where c1.a=c2.b ",
+      "explain format = 'brief' with c1 as (select * from t) select c1.* from c1, c1 c2 where c1.b=c2.c",
       // Can work when there's global limit/topn
-      "explain with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b limit 10",
-      "explain with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b order by c1.a limit 10",
+      "explain format = 'brief' with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b limit 10",
+      "explain format = 'brief' with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b order by c1.a limit 10",
       // The c2 references c1, c1 can mpp, and then c2 can mpp, so the main query can mpp.
-      "explain with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2 where c1.a=c2.b"
+      "explain format = 'brief' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2 where c1.a=c2.b",
+      // The same SQL, c1 forces to read tikv. So c2 cannot MPP, then the whole SQL.
+      "explain format = 'brief' with c1 as (select /*+ read_from_storage(tikv[t]) */ * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2 where c1.a=c2.b",
+      // The two WITH satement can all be MPP.
+      "explain format = 'brief' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2, (with c3 as (select * from t) select c3.* from c3, c3 c4 where c3.c=c4.b) c3 where c1.a=c2.b and c1.a=c3.a",
+      // The outer one will fail to use MPP. But the inner WITH statement can. But we haven't implemented the least common ancestor to detect the best position of the Sequence. So the whole SQL cannot MPP.
+      "explain format = 'brief' with c1 as (select /*+ read_from_storage(tikv[t]) */ * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2, (with c3 as (select * from t) select c3.* from c3, c3 c4 where c3.c=c4.b) c3 where c1.a=c2.b and c1.a=c3.a",
+      // The inner one will fail. So the whole SQL cannot MPP.
+      "explain format = 'brief' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2, (with c3 as (select /*+ read_from_storage(tikv[t]) */ * from t) select c3.* from c3, c3 c4 where c3.c=c4.b) c3 where c1.a=c2.b and c1.a=c3.a",
+      // A little change that the inner WITH statement references the outer's c1.
+      "explain format = 'brief' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2, (with c3 as (select * from c1) select c3.* from c3, c3 c4 where c3.c=c4.b) c3 where c1.a=c2.b and c1.a=c3.a",
+      // The outer one will fail to use MPP. Since the inner one is references the outer one, the whole SQL cannot MPP.
+      "explain format = 'brief' with c1 as (select /*+ read_from_storage(tikv[t]) */ * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2, (with c3 as (select * from c1) select c3.* from c3, c3 c4 where c3.c=c4.b) c3 where c1.a=c2.b and c1.a=c3.a"
     ]
   }
 ]
