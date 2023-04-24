@@ -1367,6 +1367,9 @@ func (local *Backend) executeJob(
 			job.lastRetryableErr = err
 			return nil
 		}
+		if job.stage == needRescan {
+			return nil
+		}
 
 		if job.writeResult == nil || job.writeResult.remainingStartKey == nil {
 			return nil
