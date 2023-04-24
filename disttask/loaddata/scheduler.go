@@ -153,5 +153,6 @@ func init() {
 			logutil.BgLogger().Info("register scheduler constructor", zap.Any("taskMeta", taskMeta))
 			return &ImportScheduler{taskMeta: &taskMeta}, nil
 		},
+		scheduler.WithConcurrentSubtask(),
 	)
 }
