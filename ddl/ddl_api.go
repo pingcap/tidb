@@ -4953,12 +4953,11 @@ func GetModifiableColumnJob(
 		if c != nil {
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 		}
-
-		// And also check the generated columns dependency.
-		err := checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	}
+	// And also check the generated columns dependency.
+	err = checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
