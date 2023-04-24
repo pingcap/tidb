@@ -538,7 +538,7 @@ func TestGeneratedColumnDDL(t *testing.T) {
 	}{
 		// Drop/rename columns dependent by other column.
 		{`alter table test_gv_ddl drop column a`, errno.ErrDependentByGeneratedColumn},
-		{`alter table test_gv_ddl change column a anew int`, errno.ErrBadField},
+		{`alter table test_gv_ddl change column a anew int`, errno.ErrDependentByGeneratedColumn},
 
 		// Modify/change stored status of generated columns.
 		{`alter table test_gv_ddl modify column b bigint`, errno.ErrUnsupportedOnGeneratedColumn},
@@ -546,7 +546,7 @@ func TestGeneratedColumnDDL(t *testing.T) {
 
 		// Modify/change generated columns breaking prior.
 		{`alter table test_gv_ddl modify column b int as (c+100)`, errno.ErrGeneratedColumnNonPrior},
-		{`alter table test_gv_ddl change column b bnew int as (c+100)`, errno.ErrGeneratedColumnNonPrior},
+		{`alter table test_gv_ddl change column b bnew int as (c+100)`, errno.ErrDependentByGeneratedColumn},
 
 		// Refer not exist columns in generation expression.
 		{`create table test_gv_ddl_bad (a int, b int as (c+8))`, errno.ErrBadField},
