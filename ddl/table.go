@@ -978,6 +978,9 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
+	if job.SchemaState == model.StatePublic {
+		return finishJobRenameTable(t, job)
+	}
 	newSchemaID := job.SchemaID
 	err := checkTableNotExists(d, t, newSchemaID, tableName.L)
 	if err != nil {
@@ -1005,7 +1008,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	job.SchemaState = model.StatePublic
 	return ver, nil
 }
 
@@ -1019,6 +1022,10 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	if err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+
+	if job.SchemaState == model.StatePublic {
+		return finishJobRenameTables(t, job, tableNames, tableIDs, newSchemaIDs)
 	}
 
 	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
@@ -1046,7 +1053,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
+	job.SchemaState = model.StatePublic
 	return ver, nil
 }
 
@@ -1141,6 +1148,43 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 		}
 	}
 	return nil
+}
+
+// We split the renaming table job into two steps:
+// 1. rename table and update the schema version.
+// 2. update the job state to JobStateDone.
+// This is the requirement from TiCDC because
+//   - it uses the job state to check whether the DDL is finished.
+//   - there is a gap between schema reloading and job state updating:
+//     when the job state is updated to JobStateDone, before the new schema reloaded,
+//     there may be DMLs that use the old schema.
+//   - TiCDC cannot handle the DMLs that use the old schema, because
+//     the commit TS of the DMLs are greater than the job state updating TS.
+func finishJobRenameTable(t *meta.Meta, job *model.Job) (int64, error) {
+	tblInfo, err := getTableInfo(t, job.TableID, job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	// Finish this job in a separate transaction.
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, 0, tblInfo)
+	return 0, nil
+
+}
+
+func finishJobRenameTables(t *meta.Meta, job *model.Job,
+	tableNames []*model.CIStr, tableIDs, newSchemaIDs []int64) (int64, error) {
+	tblInfos := make([]*model.TableInfo, 0, len(tableNames))
+	for i := range newSchemaIDs {
+		tblInfo, err := getTableInfo(t, tableIDs[i], newSchemaIDs[i])
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return 0, errors.Trace(err)
+		}
+		tblInfos = append(tblInfos, tblInfo)
+	}
+	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, 0, tblInfos)
+	return 0, nil
 }
 
 func onModifyTableComment(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
