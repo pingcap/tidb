@@ -582,13 +582,15 @@ func TestGeneratedColumnDDL(t *testing.T) {
 	result = tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
-	tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
-	result = tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+	// According to https://github.com/pingcap/tidb/issues/24321, this test case is not supported.
+	// Although in MySQL this is a legal one.
+	// tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
+	// result = tk.MustQuery(`DESC test_gv_ddl`)
+	// result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
 	tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
 	result = tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
 
 	// Test generated column `\\`.
 	tk.MustExec("drop table if exists t")

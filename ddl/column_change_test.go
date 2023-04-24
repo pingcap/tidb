@@ -484,5 +484,5 @@ func TestIssue38988And24321(t *testing.T) {
 	// For issue https://github.com/pingcap/tidb/issues/24321
 	// Note, the result is not the same with MySQL, since the limitation of the current modify column implementation.
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual);")
-	tk.MustGetErrCode("alter table t2 modify column a bigint;", errno.ErrDependentByGeneratedColumn)
+	tk.MustGetErrCode("alter table t2 modify column a bigint;", errno.ErrUnsupportedOnGeneratedColumn)
 }

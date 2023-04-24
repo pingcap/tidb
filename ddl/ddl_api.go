@@ -4947,17 +4947,20 @@ func GetModifiableColumnJob(
 	if newColName.L == model.ExtraHandleName.L {
 		return nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
+	errG := checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName)
+
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
 		c := table.FindCol(t.Cols(), newColName.L)
 		if c != nil {
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 		}
-	}
-	// And also check the generated columns dependency.
-	err = checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName)
-	if err != nil {
-		return nil, errors.Trace(err)
+
+		// And also check the generated columns dependency, if some generated columns
+		// depend on this column, we can't rename the column name.
+		if errG != nil {
+			return nil, errors.Trace(errG)
+		}
 	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
@@ -5166,6 +5169,11 @@ func GetModifiableColumnJob(
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(sctx, schema.Name, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
+	}
+	if errG != nil {
+		// According to issue https://github.com/pingcap/tidb/issues/24321,
+		// changing the type of a column involving generating a column is prohibited.
+		return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs(errG.Error())
 	}
 
 	if t.Meta().TTLInfo != nil {
