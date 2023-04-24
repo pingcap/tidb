@@ -30,6 +30,7 @@ go_library(
         "//expression",
         "//kv",
         "//meta/autoid",
+        "//parser",
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
@@ -76,7 +77,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/config",
