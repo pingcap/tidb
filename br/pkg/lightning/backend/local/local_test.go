@@ -479,7 +479,7 @@ func TestIsIngestRetryable(t *testing.T) {
 			},
 		},
 	}
-	retryType, newRegion, err := local.isIngestRetryable(ctx, resp, region, metas)
+	retryType, _, err := local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryNone, retryType)
 	require.Error(t, err)
 
@@ -499,6 +499,7 @@ func TestIsIngestRetryable(t *testing.T) {
 			},
 		},
 	}
+	var newRegion *split.RegionInfo
 	retryType, newRegion, err = local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryWrite, retryType)
 	require.Equal(t, uint64(2), newRegion.Region.RegionEpoch.Version)
