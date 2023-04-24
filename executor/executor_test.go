@@ -5543,6 +5543,10 @@ func TestStrToDateBuiltinWithWarnings(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustQuery(`SELECT STR_TO_DATE('0000-1-01', '%Y-%m-%d');`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1411 Incorrect datetime value: '0000-1-01' for function str_to_date"))
+	tk.MustQuery("SELECT CAST('4#,8?Q' AS DATE);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
+		`Incorrect datetime value: '4#,8?Q'`,
+	))
 }
 
 func TestReadPartitionedTable(t *testing.T) {
