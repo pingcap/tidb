@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint tazel
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint tazel precheck
 
 default: server buildsucc
 
@@ -30,6 +30,8 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 
 # Install the check tools.
 check-setup:tools/bin/revive
+
+precheck: fmt tidy bazel_prepare
 
 check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
 
