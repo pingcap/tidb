@@ -80,6 +80,7 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
 	if err != nil {
 		writeError(w, err)
+		return
 	}
 	jst, err := h.DumpStatsToJSON(params[pDBName], tbl.Meta(), nil, dumpPartitionStats)
 	if err != nil {
