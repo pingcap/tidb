@@ -203,6 +203,10 @@ var defaultSysVars = []*SysVar{
 		s.Enable3StageMultiDistinctAgg = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEliminateLocalAgg43StageDistinctAgg, Value: BoolToOnOff(DefEliminateLocalAgg43StageDistinctAgg), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableEliminateLocalAgg43StageDistinctAgg = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBOptWriteRowID, Value: BoolToOnOff(DefOptWriteRowID), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowWriteRowID = TiDBOptOn(val)
 		return nil

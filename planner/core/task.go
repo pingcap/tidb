@@ -2267,11 +2267,11 @@ func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *mppTask) task {
 //	null  ...  c    2      +------- replica group 2
 //	null  ...  c    2   ---+
 //
-// since null value is seen the same when grouping data (groupingID in one replica is always the same):
+// since null value is seen as the same when grouping data (groupingID in one replica is always the same):
 //   - so the num of group in replica 1 is equal to NDV(a,c)
 //   - so the num of group in replica 2 is equal to NDV(b,c)
 //
-// in a summary, the total num of group of all replica is equal to = Σ:NDV(each-grouping-set-cols, normal-group-cols)
+// in a summary, the total num of group of all replica is equal to = Σ:NDV(each-grouping-set-col, normal-group-cols)
 func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.GroupingSets, groupingIDCol *expression.Column,
 	childSchema *expression.Schema, childStats *property.StatsInfo) {
 	idSets := groupingSets.AllSetsColIDs()
@@ -2330,6 +2330,161 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 	}
 }
 
+// adjust2StagePhaseAgg will eliminate the lowest local agg compared with adjust3StagePhaseAgg
+// Reason:
+//
+//   - when groupNDV(a,b) are high, this local HashAgg is time costly and does not help in reducing the number of rows.
+//
+//   - 2StagePhaseAgg will also be applied when there are some grouping sets are overlapped. (grouping set merge)
+//
+// select count(distinct a), count(distinct b), count(c) from foo
+//
+// will generate plan:
+//
+//	HashAgg sum(#1), sum(#2), sum(#3)                                           -> final agg
+//	 +- Exchange Passthrough
+//	     +- HashAgg count(distinct a) #1, count(distinct b) #2, sum(c) #3       -> middle agg
+//	         +- Exchange HashPartition by a,b,groupingID
+//	             +- Expand {<a>}, {<b>}                                         -> expand
+//	                 +- TableScan foo
+func (p *PhysicalHashAgg) adjust2StagePhaseAgg(partialAgg, finalAgg PhysicalPlan,
+	groupingSets expression.GroupingSets, mpp *mppTask) (_final, _mid, _part, _proj4Mid, _proj4Part PhysicalPlan, _ error) {
+	if len(groupingSets) == 0 {
+		// 2StagePhaseAgg for single distinct agg is not that effective, only benefit is the split computation of
+		// single distinct agg into multi tiflash nodes and pass through them into one scalar node.
+		return finalAgg, nil, partialAgg, nil, nil, nil
+	}
+	// multi distinct agg mode, having grouping sets.
+	var groupingIDCol expression.Expression
+	// enforce Expand operator above the children.
+	// physical plan is enumerated without children from itself, use mpp subtree instead p.children.
+	// scale(len(groupingSets)) will change the NDV, while Expand doesn't change the NDV and groupNDV.
+	stats := mpp.p.statsInfo().Scale(float64(1))
+	stats.RowCount = stats.RowCount * float64(len(groupingSets))
+
+	physicalExpand := PhysicalExpand{
+		GroupingSets: groupingSets,
+	}.Init(p.ctx, stats, mpp.p.SelectBlockOffset())
+	// generate a new column as groupingID to identify which this row is targeting for.
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
+	groupingIDCol = &expression.Column{
+		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  tp,
+	}
+	// append the physical expand op with groupingID column.
+	physicalExpand.SetSchema(mpp.p.Schema().Clone())
+	physicalExpand.schema.Append(groupingIDCol.(*expression.Column))
+	physicalExpand.GroupingIDCol = groupingIDCol.(*expression.Column)
+	// attach PhysicalExpand to mpp
+	attachPlan2Task(physicalExpand, mpp)
+
+	// step1: adjust partial agg, for normal agg here, adjust it to target for specified group data.
+	// Since we may substitute the first arg of normal agg with case-when expression here, append a
+	// customized proj here rather than depending on postOptimize to insert a blunt one for us.
+	//
+	// proj4Partial output all the base col from lower op + caseWhen proj cols.
+	proj4Mid := new(PhysicalProjection).Init(p.ctx, mpp.p.statsInfo(), mpp.p.SelectBlockOffset())
+	for _, col := range mpp.p.Schema().Columns {
+		proj4Mid.Exprs = append(proj4Mid.Exprs, col)
+	}
+	proj4Mid.SetSchema(mpp.p.Schema().Clone())
+
+	midHashAgg := partialAgg.(*PhysicalHashAgg)
+	// 2PhaseMultiDistinct doesn't need group items for midHashAgg.(record it here for shuffling)
+	midHashAgg.GroupByItems = append(midHashAgg.GroupByItems, groupingIDCol)
+
+	// adjust midHashAgg since we don't have partialHashAgg, it will create a new stats for mid agg.
+	midHashAgg.scaleStats4GroupingSets(groupingSets, groupingIDCol.(*expression.Column), proj4Mid.Schema(), proj4Mid.statsInfo())
+	midAggSchema := expression.NewSchema()
+	originPartialAggFuncs := midHashAgg.AggFuncs
+	defer func() {
+		originPartialAggFuncs = originPartialAggFuncs[:0]
+	}()
+	// midAggSchema need to rebuild.
+	// eg: change the below:
+	// finalAgg:    count(distinct a), count(distinct b), sum(#9)
+	// partialAgg:    nothing,         nothing,         count(c) -> #9
+	// to
+	// finalAgg:          sum(#1),           sum(#2),           sum(#9)
+	// midAgg:  count(distinct a) -> #1  count(distinct b) -> #2   count(caseWhen-c) -> #9
+	//
+	// step1: reuse the original non-distinct agg in partialAgg itself.
+	// step2: clone distinct agg from finalAgg to midAgg.
+	midHashAgg.AggFuncs = make([]*aggregation.AggFuncDesc, 0, len(finalAgg.(*PhysicalHashAgg).AggFuncs))
+	// step1:
+	for i, fun := range originPartialAggFuncs {
+		// Expr = (case when groupingID = targeted_groupingID then arg else null end)
+		eqExpr := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), groupingIDCol, expression.NewUInt64Const(fun.GroupingID))
+		caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, fun.Args[0].GetType(), eqExpr, fun.Args[0], expression.NewNull())
+		caseWhenProjCol := &expression.Column{
+			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  fun.Args[0].GetType(),
+		}
+		fun.Mode = aggregation.Partial1Mode
+		proj4Mid.Exprs = append(proj4Mid.Exprs, caseWhen)
+		proj4Mid.Schema().Append(caseWhenProjCol)
+		fun.Args[0] = caseWhenProjCol
+		// reuse its schema col.
+		midAggSchema.Append(midHashAgg.schema.Columns[i])
+		midHashAgg.AggFuncs = append(midHashAgg.AggFuncs, fun)
+	}
+	// step2:
+	schemaColPosMap4DistinctAgg := make(map[int]int, len(finalAgg.(*PhysicalHashAgg).AggFuncs))
+	for i, fun := range finalAgg.(*PhysicalHashAgg).AggFuncs {
+		if !fun.HasDistinct {
+			continue
+		}
+		clonedMidAgg := fun.Clone()
+		// build a new column for distinct agg.
+		col := &expression.Column{
+			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  clonedMidAgg.RetTp,
+		}
+		// both distinct agg and normal agg are all Partial1Mode here.
+		clonedMidAgg.Mode = aggregation.Partial1Mode
+		schemaColPosMap4DistinctAgg[i] = midAggSchema.Len()
+		midAggSchema.Append(col)
+		midHashAgg.AggFuncs = append(midHashAgg.AggFuncs, clonedMidAgg)
+	}
+	midHashAgg.SetSchema(midAggSchema)
+
+	// step3: adjust final agg
+	finalHashAgg := finalAgg.(*PhysicalHashAgg)
+	finalAggDescs := make([]*aggregation.AggFuncDesc, 0, len(finalHashAgg.AggFuncs))
+	for i, fun := range finalHashAgg.AggFuncs {
+		if fun.HasDistinct {
+			newArgs := make([]expression.Expression, 0, 1)
+			// change count(distinct) agg to sum()
+			fun.Name = ast.AggFuncSum
+			fun.HasDistinct = false
+			// count(distinct a,b) -> become a single partial result col.
+			newArgs = append(newArgs, midAggSchema.Columns[schemaColPosMap4DistinctAgg[i]])
+			fun.Args = newArgs
+		}
+		// the normal agg's map relation is reused. (no need for remap args here)
+		fun.Mode = aggregation.FinalMode
+		fun.GroupingID = 0
+		finalAggDescs = append(finalAggDescs, fun)
+	}
+	finalHashAgg.AggFuncs = finalAggDescs
+	return finalHashAgg, midHashAgg, nil, proj4Mid, nil, nil
+}
+
+func (p *PhysicalHashAgg) adjustXStagePhaseAgg(partialAgg, finalAgg PhysicalPlan, canUse3StageAgg bool,
+	groupingSets expression.GroupingSets, mpp *mppTask) (_final, _mid, _part, _proj4Mid, _proj4Part PhysicalPlan, _ error) {
+	if !(partialAgg != nil && canUse3StageAgg) {
+		// quick path: return the original finalAgg and partialAgg.
+		return finalAgg, nil, partialAgg, nil, nil, nil
+	}
+	// todo: using the grouping NDV and CBO to choose 2 or 3 phase of multi distinct agg.
+	if !p.SCtx().GetSessionVars().EnableEliminateLocalAgg43StageDistinctAgg || len(groupingSets) == 0 {
+		// when the variable is true OR it's a single distinct agg, using the 3 phase adjustment.
+		return p.adjust3StagePhaseAgg(partialAgg, finalAgg, groupingSets, mpp)
+	}
+	return p.adjust2StagePhaseAgg(partialAgg, finalAgg, groupingSets, mpp)
+}
+
 // adjust3StagePhaseAgg generate 3 stage aggregation for single/multi count distinct if applicable.
 //
 //	select count(distinct a), count(b) from foo
@@ -2354,17 +2509,13 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 //	             +- HashAgg count(c) #4, group by a,b,groupingID                -> partial agg
 //	                 +- Expand {<a>}, {<b>}                                     -> expand
 //	                     +- TableScan foo
-func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan, canUse3StageAgg bool,
-	groupingSets expression.GroupingSets, mpp *mppTask) (final, mid, part, proj4Part PhysicalPlan, _ error) {
-	if !(partialAgg != nil && canUse3StageAgg) {
-		// quick path: return the original finalAgg and partiAgg.
-		return finalAgg, nil, partialAgg, nil, nil
-	}
+func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan,
+	groupingSets expression.GroupingSets, mpp *mppTask) (_final, _mid, _part, _proj4Mid, _proj4Part PhysicalPlan, _ error) {
 	if len(groupingSets) == 0 {
 		// single distinct agg mode.
 		clonedAgg, err := finalAgg.Clone()
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 
 		// step1: adjust middle agg.
@@ -2404,7 +2555,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 				for _, arg := range fun.Args {
 					newCol, err := arg.RemapColumn(schemaMap)
 					if err != nil {
-						return nil, nil, nil, nil, err
+						return nil, nil, nil, nil, nil, err
 					}
 					newArgs = append(newArgs, newCol)
 				}
@@ -2415,10 +2566,9 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 		}
 		finalHashAgg.AggFuncs = finalAggDescs
 		// partialAgg is im-mutated from args.
-		return finalHashAgg, middleHashAgg, partialAgg, nil, nil
+		return finalHashAgg, middleHashAgg, partialAgg, nil, nil, nil
 	}
 	// multi distinct agg mode, having grouping sets.
-	// set the default expression to constant 1 for the convenience to choose default group set data.
 	var groupingIDCol expression.Expression
 	// enforce Expand operator above the children.
 	// physical plan is enumerated without children from itself, use mpp subtree instead p.children.
@@ -2445,7 +2595,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 	// having group sets
 	clonedAgg, err := finalAgg.Clone()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	cloneHashAgg := clonedAgg.(*PhysicalHashAgg)
 	// Clone(), it will share same base-plan elements from the finalAgg, including id,tp,stats. Make a new one here.
@@ -2524,7 +2674,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 			for _, arg := range fun.Args {
 				newCol, err := arg.RemapColumn(schemaMap)
 				if err != nil {
-					return nil, nil, nil, nil, err
+					return nil, nil, nil, nil, nil, err
 				}
 				newArgs = append(newArgs, newCol)
 			}
@@ -2535,7 +2685,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 		finalAggDescs = append(finalAggDescs, fun)
 	}
 	finalHashAgg.AggFuncs = finalAggDescs
-	return finalHashAgg, middleHashAgg, partialHashAgg, proj4Partial, nil
+	return finalHashAgg, middleHashAgg, partialHashAgg, nil, proj4Partial, nil
 }
 
 func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
@@ -2611,7 +2761,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			return invalidTask
 		}
 
-		final, middle, partial, proj4Partial, err := p.adjust3StagePhaseAgg(partialAgg, finalAgg, canUse3StageAgg, groupingSets, mpp)
+		final, middle, partial, proj4Mid, proj4Partial, err := p.adjustXStagePhaseAgg(partialAgg, finalAgg, canUse3StageAgg, groupingSets, mpp)
 		if err != nil {
 			return invalidTask
 		}
@@ -2627,8 +2777,21 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 
 		if middle != nil && canUse3StageAgg {
-			items := partial.(*PhysicalHashAgg).GroupByItems
-			partitionCols := make([]*property.MPPPartitionColumn, 0, len(items))
+			var items []expression.Expression
+			var partitionCols []*property.MPPPartitionColumn
+			if partial != nil {
+				// 3 stage, using the partial agg's grouping item to do the shuffle.
+				items = partial.(*PhysicalHashAgg).GroupByItems
+				partitionCols = make([]*property.MPPPartitionColumn, 0, len(items))
+			} else {
+				// 2 stage, using the temporary middle agg's grouping item to do the shuffle.
+				items = middle.(*PhysicalHashAgg).GroupByItems
+				partitionCols = make([]*property.MPPPartitionColumn, 0, len(items))
+				defer func() {
+					// clear the tmp recorded groupByItems.
+					middle.(*PhysicalHashAgg).GroupByItems = middle.(*PhysicalHashAgg).GroupByItems[:0]
+				}()
+			}
 			for _, expr := range items {
 				col, ok := expr.(*expression.Column)
 				if !ok {
@@ -2642,6 +2805,11 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 
 			exProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
 			newMpp := mpp.enforceExchanger(exProp)
+
+			if proj4Mid != nil {
+				attachPlan2Task(proj4Mid, newMpp)
+			}
+
 			attachPlan2Task(middle, newMpp)
 			mpp = newMpp
 		}

@@ -1562,11 +1562,11 @@ func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, 
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalExpand) Clone() (PhysicalPlan, error) {
 	np := new(PhysicalExpand)
-	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(np)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	np.basePhysicalPlan = *base
+	np.physicalSchemaProducer = *base
 	// clone ID cols.
 	np.GroupingIDCol = p.GroupingIDCol.Clone().(*expression.Column)
 

@@ -598,3 +598,62 @@ func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
 }
+
+func TestMPPMultiDistinct2Stage(t *testing.T) {
+	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+
+	// test table
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, d int);")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
+	tk.MustExec("set @@session.tidb_opt_enable_three_stage_multi_distinct_agg=1")
+	defer tk.MustExec("set @@session.tidb_opt_enable_three_stage_multi_distinct_agg=0")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
+	tk.MustExec("set @@session.tidb_opt_eliminate_local_agg_for_three_stage_distinct_agg=1;")
+	defer tk.MustExec("set @@session.tidb_opt_eliminate_local_agg_for_three_stage_distinct_agg=0;")
+	// todo: current mock regionCache won't scale the regions among tiFlash nodes. The under layer still collect data from only one of the nodes.
+	tk.MustExec("split table t BETWEEN (0) AND (5000) REGIONS 5;")
+	tk.MustExec("insert into t values(1000, 1000, 1000, 1)")
+	tk.MustExec("insert into t values(1000, 1000, 1000, 1)")
+	tk.MustExec("insert into t values(2000, 2000, 2000, 1)")
+	tk.MustExec("insert into t values(2000, 2000, 2000, 1)")
+	tk.MustExec("insert into t values(3000, 3000, 3000, 1)")
+	tk.MustExec("insert into t values(3000, 3000, 3000, 1)")
+	tk.MustExec("insert into t values(4000, 4000, 4000, 1)")
+	tk.MustExec("insert into t values(4000, 4000, 4000, 1)")
+	tk.MustExec("insert into t values(5000, 5000, 5000, 1)")
+	tk.MustExec("insert into t values(5000, 5000, 5000, 1)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	enforceMPPSuiteData := GetEnforceMPPSuiteData()
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+			tk.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
