@@ -48,14 +48,14 @@ func TestSetCdcWriteSource(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var txnOption uint64
-			err := SetCdcWriteSource(&txnOption, tc.cdcWriteSource)
+			err := SetCDCWriteSource(&txnOption, tc.cdcWriteSource)
 			if tc.expectedError != "" {
 				require.Regexp(t, tc.expectedError, err.Error())
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, tc.expectedSet, isCdcWriteSourceSet(txnOption))
-			require.Equal(t, tc.expectedCdcWriteSource, getCdcWriteSource(txnOption))
+			require.Equal(t, tc.expectedSet, isCDCWriteSourceSet(txnOption))
+			require.Equal(t, tc.expectedCdcWriteSource, getCDCWriteSource(txnOption))
 		})
 	}
 }
@@ -71,21 +71,21 @@ func TestSetLossyDDLReorgSource(t *testing.T) {
 	}{
 		{
 			name:                        "lossy ddl reorg source is set",
-			currentSource:               12, // SetCdcWriteSource
+			currentSource:               12, // SetCDCWriteSource
 			lossyDDLReorgSource:         1,
 			expectedSet:                 true,
 			expectedLossyDDLReorgSource: 1,
 		},
 		{
 			name:                        "lossy ddl reorg source is not set",
-			currentSource:               12, // SetCdcWriteSource
+			currentSource:               12, // SetCDCWriteSource
 			lossyDDLReorgSource:         0,
 			expectedSet:                 false,
 			expectedLossyDDLReorgSource: 0,
 		},
 		{
 			name:                "lossy ddl reorg source is not valid",
-			currentSource:       12, // SetCdcWriteSource
+			currentSource:       12, // SetCDCWriteSource
 			lossyDDLReorgSource: 256,
 			expectedError:       ".*out of lossy DDL reorg source range.*",
 		},

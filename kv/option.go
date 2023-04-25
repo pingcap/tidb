@@ -216,8 +216,8 @@ const (
 	lossyDDLReorgSourceShift  = cdcWriteSourceBits
 )
 
-// SetCdcWriteSource sets the TiCDC write source in the txnSource.
-func SetCdcWriteSource(txnSource *uint64, value uint64) error {
+// SetCDCWriteSource sets the TiCDC write source in the txnSource.
+func SetCDCWriteSource(txnSource *uint64, value uint64) error {
 	if value > cdcWriteSourceBits {
 		return errors.Errorf("value %d is out of TiCDC write source range, should be in [1, 15]",
 			value)
@@ -227,11 +227,11 @@ func SetCdcWriteSource(txnSource *uint64, value uint64) error {
 	return nil
 }
 
-func getCdcWriteSource(txnSource uint64) uint64 {
+func getCDCWriteSource(txnSource uint64) uint64 {
 	return txnSource & cdcWriteSourceMax
 }
 
-func isCdcWriteSourceSet(txnSource uint64) bool {
+func isCDCWriteSourceSet(txnSource uint64) bool {
 	return (txnSource & cdcWriteSourceMax) != 0
 }
 

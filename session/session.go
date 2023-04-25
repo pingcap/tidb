@@ -664,7 +664,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	// If the transaction is started by CDC, we need to set the CDCWriteSource option.
 	if sessVars.CDCWriteSource != 0 {
-		err := kv.SetCdcWriteSource(&txnSource, sessVars.CDCWriteSource)
+		err := kv.SetCDCWriteSource(&txnSource, sessVars.CDCWriteSource)
 		if err != nil {
 			return errors.Trace(err)
 		}
