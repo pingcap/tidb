@@ -565,14 +565,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Info("start to remove checkpoint data for log restore")
 			err = removeCheckpointDataForRestore(c, cfg.Config.Storage, cfg.checkpointLogRestoreTaskName, &cfg.Config)
 			if err != nil {
-				log.Info("failed to remove checkpoint data for log restore", zap.Error(err))
+				log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
 			}
 		}
 		if len(cfg.checkpointSnapshotRestoreTaskName) > 0 {
 			log.Info("start to remove checkpoint data for snapshot restore.")
 			err = removeCheckpointDataForRestore(c, cfg.FullBackupStorage, cfg.checkpointSnapshotRestoreTaskName, &cfg.Config)
 			if err != nil {
-				log.Info("failed to remove checkpoint data for snapshot restore", zap.Error(err))
+				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 			}
 		}
 		log.Info("all the checkpoint data is removed.")

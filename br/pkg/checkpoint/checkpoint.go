@@ -218,10 +218,10 @@ func (cr *ChecksumRunner) FlushChecksumItem(
 		defer cr.wg.Done()
 
 		failpoint.Inject("failed-after-checkpoint-flushes-checksum-x-times", func(v failpoint.Value) {
-			cr.flushCnt += 1
 			errCnt := v.(int)
 			if errCnt >= cr.flushCnt {
-				failpoint.Return(errors.Errorf("failpoint: failed after checkpoint flushes checksum %d times", errCnt))
+				cr.RecordError(errors.Errorf("failpoint: failed after checkpoint flushes checksum %d times", errCnt))
+				failpoint.Return()
 			}
 		})
 
