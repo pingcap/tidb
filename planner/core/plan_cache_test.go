@@ -532,7 +532,11 @@ func TestPreparedPlanCacheStats(t *testing.T) {
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustExec("analyze table t")
-	tk.MustExec(`execute st using @a`) // stats changes can affect prep cache hit
+	tk.MustExec("set tidb_plan_cache_invalidation_on_fresh_stats = 0")
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_plan_cache_invalidation_on_fresh_stats = 1")
+	tk.MustExec(`execute st using @a`) // stats changes can affect prep cache hit if we turn on the variable
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
