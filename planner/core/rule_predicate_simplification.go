@@ -16,6 +16,8 @@ package core
 
 import (
 	"context"
+	"errors"
+	"github.com/pingcap/tidb/sessionctx"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
@@ -78,7 +80,7 @@ func (s *baseLogicalPlan) predicateSimplification(opt *logicalOptimizeOp) Logica
 
 // updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for
 // a special case if an element in the inlist is not removed to keep the list not empty.
-func updateInPredicate(inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
+func updateInPredicate(sctx sessionctx.Context, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
 	_, inPredicateType := findPredicateType(inPredicate)
 	_, notEQPredicateType := findPredicateType(notEQPredicate)
 	if inPredicateType != inListPredicate || notEQPredicateType != notEqualPredicate {
@@ -90,8 +92,11 @@ func updateInPredicate(inPredicate expression.Expression, notEQPredicate express
 	var lastValue *expression.Constant
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
-		redudantValue := valueOK && value.Equal(v.GetCtx(), notEQValue)
-		if !redudantValue {
+		redundantValue := valueOK && value.Equal(v.GetCtx(), notEQValue)
+		if redundantValue {
+			sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("some redundant value in IN-list is pruned"))
+		}
+		if !redundantValue {
 			newValues = append(newValues, element)
 		}
 		if valueOK {
@@ -110,7 +115,7 @@ func updateInPredicate(inPredicate expression.Expression, notEQPredicate express
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(predicates []expression.Expression) []expression.Expression {
+func applyPredicateSimplification(sctx sessionctx.Context, predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
 		return predicates
 	}
@@ -124,12 +129,12 @@ func applyPredicateSimplification(predicates []expression.Expression) []expressi
 			jCol, jType := findPredicateType(jthPredicate)
 			if iCol == jCol {
 				if iType == notEqualPredicate && jType == inListPredicate {
-					predicates[j], specialCase = updateInPredicate(jthPredicate, ithPredicate)
+					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
 					if !specialCase {
 						removeValues = append(removeValues, i)
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
-					predicates[i], specialCase = updateInPredicate(ithPredicate, jthPredicate)
+					predicates[i], specialCase = updateInPredicate(sctx, ithPredicate, jthPredicate)
 					if !specialCase {
 						removeValues = append(removeValues, j)
 					}
@@ -148,8 +153,8 @@ func applyPredicateSimplification(predicates []expression.Expression) []expressi
 
 func (s *DataSource) predicateSimplification(opt *logicalOptimizeOp) LogicalPlan {
 	p := s.self.(*DataSource)
-	p.pushedDownConds = applyPredicateSimplification(p.pushedDownConds)
-	p.allConds = applyPredicateSimplification(p.allConds)
+	p.pushedDownConds = applyPredicateSimplification(p.ctx, p.pushedDownConds)
+	p.allConds = applyPredicateSimplification(p.ctx, p.allConds)
 	return p
 }
 
