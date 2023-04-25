@@ -2861,7 +2861,9 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			var e error
-			schemaVersion, e = t.GenSchemaVersions(128)
+			// To trigger full-reload instead of diff-reload, we need to increase the schema version
+			// by at least `domain.LoadSchemaDiffVersionGapThreshold`.
+			schemaVersion, e = t.GenSchemaVersions(64 + domain.LoadSchemaDiffVersionGapThreshold)
 			return e
 		},
 	); err != nil {
@@ -2881,7 +2883,9 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		return errors.Annotatef(err, "failed to put global schema verson %v to etcd", ver)
 	}
 
-	return nil
+	// proactively reload the domain once
+	err := rc.GetDomain().Reload()
+	return errors.Trace(err)
 }
 
 const (
