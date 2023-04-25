@@ -983,6 +983,10 @@ const (
 	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
 	// limitation, if the storage is not TiKV).
 	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
+	// TiDBSkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
 )
 
 // TiDB intentional limits
@@ -1260,6 +1264,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold             = time.Second
 	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
+	DefTiDBSkipMissingPartitionStats                 = true
 )
 
 // Process global variables.
@@ -1339,7 +1344,8 @@ var (
 	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
-	EnableResourceControl = atomic.NewBool(false)
+	EnableResourceControl     = atomic.NewBool(false)
+	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 )
 
 var (

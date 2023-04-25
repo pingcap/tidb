@@ -643,13 +643,14 @@ func (h *Handle) UpdateSessionVar() error {
 // In the column statistics, the variable `num` is equal to the number of columns in the partition table.
 // In the index statistics, the variable `num` is always equal to one.
 type GlobalStats struct {
-	Num         int
-	Count       int64
-	ModifyCount int64
-	Hg          []*statistics.Histogram
-	Cms         []*statistics.CMSketch
-	TopN        []*statistics.TopN
-	Fms         []*statistics.FMSketch
+	Hg                    []*statistics.Histogram
+	Cms                   []*statistics.CMSketch
+	TopN                  []*statistics.TopN
+	Fms                   []*statistics.FMSketch
+	MissingPartitionStats []string
+	Num                   int
+	Count                 int64
+	ModifyCount           int64
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -664,7 +665,24 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+	globalStats, err = h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+	if err != nil {
+		return
+	}
+	if len(globalStats.MissingPartitionStats) > 0 {
+		var item string
+		if isIndex == 0 {
+			item = "columns"
+		} else {
+			item = "index"
+			if len(histIDs) > 0 {
+				item += " " + globalTableInfo.FindIndexNameByID(histIDs[0])
+			}
+		}
+		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", globalTableInfo.Name.L),
+			zap.String("item", item), zap.Strings("missing", globalStats.MissingPartitionStats))
+	}
+	return
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -725,7 +743,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
 		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
 	}
-
+	skipMissingPartitionStats := variable.SkipMissingPartitionStats.Load()
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
 		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
@@ -740,8 +758,14 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		}
 		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
 		if allPartitionStats == nil || partitionStats == nil || !ok {
-			partitionStats, err = h.loadTablePartitionStats(tableInfo, &def)
-			if err != nil {
+			var terr error
+			partitionStats, terr = h.loadTablePartitionStats(tableInfo, &def)
+			if terr != nil {
+				if skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
+					globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
+					continue
+				}
+				err = terr
 				return
 			}
 			if allPartitionStats == nil {
@@ -749,27 +773,38 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			}
 			allPartitionStats[partitionID] = partitionStats
 		}
+		globalStats.Count += partitionStats.RealtimeCount
+		globalStats.ModifyCount += partitionStats.ModifyCount
 		for i := 0; i < globalStats.Num; i++ {
 			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			if !analyzed {
-				var errMsg string
+				var missingPart string
 				if isIndex == 0 {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
 				} else {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` index `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("table `%s` partition `%s` index `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
 				}
-				err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
+				if skipMissingPartitionStats {
+					globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, missingPart)
+					continue
+				}
+				err = types.ErrPartitionStatsMissing.GenWithStackByArgs(missingPart)
 				return
 			}
+
 			// partition stats is not empty but column stats(hist, topn) is missing
 			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
-				var errMsg string
+				var missingPart string
 				if isIndex == 0 {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
 				} else {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` index `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("table `%s` partition `%s` index `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
 				}
-				err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(errMsg)
+				if skipMissingPartitionStats {
+					globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, missingPart)
+					continue
+				}
+				err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(missingPart)
 				return
 			}
 			if i == 0 {
@@ -787,6 +822,11 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	// After collect all of the statistics from the partition-level stats,
 	// we should merge them together.
 	for i := 0; i < globalStats.Num; i++ {
+		if len(allHg[i]) == 0 {
+			// If all partitions have no stats, we skip merging global stats because it may not handle the case `len(allHg[i]) == 0`
+			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
+			continue
+		}
 		// Merge CMSketch
 		globalStats.Cms[i] = allCms[i][0].Copy()
 		for j := 1; j < partitionNum; j++ {
