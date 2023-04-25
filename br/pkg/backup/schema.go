@@ -68,7 +68,7 @@ func (ss *Schemas) SetCheckpointChecksum(checkpointChecksum map[int64]*checkpoin
 func (ss *Schemas) BackupSchemas(
 	ctx context.Context,
 	metaWriter *metautil.MetaWriter,
-	checkpointRunner *checkpoint.BackupRunner,
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.BackupKeyType, checkpoint.BackupValueType],
 	store kv.Storage,
 	statsHandle *handle.Handle,
 	backupTS uint64,

@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/hex"
 	"sync"
 
 	"github.com/pingcap/tidb/kv"
@@ -39,9 +40,9 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
-// Available implements BackendCtxMgr.Available interface.
-func (*MockBackendCtxMgr) Available() bool {
-	return true
+// CheckAvailable implements BackendCtxMgr.Available interface.
+func (*MockBackendCtxMgr) CheckAvailable() (bool, error) {
+	return true, nil
 }
 
 // Register implements BackendCtxMgr.Register interface.
@@ -93,6 +94,12 @@ func (m *MockBackendCtx) Register(jobID, indexID int64, _, _ string) (Engine, er
 // Unregister implements BackendCtx.Unregister interface.
 func (*MockBackendCtx) Unregister(jobID, indexID int64) {
 	logutil.BgLogger().Info("mock backend ctx unregister", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
+}
+
+// CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
+func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
+	logutil.BgLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
+	return nil
 }
 
 // FinishImport implements BackendCtx.FinishImport interface.
@@ -153,7 +160,9 @@ type MockWriter struct {
 
 // WriteRow implements Writer.WriteRow interface.
 func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
-	logutil.BgLogger().Info("mock writer write row", zap.Binary("key", key), zap.Binary("idxVal", idxVal))
+	logutil.BgLogger().Info("mock writer write row",
+		zap.String("key", hex.EncodeToString(key)),
+		zap.String("idxVal", hex.EncodeToString(idxVal)))
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	txn, err := m.sessCtx.Txn(true)

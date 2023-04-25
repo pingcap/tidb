@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -362,7 +363,7 @@ func insertDDLJobs2Table(se *sess.Session, updateRawArgs bool, jobs ...*model.Jo
 		if i != 0 {
 			sql.WriteString(",")
 		}
-		sql.WriteString(fmt.Sprintf("(%d, %t, %s, %s, %s, %d, %t)", job.ID, job.MayNeedReorg(), strconv.Quote(job2SchemaIDs(job)), strconv.Quote(job2TableIDs(job)), wrapKey2String(b), job.Type, !job.NotStarted()))
+		sql.WriteString(fmt.Sprintf("(%d, %t, %s, %s, %s, %d, %t)", job.ID, job.MayNeedReorg(), strconv.Quote(job2SchemaIDs(job)), strconv.Quote(job2TableIDs(job)), util.WrapKey2String(b), job.Type, !job.NotStarted()))
 	}
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
@@ -419,7 +420,7 @@ func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) er
 	if err != nil {
 		return err
 	}
-	sql := fmt.Sprintf(updateDDLJobSQL, wrapKey2String(b), job.ID)
+	sql := fmt.Sprintf(updateDDLJobSQL, util.WrapKey2String(b), job.ID)
 	_, err = se.Execute(context.Background(), sql, "update_job")
 	return errors.Trace(err)
 }
@@ -451,7 +452,7 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 // Caller should wrap this in a separate transaction, to avoid conflicts.
 func updateDDLReorgHandle(se *sess.Session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d where job_id = %d",
-		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, jobID)
+		element.ID, util.WrapKey2String(element.TypeKey), util.WrapKey2String(startKey), util.WrapKey2String(endKey), physicalTableID, jobID)
 	_, err := se.Execute(context.Background(), sql, "update_handle")
 	return err
 }
@@ -460,7 +461,7 @@ func updateDDLReorgHandle(se *sess.Session, jobID int64, startKey kv.Key, endKey
 func initDDLReorgHandle(s *sess.Session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	del := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", jobID)
 	ins := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
-		jobID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
+		jobID, element.ID, util.WrapKey2String(element.TypeKey), util.WrapKey2String(startKey), util.WrapKey2String(endKey), physicalTableID)
 	return s.RunInTxn(func(se *sess.Session) error {
 		_, err := se.Execute(context.Background(), del, "init_handle")
 		if err != nil {
@@ -499,13 +500,6 @@ func cleanDDLReorgHandles(se *sess.Session, job *model.Job) error {
 		_, err := se.Execute(context.Background(), sql, "clean_handle")
 		return err
 	})
-}
-
-func wrapKey2String(key []byte) string {
-	if len(key) == 0 {
-		return "''"
-	}
-	return fmt.Sprintf("0x%x", key)
 }
 
 func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error) {

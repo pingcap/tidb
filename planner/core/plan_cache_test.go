@@ -50,6 +50,26 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	require.NotNil(t, lru)
 }
 
+func TestIssue43311(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table test.t (id int, value decimal(7,4), c1 int, c2 int)`)
+	tk.MustExec(`insert into test.t values (1,1.9285,54,28), (1,1.9286,54,28)`)
+
+	tk.MustExec(`set session tidb_enable_non_prepared_plan_cache=0`)
+	tk.MustQuery(`select * from t where value = 54 / 28`).Check(testkit.Rows()) // empty
+
+	tk.MustExec(`set session tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustQuery(`select * from t where value = 54 / 28`).Check(testkit.Rows()) // empty
+	tk.MustQuery(`select * from t where value = 54 / 28`).Check(testkit.Rows()) // empty
+
+	tk.MustExec(`prepare st from 'select * from t where value = ? / ?'`)
+	tk.MustExec(`set @a=54, @b=28`)
+	tk.MustQuery(`execute st using @a, @b`).Check(testkit.Rows()) // empty
+	tk.MustQuery(`execute st using @a, @b`).Check(testkit.Rows()) // empty
+}
+
 func TestPlanCacheUnsafeRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -109,6 +129,7 @@ func TestNonPreparedPlanCacheDMLHints(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int)`)
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache_for_dml=1`)
 
 	tk.MustExec(`insert into t values (1)`)
 	tk.MustExec(`insert into t values (1)`)
@@ -1570,6 +1591,33 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheDMLSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=0")
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select a from t where a < 2 for update`)
+	tk.MustExec(`select a from t where a < 2 for update`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @x:=1`)
+	tk.MustExec(`set @x:=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`select a from t where a < 2 for update`)
+	tk.MustExec(`select a from t where a < 2 for update`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func TestNonPreparedPlanCacheUnderscoreCharset(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1863,6 +1911,7 @@ func TestNonPreparedPlanCacheDML(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache_for_dml=1`)
 	tk.MustExec("create table t (a int default 0, b int default 0)")
 
 	for _, sql := range []string{
@@ -1918,6 +1967,7 @@ func TestNonPreparedPlanCacheMultiStmt(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache_for_dml=1`)
 	tk.MustExec("create table t (a int)")
 
 	tk.MustExec("update t set a=1 where a<10")

@@ -1586,12 +1586,44 @@
           "TableReader_34 0.80 root  MppVersion: 1, data:ExchangeSender_33",
           "└─ExchangeSender_33 0.80 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_32 0.80 mpp[tiflash]  semi join, equal:[eq(test.t1.a, test.t2.b)]",
+          "    ├─ExchangeReceiver_17(Build) 8.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_16 8.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_15 8.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "    │     └─TableFullScan_14 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
+          "    └─Selection_13(Probe) 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      └─TableFullScan_12 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_broadcast_join_threshold_size=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_broadcast_join_threshold_count=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)",
+        "Plan": [
+          "TableReader_36 0.80 root  MppVersion: 1, data:ExchangeSender_35",
+          "└─ExchangeSender_35 0.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_34 0.80 mpp[tiflash]  semi join, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │ └─ExchangeSender_14 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.a, collate: binary]",
           "    │   └─Selection_13 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "    │     └─TableFullScan_12 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
-          "    └─Selection_17(Probe) 8.00 mpp[tiflash]  not(isnull(test.t2.b))",
-          "      └─TableFullScan_16 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+          "    └─ExchangeReceiver_19(Probe) 8.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_18 8.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.b, collate: binary]",
+          "        └─Selection_17 8.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "          └─TableFullScan_16 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
         ],
         "Warn": null
       }
@@ -3718,6 +3750,18 @@
   {
     "Name": "TestSingleConsumerCTE",
     "Cases": [
+      {
+        "SQL": "with base1 as (WITH RECURSIVE cte(a) AS (with tmp as (select 1 as a) SELECT a from tmp UNION SELECT a+1 FROM cte) SELECT * FROM cte) select * from base1; -- issue #43318",
+        "Plan": [
+          "CTEFullScan 2.00 root CTE:cte data:CTE_3",
+          "CTE_3 2.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#15",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 1.00 root  cast(plus(Column#16, 1), bigint(1) BINARY)->Column#18",
+          "  └─CTETable 1.00 root  Scan on CTE_3"
+        ],
+        "Warning": null
+      },
       {
         "SQL": "with cte as (select 1) select * from cte; -- inline cte",
         "Plan": [
@@ -8507,26 +8551,24 @@
       {
         "SQL": "select * from tcommon where a = 1 or b = 1 order by c limit 2",
         "Plan": [
-          "Projection 2.00 root  test.tcommon.a, test.tcommon.b, test.tcommon.c",
-          "└─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
-          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │ └─TableRangeScan 2.00 cop[tikv] table:tcommon range:[1,1], keep order:true, stats:pseudo",
-          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:tcommon keep order:false, stats:pseudo"
+          "IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "│ └─TableRangeScan 2.00 cop[tikv] table:tcommon range:[1,1], keep order:true, stats:pseudo",
+          "├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "│ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 19.99 cop[tikv] table:tcommon keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
       {
         "SQL": "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2",
         "Plan": [
-          "Projection 2.00 root  test.tcommon.a, test.tcommon.b, test.tcommon.c",
-          "└─IndexMerge 11.00 root  type: union, limit embedded(offset:0, count:2)",
-          "  ├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
-          "  │ └─TableRangeScan 1.00 cop[tikv] table:tcommon range:[1 2,1 2], keep order:true, stats:pseudo",
-          "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 11.00 cop[tikv] table:tcommon keep order:false, stats:pseudo"
+          "IndexMerge 11.00 root  type: union, limit embedded(offset:0, count:2)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
+          "│ └─TableRangeScan 1.00 cop[tikv] table:tcommon range:[1 2,1 2], keep order:true, stats:pseudo",
+          "├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "│ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 11.00 cop[tikv] table:tcommon keep order:false, stats:pseudo"
         ],
         "Warning": null
       }
