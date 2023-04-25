@@ -177,6 +177,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		logger:          e.logger,
 		regionSplitSize: int64(config.SplitRegionSize),
 		regionSplitKeys: int64(config.SplitRegionKeys),
+
+		firstErr: &common.OnceError{},
 	}, nil
 }
 
@@ -211,6 +213,9 @@ type TableImporter struct {
 	// the smallest auto-generated ID in current import.
 	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
 	lastInsertID uint64
+
+	// the first error occurred during import.
+	firstErr *common.OnceError
 }
 
 var _ JobImporter = &TableImporter{}
@@ -503,6 +508,7 @@ engineLoop:
 			if !common.IsContextCanceledError(err2) {
 				ti.logger.Error("failed to create engine", zap.Error(err2), zap.Int32("engineID", id))
 			}
+			ti.firstErr.Set(err2)
 			importTableCancelFn()
 			break
 		}
@@ -542,18 +548,17 @@ func (ti *TableImporter) createEngine(ctx context.Context, cancel context.Cancel
 }
 
 func (ti *TableImporter) ingestAndCleanupEngines(ctx context.Context, sortCancelFunc context.CancelFunc, engineCh chan *engine) error {
-	onceErr := common.OnceError{}
 	for en := range engineCh {
 		// only one engine can do ingest at a time.
 		// since ingest already has a large concurrency inside.
 		// we need to call ingestAndCleanup for each engine, since we need wait all its sub-routines to finish.
 		if err := en.ingestAndCleanup(ctx, ti); err != nil {
-			onceErr.Set(err)
+			ti.firstErr.Set(err)
 			// cancel goroutines used for encoding & sorting
 			sortCancelFunc()
 		}
 	}
-	return onceErr.Get()
+	return ti.firstErr.Get()
 }
 
 // IngestAndCleanup imports the engine and cleanup the engine data.

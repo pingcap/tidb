@@ -36,6 +36,8 @@ type engine struct {
 	logger     *zap.Logger
 	dataEngine *backend.OpenedEngine
 	// the group used to encode and sort the engine data.
+	// we use a separate group, so we can know what error happened in the sort phase for this engine.
+	// this group might be cancelled by other engine's sort or ingest.
 	sortEG    *errgroup.Group
 	sortEGCtx context.Context
 	sortTask  *log.Task
@@ -43,11 +45,13 @@ type engine struct {
 
 func (en *engine) asyncSort(importer *TableImporter, pool *worker.Pool, indexEngine *backend.OpenedEngine) {
 	for _, chunkCP := range en.chunks {
+		w := pool.Apply()
 		en.sortEG.Go(func() error {
-			w := pool.Apply()
 			defer pool.Recycle(w)
 			if err := ProcessChunk(en.sortEGCtx, chunkCP, importer, en.dataEngine, indexEngine, en.logger); err != nil {
-				// there might be multiple engine sorting at the same time, we need cancel other engines too.
+				importer.firstErr.Set(err)
+				// there might be multiple engine sorting at the same time, we need cancel other engines and
+				// ingest routine too.
 				en.importTableCancel()
 				return err
 			}
