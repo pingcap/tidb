@@ -1508,7 +1508,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 			panicSplitRegionClient{}, // make sure no further split region
 		),
 	}
-	local.BackendConfig.RangeConcurrency = 1
+	local.BackendConfig.WorkerConcurrency = 1
 	db, tmpPath := makePebbleDB(t, nil)
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	ctx := context.Background()
@@ -1703,7 +1703,6 @@ func TestDoImport(t *testing.T) {
 	ctx := context.Background()
 	l := &Backend{
 		BackendConfig: BackendConfig{
-			RangeConcurrency:  1,
 			WorkerConcurrency: 2,
 		},
 	}
