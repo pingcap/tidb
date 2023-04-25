@@ -2505,6 +2505,28 @@ var defaultSysVars = []*SysVar{
 			s.OptimizerFixControl = newMap
 			return nil
 		}},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLScanRUPerSecond, Value: strconv.FormatInt(DefTiDBTTLScanRUPerSecond, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64, AllowAutoValue: true, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			TTLScanRUPerSecond.Store(val)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.FormatInt(TTLScanRUPerSecond.Load(), 10), nil
+		}},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLDeleteRUPerSecond, Value: strconv.FormatInt(DefTiDBTTLDeleteRUPerSecond, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64, AllowAutoValue: true, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			TTLDeleteRUPerSecond.Store(val)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.FormatInt(TTLDeleteRUPerSecond.Load(), 10), nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

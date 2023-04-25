@@ -32,6 +32,13 @@ import (
 	"github.com/pkg/errors"
 )
 
+const (
+	// ScanResourceGroup is the resource group for TTL scan
+	ScanResourceGroup = "ttl_scan_rg"
+	// DeleteResourceGroup is the resource group for TTL delete
+	DeleteResourceGroup = "ttl_delete_rg"
+)
+
 func writeHex(in io.Writer, d types.Datum) error {
 	_, err := fmt.Fprintf(in, "x'%s'", hex.EncodeToString(d.GetBytes()))
 	return err
@@ -80,13 +87,14 @@ type SQLBuilder struct {
 	restoreCtx *format.RestoreCtx
 	state      sqlBuilderState
 
-	isReadOnly         bool
-	hasWriteExpireCond bool
+	isReadOnly           bool
+	hasWriteExpireCond   bool
+	useResourceGroupHint bool
 }
 
 // NewSQLBuilder creates a new TTLSQLBuilder
-func NewSQLBuilder(tbl *cache.PhysicalTable) *SQLBuilder {
-	b := &SQLBuilder{tbl: tbl, state: writeBegin}
+func NewSQLBuilder(tbl *cache.PhysicalTable, useResourceGroupHint bool) *SQLBuilder {
+	b := &SQLBuilder{tbl: tbl, state: writeBegin, useResourceGroupHint: useResourceGroupHint}
 	b.restoreCtx = format.NewRestoreCtx(format.DefaultRestoreFlags, &b.sb)
 	return b
 }
@@ -114,7 +122,11 @@ func (b *SQLBuilder) WriteSelect() error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
-	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY SQL_NO_CACHE ")
+	b.restoreCtx.WritePlain("SELECT ")
+	if b.useResourceGroupHint {
+		b.restoreCtx.WritePlainf("/*+ RESOURCE_GROUP(%s) */ ", ScanResourceGroup)
+	}
+	b.restoreCtx.WritePlain("LOW_PRIORITY SQL_NO_CACHE ")
 	b.writeColNames(b.tbl.KeyColumns, false)
 	b.restoreCtx.WritePlain(" FROM ")
 	if err := b.writeTblName(); err != nil {
@@ -135,7 +147,11 @@ func (b *SQLBuilder) WriteDelete() error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
-	b.restoreCtx.WritePlain("DELETE LOW_PRIORITY FROM ")
+	b.restoreCtx.WritePlain("DELETE ")
+	if b.useResourceGroupHint {
+		b.restoreCtx.WritePlainf("/*+ RESOURCE_GROUP(%s) */ ", DeleteResourceGroup)
+	}
+	b.restoreCtx.WritePlain("LOW_PRIORITY FROM ")
 	if err := b.writeTblName(); err != nil {
 		return err
 	}
@@ -336,7 +352,7 @@ func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 }
 
 // NextSQL creates next sql of the scan task
-func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
+func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLimit int, rHint bool) (string, error) {
 	if g.exhausted {
 		return "", errors.New("generator is exhausted")
 	}
@@ -370,7 +386,7 @@ func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLim
 		}
 	}
 	g.limit = nextLimit
-	return g.buildSQL()
+	return g.buildSQL(rHint)
 }
 
 // IsExhausted returns whether the generator is exhausted
@@ -399,7 +415,7 @@ func (g *ScanQueryGenerator) setStack(key []types.Datum) error {
 	return nil
 }
 
-func (g *ScanQueryGenerator) buildSQL() (string, error) {
+func (g *ScanQueryGenerator) buildSQL(useResourceGroupHint bool) (string, error) {
 	if g.limit <= 0 {
 		return "", errors.Errorf("invalid limit '%d'", g.limit)
 	}
@@ -408,7 +424,7 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 		return "", nil
 	}
 
-	b := NewSQLBuilder(g.tbl)
+	b := NewSQLBuilder(g.tbl, useResourceGroupHint)
 	if err := b.WriteSelect(); err != nil {
 		return "", err
 	}
@@ -456,12 +472,12 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 }
 
 // BuildDeleteSQL builds a delete SQL
-func BuildDeleteSQL(tbl *cache.PhysicalTable, rows [][]types.Datum, expire time.Time) (string, error) {
+func BuildDeleteSQL(tbl *cache.PhysicalTable, rows [][]types.Datum, expire time.Time, rHint bool) (string, error) {
 	if len(rows) == 0 {
 		return "", errors.New("Cannot build delete SQL with empty rows")
 	}
 
-	b := NewSQLBuilder(tbl)
+	b := NewSQLBuilder(tbl, rHint)
 	if err := b.WriteDelete(); err != nil {
 		return "", err
 	}

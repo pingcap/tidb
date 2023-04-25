@@ -26,6 +26,7 @@ import (
 // Phases to trace
 var (
 	PhaseIdle      = "idle"
+	PhaseBlockIdle = "block_idle"
 	PhaseBeginTxn  = "begin_txn"
 	PhaseCommitTxn = "commit_txn"
 	PhaseQuery     = "query"
@@ -127,6 +128,7 @@ func InitMetricsVars() {
 func initWorkerPhases(workerType string) map[string]prometheus.Counter {
 	return map[string]prometheus.Counter{
 		PhaseIdle:      metrics.TTLPhaseTime.WithLabelValues(workerType, PhaseIdle),
+		PhaseBlockIdle: metrics.TTLPhaseTime.WithLabelValues(workerType, PhaseBlockIdle),
 		PhaseBeginTxn:  metrics.TTLPhaseTime.WithLabelValues(workerType, PhaseBeginTxn),
 		PhaseCommitTxn: metrics.TTLPhaseTime.WithLabelValues(workerType, PhaseCommitTxn),
 		PhaseQuery:     metrics.TTLPhaseTime.WithLabelValues(workerType, PhaseQuery),

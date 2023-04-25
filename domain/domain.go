@@ -954,13 +954,6 @@ func (do *Domain) Close() {
 		return
 	}
 	startTime := time.Now()
-	if do.ddl != nil {
-		terror.Log(do.ddl.Stop())
-	}
-	if do.info != nil {
-		do.info.RemoveServerInfo()
-		do.info.RemoveMinStartTS()
-	}
 	ttlJobManager := do.ttlJobManager.Load()
 	if ttlJobManager != nil {
 		ttlJobManager.Stop()
@@ -973,6 +966,13 @@ func (do *Domain) Close() {
 		if err != nil {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
 		}
+	}
+	if do.ddl != nil {
+		terror.Log(do.ddl.Stop())
+	}
+	if do.info != nil {
+		do.info.RemoveServerInfo()
+		do.info.RemoveMinStartTS()
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
@@ -2706,7 +2706,13 @@ func (do *Domain) StartTTLJobManager() {
 			logutil.BgLogger().Info("ttlJobManager exited.")
 		}()
 
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient)
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, func() bool {
+			if d := do.DDL(); d != nil {
+				return d.OwnerManager().IsOwner()
+			}
+			return false
+		})
+
 		do.ttlJobManager.Store(ttlJobManager)
 		ttlJobManager.Start()
 

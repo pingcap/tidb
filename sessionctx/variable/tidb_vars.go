@@ -983,6 +983,10 @@ const (
 	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
 	// limitation, if the storage is not TiKV).
 	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
+	// TiDBTTLScanRUPerSecond limits the RU per second for TTL scan
+	TiDBTTLScanRUPerSecond = "tidb_ttl_scan_ru_per_sec"
+	// TiDBTTLDeleteRUPerSecond limits the RU per second for TTL delte
+	TiDBTTLDeleteRUPerSecond = "tidb_ttl_delete_ru_per_sec"
 )
 
 // TiDB intentional limits
@@ -1251,6 +1255,8 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                        = 4
 	DefTiDBTTLDeleteWorkerCount                      = 4
+	DefTiDBTTLScanRUPerSecond                        = -1
+	DefTiDBTTLDeleteRUPerSecond                      = -1
 	DefaultExchangeCompressionMode                   = kv.ExchangeCompressionModeUnspecified
 	DefTiDBEnableResourceControl                     = true
 	DefTiDBPessimisticTransactionFairLocking         = false
@@ -1330,6 +1336,8 @@ var (
 	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
 	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
 	TTLDeleteWorkerCount               = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
+	TTLScanRUPerSecond                 = atomic.NewInt64(DefTiDBTTLScanRUPerSecond)
+	TTLDeleteRUPerSecond               = atomic.NewInt64(DefTiDBTTLDeleteRUPerSecond)
 	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)

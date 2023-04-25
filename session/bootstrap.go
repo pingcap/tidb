@@ -586,6 +586,11 @@ const (
        PRIMARY KEY (job_id),
        KEY (create_time),
        KEY (create_user));`
+
+	// CreateTTLScanResourceGroup creates a resource group for TTL scan
+	CreateTTLScanResourceGroup = `CREATE RESOURCE GROUP IF NOT EXISTS ttl_scan_rg RU_PER_SEC = 1000000 PRIORITY = LOW BURSTABLE`
+	// CreateTTLDeleteResourceGroup creates a resource group for TTL delete
+	CreateTTLDeleteResourceGroup = `CREATE RESOURCE GROUP IF NOT EXISTS ttl_delete_rg RU_PER_SEC = 1000000 PRIORITY = LOW BURSTABLE`
 )
 
 // bootstrap initiates system DB for a store.
@@ -2620,6 +2625,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalTask)
 	// Create load_data_jobs
 	mustExecute(s, CreateLoadDataJobs)
+	// Create resource group ttl_scan_rg
+	mustExecute(s, CreateTTLScanResourceGroup)
+	// Create resource group ttl_delete_rg
+	mustExecute(s, CreateTTLDeleteResourceGroup)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

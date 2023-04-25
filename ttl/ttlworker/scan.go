@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/sqlbuilder"
@@ -148,6 +149,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 
 	retrySQL := ""
 	retryTimes := 0
+	resourceGroupThrottledRetryTimes := 0
 	var lastResult [][]types.Datum
 	for {
 		if err = taskCtx.Err(); err != nil {
@@ -166,7 +168,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		sql := retrySQL
 		if sql == "" {
 			limit := int(variable.TTLScanBatchSize.Load())
-			if sql, err = generator.NextSQL(lastResult, limit); err != nil {
+			if sql, err = generator.NextSQL(lastResult, limit, variable.TTLScanRUPerSecond.Load() > 0); err != nil {
 				return t.result(err)
 			}
 		}
@@ -180,10 +182,11 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		selectInterval := time.Since(sqlStart)
 		if sqlErr != nil {
 			metrics.SelectErrorDuration.Observe(selectInterval.Seconds())
-			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry && ctx.Err() == nil
+			needRetry := retryable && (retryTimes-resourceGroupThrottledRetryTimes) < scanTaskExecuteSQLMaxRetry && ctx.Err() == nil
 			logutil.BgLogger().Error("execute query for ttl scan task failed",
 				zap.String("SQL", sql),
 				zap.Int("retryTimes", retryTimes),
+				zap.Int("resourceGroupThrottledRetryTimes", resourceGroupThrottledRetryTimes),
 				zap.Bool("needRetry", needRetry),
 				zap.Error(sqlErr),
 			)
@@ -193,6 +196,9 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 			}
 			retrySQL = sql
 			retryTimes++
+			if errors.ErrorEqual(sqlErr, derr.ErrResourceGroupThrottled) {
+				resourceGroupThrottledRetryTimes++
+			}
 
 			tracer.EnterPhase(metrics.PhaseWaitRetry)
 			select {

@@ -33,11 +33,13 @@ import (
 	"github.com/pingcap/tidb/ttl/client"
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
+	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 const scanTaskNotificationType string = "scan"
@@ -106,10 +108,15 @@ type JobManager struct {
 	taskManager *taskManager
 
 	lastReportDelayMetricsTime time.Time
+
+	ownerFunc               func() bool
+	lastSyncRU              time.Time
+	resourceGroupRU         map[string]string
+	resourceGroupRetryAfter map[string]time.Time
 }
 
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *clientv3.Client) (manager *JobManager) {
+func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *clientv3.Client, ownerFunc func() bool) (manager *JobManager) {
 	manager = &JobManager{}
 	manager.id = id
 	manager.store = store
@@ -130,7 +137,13 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 	}
 
 	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id, store)
-
+	if ownerFunc != nil {
+		manager.ownerFunc = ownerFunc
+	} else {
+		manager.ownerFunc = func() bool { return false }
+	}
+	manager.lastSyncRU = time.UnixMicro(0)
+	manager.resourceGroupRU = make(map[string]string, 2)
 	return
 }
 
@@ -159,10 +172,12 @@ func (m *JobManager) jobLoop() error {
 	updateTaskHeartBeatTicker := time.Tick(ttlTaskHeartBeatTickerInterval)
 	taskCheckTicker := time.Tick(time.Second * 5)
 	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
+	resetResourceGroupTicker := time.Tick(5 * time.Second)
 
 	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
 	scanTaskNotificationWatcher := m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
 	m.taskManager.resizeWorkersWithSysVar()
+	m.resetResourceGroups(se)
 	for {
 		m.reportMetrics(se)
 		m.taskManager.reportMetrics()
@@ -249,6 +264,8 @@ func (m *JobManager) jobLoop() error {
 			if m.taskManager.handleScanFinishedTask() {
 				m.taskManager.rescheduleTasks(se, now)
 			}
+		case <-resetResourceGroupTicker:
+			m.resetResourceGroups(se)
 		}
 	}
 }
@@ -734,6 +751,86 @@ func (m *JobManager) GetCommandCli() client.CommandClient {
 // GetNotificationCli returns the notification client
 func (m *JobManager) GetNotificationCli() client.NotificationClient {
 	return m.notificationCli
+}
+
+func (m *JobManager) syncRU(se session.Session) {
+	defer func() {
+		m.lastSyncRU = time.Now()
+	}()
+
+	rows, err := se.ExecuteSQL(
+		m.ctx,
+		"SELECT NAME, RU_PER_SEC FROM information_schema.resource_groups WHERE NAME in (%?, %?)",
+		sqlbuilder.ScanResourceGroup, sqlbuilder.DeleteResourceGroup,
+	)
+
+	if err != nil {
+		logutil.BgLogger().Error("failed to sync TTL resource group info", zap.Error(err))
+		return
+	}
+
+	maps.Clear(m.resourceGroupRU)
+	for _, row := range rows {
+		group := row.GetString(0)
+		ru := row.GetString(1)
+		m.resourceGroupRU[group] = ru
+	}
+}
+
+func (m *JobManager) resetOneResourceGroup(se session.Session, group string, to int64) {
+	ru := "1000000"
+	if to > 0 {
+		ru = strconv.FormatInt(to, 10)
+	}
+
+	doCreate := true
+	if val, ok := m.resourceGroupRU[group]; ok {
+		if val == ru {
+			return
+		}
+		doCreate = false
+	}
+
+	var sb strings.Builder
+	if doCreate {
+		sb.WriteString("CREATE RESOURCE GROUP IF NOT EXISTS")
+	} else {
+		sb.WriteString("ALTER RESOURCE GROUP")
+	}
+	sb.WriteString(fmt.Sprintf(" %s RU_PER_SEC = %s PRIORITY = LOW BURSTABLE", group, ru))
+	sql := sb.String()
+
+	logutil.BgLogger().Info("resource group RU changed, update it",
+		zap.String("group", group),
+		zap.Int64("ru", to),
+		zap.String("setRU", ru),
+		zap.String("SQL", sql),
+	)
+
+	if _, err := se.ExecuteSQL(m.ctx, sql); err != nil {
+		logutil.BgLogger().Error("failed to set TTL resource group", zap.Error(err), zap.String("SQL", sql))
+		return
+	}
+	m.resourceGroupRU[group] = ru
+}
+
+func (m *JobManager) resetResourceGroups(se session.Session) {
+	defer func() {
+		if !m.taskManager.resourceGroupReady && len(m.resourceGroupRU) >= 2 {
+			m.taskManager.setResourceGroupReady()
+		}
+	}()
+
+	isOwner := m.ownerFunc()
+	syncInterval := 2 * time.Minute
+	if (isOwner || !m.taskManager.resourceGroupReady) && time.Now().After(m.lastSyncRU.Add(syncInterval)) {
+		m.syncRU(se)
+	}
+
+	if isOwner {
+		m.resetOneResourceGroup(se, sqlbuilder.ScanResourceGroup, variable.TTLScanRUPerSecond.Load())
+		m.resetOneResourceGroup(se, sqlbuilder.DeleteResourceGroup, variable.TTLDeleteRUPerSecond.Load())
+	}
 }
 
 // TTLSummary is the summary for TTL job

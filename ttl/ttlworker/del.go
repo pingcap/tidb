@@ -18,25 +18,30 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
 
 const (
-	delMaxRetry        = 3
-	delRetryBufferSize = 128
-	delRetryInterval   = time.Second * 5
+	delMaxRetry                   = 3
+	delRetryBufferSize            = 128
+	delMaxInfiniteRetryBufferSize = 1024
+	delRetryInterval              = time.Second * 5
 )
 
 var globalDelRateLimiter = newDelRateLimiter()
@@ -85,7 +90,7 @@ type ttlDeleteTask struct {
 	statistics *ttlStatistics
 }
 
-func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (retryRows [][]types.Datum) {
+func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (retryRows [][]types.Datum, infiniteRetryRows [][]types.Datum) {
 	tracer := metrics.PhaseTracerFromCtx(ctx)
 	defer tracer.EnterPhase(tracer.Phase())
 	tracer.EnterPhase(metrics.PhaseOther)
@@ -93,6 +98,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 	leftRows := t.rows
 	se := newTableSession(rawSe, t.tbl, t.expire)
 	for len(leftRows) > 0 {
+		tracer.EnterPhase(metrics.PhaseOther)
 		maxBatch := variable.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
 		if int64(len(leftRows)) < maxBatch {
@@ -103,7 +109,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			leftRows = leftRows[maxBatch:]
 		}
 
-		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, delBatch, t.expire)
+		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, delBatch, t.expire, variable.TTLDeleteRUPerSecond.Load() > 0)
 		if err != nil {
 			t.statistics.IncErrorRows(len(delBatch))
 			logutil.BgLogger().Warn(
@@ -111,15 +117,14 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 				zap.Error(err),
 				zap.String("table", t.tbl.Schema.O+"."+t.tbl.Name.O),
 			)
-			return
+			continue
 		}
 
 		tracer.EnterPhase(metrics.PhaseWaitToken)
 		if err = globalDelRateLimiter.Wait(ctx); err != nil {
 			t.statistics.IncErrorRows(len(delBatch))
-			return
+			continue
 		}
-		tracer.EnterPhase(metrics.PhaseOther)
 
 		sqlStart := time.Now()
 		_, needRetry, err := se.ExecuteSQLWithCheck(ctx, sql)
@@ -135,10 +140,17 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			)
 
 			if needRetry {
-				if retryRows == nil {
-					retryRows = make([][]types.Datum, 0, len(leftRows)+len(delBatch))
+				if shouldErrorInfiniteRetry(err) {
+					if infiniteRetryRows == nil {
+						infiniteRetryRows = make([][]types.Datum, 0, len(leftRows)+len(delBatch))
+					}
+					infiniteRetryRows = append(infiniteRetryRows, delBatch...)
+				} else {
+					if retryRows == nil {
+						retryRows = make([][]types.Datum, 0, len(leftRows)+len(delBatch))
+					}
+					retryRows = append(retryRows, delBatch...)
 				}
-				retryRows = append(retryRows, delBatch...)
 			} else {
 				t.statistics.IncErrorRows(len(delBatch))
 			}
@@ -148,7 +160,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		metrics.DeleteSuccessDuration.Observe(sqlInterval.Seconds())
 		t.statistics.IncSuccessRows(len(delBatch))
 	}
-	return retryRows
+	return
 }
 
 type ttlDelRetryItem struct {
@@ -237,19 +249,27 @@ func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]t
 	return true
 }
 
+func shouldErrorInfiniteRetry(err error) bool {
+	return errors.ErrorEqual(err, derr.ErrResourceGroupThrottled)
+}
+
 type ttlDeleteWorker struct {
 	baseWorker
-	delCh       <-chan *ttlDeleteTask
-	sessionPool sessionPool
-	retryBuffer *ttlDelRetryBuffer
+	delCh               <-chan *ttlDeleteTask
+	sessionPool         sessionPool
+	retryBuffer         *ttlDelRetryBuffer
+	infiniteRetryBuffer *ttlDelRetryBuffer
 }
 
 func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool sessionPool) *ttlDeleteWorker {
 	w := &ttlDeleteWorker{
-		delCh:       delCh,
-		sessionPool: sessPool,
-		retryBuffer: newTTLDelRetryBuffer(),
+		delCh:               delCh,
+		sessionPool:         sessPool,
+		retryBuffer:         newTTLDelRetryBuffer(),
+		infiniteRetryBuffer: newTTLDelRetryBuffer(),
 	}
+	w.infiniteRetryBuffer.maxSize = math.MaxInt
+	w.infiniteRetryBuffer.maxRetry = math.MaxInt
 	w.init(w.loop)
 	return w
 }
@@ -269,8 +289,16 @@ func (w *ttlDeleteWorker) loop() error {
 
 	ctx := metrics.CtxWithPhaseTracer(w.baseWorker.ctx, tracer)
 
-	doRetry := func(task *ttlDeleteTask) [][]types.Datum {
-		return task.doDelete(ctx, se)
+	doNormalBufferRetry := func(task *ttlDeleteTask) [][]types.Datum {
+		retryRows, infiniteRetryRows := task.doDelete(ctx, se)
+		w.infiniteRetryBuffer.RecordTaskResult(task, infiniteRetryRows)
+		return retryRows
+	}
+
+	doInfiniteBufferRetry := func(task *ttlDeleteTask) [][]types.Datum {
+		retryRows, infiniteRetryRows := task.doDelete(ctx, se)
+		w.retryBuffer.RecordTaskResult(task, retryRows)
+		return infiniteRetryRows
 	}
 
 	timer := time.NewTimer(w.retryBuffer.retryInterval)
@@ -283,15 +311,42 @@ func (w *ttlDeleteWorker) loop() error {
 			return nil
 		case <-timer.C:
 			tracer.EnterPhase(metrics.PhaseOther)
-			nextInterval := w.retryBuffer.DoRetry(doRetry)
+			nextInterval := w.infiniteRetryBuffer.DoRetry(doInfiniteBufferRetry)
+			if interval := w.retryBuffer.DoRetry(doNormalBufferRetry); interval < nextInterval {
+				nextInterval = interval
+			}
 			timer.Reset(nextInterval)
 		case task, ok := <-w.delCh:
 			tracer.EnterPhase(metrics.PhaseOther)
 			if !ok {
 				return nil
 			}
-			retryRows := task.doDelete(ctx, se)
+			retryRows, infiniteRetryRows := task.doDelete(ctx, se)
 			w.retryBuffer.RecordTaskResult(task, retryRows)
+			w.infiniteRetryBuffer.RecordTaskResult(task, infiniteRetryRows)
+		}
+
+		if w.infiniteRetryBuffer.Len() < delMaxInfiniteRetryBufferSize {
+			continue
+		}
+
+		backToNormalBufferSize := mathutil.Max(delMaxInfiniteRetryBufferSize-4, 0)
+		logutil.BgLogger().Warn(
+			"ttlDeleteWorker infiniteRetryBuffer is full, waiting back to normal",
+			zap.Int("size", w.infiniteRetryBuffer.Len()),
+			zap.Int("backToNormalSize", backToNormalBufferSize),
+		)
+
+		for w.Status() == workerStatusRunning && w.infiniteRetryBuffer.Len() > backToNormalBufferSize {
+			tracer.EnterPhase(metrics.PhaseBlockIdle)
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-timer.C:
+				tracer.EnterPhase(metrics.PhaseOther)
+				nextInterval := w.infiniteRetryBuffer.DoRetry(doInfiniteBufferRetry)
+				timer.Reset(nextInterval)
+			}
 		}
 	}
 	return nil

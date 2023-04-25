@@ -68,7 +68,7 @@ func TestParallelLockNewJob(t *testing.T) {
 
 	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
 	// simply lock a new job
-	m := ttlworker.NewJobManager("test-id", nil, store, nil)
+	m := ttlworker.NewJobManager("test-id", nil, store, nil, func() bool { return true })
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 	se := sessionFactory()
@@ -91,7 +91,7 @@ func TestParallelLockNewJob(t *testing.T) {
 			jobManagerID := fmt.Sprintf("test-ttl-manager-%d", j)
 			wg.Add(1)
 			go func() {
-				m := ttlworker.NewJobManager(jobManagerID, nil, store, nil)
+				m := ttlworker.NewJobManager(jobManagerID, nil, store, nil, func() bool { return true })
 				m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 				se := sessionFactory()
@@ -125,7 +125,7 @@ func TestFinishJob(t *testing.T) {
 	tk.MustExec("insert into mysql.tidb_ttl_table_status(table_id) values (2)")
 
 	// finish with error
-	m := ttlworker.NewJobManager("test-id", nil, store, nil)
+	m := ttlworker.NewJobManager("test-id", nil, store, nil, func() bool { return true })
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 	se := sessionFactory()
 	startTime := time.Now()
@@ -402,7 +402,7 @@ func TestRescheduleJobs(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 
 	se := sessionFactory()
-	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool { return true })
 	m.TaskManager().ResizeWorkersWithSysVar()
 	require.NoError(t, m.InfoSchemaCache().Update(se))
 	// schedule jobs
@@ -420,7 +420,7 @@ func TestRescheduleJobs(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
 
 	// another manager should get this job, if the heart beat is not updated
-	anotherManager := ttlworker.NewJobManager("manager-2", nil, store, nil)
+	anotherManager := ttlworker.NewJobManager("manager-2", nil, store, nil, func() bool { return true })
 	anotherManager.TaskManager().ResizeWorkersWithSysVar()
 	require.NoError(t, anotherManager.InfoSchemaCache().Update(se))
 	anotherManager.RescheduleJobs(se, now.Add(time.Hour))
@@ -456,7 +456,7 @@ func TestJobTimeout(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 
 	se := sessionFactory()
-	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool { return true })
 	m.TaskManager().ResizeWorkersWithSysVar()
 	require.NoError(t, m.InfoSchemaCache().Update(se))
 	// schedule jobs
@@ -492,7 +492,7 @@ func TestTriggerScanTask(t *testing.T) {
 
 	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
 
-	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool { return true })
 	require.NoError(t, m.InfoSchemaCache().Update(se))
 	m.TaskManager().ResizeWorkersWithSysVar()
 	m.Start()
@@ -640,7 +640,7 @@ func TestJobMetrics(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 
 	se := sessionFactory()
-	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool { return true })
 	m.TaskManager().ResizeWorkersWithSysVar()
 	require.NoError(t, m.InfoSchemaCache().Update(se))
 	// schedule jobs

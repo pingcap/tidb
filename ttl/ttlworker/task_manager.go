@@ -90,8 +90,9 @@ type taskManager struct {
 	infoSchemaCache *cache.InfoSchemaCache
 	runningTasks    []*runningScanTask
 
-	delCh         chan *ttlDeleteTask
-	notifyStateCh chan interface{}
+	delCh              chan *ttlDeleteTask
+	notifyStateCh      chan interface{}
+	resourceGroupReady bool
 }
 
 func newTaskManager(ctx context.Context, sessPool sessionPool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
@@ -112,6 +113,10 @@ func newTaskManager(ctx context.Context, sessPool sessionPool, infoSchemaCache *
 		delCh:         make(chan *ttlDeleteTask),
 		notifyStateCh: make(chan interface{}, 1),
 	}
+}
+
+func (m *taskManager) setResourceGroupReady() {
+	m.resourceGroupReady = true
 }
 
 func (m *taskManager) resizeWorkersWithSysVar() {
@@ -271,7 +276,7 @@ func (m *taskManager) idleScanWorkers() []scanWorker {
 
 func (m *taskManager) rescheduleTasks(se session.Session, now time.Time) {
 	idleScanWorkers := m.idleScanWorkers()
-	if len(idleScanWorkers) == 0 {
+	if len(idleScanWorkers) == 0 || !m.resourceGroupReady {
 		return
 	}
 

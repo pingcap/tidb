@@ -359,9 +359,10 @@ func TestResourceGroups(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
+	reservedGroups := uint64(3)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, reservedGroups, usage.ResourceControlUsage.NumResourceGroups)
 	require.Equal(t, true, usage.ResourceControlUsage.Enabled)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'ON'")
@@ -369,27 +370,27 @@ func TestResourceGroups(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, true, usage.ResourceControlUsage.Enabled)
-	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, reservedGroups+1, usage.ResourceControlUsage.NumResourceGroups)
 
 	tk.MustExec("create resource group y ru_per_sec=100")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, uint64(3), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, reservedGroups+2, usage.ResourceControlUsage.NumResourceGroups)
 
 	tk.MustExec("alter resource group y ru_per_sec=200")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, uint64(3), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, reservedGroups+2, usage.ResourceControlUsage.NumResourceGroups)
 
 	tk.MustExec("drop resource group y")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, reservedGroups+1, usage.ResourceControlUsage.NumResourceGroups)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'OFF'")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, reservedGroups+1, usage.ResourceControlUsage.NumResourceGroups)
 	require.Equal(t, false, usage.ResourceControlUsage.Enabled)
 }
 
