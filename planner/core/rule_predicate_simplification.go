@@ -17,10 +17,9 @@ package core
 import (
 	"context"
 	"errors"
-	"github.com/pingcap/tidb/sessionctx"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/sessionctx"
 	"golang.org/x/exp/slices"
 )
 
@@ -80,7 +79,7 @@ func (s *baseLogicalPlan) predicateSimplification(opt *logicalOptimizeOp) Logica
 
 // updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for
 // a special case if an element in the inlist is not removed to keep the list not empty.
-func updateInPredicate(sctx sessionctx.Context, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
+func updateInPredicate(inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
 	_, inPredicateType := findPredicateType(inPredicate)
 	_, notEQPredicateType := findPredicateType(notEQPredicate)
 	if inPredicateType != inListPredicate || notEQPredicateType != notEqualPredicate {
@@ -93,9 +92,6 @@ func updateInPredicate(sctx sessionctx.Context, inPredicate expression.Expressio
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
 		redundantValue := valueOK && value.Equal(v.GetCtx(), notEQValue)
-		if redundantValue {
-			sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("some redundant value in IN-list is pruned"))
-		}
 		if !redundantValue {
 			newValues = append(newValues, element)
 		}
@@ -129,12 +125,14 @@ func applyPredicateSimplification(sctx sessionctx.Context, predicates []expressi
 			jCol, jType := findPredicateType(jthPredicate)
 			if iCol == jCol {
 				if iType == notEqualPredicate && jType == inListPredicate {
-					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
+					predicates[j], specialCase = updateInPredicate(jthPredicate, ithPredicate)
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
 					if !specialCase {
 						removeValues = append(removeValues, i)
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
-					predicates[i], specialCase = updateInPredicate(sctx, ithPredicate, jthPredicate)
+					predicates[i], specialCase = updateInPredicate(ithPredicate, jthPredicate)
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
 					if !specialCase {
 						removeValues = append(removeValues, j)
 					}
