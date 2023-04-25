@@ -28,6 +28,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
@@ -1147,6 +1148,10 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
+	failpoint.Inject("failed-before-full-restore", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed before full restore"))
+	})
+
 	recorder := tiflashrec.New()
 	cfg.tiflashRecorder = recorder
 	// restore full snapshot.
@@ -1160,6 +1165,10 @@ func RunStreamRestore(
 		cfg.Config.Storage = logStorage
 	} else if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
 		log.Info("load tiflash records from checkpoint")
+		_, err := glue.GetConsole(g).Out().Write([]byte(fmt.Sprintf("%s command is skipped due to checkpoint mode for restore\n", FullRestoreCmd)))
+		if err != nil {
+			return errors.Trace(err)
+		}
 		cfg.tiflashRecorder.Load(curTaskInfo.TiFlashItems)
 	}
 	// restore log.
@@ -1270,6 +1279,7 @@ func restoreStream(
 	taskName := getStreamRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
 	if cfg.UseCheckpoint {
+		cfg.checkpointLogRestoreTaskName = taskName
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
 		if err != nil {
 			return errors.Trace(err)
@@ -1291,23 +1301,23 @@ func restoreStream(
 		return err
 	}
 
-	// get full backup meta to generate rewrite rules.
-	fullBackupTables, err := initFullBackupTables(ctx, cfg)
+	// get full backup meta storage to generate rewrite rules.
+	fullBackupStorage, err := parseFullBackupTablesStorage(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	// load the id maps only when the checkpoint mode is used and not the first execution
 	newTask := true
 	if taskInfo != nil && taskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist {
 		newTask = false
 	}
 	// get the schemas ID replace information.
 	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &restore.InitSchemaConfig{
-		IsNewTask:       newTask,
-		HasFullRestore:  len(cfg.FullBackupStorage) > 0,
-		TableFilter:     cfg.TableFilter,
-		TiFlashRecorder: cfg.tiflashRecorder,
-		Tables:          fullBackupTables,
+		IsNewTask:         newTask,
+		HasFullRestore:    len(cfg.FullBackupStorage) > 0,
+		TableFilter:       cfg.TableFilter,
+		TiFlashRecorder:   cfg.tiflashRecorder,
+		FullBackupStorage: fullBackupStorage,
 	})
 	if err != nil {
 		return errors.Trace(err)
@@ -1637,63 +1647,24 @@ func getGlobalResolvedTS(
 	return globalCheckpointTS, nil
 }
 
-func initFullBackupTables(
+func parseFullBackupTablesStorage(
 	ctx context.Context,
 	cfg *RestoreConfig,
-) (map[int64]*metautil.Table, error) {
-	var storage string
+) (*restore.FullBackupStorageConfig, error) {
+	var storageName string
 	if len(cfg.FullBackupStorage) > 0 {
-		storage = cfg.FullBackupStorage
+		storageName = cfg.FullBackupStorage
 	} else {
-		storage = cfg.Storage
+		storageName = cfg.Storage
 	}
-	_, s, err := GetStorage(ctx, storage, &cfg.Config)
+	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err = backupMeta.Unmarshal(metaData); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// read full backup databases to get map[table]table.Info
-	reader := metautil.NewMetaReader(backupMeta, s, nil)
-
-	databases, err := utils.LoadBackupTables(ctx, reader)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	tables := make(map[int64]*metautil.Table)
-	for _, db := range databases {
-		dbName := db.Info.Name.O
-		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
-			dbName = name
-		}
-
-		if !cfg.TableFilter.MatchSchema(dbName) {
-			continue
-		}
-
-		for _, table := range db.Tables {
-			// check this db is empty.
-			if table.Info == nil {
-				tables[db.Info.ID] = table
-				continue
-			}
-			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
-				continue
-			}
-			tables[table.Info.ID] = table
-		}
-	}
-
-	return tables, nil
+	return &restore.FullBackupStorageConfig{
+		Backend: u,
+		Opts:    storageOpts(&cfg.Config),
+	}, nil
 }
 
 func initRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore.RewriteRules {

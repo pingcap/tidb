@@ -29,9 +29,10 @@ type RestoreKeyType = int64
 type RestoreValueType = RangeType
 
 const (
-	CheckpointDataDirForRestoreFormat     = CheckpointDir + "/restore-%s/data"
-	CheckpointChecksumDirForRestoreFormat = CheckpointDir + "/restore-%s/checksum"
-	CheckpointMetaPathForRestoreFormat    = CheckpointDir + "/restore-%s/checkpoint.meta"
+	CheckpointRestoreDirFormat            = CheckpointDir + "/restore-%s"
+	CheckpointDataDirForRestoreFormat     = CheckpointRestoreDirFormat + "/data"
+	CheckpointChecksumDirForRestoreFormat = CheckpointRestoreDirFormat + "/checksum"
+	CheckpointMetaPathForRestoreFormat    = CheckpointRestoreDirFormat + "/checkpoint.meta"
 )
 
 func getCheckpointMetaPathByName(taskName string) string {
@@ -154,4 +155,9 @@ func ExistsRestoreCheckpoint(
 	taskName string,
 ) (bool, error) {
 	return s.FileExists(ctx, getCheckpointMetaPathByName(taskName))
+}
+
+func RemoveCheckpointDataForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) error {
+	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
+	return removeCheckpointData(ctx, s, prefix)
 }

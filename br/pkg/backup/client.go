@@ -235,9 +235,9 @@ func (bc *Client) SetStorageAndCheckNotInUse(
 			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.MetaFile)
 	}
 	// use checkpoint mode if checkpoint meta exists
-	exist, err = bc.storage.FileExists(ctx, checkpoint.CheckpointMetaPath)
+	exist, err = bc.storage.FileExists(ctx, checkpoint.CheckpointMetaPathForBackup)
 	if err != nil {
-		return errors.Annotatef(err, "error occurred when checking %s file", checkpoint.CheckpointMetaPath)
+		return errors.Annotatef(err, "error occurred when checking %s file", checkpoint.CheckpointMetaPathForBackup)
 	}
 
 	// if there is no checkpoint meta, then checkpoint mode is not used
@@ -247,7 +247,7 @@ func (bc *Client) SetStorageAndCheckNotInUse(
 		log.Info("load the checkpoint meta, so the existence of lockfile is allowed.")
 		bc.checkpointMeta, err = checkpoint.LoadCheckpointMetadata(ctx, bc.storage)
 		if err != nil {
-			return errors.Annotatef(err, "error occurred when loading %s file", checkpoint.CheckpointMetaPath)
+			return errors.Annotatef(err, "error occurred when loading %s file", checkpoint.CheckpointMetaPathForBackup)
 		}
 	} else {
 		err = CheckBackupStorageIsLocked(ctx, bc.storage)
