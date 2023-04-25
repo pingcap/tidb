@@ -33,10 +33,7 @@ type keyValue struct {
 }
 
 func runCommonTest(t *testing.T, sorter extsort.ExternalSorter) {
-	const (
-		numKeys    = 1000
-		maxBufSize = 4096
-	)
+	const numKeys = 1000
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -58,10 +55,6 @@ func runCommonTest(t *testing.T, sorter extsort.ExternalSorter) {
 		kvs = append(kvs, kv)
 		err := w.Put(kv.key, kv.value)
 		require.NoError(t, err)
-		if w.Size() >= maxBufSize {
-			require.NoError(t, w.Flush())
-			require.Zero(t, w.Size())
-		}
 	}
 	require.NoError(t, w.Close())
 

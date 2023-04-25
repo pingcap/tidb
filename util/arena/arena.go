@@ -59,19 +59,13 @@ func NewAllocator(capacity int) *SimpleAllocator {
 
 // Alloc implements Allocator.AllocBytes interface.
 func (s *SimpleAllocator) Alloc(capacity int) []byte {
-	if capacity > cap(s.arena) {
-		return make([]byte, 0, capacity)
+	if s.off+capacity < cap(s.arena) {
+		slice := s.arena[s.off : s.off : s.off+capacity]
+		s.off += capacity
+		return slice
 	}
 
-	// Allocate a new arena if there is not enough space.
-	if s.off+capacity > cap(s.arena) {
-		s.arena = make([]byte, 0, cap(s.arena))
-		s.off = 0
-	}
-
-	slice := s.arena[s.off : s.off : s.off+capacity]
-	s.off += capacity
-	return slice
+	return make([]byte, 0, capacity)
 }
 
 // AllocWithLen implements Allocator.AllocWithLen interface.

@@ -20,60 +20,64 @@ import (
 )
 
 var (
-	ErrSorted    = errors.New("already sorted")
+	// ErrSorted is returned when the sorter is already sorted, new writers cannot be created.
+	ErrSorted = errors.New("already sorted")
+	// ErrNotSorted is returned when the sorter is not sorted yet, iterators are not ready.
 	ErrNotSorted = errors.New("not sorted")
 )
 
-// ExternalSorter is an interface for external sorting.
+// ExternalSorter is an interface for sorting key-value pairs in external storage.
+// The key-value pairs are sorted by the key, duplicate keys are automatically removed.
 type ExternalSorter interface {
-	// NewWriter creates a new writer for writing key/value pairs before sorting.
-	// It should be called before calling Sort().
+	// NewWriter creates a new writer for writing key-value pairs before sorting.
+	// Multiple writers can be opened and used concurrently.
 	NewWriter(ctx context.Context) (Writer, error)
-	// Sort sorts the key/value pairs written by the writer.
+	// Sort sorts the key-value pairs written by the writer.
 	// It should be called after all open writers are closed.
 	Sort(ctx context.Context) error
-	// NewIterator creates a new iterator for iterating over the key/value pairs after sorting.
-	// It should be called after calling Sort().
+	// IsSorted returns true if the key-value pairs are sorted, iterators are ready to create.
+	IsSorted() bool
+	// NewIterator creates a new iterator for iterating over the key-value pairs after sorting.
+	// Multiple iterators can be opened and used concurrently.
 	NewIterator(ctx context.Context) (Iterator, error)
-	// Close releases running resources held by the external sorter.
+	// Close releases all resources held by the sorter. It will not clean up the external storage,
+	// so the sorter can recover from a crash.
 	Close() error
 	// CloseAndCleanup closes the external sorter and cleans up all resources created by the sorter.
 	CloseAndCleanup() error
 }
 
-// Writer is an interface for writing key/value pairs to the external sorter.
+// Writer is an interface for writing key-value pairs to the external sorter.
 type Writer interface {
-	// Put adds a key/value pair to the writer.
+	// Put adds a key-value pair to the writer.
 	Put(key, value []byte) error
-	// Size returns the total size of buffered key/value pairs.
-	Size() int64
-	// Flush flushes all buffered key/value pairs to the external sorter.
+	// Flush flushes all buffered key-value pairs to the external sorter.
 	// the writer can be reused after calling Flush().
 	Flush() error
-	// Close flushes remaining buffered key/value pairs to the external sorter,
+	// Close flushes all buffered key-value pairs to the external sorter,
 	// and releases all resources held by the writer.
 	Close() error
 }
 
-// Iterator is an interface for iterating over the key/value pairs after sorting.
+// Iterator is an interface for iterating over the key-value pairs after sorting.
 type Iterator interface {
-	// Seek moves the iterator to the first key/value pair whose key is greater
+	// Seek moves the iterator to the first key-value pair whose key is greater
 	// than or equal to the given key.
 	Seek(key []byte) bool
-	// First moves the iterator to the first key/value pair.
+	// First moves the iterator to the first key-value pair.
 	First() bool
-	// Next moves the iterator to the next key/value pair.
+	// Next moves the iterator to the next key-value pair.
 	Next() bool
-	// Last moves the iterator to the last key/value pair.
+	// Last moves the iterator to the last key-value pair.
 	Last() bool
-	// Valid returns true if the iterator is positioned at a valid key/value pair.
+	// Valid returns true if the iterator is positioned at a valid key-value pair.
 	Valid() bool
 	// Error returns the error, if any, that was encountered during iteration.
 	Error() error
-	// UnsafeKey returns the key of the current key/value pair, without copying.
+	// UnsafeKey returns the key of the current key-value pair, without copying.
 	// The memory is only valid until the next call to change the iterator.
 	UnsafeKey() []byte
-	// UnsafeValue returns the value of the current key/value pair, without copying.
+	// UnsafeValue returns the value of the current key-value pair, without copying.
 	// The memory is only valid until the next call to change the iterator.
 	UnsafeValue() []byte
 	// Close releases all resources held by the iterator.

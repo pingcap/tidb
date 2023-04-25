@@ -21,15 +21,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPebbleSorter(t *testing.T) {
-	sorter, err := extsort.OpenPebbleSorter(t.TempDir(), nil)
+func TestDiskSorter(t *testing.T) {
+	sorter, err := extsort.OpenDiskSorter(t.TempDir(), &extsort.DiskSorterOptions{
+		WriterBufferSize: 32 * 1024,
+	})
 	require.NoError(t, err)
 	runCommonTest(t, sorter)
 	require.NoError(t, sorter.Close())
 }
 
-func TestPebbleSorterParallel(t *testing.T) {
-	sorter, err := extsort.OpenPebbleSorter(t.TempDir(), nil)
+func TestDiskSorterParallel(t *testing.T) {
+	sorter, err := extsort.OpenDiskSorter(t.TempDir(), &extsort.DiskSorterOptions{
+		WriterBufferSize: 32 * 1024,
+	})
 	require.NoError(t, err)
 	runParallelTest(t, sorter)
 	require.NoError(t, sorter.Close())
