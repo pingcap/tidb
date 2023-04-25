@@ -484,7 +484,6 @@ func (ti *TableImporter) sortAndIngestEngines(ctx context.Context) (err error) {
 
 	encodePool := worker.NewPool(ctx, int(ti.ThreadCnt), "encoder")
 	engineCh := make(chan *engine, len(ti.tableCp.Engines))
-	defer close(engineCh)
 
 	importTableCtx, importTableCancelFn := context.WithCancel(ctx)
 	ingestGroup, _ := errgroup.WithContext(importTableCtx)
@@ -503,7 +502,9 @@ engineLoop:
 		default:
 		}
 
-		en, err2 := ti.createEngine(importTableCtx, importTableCancelFn, engineCP.Chunks, id)
+		// we use parent ctx for when open data engine, since we may cancel importTableCtx explicitly,
+		// and we want to make sure engine closed even if importTableCtx is cancelled.
+		dataEngine, err2 := ti.OpenDataEngine(ctx, id)
 		if err2 != nil {
 			if !common.IsContextCanceledError(err2) {
 				ti.logger.Error("failed to create engine", zap.Error(err2), zap.Int32("engineID", id))
@@ -512,42 +513,32 @@ engineLoop:
 			importTableCancelFn()
 			break
 		}
+		en := ti.createEngine(importTableCtx, importTableCancelFn, engineCP.Chunks, dataEngine)
 		en.asyncSort(ti, encodePool, indexEngine)
 		engineCh <- en
 	}
 
+	close(engineCh)
 	return ingestGroup.Wait()
 }
 
-func (ti *TableImporter) createEngine(ctx context.Context, cancel context.CancelFunc, chunks []*checkpoints.ChunkCheckpoint, engineID int32) (*engine, error) {
+func (ti *TableImporter) createEngine(ctx context.Context, cancel context.CancelFunc, chunks []*checkpoints.ChunkCheckpoint,
+	openedEn *backend.OpenedEngine) *engine {
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(int(ti.ThreadCnt))
-	dataEngineCfg := &backend.EngineConfig{
-		TableInfo: ti.tableInfo,
-	}
-	if !ti.tableMeta.IsRowOrdered {
-		dataEngineCfg.Local.Compact = true
-		dataEngineCfg.Local.CompactConcurrency = 4
-		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
-	}
-	mgr := backend.MakeEngineManager(ti.backend)
-	dataEngine, err := mgr.OpenEngine(ctx, dataEngineCfg, ti.tableMeta.FullTableName(), engineID)
-	if err != nil {
-		return nil, err
-	}
 	en := &engine{
 		importTableCancel: cancel,
 		chunks:            chunks,
-		logger:            ti.logger.With(zap.Int32("engine-id", engineID)),
-		dataEngine:        dataEngine,
+		logger:            ti.logger.With(zap.Int32("engine-id", openedEn.GetID())),
+		dataEngine:        openedEn,
 		sortEG:            eg,
 		sortEGCtx:         egCtx,
 	}
 	en.sortTask = log.BeginTask(en.logger, "sort engine")
-	return en, nil
+	return en
 }
 
-func (ti *TableImporter) ingestAndCleanupEngines(ctx context.Context, sortCancelFunc context.CancelFunc, engineCh chan *engine) error {
+func (ti *TableImporter) ingestAndCleanupEngines(ctx context.Context, importTableCancelFn context.CancelFunc, engineCh chan *engine) error {
 	for en := range engineCh {
 		// only one engine can do ingest at a time.
 		// since ingest already has a large concurrency inside.
@@ -555,7 +546,7 @@ func (ti *TableImporter) ingestAndCleanupEngines(ctx context.Context, sortCancel
 		if err := en.ingestAndCleanup(ctx, ti); err != nil {
 			ti.firstErr.Set(err)
 			// cancel goroutines used for encoding & sorting
-			sortCancelFunc()
+			importTableCancelFn()
 		}
 	}
 	return ti.firstErr.Get()

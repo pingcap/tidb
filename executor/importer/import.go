@@ -990,5 +990,9 @@ func GetMsgFromBRError(err error) string {
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
 
-// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
-var TestSyncCh = make(chan struct{})
+// used in test
+var (
+	// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
+	TestSyncCh             = make(chan struct{})
+	TestProcessChunkFailed bool
+)

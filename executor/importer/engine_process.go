@@ -16,7 +16,10 @@ package importer
 
 import (
 	"context"
+	"strconv"
+	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -53,6 +56,9 @@ func (en *engine) asyncSort(importer *TableImporter, pool *worker.Pool, indexEng
 				// there might be multiple engine sorting at the same time, we need cancel other engines and
 				// ingest routine too.
 				en.importTableCancel()
+				failpoint.Inject("ProcessChunkFail", func() {
+					TestProcessChunkFailed = true
+				})
 				return err
 			}
 			return nil
@@ -63,16 +69,11 @@ func (en *engine) asyncSort(importer *TableImporter, pool *worker.Pool, indexEng
 func (en *engine) ingestAndCleanup(ctx context.Context, importer *TableImporter) error {
 	err := en.sortEG.Wait()
 	en.sortTask.End(zap.ErrorLevel, err)
-	// ctx maybe canceled, so to avoid Close engine failed, we use `context.Background()` here
+	// we want close the engine even when context cancelled, we use `context.Background()` here
 	// todo: remove ctx param in Close()
-	closeCtx := ctx
-	if common.IsContextCanceledError(err) {
-		closeCtx = context.Background()
-	}
-	// close the engine even when sort failed
-	closedDataEngine, err2 := en.dataEngine.Close(closeCtx)
+	closedDataEngine, err2 := en.dataEngine.Close(context.Background())
 	if err2 != nil {
-		en.logger.Warn("close data engine failed", zap.Error(err2))
+		en.logger.Warn("close data engine failed", log.ShortError(err2))
 	}
 	if err != nil {
 		return err
@@ -101,6 +102,18 @@ func ProcessChunk(
 	indexEngine *backend.OpenedEngine,
 	logger *zap.Logger,
 ) error {
+	failpoint.Inject("BeforeProcessChunkSync", func(v failpoint.Value) {
+		items := strings.Split(v.(string), ",")
+		if strconv.Itoa(int(dataEngine.GetID())) == items[0] && chunk.Key.Path == items[1] {
+			<-TestSyncCh
+		}
+	})
+	failpoint.Inject("BeforeProcessChunkFail", func(v failpoint.Value) {
+		items := strings.Split(v.(string), ",")
+		if strconv.Itoa(int(dataEngine.GetID())) == items[0] && chunk.Key.Path == items[1] {
+			failpoint.Return(errors.New("mock process chunk fail"))
+		}
+	})
 	// if the key are ordered, LocalWrite can optimize the writing.
 	// table has auto-incremented _tidb_rowid must satisfy following restrictions:
 	// - clustered index disable and primary key is not number
@@ -120,7 +133,7 @@ func ProcessChunk(
 	}
 	defer func() {
 		if err2 := parser.Close(); err2 != nil {
-			logger.Warn("close parser failed", zap.Error(err2))
+			logger.Warn("close parser failed", log.ShortError(err2))
 		}
 	}()
 	encoder, err := tableImporter.getKVEncoder(chunk)
@@ -129,7 +142,7 @@ func ProcessChunk(
 	}
 	defer func() {
 		if err2 := encoder.Close(); err2 != nil {
-			logger.Warn("close encoder failed", zap.Error(err2))
+			logger.Warn("close encoder failed", log.ShortError(err2))
 		}
 	}()
 	dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
@@ -138,7 +151,7 @@ func ProcessChunk(
 	}
 	defer func() {
 		if _, err2 := dataWriter.Close(ctx); err2 != nil {
-			logger.Warn("close data writer failed", zap.Error(err2))
+			logger.Warn("close data writer failed", log.ShortError(err2))
 		}
 	}()
 	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
@@ -147,7 +160,7 @@ func ProcessChunk(
 	}
 	defer func() {
 		if _, err2 := indexWriter.Close(ctx); err2 != nil {
-			logger.Warn("close index writer failed", zap.Error(err2))
+			logger.Warn("close index writer failed", log.ShortError(err2))
 		}
 	}()
 
@@ -168,5 +181,8 @@ func ProcessChunk(
 		return err
 	}
 	tableImporter.setLastInsertID(encoder.GetLastInsertID())
+	failpoint.Inject("AfterProcessChunkSync", func() {
+		<-TestSyncCh
+	})
 	return nil
 }
