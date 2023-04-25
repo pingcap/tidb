@@ -170,6 +170,15 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 	}
 	logutil.Logger(s.logCtx).Info("split subTask", zap.Any("cnt", len(minimalTasks)), zap.Any("subtask_id", subtask.ID))
 
+	// fast path for ADD INDEX.
+	// ADD INDEX is a special case now, no minimal tasks will be generated.
+	// run it synchronously now.
+	if len(minimalTasks) == 0 {
+		s.onSubtaskFinished(ctx, scheduler, subtask)
+		s.subtaskWg.Done()
+		return
+	}
+
 	var mu sync.Mutex
 	var cnt int
 	for _, minimalTask := range minimalTasks {
@@ -180,6 +189,7 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 			mu.Lock()
 			defer mu.Unlock()
 			cnt++
+			// last minimal task should mark subtask as finished
 			if cnt == len(minimalTasks) {
 				s.onSubtaskFinished(ctx, scheduler, subtask)
 				s.subtaskWg.Done()
