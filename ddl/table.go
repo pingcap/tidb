@@ -1193,7 +1193,7 @@ func finishJobRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job,
 		tblSchemaIDs[tableIDs[i]] = newSchemaIDs[i]
 	}
 	tblInfos := make([]*model.TableInfo, 0, len(tableNames))
-	for i := range newSchemaIDs {
+	for i := range tableIDs {
 		tblID := tableIDs[i]
 		tblInfo, err := getTableInfo(t, tblID, tblSchemaIDs[tblID])
 		if err != nil {
