@@ -2493,6 +2493,10 @@ var defaultSysVars = []*SysVar{
 			s.OptimizerFixControl = newMap
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPlanCacheInvalidationOnFreshStats, Value: BoolToOnOff(DefTiDBPlanCacheInvalidationOnFreshStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
