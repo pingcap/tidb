@@ -320,13 +320,13 @@
         ]
       },
       {
-        "Digest": "5fc0a796273b90410acda281d59ff137547ace7422739f9b1dbf90ded8cb836c",
+        "Digest": "c3b0c0b4844f65d08430c45f539cca8c7cc11aca1b491e62e2ba3eda6822f9d6",
         "Plan": [
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",
           "   └─Projection        cop[tiflash] plus(test.t1.a, test.t1.b)",
           "     └─Selection       cop[tiflash] lt(plus(test.t1.a, test.t1.b), ?)",
-          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:empty, keep order:false"
         ]
       },
       {
@@ -344,7 +344,6 @@
     "Name": "TestTiFlashLateMaterialization",
     "Cases": [
       {
-        "_comment": "No predicate, no predicate push down",
         "SQL": "explain select * from t1;",
         "Plan": [
           " TableReader       root         ",
@@ -353,7 +352,6 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a<1` is 0, so it will be pushed down",
         "SQL": "explain select * from t1 where a<1;",
         "Plan": [
           " TableReader       root         ",
@@ -362,7 +360,6 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a>1` is 0.66(< 0.7), so it will be pushed down",
         "SQL": "explain select * from t1 where a>1",
         "Plan": [
           " TableReader       root         ",
@@ -371,7 +368,6 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a=1` is 0.33(< 0.7), so it will be pushed down",
         "SQL": "explain select * from t1 where a=1",
         "Plan": [
           " TableReader       root         ",
@@ -380,7 +376,6 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a in (1,2,3)` is 1(> 0.7), so it will not be pushed down",
         "SQL": "explain select * from t1 where a in (1,2,3)",
         "Plan": [
           " TableReader         root         ",
@@ -390,7 +385,6 @@
         ]
       },
       {
-        "_comment": "The selectivity of `b=1` is 0.33(< 0.7), so it will be pushed down",
         "SQL": "explain select * from t1 where b=1",
         "Plan": [
           " TableReader       root         ",
@@ -399,7 +393,6 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a!=1` is 0.66(< 0.7), so it will be pushed down",
         "SQL": "explain select * from t1 where a!=1 order by c limit 1",
         "Plan": [
           " TopN                  root         test.t1.c",
@@ -410,7 +403,6 @@
         ]
       },
       {
-        "_comment": "The `a>1` applied columns eaual to the columns of table scan, so it will be not pushed down",
         "SQL": "explain select a from t1 where a>1",
         "Plan": [
           " TableReader         root         ",
@@ -420,7 +412,6 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a>1` and `b>1` both are 0.66(< 0.7), so push one of them down",
         "SQL": "explain select a from t1 where a>1 and b>1",
         "Plan": [
           " TableReader           root         ",
@@ -431,17 +422,15 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a>1`, `b>1` and `c>1` all are 0.66(< 0.7), so push one of them down",
         "SQL": "explain select * from t1 where a>1 and b>1 and c>1",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.a, ?), gt(test.t1.b, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.c, ?), keep order:false"
+          "   └─Selection       cop[tiflash] gt(test.t1.b, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), gt(test.t1.c, ?), keep order:false"
         ]
       },
       {
-        "_comment": "The selectivity of `a<1 or b<2` is 0.66(< 0.7), so push it down",
         "SQL": "explain select * from t1 where a<1 or b<2",
         "Plan": [
           " TableReader       root         ",
@@ -450,7 +439,6 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a>3` is 0(< 0.7), so push it down",
         "SQL": "explain select * from t1 where (a<1 or b<2) and (a>3 and b>3)",
         "Plan": [
           " TableReader         root         ",
@@ -460,17 +448,15 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a>3` is 0(< 0.7), so push it down",
         "SQL": "explain select * from t1 where (a<1 or b<2) and (a>3 and b>3) and c>1",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?)), gt(test.t1.c, ?)",
+          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
           "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
       },
       {
-        "_comment": "The selectivity of `a>3` is 0(< 0.7), so push it down",
         "SQL": "explain select * from t1 where (a>2 or b<2) and (a>3 and b>3) and c>2",
         "Plan": [
           " TableReader         root         ",
@@ -480,7 +466,6 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a>1` is 0.66(< 0.7), so push it down",
         "SQL": "explain select count(a), max(t) from t1 where a>1",
         "Plan": [
           " HashAgg           root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",

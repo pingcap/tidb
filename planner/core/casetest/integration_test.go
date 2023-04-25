@@ -3208,8 +3208,8 @@ func TestIssue32632(t *testing.T) {
 		"`S_ACCTBAL` decimal(15,2) NOT NULL," +
 		"`S_COMMENT` varchar(101) NOT NULL," +
 		"PRIMARY KEY (`S_SUPPKEY`) /*T![clustered_index] CLUSTERED */)")
-	tk.MustExec("analyze table partsupp;")
-	tk.MustExec("analyze table supplier;")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("set @@tidb_enforce_mpp = 1")
 
 	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "partsupp", L: "partsupp"})
@@ -3220,7 +3220,6 @@ func TestIssue32632(t *testing.T) {
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	h := dom.StatsHandle()
 	statsTbl1 := h.GetTableStats(tbl1.Meta())
 	statsTbl1.RealtimeCount = 800000
 	statsTbl2 := h.GetTableStats(tbl2.Meta())
@@ -3475,5 +3474,42 @@ func TestIndexJoinRangeFallback(t *testing.T) {
 			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
+	}
+}
+
+func TestFixControl(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	s := tk.Session()
+	var input []string
+	var output []struct {
+		SQL        string
+		FixControl map[uint64]string
+		Error      string
+		Warnings   [][]interface{}
+		Variable   []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		err := tk.ExecToErr(tt)
+		var errStr string
+		if err != nil {
+			errStr = err.Error()
+		}
+		warning := tk.MustQuery("show warnings").Sort().Rows()
+		rows := testdata.ConvertRowsToStrings(tk.MustQuery("select @@tidb_opt_fix_control").Sort().Rows())
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].FixControl = s.GetSessionVars().OptimizerFixControl
+			output[i].Error = errStr
+			output[i].Warnings = warning
+			output[i].Variable = rows
+		})
+		require.Equal(t, output[i].FixControl, s.GetSessionVars().OptimizerFixControl)
+		require.Equal(t, output[i].Error, errStr)
+		require.Equal(t, output[i].Warnings, warning)
+		require.Equal(t, output[i].Variable, rows)
 	}
 }

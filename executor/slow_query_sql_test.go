@@ -117,8 +117,8 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	tk.MustQuery(`select prepared, plan_from_cache, query from information_schema.slow_query where query like '%select * from t where a%' order by query`).Check(testkit.Rows(
-		`0 0 select * from t where a<1 [arguments: 1];`,
-		`0 1 select * from t where a<2 [arguments: 2];`,
+		`0 0 select * from t where a<1;`,
+		`0 1 select * from t where a<2;`,
 		`0 0 select * from t where a<3;`))
 }
 

@@ -103,7 +103,7 @@ func NewEncodingBuilder() encode.EncodingBuilder {
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
+func (*encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	se := kv.NewSessionCtx(&config.SessionOptions, log.FromContext(ctx))
 	if config.SQLMode.HasStrictMode() {
 		se.GetSessionVars().SkipUTF8Check = false
@@ -121,7 +121,7 @@ func (b *encodingBuilder) NewEncoder(ctx context.Context, config *encode.Encodin
 
 // MakeEmptyRows creates an empty KV rows.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) MakeEmptyRows() encode.Rows {
+func (*encodingBuilder) MakeEmptyRows() encode.Rows {
 	return tidbRows(nil)
 }
 
@@ -245,7 +245,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 
 // CheckRequirements performs the check whether the backend satisfies the version requirements.
 // It implements the `backend.TargetInfoGetter` interface.
-func (b *targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
+func (*targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
 	log.FromContext(ctx).Info("skipping check requirements for tidb backend")
 	return nil
 }
@@ -255,6 +255,8 @@ type tidbBackend struct {
 	onDuplicate string
 	errorMgr    *errormanager.ErrorManager
 }
+
+var _ backend.Backend = (*tidbBackend)(nil)
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
 //
@@ -267,11 +269,11 @@ func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMg
 		log.FromContext(ctx).Warn("unsupported action on duplicate, overwrite with `replace`")
 		onDuplicate = config.ReplaceOnDup
 	}
-	return backend.MakeBackend(&tidbBackend{
+	return &tidbBackend{
 		db:          db,
 		onDuplicate: onDuplicate,
 		errorMgr:    errorMgr,
-	})
+	}
 }
 
 func (row tidbRow) Size() uint64 {
@@ -393,7 +395,7 @@ func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, _ *ta
 		//		return errors.Trace(err)
 		//	}
 		//	datum = &d
-		// }
+		// }
 
 		enc.appendSQLBytes(sb, datum.GetBytes())
 	case types.KindBytes:
@@ -447,7 +449,7 @@ func getColumnByIndex(cols []*table.Column, index int) *table.Column {
 	return cols[index]
 }
 
-func (enc *tidbEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
+func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []int, offset int64) (encode.Row, error) {
 	cols := enc.tbl.Cols()
 
 	if len(enc.columnIdx) == 0 {
@@ -534,39 +536,39 @@ func EncodeRowForRecord(ctx context.Context, encTable table.Table, sqlMode mysql
 	return resRow.(tidbRow).insertStmt
 }
 
-func (be *tidbBackend) Close() {
+func (*tidbBackend) Close() {
 	// *Not* going to close `be.db`. The db object is normally borrowed from a
 	// TidbManager, so we let the manager to close it.
 }
 
-func (be *tidbBackend) RetryImportDelay() time.Duration {
+func (*tidbBackend) RetryImportDelay() time.Duration {
 	return 0
 }
 
-func (be *tidbBackend) MaxChunkSize() int {
+func (*tidbBackend) MaxChunkSize() int {
 	failpoint.Inject("FailIfImportedSomeRows", func() {
 		failpoint.Return(1)
 	})
 	return 1048576
 }
 
-func (be *tidbBackend) ShouldPostProcess() bool {
+func (*tidbBackend) ShouldPostProcess() bool {
 	return true
 }
 
-func (be *tidbBackend) OpenEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
+func (*tidbBackend) OpenEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) CloseEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
+func (*tidbBackend) CloseEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
+func (*tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) error {
+func (*tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) error {
 	return nil
 }
 
@@ -598,10 +600,6 @@ rowLoop:
 		return errors.Annotatef(err, "[%s] batch write rows reach max retry %d and still failed", tableName, writeRowsMaxRetryTimes)
 	}
 	return nil
-}
-
-func (be *tidbBackend) TotalMemoryConsume() int64 {
-	return 0
 }
 
 type stmtTask struct {
@@ -724,52 +722,48 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 	return nil
 }
 
-// EngineFileSizes returns the size of each engine file.
-func (be *tidbBackend) EngineFileSizes() []backend.EngineFileSize {
-	return nil
-}
-
 // FlushEngine flushes the data in the engine to the underlying storage.
-func (be *tidbBackend) FlushEngine(context.Context, uuid.UUID) error {
+func (*tidbBackend) FlushEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
 // FlushAllEngines flushes all the data in the engines to the underlying storage.
-func (be *tidbBackend) FlushAllEngines(context.Context) error {
+func (*tidbBackend) FlushAllEngines(context.Context) error {
 	return nil
 }
 
 // ResetEngine resets the engine.
-func (be *tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
+func (*tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
 	return errors.New("cannot reset an engine in TiDB backend")
 }
 
 // LocalWriter returns a writer that writes data to local storage.
 func (be *tidbBackend) LocalWriter(
-	ctx context.Context,
+	_ context.Context,
 	cfg *backend.LocalWriterConfig,
 	_ uuid.UUID,
 ) (backend.EngineWriter, error) {
-	return &Writer{be: be}, nil
+	return &Writer{be: be, tableName: cfg.TableName}, nil
 }
 
 // Writer is a writer that writes data to local storage.
 type Writer struct {
-	be *tidbBackend
+	be        *tidbBackend
+	tableName string
 }
 
 // Close implements the EngineWriter interface.
-func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+func (*Writer) Close(_ context.Context) (backend.ChunkFlushStatus, error) {
 	return nil, nil
 }
 
 // AppendRows implements the EngineWriter interface.
-func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
-	return w.be.WriteRows(ctx, tableName, columnNames, rows)
+func (w *Writer) AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
+	return w.be.WriteRows(ctx, w.tableName, columnNames, rows)
 }
 
 // IsSynced implements the EngineWriter interface.
-func (w *Writer) IsSynced() bool {
+func (*Writer) IsSynced() bool {
 	return true
 }
 

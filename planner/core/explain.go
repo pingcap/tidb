@@ -113,8 +113,17 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString(", stats:pseudo")
+	if !normalized {
+		if p.usedStatsInfo != nil {
+			str := p.usedStatsInfo.FormatForExplain()
+			if len(str) > 0 {
+				buffer.WriteString(", ")
+				buffer.WriteString(str)
+			}
+		} else if p.stats.StatsVersion == statistics.PseudoVersion {
+			// This branch is not needed in fact, we add this to prevent test result changes under planner/cascades/
+			buffer.WriteString(", stats:pseudo")
+		}
 	}
 	return buffer.String()
 }
@@ -204,7 +213,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
-	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 {
+	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
 		buffer.WriteString("pushed down filter:")
 		if len(p.lateMaterializationFilterCondition) > 0 {
 			if normalized {
@@ -222,8 +231,17 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString(", stats:pseudo")
+	if !normalized {
+		if p.usedStatsInfo != nil {
+			str := p.usedStatsInfo.FormatForExplain()
+			if len(str) > 0 {
+				buffer.WriteString(", ")
+				buffer.WriteString(str)
+			}
+		} else if p.stats.StatsVersion == statistics.PseudoVersion {
+			// This branch is not needed in fact, we add this to prevent test result changes under planner/cascades/
+			buffer.WriteString(", stats:pseudo")
+		}
 	}
 	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		buffer.WriteString(", PartitionTableScan:true")
@@ -305,10 +323,20 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
+	var str strings.Builder
 	if p.IsIntersectionType {
-		return "type: intersection"
+		str.WriteString("type: intersection")
+	} else {
+		str.WriteString("type: union")
 	}
-	return "type: union"
+	if p.PushedLimit != nil {
+		str.WriteString(", limit embedded(offset:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
+		str.WriteString(", count:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
+		str.WriteString(")")
+	}
+	return str.String()
 }
 
 // ExplainInfo implements Plan interface.

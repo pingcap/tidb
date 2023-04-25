@@ -67,10 +67,6 @@ type reorgCtx struct {
 	// 1: job is canceled.
 	notifyCancelReorgJob int32
 
-	// element is used to record the current element in the reorg process, it can be
-	// accessed by reorg-worker and daemon-worker concurrently.
-	element atomic.Value
-
 	mu struct {
 		sync.Mutex
 		// warnings are used to store the warnings when doing the reorg job under certain SQL modes.
@@ -108,10 +104,6 @@ func (rc *reorgCtx) isReorgCanceled() bool {
 
 func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
-}
-
-func (rc *reorgCtx) setCurrentElement(element *meta.Element) {
-	rc.element.Store(element)
 }
 
 func (rc *reorgCtx) mergeWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
@@ -198,7 +190,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		if job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
-		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.StartKey, reorgInfo.currElement, reorgInfo.Job.GetRowCount())
+		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
@@ -394,7 +386,10 @@ type reorgInfo struct {
 }
 
 func (r *reorgInfo) String() string {
-	_, isEnabled := ingest.LitBackCtxMgr.Load(r.Job.ID)
+	var isEnabled bool
+	if ingest.LitInitialized {
+		_, isEnabled = ingest.LitBackCtxMgr.Load(r.Job.ID)
+	}
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
 		"StartKey:" + hex.EncodeToString(r.StartKey) + "," +
@@ -766,14 +761,14 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error
 	}
 	defer pool.Put(sctx)
 
-	se := newSession(sctx)
-	err = se.begin()
+	se := sess.NewSession(sctx)
+	err = se.Begin()
 	if err != nil {
 		return
 	}
 	rh := newReorgHandler(se)
 	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
-	err1 := se.commit()
+	err1 := se.Commit()
 	if err == nil {
 		err = err1
 	}
@@ -782,15 +777,15 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error
 
 // reorgHandler is used to handle the reorg information duration reorganization DDL job.
 type reorgHandler struct {
-	s *session
+	s *sess.Session
 }
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
-func NewReorgHandlerForTest(sess sessionctx.Context) *reorgHandler {
-	return newReorgHandler(newSession(sess))
+func NewReorgHandlerForTest(se sessionctx.Context) *reorgHandler {
+	return newReorgHandler(sess.NewSession(se))
 }
 
-func newReorgHandler(sess *session) *reorgHandler {
+func newReorgHandler(sess *sess.Session) *reorgHandler {
 	return &reorgHandler{s: sess}
 }
 
@@ -810,7 +805,7 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 }
 
 // CleanupDDLReorgHandles removes the job reorganization related handles.
-func CleanupDDLReorgHandles(job *model.Job, s *session) {
+func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 	if job != nil && !job.IsFinished() && !job.IsSynced() {
 		// Job is given, but it is neither finished nor synced; do nothing
 		return

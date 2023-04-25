@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -109,6 +110,7 @@ func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv
 	if err != nil {
 		return err
 	}
+	executor.SetResourceGroupController(control)
 	tikv.SetResourceControlInterceptor(control)
 	control.Start(ctx)
 	return nil
@@ -188,11 +190,10 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
 		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
-	pdCli = util.InterceptedPDClient{Client: pdCli}
-
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	pdCli = util.InterceptedPDClient{Client: pdCli}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))

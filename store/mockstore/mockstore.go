@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/testkit/testenv"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -163,6 +164,7 @@ var DDLCheckerInjector func(kv.Storage) kv.Storage
 // NewMockStore creates a mocked tikv store, the path is the file path to store the data.
 // If path is an empty string, a memory storage will be created.
 func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
+	testenv.SetGOMAXPROCSForTest()
 	opt := mockOptions{
 		clusterInspector: func(c testutils.Cluster) {
 			BootstrapWithSingleStore(c)

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
@@ -1135,6 +1136,12 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if partialSel != nil && finalScan.statsInfo().RowCount > 0 {
 				selSelectivityOnPartialScan[i] = partialSel.statsInfo().RowCount / finalScan.statsInfo().RowCount
 			}
+			if plan, ok := finalScan.(*PhysicalTableScan); ok {
+				plan.ByItems = p.ByItems
+			}
+			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
+				plan.ByItems = p.ByItems
+			}
 			partialScans = append(partialScans, finalScan)
 		}
 	}
@@ -1154,13 +1161,51 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 			newCopSubPlans := p.addPartialLimitForSubScans(clonedPartialPlan, partialScans, selSelectivityOnPartialScan)
 			copTsk.idxMergePartPlans = newCopSubPlans
-			clonedTblScan, err := copTsk.tablePlan.Clone()
+			cloned, err := copTsk.tablePlan.Clone()
 			if err != nil {
 				return nil, false
 			}
+			clonedTblScan := cloned.(*PhysicalTableScan)
 			clonedTblScan.statsInfo().ScaleByExpectCnt(float64(p.Count+p.Offset) * float64(len(copTsk.idxMergePartPlans)))
+			tblInfo := clonedTblScan.Table
+			if tblInfo.PKIsHandle {
+				pk := tblInfo.GetPkColInfo()
+				pkCol := expression.ColInfo2Col(clonedTblScan.tblCols, pk)
+				if !clonedTblScan.Schema().Contains(pkCol) {
+					clonedTblScan.Schema().Append(pkCol)
+					clonedTblScan.Columns = append(clonedTblScan.Columns, pk)
+				}
+			} else if tblInfo.IsCommonHandle {
+				idxInfo := tblInfo.GetPrimaryKey()
+				for _, idxCol := range idxInfo.Columns {
+					c := clonedTblScan.tblCols[idxCol.Offset]
+					if !clonedTblScan.Schema().Contains(c) {
+						clonedTblScan.Schema().Append(c)
+						clonedTblScan.Columns = append(clonedTblScan.Columns, c.ToInfo())
+					}
+				}
+			} else {
+				if !clonedTblScan.Schema().Contains(clonedTblScan.HandleCols.GetCol(0)) {
+					clonedTblScan.Schema().Append(clonedTblScan.HandleCols.GetCol(0))
+					clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraHandleColInfo())
+				}
+			}
+			clonedTblScan.HandleCols, err = clonedTblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
+			if err != nil {
+				return nil, false
+			}
 			copTsk.tablePlan = clonedTblScan
 			copTsk.indexPlanFinished = true
+			rootTask := copTsk.convertToRootTask(p.ctx)
+			if indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader); ok {
+				indexMerge.PushedLimit = &PushedDownLimit{
+					Offset: p.Offset,
+					Count:  p.Count,
+				}
+				indexMerge.ByItems = p.ByItems
+				indexMerge.KeepOrder = true
+				return rootTask, true
+			}
 		}
 	} else {
 		return nil, false
@@ -1220,7 +1265,7 @@ func (p *PhysicalTopN) checkSubScans(colsProp *property.PhysicalProperty, isDesc
 				}
 			} else {
 				idxCols, idxColLens := expression.IndexInfo2PrefixCols(x.Columns, x.Schema().Columns, tables.FindPrimaryIndex(x.Table))
-				matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, nil, colsProp)
+				matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, x.constColsByCond, colsProp)
 				if !matched {
 					return false
 				}

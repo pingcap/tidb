@@ -20,6 +20,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -27,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-// Pool is used to new session.
+// Pool is used to new Session.
 type Pool struct {
 	mu struct {
 		sync.Mutex
@@ -37,7 +38,7 @@ type Pool struct {
 	store   kv.Storage
 }
 
-// NewSessionPool creates a new session pool.
+// NewSessionPool creates a new Session pool.
 func NewSessionPool(resPool *pools.ResourcePool, store kv.Storage) *Pool {
 	return &Pool{resPool: resPool, store: store}
 }
@@ -66,10 +67,11 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 
 	ctx, ok := resource.(sessionctx.Context)
 	if !ok {
-		return nil, fmt.Errorf("session pool resource get %v", ctx)
+		return nil, errors.Trace(fmt.Errorf("need sessionctx.Context, but got %T", ctx))
 	}
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
+	infosync.StoreInternalSession(ctx)
 	return ctx, nil
 }
 
@@ -82,6 +84,7 @@ func (sg *Pool) Put(ctx sessionctx.Context) {
 	// no need to protect sg.resPool, even the sg.resPool is closed, the ctx still need to
 	// Put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
 	sg.resPool.Put(ctx.(pools.Resource))
+	infosync.DeleteInternalSession(ctx)
 }
 
 // Close clean up the Pool.

@@ -3116,22 +3116,38 @@ type BRIEOptionType uint16
 
 const (
 	BRIEKindBackup BRIEKind = iota
+	BRIEKindCancelJob
+	BRIEKindStreamStart
+	BRIEKindStreamMetaData
+	BRIEKindStreamStatus
+	BRIEKindStreamPause
+	BRIEKindStreamResume
+	BRIEKindStreamStop
+	BRIEKindStreamPurge
 	BRIEKindRestore
-
+	BRIEKindRestorePIT
+	BRIEKindShowJob
+	BRIEKindShowQuery
+	BRIEKindShowBackupMeta
 	// common BRIE options
 	BRIEOptionRateLimit BRIEOptionType = iota + 1
 	BRIEOptionConcurrency
 	BRIEOptionChecksum
 	BRIEOptionSendCreds
 	BRIEOptionCheckpoint
+	BRIEOptionStartTS
+	BRIEOptionUntilTS
 	// backup options
 	BRIEOptionBackupTimeAgo
 	BRIEOptionBackupTS
 	BRIEOptionBackupTSO
 	BRIEOptionLastBackupTS
 	BRIEOptionLastBackupTSO
+	BRIEOptionGCTTL
 	// restore options
 	BRIEOptionOnline
+	BRIEOptionFullBackupStorage
+	BRIEOptionRestoredTS
 	// import options
 	BRIEOptionAnalyze
 	BRIEOptionBackend
@@ -3166,6 +3182,30 @@ func (kind BRIEKind) String() string {
 		return "BACKUP"
 	case BRIEKindRestore:
 		return "RESTORE"
+	case BRIEKindStreamStart:
+		return "BACKUP LOGS"
+	case BRIEKindStreamStop:
+		return "STOP BACKUP LOGS"
+	case BRIEKindStreamPause:
+		return "PAUSE BACKUP LOGS"
+	case BRIEKindStreamResume:
+		return "RESUME BACKUP LOGS"
+	case BRIEKindStreamStatus:
+		return "SHOW BACKUP LOGS STATUS"
+	case BRIEKindStreamMetaData:
+		return "SHOW BACKUP LOGS METADATA"
+	case BRIEKindStreamPurge:
+		return "PURGE BACKUP LOGS"
+	case BRIEKindRestorePIT:
+		return "RESTORE POINT"
+	case BRIEKindShowJob:
+		return "SHOW BR JOB"
+	case BRIEKindShowQuery:
+		return "SHOW BR JOB QUERY"
+	case BRIEKindCancelJob:
+		return "CANCEL BR JOB"
+	case BRIEKindShowBackupMeta:
+		return "SHOW BACKUP METADATA"
 	default:
 		return ""
 	}
@@ -3217,6 +3257,16 @@ func (kind BRIEOptionType) String() string {
 		return "CSV_SEPARATOR"
 	case BRIEOptionCSVTrimLastSeparators:
 		return "CSV_TRIM_LAST_SEPARATORS"
+	case BRIEOptionFullBackupStorage:
+		return "FULL_BACKUP_STORAGE"
+	case BRIEOptionRestoredTS:
+		return "RESTORED_TS"
+	case BRIEOptionStartTS:
+		return "START_TS"
+	case BRIEOptionUntilTS:
+		return "UNTIL_TS"
+	case BRIEOptionGCTTL:
+		return "GC_TTL"
 	default:
 		return ""
 	}
@@ -3245,7 +3295,7 @@ func (opt *BRIEOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(opt.Tp.String())
 	ctx.WritePlain(" = ")
 	switch opt.Tp {
-	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator:
+	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL:
 		ctx.WriteString(opt.StrValue)
 	case BRIEOptionBackupTimeAgo:
 		ctx.WritePlainf("%d ", opt.UintValue/1000)
@@ -3278,6 +3328,7 @@ type BRIEStmt struct {
 	Schemas []string
 	Tables  []*TableName
 	Storage string
+	JobID   int64
 	Options []*BRIEOption
 }
 
@@ -3300,37 +3351,48 @@ func (n *BRIEStmt) Accept(v Visitor) (Node, bool) {
 func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(n.Kind.String())
 
-	switch {
-	case len(n.Tables) != 0:
-		ctx.WriteKeyWord(" TABLE ")
-		for index, table := range n.Tables {
-			if index != 0 {
-				ctx.WritePlain(", ")
-			}
-			if err := table.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore BRIEStmt.Tables[%d]", index)
-			}
-		}
-	case len(n.Schemas) != 0:
-		ctx.WriteKeyWord(" DATABASE ")
-		for index, schema := range n.Schemas {
-			if index != 0 {
-				ctx.WritePlain(", ")
-			}
-			ctx.WriteName(schema)
-		}
-	default:
-		ctx.WriteKeyWord(" DATABASE")
-		ctx.WritePlain(" *")
-	}
-
 	switch n.Kind {
-	case BRIEKindBackup:
+	case BRIEKindRestore, BRIEKindBackup:
+		switch {
+		case len(n.Tables) != 0:
+			ctx.WriteKeyWord(" TABLE ")
+			for index, table := range n.Tables {
+				if index != 0 {
+					ctx.WritePlain(", ")
+				}
+				if err := table.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore BRIEStmt.Tables[%d]", index)
+				}
+			}
+		case len(n.Schemas) != 0:
+			ctx.WriteKeyWord(" DATABASE ")
+			for index, schema := range n.Schemas {
+				if index != 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteName(schema)
+			}
+		default:
+			ctx.WriteKeyWord(" DATABASE")
+			ctx.WritePlain(" *")
+		}
+
+		if n.Kind == BRIEKindBackup {
+			ctx.WriteKeyWord(" TO ")
+			ctx.WriteString(n.Storage)
+		} else {
+			ctx.WriteKeyWord(" FROM ")
+			ctx.WriteString(n.Storage)
+		}
+	case BRIEKindCancelJob, BRIEKindShowJob, BRIEKindShowQuery:
+		ctx.WritePlainf(" %d", n.JobID)
+	case BRIEKindStreamStart:
 		ctx.WriteKeyWord(" TO ")
-	case BRIEKindRestore:
+		ctx.WriteString(n.Storage)
+	case BRIEKindRestorePIT, BRIEKindStreamMetaData, BRIEKindShowBackupMeta, BRIEKindStreamPurge:
 		ctx.WriteKeyWord(" FROM ")
+		ctx.WriteString(n.Storage)
 	}
-	ctx.WriteString(n.Storage)
 
 	for _, opt := range n.Options {
 		ctx.WritePlain(" ")
@@ -3659,14 +3721,51 @@ func (n *SetResourceGroupStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// CalibrateResourceType is the type for CalibrateResource statement.
+type CalibrateResourceType int
+
+// calibrate resource [ workload < TPCC | OLTP_READ_WRITE | OLTP_READ_ONLY | OLTP_WRITE_ONLY> ]
+const (
+	WorkloadNone CalibrateResourceType = iota
+	TPCC
+	OLTPREADWRITE
+	OLTPREADONLY
+	OLTPWRITEONLY
+)
+
+func (n CalibrateResourceType) Restore(ctx *format.RestoreCtx) error {
+	switch n {
+	case TPCC:
+		ctx.WriteKeyWord(" WORKLOAD TPCC")
+	case OLTPREADWRITE:
+		ctx.WriteKeyWord(" WORKLOAD OLTP_READ_WRITE")
+	case OLTPREADONLY:
+		ctx.WriteKeyWord(" WORKLOAD OLTP_READ_ONLY")
+	case OLTPWRITEONLY:
+		ctx.WriteKeyWord(" WORKLOAD OLTP_WRITE_ONLY")
+	}
+	return nil
+}
+
 // CalibrateResourceStmt is a statement to fetch the cluster RU capacity
 type CalibrateResourceStmt struct {
 	stmtNode
+	DynamicCalibrateResourceOptionList []*DynamicCalibrateResourceOption
+	Tp                                 CalibrateResourceType
 }
 
 // Restore implements Node interface.
 func (n *CalibrateResourceStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CALIBRATE RESOURCE")
+	if err := n.Tp.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CalibrateResourceStmt.CalibrateResourceType")
+	}
+	for i, option := range n.DynamicCalibrateResourceOptionList {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing DynamicCalibrateResourceOption: [%v]", i)
+		}
+	}
 	return nil
 }
 
@@ -3678,4 +3777,40 @@ func (n *CalibrateResourceStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*CalibrateResourceStmt)
 	return v.Leave(n)
+}
+
+type DynamicCalibrateType int
+
+const (
+	// specific time
+	CalibrateStartTime = iota
+	CalibrateEndTime
+	CalibrateDuration
+)
+
+type DynamicCalibrateResourceOption struct {
+	Tp       DynamicCalibrateType
+	Ts       ExprNode
+	StrValue string
+}
+
+func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case CalibrateStartTime:
+		ctx.WriteKeyWord("START_TIME ")
+		if err := n.Ts.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing DynamicCalibrateResourceOption StartTime")
+		}
+	case CalibrateEndTime:
+		ctx.WriteKeyWord("END_TIME ")
+		if err := n.Ts.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing DynamicCalibrateResourceOption EndTime")
+		}
+	case CalibrateDuration:
+		ctx.WriteKeyWord("DURATION ")
+		ctx.WriteString(n.StrValue)
+	default:
+		return errors.Errorf("invalid DynamicCalibrateResourceOption: %d", n.Tp)
+	}
+	return nil
 }

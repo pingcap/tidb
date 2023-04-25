@@ -661,8 +661,8 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
-	// PreparedParams params for prepared statements
-	PreparedParams    PreparedParams
+	// Parameter values for plan cache.
+	PlanCacheParams   *PlanCacheParamList
 	LastUpdateTime4PC types.Time
 
 	// ActiveRoles stores active roles for current user
@@ -1312,8 +1312,21 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
 
+	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
+	EnableNonPreparedPlanCacheForDML bool
+
+	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
+	// related stats are analyzed after the plan cache is generated.
+	PlanCacheInvalidationOnFreshStats bool
+
 	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	NonPreparedPlanCacheSize uint64
+
+	// PlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
+	PlanCacheMaxPlanSize uint64
+
+	// SessionPlanCacheSize controls the size of session plan cache.
+	SessionPlanCacheSize uint64
 
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
@@ -1335,6 +1348,10 @@ type SessionVars struct {
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
+
+	// InPlanReplayer means we are now executing a statement for a PLAN REPLAYER SQL.
+	// Note that PLAN REPLAYER CAPTURE is not included here.
+	InPlanReplayer bool
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
@@ -1413,6 +1430,9 @@ type SessionVars struct {
 	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
+
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1659,14 +1679,53 @@ func (p PartitionPruneMode) Update() PartitionPruneMode {
 	}
 }
 
-// PreparedParams contains the parameters of the current prepared statement when executing it.
-type PreparedParams []types.Datum
+// PlanCacheParamList stores the parameters for plan cache.
+// Use attached methods to access or modify parameter values instead of accessing them directly.
+type PlanCacheParamList struct {
+	paramValues     []types.Datum
+	forNonPrepCache bool
+}
 
-func (pps PreparedParams) String() string {
-	if len(pps) == 0 {
+// NewPlanCacheParamList creates a new PlanCacheParams.
+func NewPlanCacheParamList() *PlanCacheParamList {
+	p := &PlanCacheParamList{paramValues: make([]types.Datum, 0, 8)}
+	p.Reset()
+	return p
+}
+
+// Reset resets the PlanCacheParams.
+func (p *PlanCacheParamList) Reset() {
+	p.paramValues = p.paramValues[:0]
+	p.forNonPrepCache = false
+}
+
+// String implements the fmt.Stringer interface.
+func (p *PlanCacheParamList) String() string {
+	if p == nil || len(p.paramValues) == 0 ||
+		p.forNonPrepCache { // hide non-prep parameter values by default
 		return ""
 	}
-	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
+	return " [arguments: " + types.DatumsToStrNoErr(p.paramValues) + "]"
+}
+
+// Append appends a parameter value to the PlanCacheParams.
+func (p *PlanCacheParamList) Append(vs ...types.Datum) {
+	p.paramValues = append(p.paramValues, vs...)
+}
+
+// SetForNonPrepCache sets the flag forNonPrepCache.
+func (p *PlanCacheParamList) SetForNonPrepCache(flag bool) {
+	p.forNonPrepCache = flag
+}
+
+// GetParamValue returns the value of the parameter at the specified index.
+func (p *PlanCacheParamList) GetParamValue(idx int) types.Datum {
+	return p.paramValues[idx]
+}
+
+// AllParamValues returns all parameter values.
+func (p *PlanCacheParamList) AllParamValues() []types.Datum {
+	return p.paramValues
 }
 
 // ConnectionInfo presents the connection information, which is mainly used by audit logs.
@@ -1723,7 +1782,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		stmtVars:                      make(map[string]string),
 		PreparedStmts:                 make(map[uint32]interface{}),
 		PreparedStmtNameToID:          make(map[string]uint32),
-		PreparedParams:                make([]types.Datum, 0, 10),
+		PlanCacheParams:               NewPlanCacheParamList(),
 		TxnCtx:                        &TransactionContext{},
 		RetryInfo:                     &RetryInfo{},
 		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
@@ -1807,7 +1866,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
 		MaxAllowedPacket:              DefMaxAllowedPacket,
 		TiFlashFastScan:               DefTiFlashFastScan,
-		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
+		EnableTiFlashReadForWriteStmt: true,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
@@ -2178,7 +2237,7 @@ func (k planCacheStmtKey) Hash() []byte {
 // AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
 func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) {
 	if s.nonPreparedPlanCacheStmts == nil {
-		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.NonPreparedPlanCacheSize), 0, 0)
+		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
 	}
 	s.nonPreparedPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
 }
@@ -2428,6 +2487,7 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
+	sessionStates.ResourceGroupName = s.ResourceGroupName
 
 	// Encode StatementContext. We encode it here to avoid circle dependency.
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
@@ -2461,6 +2521,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
+	s.ResourceGroupName = sessionStates.ResourceGroupName
 
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
@@ -2890,7 +2951,6 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	StatsInfos        map[string]uint64
 	CopTasks          *stmtctx.CopTasksDetails
 	ExecDetail        execdetails.ExecDetails
 	MemMax            int64
@@ -2914,8 +2974,7 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
-	// table -> name -> status
-	StatsLoadStatus   map[string]map[string]string
+	UsedStats         map[int64]*stmtctx.UsedStatsInfoForTable
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
 }
@@ -3003,26 +3062,23 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.Digest) > 0 {
 		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if len(logItems.StatsInfos) > 0 {
+	if len(logItems.UsedStats) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
-		vStr := ""
-		for k, v := range logItems.StatsInfos {
-			if v == 0 {
-				vStr = "pseudo"
-			} else {
-				vStr = strconv.FormatUint(v, 10)
+		keys := maps.Keys(logItems.UsedStats)
+		slices.Sort(keys)
+		for _, id := range keys {
+			usedStatsForTbl := logItems.UsedStats[id]
+			if usedStatsForTbl == nil {
+				continue
 			}
 			if firstComma {
-				buf.WriteString("," + k + ":" + vStr)
-			} else {
-				buf.WriteString(k + ":" + vStr)
-				firstComma = true
+				buf.WriteString(",")
 			}
-			if v != 0 && len(logItems.StatsLoadStatus[k]) > 0 {
-				writeStatsLoadStatusItems(&buf, logItems.StatsLoadStatus[k])
-			}
+			usedStatsForTbl.WriteToSlowLog(&buf)
+			firstComma = true
 		}
+
 		buf.WriteString("\n")
 	}
 	if logItems.CopTasks != nil {
@@ -3130,22 +3186,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	return buf.String()
-}
-
-func writeStatsLoadStatusItems(buf *bytes.Buffer, loadStatus map[string]string) {
-	if len(loadStatus) > 0 {
-		buf.WriteString("[")
-		firstComma := false
-		for name, status := range loadStatus {
-			if firstComma {
-				buf.WriteString("," + name + ":" + status)
-			} else {
-				buf.WriteString(name + ":" + status)
-				firstComma = true
-			}
-		}
-		buf.WriteString("]")
-	}
 }
 
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"

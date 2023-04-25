@@ -32,6 +32,8 @@ go_test(
     ],
     embed = [":scheduler"],
     flaky = True,
+    race = "on",
+    shard_count = 8,
     deps = [
         "//disttask/framework/proto",
         "//resourcemanager/pool/spool",

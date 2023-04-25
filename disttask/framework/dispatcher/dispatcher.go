@@ -193,40 +193,45 @@ func (d *dispatcher) DispatchTaskLoop() {
 	}
 }
 
-func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr string) {
+func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [][]byte) {
 	// TODO: Consider putting the following operations into a transaction.
 	// TODO: Consider collect some information about the tasks.
 	if gTask.State != proto.TaskStateReverting {
 		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateFailed)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
-			return false, ""
+			return false, nil
 		}
 		if cnt > 0 {
-			return false, proto.TaskStateFailed
+			subTaskErr, err = d.taskMgr.CollectSubTaskError(gTask.ID)
+			if err != nil {
+				logutil.BgLogger().Warn("collate subtask error failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
+				return false, nil
+			}
+			return false, subTaskErr
 		}
 
 		cnt, err = d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
-			return false, ""
+			return false, nil
 		}
 		if cnt > 0 {
 			logutil.BgLogger().Info("check task, subtasks aren't finished", zap.Int64("task ID", gTask.ID), zap.Int64("cnt", cnt))
-			return false, ""
+			return false, nil
 		}
-		return true, ""
+		return true, nil
 	}
 
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
 	if err != nil {
 		logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
-		return false, ""
+		return false, nil
 	}
 	if cnt > 0 {
-		return false, ""
+		return false, nil
 	}
-	return true, ""
+	return true, nil
 }
 
 // DetectTaskLoop monitors the status of the subtasks and processes them.
@@ -257,7 +262,7 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 			// TODO: Consider actively obtaining information about task completion.
 			stepIsFinished, errStr := d.probeTask(gTask)
 			// The global task isn't finished and failed.
-			if !stepIsFinished && errStr == "" {
+			if !stepIsFinished && len(errStr) == 0 {
 				logutil.BgLogger().Debug("detect task, this task keeps current state",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 				break
@@ -276,17 +281,17 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 	}
 }
 
-func (d *dispatcher) processFlow(gTask *proto.Task, errStr string) bool {
+func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) bool {
 	var err error
-	if errStr != "" {
+	if len(errStr) > 0 {
 		// Found an error when task is running.
-		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.String("err msg", errStr))
+		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.Any("err msg", errStr))
 		err = d.processErrFlow(gTask, errStr)
 	} else {
 		if gTask.State == proto.TaskStateReverting {
 			// Finish the rollback step.
 			logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("taskID", gTask.ID))
-			err = d.updateTask(gTask, proto.TaskStateReverted, retrySQLTimes)
+			err = d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 		} else {
 			// Finish the normal step.
 			logutil.BgLogger().Info("process flow, process normal", zap.Int64("taskID", gTask.ID))
@@ -303,31 +308,30 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr string) bool {
 	return false
 }
 
-func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, retryTimes int) (err error) {
+func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := gTask.State
+	gTask.State = gTaskState
 	for i := 0; i < retryTimes; i++ {
-		gTask.State = gTaskState
-		// Write the global task meta into the storage.
-		err = d.taskMgr.UpdateGlobalTask(gTask)
+		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(gTask, newSubTasks, gTaskState == proto.TaskStateReverting)
 		if err == nil {
 			break
 		}
 		if i%10 == 0 {
-			logutil.BgLogger().Warn("update global task first failed", zap.Int64("taskID", gTask.ID),
+			logutil.BgLogger().Warn("updateTask first failed", zap.Int64("taskID", gTask.ID),
 				zap.String("previous state", prevState), zap.String("curr state", gTask.State),
 				zap.Int("retry times", retryTimes), zap.Error(err))
 		}
 		time.Sleep(retrySQLInterval)
 	}
 	if err != nil && retryTimes != nonRetrySQLTime {
-		logutil.BgLogger().Warn("update global task failed and delete running task info", zap.Int64("taskID", gTask.ID),
+		logutil.BgLogger().Warn("updateTask failed and delete running task info", zap.Int64("taskID", gTask.ID),
 			zap.String("previous state", prevState), zap.String("curr state", gTask.State), zap.Int("retry times", retryTimes), zap.Error(err))
 		d.delRunningGTask(gTask.ID)
 	}
 	return err
 }
 
-func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error {
+func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d.ctx, d, gTask, receiveErr)
 	if err != nil {
@@ -342,26 +346,14 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 	}
 
 	if len(instanceIDs) == 0 {
-		return d.updateTask(gTask, proto.TaskStateReverted, retrySQLTimes)
+		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 
-	// TODO: UpdateGlobalTask and AddNewSubTask in a txn.
-	// Write the global task meta into the storage.
-	err = d.updateTask(gTask, proto.TaskStateReverting, retrySQLTimes)
-	if err != nil {
-		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
-		return err
-	}
-	// New rollback subtasks and write into the storage.
+	subTasks := make([]*proto.Subtask, 0, len(instanceIDs))
 	for _, id := range instanceIDs {
-		subtask := proto.NewSubtask(gTask.ID, gTask.Type, id, meta)
-		err = d.taskMgr.AddNewSubTask(gTask.ID, subtask.SchedulerID, subtask.Meta, subtask.Type, true)
-		if err != nil {
-			logutil.BgLogger().Warn("add subtask failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
-			return err
-		}
+		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, id, meta))
 	}
-	return nil
+	return d.updateTask(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
 }
 
 func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
@@ -369,7 +361,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-		return d.updateTask(gTask, proto.TaskStateReverted, retrySQLTimes)
+		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
 	if err != nil {
@@ -401,7 +393,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	if len(metas) == 0 {
 		gTask.StateUpdateTime = time.Now().UTC()
 		// Write the global task meta into the storage.
-		err = d.updateTask(gTask, proto.TaskStateSucceed, retryTimes)
+		err = d.updateTask(gTask, proto.TaskStateSucceed, nil, retryTimes)
 		if err != nil {
 			logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 			return err
@@ -409,31 +401,16 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		return nil
 	}
 
-	// TODO: UpdateGlobalTask and AddNewSubTask in a txn.
-	// Write the global task meta into the storage.
-	err = d.updateTask(gTask, gTask.State, retryTimes)
-	if err != nil {
-		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
-		return err
-	}
-	// Write subtasks into the storage.
+	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for _, meta := range metas {
 		instanceID, err := GetEligibleInstance(d.ctx)
 		if err != nil {
 			logutil.BgLogger().Warn("get a eligible instance failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
 			return err
 		}
-		subtask := proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta)
-
-		// TODO: Consider batch insert.
-		// TODO: Synchronization interruption problem, e.g. AddNewTask failed.
-		err = d.taskMgr.AddNewSubTask(gTask.ID, subtask.SchedulerID, subtask.Meta, subtask.Type, false)
-		if err != nil {
-			logutil.BgLogger().Warn("add subtask failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
-			return err
-		}
+		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
-	return nil
+	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
 }
 
 // GetEligibleInstance gets an eligible instance.

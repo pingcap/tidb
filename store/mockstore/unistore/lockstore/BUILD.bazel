@@ -26,6 +26,7 @@ go_test(
     ],
     embed = [":lockstore"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

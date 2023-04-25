@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
@@ -34,15 +35,13 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-func MockDispatcher(t *testing.T) (dispatcher.Dispatch, *storage.TaskManager, kv.Storage) {
-	store := testkit.CreateMockStore(t)
-	gtk := testkit.NewTestKit(t, store)
+func MockDispatcher(t *testing.T, pool *pools.ResourcePool) (dispatcher.Dispatch, *storage.TaskManager) {
 	ctx := context.Background()
-	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), gtk.Session())
+	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
 	dsp, err := dispatcher.NewDispatcher(util.WithInternalSourceType(ctx, "dispatcher"), mgr)
 	require.NoError(t, err)
-	return dsp, mgr, store
+	return dsp, mgr
 }
 
 func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
@@ -52,7 +51,14 @@ func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
 
 func TestGetInstance(t *testing.T) {
 	ctx := context.Background()
-	dsp, mgr, _ := MockDispatcher(t)
+	store := testkit.CreateMockStore(t)
+	gtk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return gtk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+
+	dsp, mgr := MockDispatcher(t, pool)
 
 	makeFailpointRes := func(v interface{}) string {
 		bytes, err := json.Marshal(v)
@@ -139,7 +145,14 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		dispatcher.DefaultDispatchConcurrency = 1
 	}
 
-	dsp, mgr, store := MockDispatcher(t)
+	store := testkit.CreateMockStore(t)
+	gtk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return gtk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+
+	dsp, mgr := MockDispatcher(t, pool)
 	dsp.Start()
 	defer func() {
 		dsp.Stop()
@@ -208,7 +221,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateSucceed)
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, "")
 			require.NoError(t, err)
 		}
 		checkGetGTaskState(proto.TaskStateSucceed)
@@ -224,7 +237,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	}()
 	// Mock a subtask fails.
 	for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-		err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateFailed)
+		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, "")
 		require.NoError(t, err)
 	}
 	checkGetGTaskState(proto.TaskStateReverting)
@@ -232,7 +245,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateReverted)
+		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, "")
 		require.NoError(t, err)
 	}
 	checkGetGTaskState(proto.TaskStateReverted)
@@ -281,7 +294,7 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 	return metas, nil
 }
 
-func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
+func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
 }
