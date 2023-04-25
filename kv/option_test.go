@@ -71,6 +71,13 @@ func TestSetLossyDDLReorgSource(t *testing.T) {
 	}{
 		{
 			name:                        "lossy ddl reorg source is set",
+			currentSource:               0, // SetCDCWriteSource
+			lossyDDLReorgSource:         1,
+			expectedSet:                 true,
+			expectedLossyDDLReorgSource: 1,
+		},
+		{
+			name:                        "lossy ddl reorg source is set",
 			currentSource:               12, // SetCDCWriteSource
 			lossyDDLReorgSource:         1,
 			expectedSet:                 true,
