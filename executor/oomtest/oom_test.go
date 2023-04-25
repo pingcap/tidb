@@ -262,14 +262,13 @@ func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		h.mu.Unlock()
 		return nil
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	// They are just common background task and not related to the oom.
 	if !h.messageFilter.Empty() && !h.messageFilter.Exist(entry.Message) {
 		return nil
 	}
-
-	h.mu.Lock()
 	h.tracker = entry.Message
-	h.mu.Unlock()
 	return nil
 }
 
