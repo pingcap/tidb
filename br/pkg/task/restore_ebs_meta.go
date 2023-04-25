@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -199,6 +200,40 @@ func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Prog
 	}
 
 	if h.cfg.SkipAWS {
+		if _, err := os.Stat("/usr/local/bin/install-snapshot.sh"); err == nil {
+			log.Info("start to install snapshots")
+			if err := os.WriteFile("backupmeta.json", []byte(h.metaInfo.String()), 0644); err != nil {
+				return 0, errors.Trace(err)
+			}
+			cmd := exec.Command("install-snapshot.sh")
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Warn("failed to install snapshots", zap.Error(err))
+				return 0, errors.Trace(err)
+			}
+			// Script should write the restore volume ids to /volume-ids.txt.
+			// Each line contains: <volume-id> <restore-volume-id>
+			data, err := os.ReadFile("volume-ids.txt")
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			log.Info("install snapshots finished", zap.String("volume-ids", string(data)))
+			volumeIDMap := make(map[string]string)
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				fields := strings.Split(line, " ")
+				if len(fields) != 2 {
+					log.Warn("invalid volume id line", zap.String("line", line))
+					continue
+				}
+				volumeID, restoreVolumeID := strings.TrimSpace(fields[0]), strings.TrimSpace(fields[1])
+				volumeIDMap[volumeID] = restoreVolumeID
+			}
+			h.metaInfo.SetRestoreVolumeIDs(volumeIDMap)
+		}
 		for i := 0; i < int(h.metaInfo.GetStoreCount()); i++ {
 			progress.Inc()
 			log.Info("mock: create volume from snapshot finished.", zap.Int("index", i))

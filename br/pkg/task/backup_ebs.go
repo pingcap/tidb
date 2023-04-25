@@ -9,7 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -220,6 +223,38 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		}
 		log.Info("async snapshots finished.")
 	} else {
+		if _, err := os.Stat("/usr/local/bin/create-snapshot.sh"); err == nil {
+			log.Info("start to create snapshots")
+			if err := os.WriteFile("backupmeta.json", []byte(backupInfo.String()), 0644); err != nil {
+				return errors.Trace(err)
+			}
+			cmd := exec.Command("create-snapshot.sh", cfg.VolumeFile)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Warn("failed to create snapshots", zap.Error(err))
+				return errors.Trace(err)
+			}
+			// Script should write snapshot id to /snapshot-id.txt.
+			// Each line contains: <volume-id> <snapshot-id>
+			data, err := os.ReadFile("snapshot-ids.txt")
+			if err != nil {
+				return errors.Trace(err)
+			}
+			log.Info("create snapshots finished", zap.String("snapshot-ids", string(data)))
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				fields := strings.Split(line, " ")
+				if len(fields) != 2 {
+					log.Warn("invalid snapshot id line", zap.String("line", line))
+					continue
+				}
+				volumeID, snapID := strings.TrimSpace(fields[0]), strings.TrimSpace(fields[1])
+				snapIDMap[volumeID] = snapID
+			}
+		}
 		for i := 0; i < int(storeCount); i++ {
 			progress.IncBy(100)
 			totalSize = 1024
