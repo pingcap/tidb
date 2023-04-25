@@ -1089,6 +1089,9 @@ func upgrade(s Session) {
 	if isNull {
 		upgradeToVer99Before(s)
 	}
+
+	// It is only used in test.
+	addMockBootstrapVersion()
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
