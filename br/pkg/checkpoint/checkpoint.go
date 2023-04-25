@@ -195,6 +195,9 @@ func (cr *ChecksumRunner) FlushChecksumItem(
 	// When the table is large, the time spent executing checksum will span
 	// several breakpoint persistence cycles. So we'd better to immediately persist
 	// the checksum of these large tables.
+	failpoint.Inject("checkpoint-more-quickly-flush", func(_ failpoint.Value) {
+		cr.totalCost = MaxChecksumTotalCost + 1
+	})
 	if cr.totalCost > MaxChecksumTotalCost {
 		toBeFlushedChecksumItems = &ChecksumItems{
 			Items: cr.checksumItems.Items,
@@ -457,6 +460,12 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 	tickDurationForFlush,
 	tickDurationForLock time.Duration,
 ) {
+	failpoint.Inject("checkpoint-more-quickly-flush", func(_ failpoint.Value) {
+		tickDurationForFlush = 3 * time.Second
+		if tickDurationForLock > 0 {
+			tickDurationForLock = 1 * time.Second
+		}
+	})
 	r.wg.Add(1)
 	checkpointLoop := func(ctx context.Context) {
 		defer r.wg.Done()
