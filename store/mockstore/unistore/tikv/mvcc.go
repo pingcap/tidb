@@ -1151,10 +1151,6 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 				Key:         key,
 			}
 		}
-		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
-			log.Warn("commit a pessimistic lock with Lock type", zap.Binary("key", key), zap.Uint64("start ts", startTS), zap.Uint64("commit ts", commitTS))
-			lock.Op = uint8(kvrpcpb.Op_Lock)
-		}
 		isPessimisticTxn = lock.ForUpdateTS > 0
 		tmpDiff += len(key) + len(lock.Value)
 		batch.Commit(key, &lock)
