@@ -95,6 +95,9 @@ import (
 
 var (
 	mdlCheckLookDuration = 50 * time.Millisecond
+
+	// The threshold for version gap to reload domain by loading schema diffs
+	LoadSchemaDiffVersionGapThreshold int64 = 100
 )
 
 func init() {
@@ -208,7 +211,8 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// fetch the commit timestamp of the schema diff
 	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
+		// NOTICE: the log restore needs to increase schema version without `Diff:` key to full-reload the domain globally.
+		logutil.BgLogger().Debug("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
 		schemaTs = 0
 	}
 
@@ -229,7 +233,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 3. There are less 100 diffs.
 	// 4. No regenrated schema diff.
 	startTime := time.Now()
-	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < 100 {
+	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
 		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
 		if err == nil {
 			do.infoCache.Insert(is, uint64(schemaTs))
