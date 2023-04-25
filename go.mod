@@ -3,7 +3,7 @@ module github.com/pingcap/tidb
 go 1.20
 
 require (
-	cloud.google.com/go/storage v1.28.1
+	cloud.google.com/go/storage v1.30.1
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v0.20.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v0.12.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v0.2.0
