@@ -1660,8 +1660,11 @@ func TestRpadSig(t *testing.T) {
 	input := chunk.NewChunkWithCapacity(colTypes, 10)
 	input.AppendString(0, "abc")
 	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
 	input.AppendInt64(1, 6)
 	input.AppendInt64(1, 10000)
+	input.AppendInt64(1, 1000000000)
+	input.AppendString(2, "123")
 	input.AppendString(2, "123")
 	input.AppendString(2, "123")
 
@@ -1670,6 +1673,12 @@ func TestRpadSig(t *testing.T) {
 	require.False(t, isNull)
 	require.NoError(t, err)
 
+	res, isNull, err = rpad.evalString(input.GetRow(1))
+	require.Equal(t, "", res)
+	require.True(t, isNull)
+	require.NoError(t, err)
+
+	rpad.maxAllowedPacket = 10000000000
 	res, isNull, err = rpad.evalString(input.GetRow(1))
 	require.Equal(t, "", res)
 	require.True(t, isNull)

@@ -2269,6 +2269,10 @@ func (b *builtinRpadUTF8Sig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	padLength := len([]rune(padStr))
 
+	if len(padStr)*targetLength > (1 << 32) {
+		return "", true, nil
+	}
+
 	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() || (runeLength < targetLength && padLength == 0) {
 		return "", true, nil
 	}
