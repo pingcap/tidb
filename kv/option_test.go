@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSetCdcWriteSource(t *testing.T) {
+func TestSetCDCWriteSource(t *testing.T) {
 	for _, tc := range []struct {
 		name                   string
 		cdcWriteSource         uint64
