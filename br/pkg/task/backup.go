@@ -19,6 +19,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -183,11 +184,6 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		// TODO: compatible with incremental backup
 		cfg.UseCheckpoint = false
 		log.Info("since incremental backup is used, turn off checkpoint mode")
-	}
-	if cfg.UseBackupMetaV2 {
-		// TODO: compatible with backup meta v2, maybe just clean the meta files
-		cfg.UseCheckpoint = false
-		log.Info("since backup meta v2 is used, turn off checkpoint mode")
 	}
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
@@ -633,6 +629,13 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			if !gcSafePointKeeperRemovable {
 				log.Info("wait for flush checkpoint...")
 				client.WaitForFinishCheckpoint(ctx)
+			} else {
+				log.Info("start to remove checkpoint data for backup")
+				if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
+					log.Info("failed to remove checkpoint data for backup", zap.Error(removeErr))
+				} else {
+					log.Info("the checkpoint data for backup is removed.")
+				}
 			}
 		}()
 	}
