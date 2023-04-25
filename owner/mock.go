@@ -101,6 +101,6 @@ func (m *mockManager) SetBeOwnerHook(hook func()) {
 }
 
 // CampaignCancel implements Manager.CampaignCancel interface
-func (m *mockManager) CampaignCancel() {
+func (*mockManager) CampaignCancel() {
 	// do nothing
 }

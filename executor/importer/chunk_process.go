@@ -49,8 +49,7 @@ type deliveredRow struct {
 }
 
 type deliverResult struct {
-	totalDur time.Duration
-	err      error
+	err error
 }
 
 type deliverKVBatch struct {
@@ -118,7 +117,6 @@ type chunkProcessor struct {
 	dataWriter  backend.EngineWriter
 	indexWriter backend.EngineWriter
 
-	checksum    verify.KVChecksum
 	encoder     kvEncoder
 	kvCodec     tikv.Codec
 	progress    *asyncloaddata.Progress

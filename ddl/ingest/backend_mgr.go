@@ -128,7 +128,7 @@ const checkpointUpdateInterval = 10 * time.Minute
 
 func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
 	cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot) *litBackendCtx {
-	return &litBackendCtx{
+	bCtx := &litBackendCtx{
 		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
 		MemRoot:        memRoot,
 		DiskRoot:       diskRoot,
@@ -140,6 +140,8 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
 		diskRoot:       diskRoot,
 		updateInterval: checkpointUpdateInterval,
 	}
+	bCtx.timeOfLastFlush.Store(time.Now())
+	return bCtx
 }
 
 // Unregister removes a backend context from the backend context manager.
