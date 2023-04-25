@@ -419,13 +419,8 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 	return nil
 }
 
-var ignoreInTest = false
-
 func (p *Plan) initDefaultOptions() {
 	threadCnt := runtime.NumCPU()
-	if intest.InTest && !ignoreInTest {
-		threadCnt = 1
-	}
 	if p.Format == LoadDataFormatParquet {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
