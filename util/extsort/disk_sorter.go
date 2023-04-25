@@ -207,7 +207,7 @@ func (w *diskSorterWriter) Put(key, value []byte) error {
 		}
 		// The default buffer is too small, enlarge it to fit the key and value.
 		if w.off+len(key)+len(value) > len(w.buf) {
-			w.buf = make([]byte, len(key)+len(value), len(key)+len(value))
+			w.buf = make([]byte, len(key)+len(value))
 		}
 	}
 
