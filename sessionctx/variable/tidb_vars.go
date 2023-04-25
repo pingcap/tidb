@@ -787,6 +787,9 @@ const (
 	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
 	// TiDBPlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
 	TiDBPlanCacheMaxPlanSize = "tidb_plan_cache_max_plan_size"
+	// TiDBPlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
+	// related stats are analyzed after the plan cache is generated.
+	TiDBPlanCacheInvalidationOnFreshStats = "tidb_plan_cache_invalidation_on_fresh_stats"
 	// TiDBSessionPlanCacheSize controls the size of session plan cache.
 	TiDBSessionPlanCacheSize = "tidb_session_plan_cache_size"
 
@@ -1260,6 +1263,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold             = time.Second
 	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
+	DefTiDBPlanCacheInvalidationOnFreshStats         = true
 )
 
 // Process global variables.
