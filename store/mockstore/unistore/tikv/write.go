@@ -15,6 +15,7 @@
 package tikv
 
 import (
+	"bytes"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -22,10 +23,12 @@ import (
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/util/mathutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -249,10 +252,11 @@ func (wb *writeBatch) Commit(key []byte, lock *mvcc.Lock) {
 	userMeta := mvcc.NewDBUserMeta(wb.startTS, wb.commitTS)
 	k := y.KeyWithTs(key, wb.commitTS)
 	if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
+		log.Info("removing a pessimistic lock when committing", zap.Binary("key", key), zap.Uint64("startTS", wb.startTS), zap.Uint64("commitTS", wb.commitTS))
 		// Write nothing as if PessimisticRollback is called.
 	} else if lock.Op != uint8(kvrpcpb.Op_Lock) {
 		wb.dbBatch.set(k, lock.Value, userMeta)
-	} else {
+	} else if bytes.Equal(key, lock.Primary) {
 		opLockKey := y.KeyWithTs(mvcc.EncodeExtraTxnStatusKey(key, wb.startTS), wb.startTS)
 		wb.dbBatch.set(opLockKey, nil, userMeta)
 	}
