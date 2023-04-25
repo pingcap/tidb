@@ -5547,6 +5547,12 @@ func TestStrToDateBuiltinWithWarnings(t *testing.T) {
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
 		`Warning 8034 Incorrect datetime value: '4#,8?Q'`,
 	))
+	tk.MustExec("CREATE TABLE t1 (c1 INT, c2 TEXT);")
+	tk.MustExec("INSERT INTO t1 VALUES (1833458842, '0.3503490908550797');")
+	tk.MustQuery(`SELECT  CAST(t1.c2 AS DATE) FROM t1`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
+		`Warning 1292 Incorrect datetime value: '0.3503490908550797'`,
+	))
 }
 
 func TestReadPartitionedTable(t *testing.T) {
