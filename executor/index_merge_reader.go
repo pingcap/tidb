@@ -616,7 +616,7 @@ type partialTableWorker struct {
 
 // hasExtralPidCol indicates whether we need create a partitonHandle or not.
 // If we want to keep order in IndexMerge for a partition table,
-// we should create a partitionHandle which contained Pid information.
+// we should create a partitionHandle which contained pid information.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
 func (w *partialTableWorker) hasExtralPidCol() bool {
 	return w.partitionTableMode && len(w.byItems) > 0
