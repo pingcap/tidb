@@ -863,6 +863,7 @@
       "br/pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated"
     },
     "only_files": {
+      "domain/": "domain code",
       "util/gctuner": "util/gctuner",
       "util/cgroup": "util/cgroup code",
       "util/watcher": "util/watcher",
@@ -876,6 +877,7 @@
       "resourcemanager/": "resourcemanager code",
       "keyspace/": "keyspace code",
       "server/": "server code",
+      "owner/": "owner code",
       "meta": "meta code"
     }
   },
