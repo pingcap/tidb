@@ -816,14 +816,20 @@
   {
     "name": "TestPushdownDistinctEnable",
     "cases": [
-      "select /*+ HASH_AGG() */ avg(distinct a) from t;", // InjectProjBelowAgg
-      "select /*+ HASH_AGG() */ a, count(distinct a) from t;", // firstrow(a) cannot be removed.
+      // InjectProjBelowAgg
+      "select /*+ HASH_AGG() */ avg(distinct a) from t;",
+      // firstrow(a) cannot be removed.
+      "select /*+ HASH_AGG() */ a, count(distinct a) from t;",
       "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
-      "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;", // can push down
-      "select /*+ STREAM_AGG() */ count(distinct c) from t;", // can not push down because c is not in group by
-      "select /*+ HASH_AGG() */ count(distinct c) from t;", // can push down
+      // can push down
+      "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;",
+      // can not push down because c is not in group by
+      "select /*+ STREAM_AGG() */ count(distinct c) from t;",
+      // can push down
+      "select /*+ HASH_AGG() */ count(distinct c) from t;",
       "select count(distinct c) from t group by c;",
-      "select count(distinct c) from t;", // should not use streamAgg because c is not in group by
+      // should not use streamAgg because c is not in group by
+      "select count(distinct c) from t;",
 
       "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
       "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
