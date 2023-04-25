@@ -110,21 +110,21 @@ func (b *builtinGroupingSig) checkMetadata() error {
 	return nil
 }
 
-func (b *builtinGroupingSig) groupingImplV1(groupingID int64, metaGroupingID int64) int64 {
+func (b *builtinGroupingSig) groupingImplBitAnd(groupingID int64, metaGroupingID int64) int64 {
 	if groupingID&metaGroupingID > 0 {
 		return 1
 	}
 	return 0
 }
 
-func (b *builtinGroupingSig) groupingImplV2(groupingID int64, metaGroupingID int64) int64 {
+func (b *builtinGroupingSig) groupingImplNumericCmp(groupingID int64, metaGroupingID int64) int64 {
 	if groupingID > metaGroupingID {
 		return 1
 	}
 	return 0
 }
 
-func (b *builtinGroupingSig) groupingImplV3(groupingID int64) int64 {
+func (b *builtinGroupingSig) groupingImplNumericSet(groupingID int64) int64 {
 	grouping_ids := b.getMetaGroupingIDs()
 	_, ok := grouping_ids[groupingID]
 	if ok {
@@ -135,12 +135,12 @@ func (b *builtinGroupingSig) groupingImplV3(groupingID int64) int64 {
 
 func (b *builtinGroupingSig) grouping(groupingID int64) int64 {
 	switch b.mode {
-	case 1:
-		return b.groupingImplV1(groupingID, b.getMetaGroupingID())
-	case 2:
-		return b.groupingImplV2(groupingID, b.getMetaGroupingID())
-	case 3:
-		return b.groupingImplV3(groupingID)
+	case tipb.GroupingMode_ModeBitAnd:
+		return b.groupingImplBitAnd(groupingID, b.getMetaGroupingID())
+	case tipb.GroupingMode_ModeNumericCmp:
+		return b.groupingImplNumericCmp(groupingID, b.getMetaGroupingID())
+	case tipb.GroupingMode_ModeNumericSet:
+		return b.groupingImplNumericSet(groupingID)
 	}
 	return 0
 }
@@ -164,17 +164,17 @@ func (b *builtinGroupingSig) groupingVec(groupingIds *chunk.Column, rowNum int, 
 	result.ResizeInt64(rowNum, false)
 	resContainer := result.Int64s()
 	switch b.mode {
-	case 1:
+	case tipb.GroupingMode_ModeBitAnd:
 		for i := 0; i < rowNum; i++ {
-			resContainer[i] = b.groupingImplV1(groupingIds.GetInt64(i), b.getMetaGroupingID())
+			resContainer[i] = b.groupingImplBitAnd(groupingIds.GetInt64(i), b.getMetaGroupingID())
 		}
-	case 2:
+	case tipb.GroupingMode_ModeNumericCmp:
 		for i := 0; i < rowNum; i++ {
-			resContainer[i] = b.groupingImplV2(groupingIds.GetInt64(i), b.getMetaGroupingID())
+			resContainer[i] = b.groupingImplNumericCmp(groupingIds.GetInt64(i), b.getMetaGroupingID())
 		}
-	case 3:
+	case tipb.GroupingMode_ModeNumericSet:
 		for i := 0; i < rowNum; i++ {
-			resContainer[i] = b.groupingImplV3(groupingIds.GetInt64(i))
+			resContainer[i] = b.groupingImplNumericSet(groupingIds.GetInt64(i))
 		}
 	}
 }

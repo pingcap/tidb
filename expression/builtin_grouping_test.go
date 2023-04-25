@@ -47,7 +47,7 @@ func TestGrouping(t *testing.T) {
 		groupingIDs  map[int64]struct{}
 		expectResult uint64
 	}{
-		// version 1
+		// GroupingMode_ModeBitAnd
 		{1, 1, map[int64]struct{}{1: {}}, 1},
 		{1, 1, map[int64]struct{}{3: {}}, 1},
 		{1, 1, map[int64]struct{}{6: {}}, 0},
@@ -58,7 +58,7 @@ func TestGrouping(t *testing.T) {
 		{4, 1, map[int64]struct{}{4: {}}, 1},
 		{4, 1, map[int64]struct{}{6: {}}, 1},
 
-		// version 2
+		// GroupingMode_ModeNumericCmp
 		{0, 2, map[int64]struct{}{0: {}}, 0},
 		{0, 2, map[int64]struct{}{2: {}}, 0},
 		{2, 2, map[int64]struct{}{0: {}}, 1},
@@ -66,7 +66,7 @@ func TestGrouping(t *testing.T) {
 		{2, 2, map[int64]struct{}{2: {}}, 0},
 		{2, 2, map[int64]struct{}{3: {}}, 0},
 
-		// version 3
+		// GroupingMode_ModeNumericSet
 		{1, 3, map[int64]struct{}{1: {}, 2: {}}, 0},
 		{1, 3, map[int64]struct{}{2: {}}, 1},
 		{2, 3, map[int64]struct{}{1: {}, 3: {}}, 1},
