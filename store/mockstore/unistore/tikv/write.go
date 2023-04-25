@@ -15,7 +15,6 @@
 package tikv
 
 import (
-	"bytes"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -249,9 +248,11 @@ func (wb *writeBatch) Prewrite(key []byte, lock *mvcc.Lock) {
 func (wb *writeBatch) Commit(key []byte, lock *mvcc.Lock) {
 	userMeta := mvcc.NewDBUserMeta(wb.startTS, wb.commitTS)
 	k := y.KeyWithTs(key, wb.commitTS)
-	if lock.Op != uint8(kvrpcpb.Op_Lock) {
+	if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
+		// Write nothing as if PessimisticRollback is called.
+	} else if lock.Op != uint8(kvrpcpb.Op_Lock) {
 		wb.dbBatch.set(k, lock.Value, userMeta)
-	} else if bytes.Equal(key, lock.Primary) {
+	} else {
 		opLockKey := y.KeyWithTs(mvcc.EncodeExtraTxnStatusKey(key, wb.startTS), wb.startTS)
 		wb.dbBatch.set(opLockKey, nil, userMeta)
 	}
