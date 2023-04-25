@@ -2176,6 +2176,7 @@ func (do *Domain) loadStatsWorker() {
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
+	close(statsHandle.InitStatsDone)
 	for {
 		select {
 		case <-loadTicker.C:
