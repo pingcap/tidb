@@ -134,7 +134,11 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 }
 
 // fixTaskForCTEStorageAndReader fixes the upstream/downstream tasks for the producers and consumers.
-// We only setup local transport for the data.
+// After we split the fragments. A CTE producer in the fragment will holds all the task address of the consumers.
+// For example, the producer has two task on node_1 and node_2. As we know that each consumer also has two task on the same nodes(node_1 and node_2)
+// We need to prune address of node_2 for producer's task on node_1 since we just want the producer task on the node_1 only send to the consumer tasks on the node_1.
+// And the same for the task on the node_2.
+// And the same for the consumer task. We need to prune the unnecessary task address of its producer tasks(i.e. the downstream tasks).
 func (e *MPPGather) fixTaskForCTEStorageAndReader(exec *tipb.Executor, meta kv.MPPTaskMeta) error {
 	children := make([]*tipb.Executor, 0, 2)
 	switch exec.Tp {
