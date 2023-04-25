@@ -70,6 +70,33 @@ func TestIssue43311(t *testing.T) {
 	tk.MustQuery(`execute st using @a, @b`).Check(testkit.Rows()) // empty
 }
 
+func TestPlanCacheSizeSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// default value = 100
+	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("100"))
+	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("100"))
+
+	// keep the same value when updating any one of them
+	tk.MustExec(`set @@tidb_prepared_plan_cache_size = 200`)
+	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("200"))
+	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("200"))
+	tk.MustExec(`set @@tidb_session_plan_cache_size = 300`)
+	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("300"))
+	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("300"))
+
+	tk.MustExec(`set global tidb_prepared_plan_cache_size = 400`)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("400"))
+	tk1.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("400"))
+
+	tk.MustExec(`set global tidb_session_plan_cache_size = 500`)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("500"))
+	tk2.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("500"))
+}
+
 func TestPlanCacheUnsafeRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -532,7 +559,11 @@ func TestPreparedPlanCacheStats(t *testing.T) {
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustExec("analyze table t")
-	tk.MustExec(`execute st using @a`) // stats changes can affect prep cache hit
+	tk.MustExec("set tidb_plan_cache_invalidation_on_fresh_stats = 0")
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_plan_cache_invalidation_on_fresh_stats = 1")
+	tk.MustExec(`execute st using @a`) // stats changes can affect prep cache hit if we turn on the variable
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))

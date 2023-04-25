@@ -76,14 +76,18 @@ func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gT
 	return nil, nil
 }
 
-func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) ([]*SubtaskMeta, error) {
+func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
 		return nil, err
 	}
-	// todo: use real session context
-	controller, err := importer.NewLoadDataController(nil, &taskMeta.Plan, tbl)
+
+	astArgs, err := importer.ASTArgsFromStmt(taskMeta.Stmt)
+	if err != nil {
+		return nil, err
+	}
+	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -94,16 +98,24 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) ([]*SubtaskMe
 	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
 		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
+		Job: &asyncloaddata.Job{
+			ID: taskMeta.JobID,
+		},
 	}, controller)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		err2 := tableImporter.Close()
+		if err == nil {
+			err = err2
+		}
+	}()
 
 	engineCheckpoints, err := tableImporter.PopulateChunks(ctx)
 	if err != nil {
 		return nil, err
 	}
-	subtaskMetas := make([]*SubtaskMeta, 0, len(engineCheckpoints))
 	for id, ecp := range engineCheckpoints {
 		if id == common.IndexEngineID {
 			continue

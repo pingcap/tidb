@@ -45,6 +45,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
 	require.Equal(t, true, plan.AddIndex)
 	require.Equal(t, config.OpLevelOptional, plan.Analyze)
+	require.Equal(t, false, plan.Distributed)
 	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
 	require.Equal(t, int64(1000), plan.BatchSize)
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
@@ -67,10 +68,12 @@ func TestInitOptions(t *testing.T) {
 		{OptionStr: detachedOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: addIndexOption, Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: detachedOption + ", " + detachedOption, Err: exeerrors.ErrDuplicateOption},
+		{OptionStr: distributedOption, Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: importModeOption + "='logical', " + diskQuotaOption + "='100GiB'", Err: exeerrors.ErrLoadDataUnsupportedOption},
 		{OptionStr: importModeOption + "='logical', " + checksumOption + "='optional'", Err: exeerrors.ErrLoadDataUnsupportedOption},
 		{OptionStr: importModeOption + "='logical', " + addIndexOption + "=false", Err: exeerrors.ErrLoadDataUnsupportedOption},
 		{OptionStr: importModeOption + "='logical', " + analyzeOption + "='optional'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: importModeOption + "='logical', " + distributedOption + "=false", Err: exeerrors.ErrLoadDataUnsupportedOption},
 
 		{OptionStr: importModeOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: importModeOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
@@ -95,6 +98,10 @@ func TestInitOptions(t *testing.T) {
 		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
+
+		{OptionStr: importModeOption + "='physical', " + distributedOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + distributedOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + distributedOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
 		{OptionStr: threadOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: threadOption + "=0", Err: exeerrors.ErrInvalidOptionVal},
@@ -155,6 +162,7 @@ func TestInitOptions(t *testing.T) {
 		checksumOption+"='optional', "+
 		addIndexOption+"=false, "+
 		analyzeOption+"='required', "+
+		distributedOption+"=false, "+
 		threadOption+"='100000', "+
 		batchSizeOption+"=2000, "+
 		maxWriteSpeedOption+"='200mib', "+
@@ -169,6 +177,7 @@ func TestInitOptions(t *testing.T) {
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
 	require.False(t, plan.AddIndex, sql)
+	require.False(t, plan.Distributed, sql)
 	require.Equal(t, config.OpLevelRequired, plan.Analyze, sql)
 	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt, sql)
 	require.Equal(t, int64(2000), plan.BatchSize, sql)
@@ -197,4 +206,21 @@ func TestGetMsgFromBRError(t *testing.T) {
 	berr = errors.Annotatef(berr, "some message about error reason")
 	require.Equal(t, "some message about error reason: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
 	require.Equal(t, "some message about error reason", GetMsgFromBRError(berr))
+}
+
+func TestASTArgsFromStmt(t *testing.T) {
+	stmt := "load data infile 'gs://test-load/test.tsv' into table tb(a, é);"
+	stmtNode, err := parser.New().ParseOneStmt(stmt, "latin1", "latin1_bin")
+	require.NoError(t, err)
+	text := stmtNode.Text()
+	require.Equal(t, stmt, text)
+	astArgs, err := ASTArgsFromStmt(text)
+	require.NoError(t, err)
+	loadDataStmt := stmtNode.(*ast.LoadDataStmt)
+	require.Equal(t, astArgs.FileLocRef, loadDataStmt.FileLocRef)
+	require.Equal(t, astArgs.ColumnAssignments, loadDataStmt.ColumnAssignments)
+	require.Equal(t, astArgs.ColumnsAndUserVars, loadDataStmt.ColumnsAndUserVars)
+	require.Equal(t, astArgs.FieldsInfo, loadDataStmt.FieldsInfo)
+	require.Equal(t, astArgs.LinesInfo, loadDataStmt.LinesInfo)
+	require.Equal(t, astArgs.OnDuplicate, loadDataStmt.OnDuplicate)
 }
