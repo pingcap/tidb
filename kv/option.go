@@ -98,8 +98,9 @@ const (
 	ScanBatchSize
 	// TxnSource set the source of this transaction.
 	// We use an uint64 to represent the source of a transaction.
-	// The first 8 bits are reserved for TiCDC, and the next 4 bits are reserved for Lossy DDL reorg Backfill job.
-	// The remaining 52 bits are reserved for extendability.
+	// The first 8 bits are reserved for TiCDC to implement BDR synchronization,
+	// and the next 8 bits are reserved for Lossy DDL reorg Backfill job.
+	// The remaining 48 bits are reserved for extendability.
 	TxnSource
 	// ResourceGroupName set the bind resource group name.
 	ResourceGroupName
