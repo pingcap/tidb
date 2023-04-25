@@ -355,6 +355,8 @@ func (t *timeSeriesValues) getValue() float64 {
 
 func (t *timeSeriesValues) advance(target time.Time) bool {
 	for ; t.idx < len(t.vals); t.idx++ {
+		// `target` is maximal time in other timeSeriesValues,
+		// so we should find the time which offset is less than 10s.
 		if t.vals[t.idx].tp.Add(time.Second * 10).After(target) {
 			return t.vals[t.idx].tp.Add(-time.Second * 10).Before(target)
 		}
