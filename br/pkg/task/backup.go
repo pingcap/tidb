@@ -632,7 +632,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			} else {
 				log.Info("start to remove checkpoint data for backup")
 				if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
-					log.Info("failed to remove checkpoint data for backup", zap.Error(removeErr))
+					log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
 				} else {
 					log.Info("the checkpoint data for backup is removed.")
 				}
