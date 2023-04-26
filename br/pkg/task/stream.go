@@ -1084,11 +1084,6 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 	return nil
 }
 
-// getStreamRestoreTaskName generates the taskName for checkpoint
-func getStreamRestoreTaskName(clusterID, startTS, restoreTs uint64) string {
-	return fmt.Sprintf("%d/%d.%d", clusterID, startTS, restoreTs)
-}
-
 // RunStreamRestore restores stream log.
 func RunStreamRestore(
 	c context.Context,
@@ -1276,10 +1271,10 @@ func restoreStream(
 		log.Info("finish restoring gc")
 	}()
 
-	taskName := getStreamRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
+	var taskName string
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
 	if cfg.UseCheckpoint {
-		cfg.checkpointLogRestoreTaskName = taskName
+		taskName := cfg.generateLogRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
 		if err != nil {
 			return errors.Trace(err)
@@ -1423,6 +1418,12 @@ func restoreStream(
 			return err
 		}
 	}
+
+	failpoint.Inject("do-checksum-with-rewrite-rules", func(_ failpoint.Value) {
+		if err := client.FailpointDoChecksumForLogRestore(ctx, mgr.GetStorage().GetClient(), mgr.GetPDClient(), idrules, rewriteRules); err != nil {
+			failpoint.Return(errors.Annotate(err, "failed to do checksum"))
+		}
+	})
 
 	gcDisabledRestorable = true
 

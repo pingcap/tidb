@@ -1744,6 +1744,111 @@ func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *Crea
 	}
 }
 
+// called by failpoint
+func (rc *Client) FailpointDoChecksumForLogRestore(
+	ctx context.Context,
+	kvClient kv.Client,
+	pdClient pd.Client,
+	idrules map[int64]int64,
+	rewriteRules map[int64]*RewriteRules,
+) (finalErr error) {
+	startTS, err := rc.GetTSWithRetry(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// set gc safepoint for checksum
+	sp := utils.BRServiceSafePoint{
+		BackupTS: startTS,
+		TTL:      utils.DefaultBRGCSafePointTTL,
+		ID:       utils.MakeSafePointID(),
+	}
+	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
+	defer func() {
+		log.Info("start to remove gc-safepoint keeper")
+		// close the gc safe point keeper at first
+		gcSafePointKeeperCancel()
+		// set the ttl to 0 to remove the gc-safe-point
+		sp.TTL = 0
+		if err := utils.UpdateServiceSafePoint(cctx, pdClient, sp); err != nil {
+			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+				zap.Error(err),
+			)
+		}
+		log.Info("finish removing gc-safepoint keeper")
+	}()
+	err = utils.StartServiceSafePointKeeper(cctx, pdClient, sp)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	eg, ectx := errgroup.WithContext(ctx)
+	pool := utils.NewWorkerPool(4, "checksum for log restore")
+	infoSchema := rc.GetDomain().InfoSchema()
+	// downstream id -> upstream id
+	reidRules := make(map[int64]int64)
+	for upstreamID, downstreamID := range idrules {
+		reidRules[downstreamID] = upstreamID
+	}
+	for upstreamID, downstreamID := range idrules {
+		newTable, ok := infoSchema.TableByID(downstreamID)
+		if !ok {
+			// a dropped table
+			continue
+		}
+		rewriteRule, ok := rewriteRules[upstreamID]
+		if !ok {
+			continue
+		}
+		newTableInfo := newTable.Meta()
+		var definitions []model.PartitionDefinition
+		for _, def := range newTableInfo.Partition.Definitions {
+			upid, ok := reidRules[def.ID]
+			if ok {
+				log.Panic("no rewrite rule for parition table id", zap.Int64("id", def.ID))
+			}
+			definitions = append(definitions, model.PartitionDefinition{
+				ID: upid,
+			})
+		}
+		oldPartition := &model.PartitionInfo{
+			Definitions: definitions,
+		}
+		oldTable := &metautil.Table{
+			Info: &model.TableInfo{
+				ID:        upstreamID,
+				Indices:   newTableInfo.Indices,
+				Partition: oldPartition,
+			},
+		}
+		pool.ApplyOnErrorGroup(eg, func() error {
+			exe, err := checksum.NewExecutorBuilder(newTableInfo, startTS).
+				SetOldTable(oldTable).
+				SetConcurrency(4).
+				SetOldKeyspace(rewriteRule.OldKeyspace).
+				SetNewKeyspace(rewriteRule.NewKeyspace).
+				Build()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			checksumResp, err := exe.Execute(ectx, kvClient, func() {})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// print to log so that the test script can get final checksum
+			log.Info("checksum complete",
+				zap.String("table-name", newTableInfo.Name.O),
+				zap.Int64("upstream-id", oldTable.Info.ID),
+				zap.Uint64("checksum", checksumResp.Checksum),
+				zap.Uint64("total-kvs", checksumResp.TotalKvs),
+				zap.Uint64("total-bytes", checksumResp.TotalBytes),
+			)
+			return nil
+		})
+	}
+
+	return eg.Wait()
+}
+
 const (
 	restoreLabelKey   = "exclusive"
 	restoreLabelValue = "restore"
@@ -2462,7 +2567,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		err    error
 		dbMaps []*backuppb.PitrDBMap
 		// the id map doesn't need to construct only when it is not the first execution
-		idMapNeedConstruct bool
+		needConstructIdMap bool
 
 		dbReplaces = make(map[stream.UpstreamID]*stream.DBReplace)
 	)
@@ -2470,7 +2575,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	// not new task, load schemas map from external storage
 	if !cfg.IsNewTask {
 		log.Info("try to load pitr id maps")
-		idMapNeedConstruct = false
+		needConstructIdMap = false
 		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.restoreTS)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -2481,7 +2586,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && !cfg.HasFullRestore {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		idMapNeedConstruct = true
+		needConstructIdMap = true
 		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -2490,7 +2595,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
-		idMapNeedConstruct = true
+		needConstructIdMap = true
 		s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -2552,7 +2657,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	}
 
 	rp := stream.NewSchemasReplace(
-		dbReplaces, idMapNeedConstruct, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
+		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
 		rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
 	return rp, nil
 }
@@ -2852,7 +2957,7 @@ func (rc *Client) restoreMetaKvEntries(
 
 	rc.rawKVClient.SetColumnFamily(columnFamily)
 
-	for _, entry := range entries {
+	for i, entry := range entries {
 		log.Debug("before rewrte entry", zap.Uint64("key-ts", entry.ts), zap.Int("key-len", len(entry.e.Key)),
 			zap.Int("value-len", len(entry.e.Value)), zap.ByteString("key", entry.e.Key))
 
@@ -2867,9 +2972,24 @@ func (rc *Client) restoreMetaKvEntries(
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.e.Value)), zap.ByteString("new-key", newEntry.Key))
 
+		failpoint.Inject("failed-when-restore-N-metakv", func(v failpoint.Value) {
+			j := v.(int)
+			if i+1 == j {
+				failpoint.Return(errors.Errorf("failpoint: failed when restore %d metakv", j))
+			}
+		})
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
+		// for failpoint, we need to flush the cache in rawKVClient every time
+		failpoint.Inject("failed-when-restore-N-metakv", func(v failpoint.Value) {
+			j := v.(int)
+			if j > 0 {
+				if err := rc.rawKVClient.PutRest(ctx); err != nil {
+					failpoint.Return(0, 0, errors.Trace(err))
+				}
+			}
+		})
 		kvCount++
 		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}
