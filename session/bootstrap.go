@@ -2430,7 +2430,7 @@ func upgradeToVer136(s Session, ver int64) {
 	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer137(s Session, ver int64) {
+func upgradeToVer137(_ Session, _ int64) {
 	// NOOP, we don't depend on ddl to init the default group due to backward compatible issue.
 }
 
