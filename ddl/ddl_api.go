@@ -3907,7 +3907,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 
 	fn := func(pi *model.PartitionInfo) (*model.PartitionInfo, error) {
 		if spec.OnAllPartitions {
-			return pi, nil
+			return pi.Clone(), nil
 		}
 		var defs []model.PartitionDefinition
 		// MySQL allows duplicate partition names in truncate partition
@@ -3923,11 +3923,12 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 				posMap[pos] = true
 			}
 		}
+		pi = pi.Clone()
 		pi.Definitions = defs
 		return pi, nil
 	}
 	var pids []int64
-	pi, err := fn(meta.GetPartitionInfo().Clone())
+	pi, err := fn(meta.GetPartitionInfo())
 	if err != nil {
 		return err
 	}
@@ -3951,7 +3952,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ident); err == nil {
-		if p, err := fn(tb.Meta().GetPartitionInfo().Clone()); err == nil {
+		if p, err := fn(tb.Meta().GetPartitionInfo()); err == nil {
 			d.preSplitAndScatter(ctx, tb.Meta(), p)
 		}
 	}
