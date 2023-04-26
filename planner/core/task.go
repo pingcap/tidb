@@ -1167,8 +1167,8 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 			if plan, ok := finalScan.(*PhysicalTableScan); ok {
 				plan.ByItems = p.ByItems
-				plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
 				if tblInfo.GetPartitionInfo() != nil {
+					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
 					plan.schema.Append(&expression.Column{
 						RetType:  types.NewFieldType(mysql.TypeLonglong),
 						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
