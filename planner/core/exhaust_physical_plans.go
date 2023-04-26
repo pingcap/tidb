@@ -2417,12 +2417,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		// 1. it is a broadcast join(for broadcast join, it makes sense to use the broadcast side as the build side)
 		// 2. or session variable MPPOuterJoinFixedBuildSide is set to true
 		// 3. or there are otherConditions for this join(cross or nullAware ones only)
-		if !useBCJ && !p.isNAAJ() && len(p.EqualConditions) > 0 && !p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide {
-			// only handle non-null_aware, non-cross cases here
-			if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
-				preferredBuildIndex = 1
-			}
-		} else if useBCJ || p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide || len(p.OtherConditions) > 0 {
+		if useBCJ || p.isNAAJ() || len(p.EqualConditions) == 0 || p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide {
 			if !p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide {
 				// The hint has higher priority than variable.
 				fixedBuildSide = true
