@@ -109,26 +109,29 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 }
 
 // OnSubtaskFinished implements the Scheduler.OnSubtaskFinished interface.
-func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) error {
+func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
 	logutil.BgLogger().Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
 	var subtaskMeta SubtaskMeta
 	if err := json.Unmarshal(subtaskMetaBytes, &subtaskMeta); err != nil {
-		return err
+		return nil, err
 	}
 
 	dataEngine, ok := s.dataEngines.Load(subtaskMeta.ID)
 	if !ok {
-		return errors.Errorf("data engine %d not found", subtaskMeta.ID)
+		return nil, errors.Errorf("data engine %d not found", subtaskMeta.ID)
 	}
 	engine, ok := dataEngine.(*backend.OpenedEngine)
 	if !ok {
-		return errors.Errorf("data engine %d not found", subtaskMeta.ID)
+		return nil, errors.Errorf("data engine %d not found", subtaskMeta.ID)
 	}
 	closedEngine, err := engine.Close(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.tableImporter.ImportAndCleanup(ctx, closedEngine)
+	if err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
+		return nil, err
+	}
+	return subtaskMetaBytes, nil
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.

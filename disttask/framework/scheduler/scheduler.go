@@ -199,8 +199,9 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 }
 
 func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask) {
+	var subtaskMeta []byte
 	if err := s.getError(); err == nil {
-		if err := scheduler.OnSubtaskFinished(ctx, subtask.Meta); err != nil {
+		if subtaskMeta, err = scheduler.OnSubtaskFinished(ctx, subtask.Meta); err != nil {
 			s.onError(err)
 		}
 	}
@@ -212,7 +213,9 @@ func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler
 		}
 		return
 	}
-	s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateSucceed, "")
+	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
+		s.onError(err)
+	}
 }
 
 func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {

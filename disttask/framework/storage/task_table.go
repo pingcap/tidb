@@ -332,6 +332,12 @@ func (stm *TaskManager) UpdateSubtaskStateAndError(id int64, state string, subTa
 	return err
 }
 
+// FinishSubtask updates the subtask meta and mark state to succeed.
+func (stm *TaskManager) FinishSubtask(id int64, meta []byte) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_background_subtask set meta = %?, state = %? where id = %?", meta, proto.TaskStateSucceed, id)
+	return err
+}
+
 // UpdateSubtaskHeartbeat updates the heartbeat of the subtask.
 func (stm *TaskManager) UpdateSubtaskHeartbeat(instanceID string, taskID int64, heartbeat time.Time) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_background_subtask set exec_expired = %? where exec_id = %? and task_key = %?", heartbeat.String(), instanceID, taskID)
