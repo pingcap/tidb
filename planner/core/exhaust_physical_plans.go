@@ -2416,7 +2416,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		// so we can choose the build side based on the row count, except that:
 		// 1. it is a broadcast join(for broadcast join, it makes sense to use the broadcast side as the build side)
 		// 2. or session variable MPPOuterJoinFixedBuildSide is set to true
-		// 3. or there are otherConditions for this join(cross or nullAware ones only)
+		// 3. or nullAware/cross joins
 		if useBCJ || p.isNAAJ() || len(p.EqualConditions) == 0 || p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide {
 			if !p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide {
 				// The hint has higher priority than variable.
