@@ -1095,7 +1095,7 @@ func upgrade(s Session) {
 	}
 
 	// It is only used in test.
-	addMockBootstrapVersion()
+	addMockBootstrapVersionForTest()
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
