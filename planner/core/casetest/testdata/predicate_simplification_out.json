@@ -185,6 +185,22 @@
           "      └─Selection 20.00 cop[tikv]  in(test.ts.f, \"2\", \"3\")",
           "        └─TableFullScan 10000.00 cop[tikv] table:ts keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.",
+        "Plan": [
+          "TableReader 0.00 root  data:Selection",
+          "└─Selection 0.00 cop[tikv]  in(test.t.f, 1, 2, 3), ne(test.t.f, NULL)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select f from t where f != NULL  and f in (NULL,2,3) -- Special case of NULL with no simplification.",
+        "Plan": [
+          "TableReader 0.00 root  data:Selection",
+          "└─Selection 0.00 cop[tikv]  in(test.t.f, NULL, 2, 3), ne(test.t.f, NULL)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
       }
     ]
   }
