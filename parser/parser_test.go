@@ -99,7 +99,7 @@ func TestSimple(t *testing.T) {
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
 		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute", "resource",
-		"burstable", "calibrate",
+		"burstable", "calibrate", "rollup",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -4991,6 +4991,17 @@ func TestLockUnlockTables(t *testing.T) {
 		{"ALTER TABLE t READ WRITE", true, "ALTER TABLE `t` READ WRITE"},
 	}
 
+	RunTest(t, table, false)
+}
+
+func TestWithRollup(t *testing.T) {
+	table := []testCase{
+		{`select * from t group by a, b rollup`, false, ""},
+		{`select * from t group by a, b with rollup`, true, "SELECT * FROM `t` GROUP BY `a`,`b` WITH ROLLUP"},
+		// should be ERROR 1241 (21000): Operand should contain 1 column(s) in runtime.
+		{`select * from t group by (a, b) with rollup`, true, "SELECT * FROM `t` GROUP BY ROW(`a`,`b`) WITH ROLLUP"},
+		{`select * from t group by (a+b) with rollup`, true, "SELECT * FROM `t` GROUP BY (`a`+`b`) WITH ROLLUP"},
+	}
 	RunTest(t, table, false)
 }
 
