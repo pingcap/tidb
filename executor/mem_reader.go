@@ -204,7 +204,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *Tabl
 	}
 
 	defVal := func(i int) ([]byte, error) {
-		d, err := table.GetColOriginDefaultValue(us.ctx, us.columns[i])
+		d, err := table.GetColOriginDefaultValueWithStrictSQLMode(us.ctx, us.columns[i])
 		if err != nil {
 			return nil, err
 		}
