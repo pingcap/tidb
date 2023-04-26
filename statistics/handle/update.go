@@ -976,13 +976,7 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
-<<<<<<< HEAD
-		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-		dur := time.Since(t)
-		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %v", dur)
-=======
 		return true, "table unanalyzed"
->>>>>>> ddfa6db728 (statistics: remove 1min no write check for unanalyzed table in auto analyze (#39395))
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
