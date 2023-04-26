@@ -500,6 +500,7 @@
       "dumpling/export": "dumpling/export code",
       "lock/": "lock file",
       "errno/": "errno code",
+      "session/": "session code",
       "structure/": "structure code",
       "telemetry/": "telemetry code",
       "parser/": "parser code",
