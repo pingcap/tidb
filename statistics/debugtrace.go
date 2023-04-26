@@ -337,17 +337,22 @@ type topNRangeInfo struct {
 }
 
 func debugTraceTopNRange(s sessionctx.Context, t *TopN, startIdx, endIdx int) {
+	if endIdx <= startIdx {
+		return
+	}
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := new(topNRangeInfo)
 	traceInfo.FirstIdx = startIdx
 	traceInfo.LastIdx = endIdx - 1
+	if startIdx < len(t.TopN) {
+		traceInfo.FirstEncoded = t.TopN[startIdx].Encoded
+	}
+	if endIdx-1 < len(t.TopN) {
+		traceInfo.LastEncoded = t.TopN[endIdx-1].Encoded
+	}
 	cnts := make([]uint64, endIdx-startIdx)
 	for topNIdx, i := startIdx, 0; topNIdx < endIdx; {
 		cnts[i] = t.TopN[topNIdx].Count
-		if i == 0 {
-			traceInfo.FirstEncoded = t.TopN[startIdx].Encoded
-		}
-		traceInfo.LastEncoded = t.TopN[topNIdx].Encoded
 		topNIdx++
 		i++
 	}
