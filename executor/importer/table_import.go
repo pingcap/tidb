@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -214,7 +215,10 @@ type TableImporter struct {
 	regionSplitKeys int64
 	// the smallest auto-generated ID in current import.
 	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	lastInsertID uint64
+	fieldMu struct {
+		sync.Mutex
+		lastInsertID uint64
+	}
 
 	// the first error occurred during import.
 	firstErr *common.OnceError
@@ -250,7 +254,7 @@ func (ti *TableImporter) Result() JobImportResult {
 	return JobImportResult{
 		Msg:          msg,
 		Affected:     ti.Progress.LoadedRowCnt.Load(),
-		LastInsertID: ti.lastInsertID,
+		LastInsertID: ti.getLastInsertID(),
 	}
 }
 
@@ -484,7 +488,7 @@ func (ti *TableImporter) sortAndIngestEngines(ctx context.Context) (err error) {
 		}
 	}()
 
-	encodePool := worker.NewPool(ctx, int(ti.ThreadCnt), "encoder")
+	sortPool := worker.NewPool(ctx, int(ti.ThreadCnt), "sorter")
 	engineCh := make(chan *engine, len(ti.TableCP.Engines))
 
 	importTableCtx, importTableCancelFn := context.WithCancel(ctx)
@@ -516,7 +520,7 @@ engineLoop:
 			break
 		}
 		en := ti.createEngine(importTableCtx, importTableCancelFn, engineCP.Chunks, dataEngine)
-		en.asyncSort(ti, encodePool, indexEngine)
+		en.asyncSort(ti, sortPool, indexEngine)
 		engineCh <- en
 	}
 
@@ -547,7 +551,7 @@ func (ti *TableImporter) ingestAndCleanupEngines(ctx context.Context, importTabl
 		// we need to call ingestAndCleanup for each engine, since we need wait all its sub-routines to finish.
 		if err := en.ingestAndCleanup(ctx, ti); err != nil {
 			ti.firstErr.Set(err)
-			// cancel goroutines used for encoding & sorting
+			// cancel goroutines used for sorting
 			importTableCancelFn()
 			failpoint.Inject("SetImportCancelledOnErr", func() {
 				TestImportCancelledOnErr = true
@@ -580,12 +584,19 @@ func (ti *TableImporter) Close() error {
 	return nil
 }
 
+func (ti *TableImporter) getLastInsertID() uint64 {
+	ti.fieldMu.Lock()
+	defer ti.fieldMu.Unlock()
+	return ti.fieldMu.lastInsertID
+}
+
 func (ti *TableImporter) setLastInsertID(id uint64) {
-	// todo: if we run concurrently, we should use atomic operation here.
 	if id == 0 {
 		return
 	}
-	if ti.lastInsertID == 0 || id < ti.lastInsertID {
-		ti.lastInsertID = id
+	ti.fieldMu.Lock()
+	defer ti.fieldMu.Unlock()
+	if ti.fieldMu.lastInsertID == 0 || id < ti.fieldMu.lastInsertID {
+		ti.fieldMu.lastInsertID = id
 	}
 }

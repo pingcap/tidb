@@ -19,6 +19,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
@@ -141,7 +142,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 	}
 
 	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
-		INTO TABLE t %%s with thread=1, import_mode='physical'`, gcsEndpoint)
+		INTO TABLE t %%s with import_mode='physical', thread=2`, gcsEndpoint)
 	for _, c := range cases {
 		s.tk.MustExec("drop table if exists t;")
 		s.tk.MustExec(c.createTableSQL)
@@ -853,4 +854,47 @@ func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed boo
 		"4 400",
 		"5 500",
 	))
+}
+
+func (s *mockGCSSuite) TestConcurrentPhysical() {
+	// each engine 5 files.
+	s.testConcurrentPhysical(20, 500, 5)  // 1 engines sorting concurrently
+	s.testConcurrentPhysical(20, 500, 10) // 2 engines sorting concurrently
+	s.testConcurrentPhysical(20, 500, 20) // 4 engines sorting concurrently
+}
+
+func (s *mockGCSSuite) testConcurrentPhysical(fileCount, engineSize, thread int) {
+	expectedData := make([]string, 0, fileCount)
+	for i := 0; i < fileCount; i++ {
+		fileData := make([]string, 0, 5)
+		// each file has 5 rows, size=100
+		for j := 0; j < 5; j++ {
+			num := i*10 + j + 100000 // to make size=20 for each row
+			data := fmt.Sprintf("%d padddd%d", num, num)
+			fileData = append(fileData, data)
+		}
+		expectedData = append(expectedData, fileData...)
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{
+				BucketName: "concurrent-physical",
+				Name:       fmt.Sprintf("t-%d.csv", i),
+			},
+			Content: []byte(strings.Join(fileData, "\n") + "\n"),
+		})
+	}
+
+	backup := config.DefaultBatchSize
+	config.DefaultBatchSize = config.ByteSize(engineSize)
+	s.T().Cleanup(func() {
+		config.DefaultBatchSize = backup
+	})
+
+	s.prepareAndUseDB("load_data")
+	s.tk.MustExec("drop table if exists t;")
+	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), key(b));")
+	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://concurrent-physical/t-*.csv?endpoint=%s'
+		INTO TABLE t fields terminated by ' ' with import_mode='physical', thread=%d`, gcsEndpoint, thread)
+	s.tk.MustExec(loadDataSQL)
+	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
+	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows(expectedData...))
 }
