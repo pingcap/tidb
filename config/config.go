@@ -418,6 +418,7 @@ type Performance struct {
 	MaxMemory             uint64  `toml:"max-memory" json:"max-memory"`
 	ServerMemoryQuota     uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
+<<<<<<< HEAD
 	StatsLease            string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit        uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability   float64 `toml:"feedback-probability" json:"feedback-probability"`
@@ -439,6 +440,17 @@ type Performance struct {
 	PlanReplayerGCLease   string  `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                  int     `toml:"gogc" json:"gogc"`
 	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
+=======
+
+	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
+
+	LiteInitStats bool `toml:"lite-init-stats" json:"lite-init-stats"`
+
+	// If ForceInitStats is true, when tidb starts up, it doesn't provide service until init stats is finished.
+	// If ForceInitStats is false, tidb can provide service before init stats is finished. Note that during the period
+	// of init stats the optimizer may make bad decisions due to pseudo stats.
+	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -649,10 +661,26 @@ var defaultConf = Config{
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		MemProfileInterval:    "1m",
 		// TODO: set indexUsageSyncLease to 60s.
+<<<<<<< HEAD
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
 		EnforceMPP:          false,
 		PlanReplayerGCLease: "10m",
+=======
+		IndexUsageSyncLease:               "0s",
+		GOGC:                              100,
+		EnforceMPP:                        false,
+		PlanReplayerGCLease:               "10m",
+		StatsLoadConcurrency:              5,
+		StatsLoadQueueSize:                1000,
+		AnalyzePartitionConcurrencyQuota:  16,
+		PlanReplayerDumpWorkerConcurrency: 1,
+		EnableStatsCacheMemQuota:          false,
+		RunAutoAnalyze:                    true,
+		EnableLoadFMSketch:                false,
+		LiteInitStats:                     false,
+		ForceInitStats:                    false,
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

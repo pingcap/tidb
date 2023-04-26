@@ -205,6 +205,13 @@ enable-forwarding = true
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
+<<<<<<< HEAD
+=======
+enable-load-fmsketch = true
+plan-replayer-dump-worker-concurrency = 1
+lite-init-stats = true
+force-init-stats = true
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -294,6 +301,17 @@ receiver-address = "127.0.0.1:10100"
 	require.False(t, conf.Experimental.EnableNewCharset)
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
+<<<<<<< HEAD
+=======
+	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
+	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
+	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
+	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
+	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
+	require.True(t, conf.Performance.EnableLoadFMSketch)
+	require.True(t, conf.Performance.LiteInitStats)
+	require.True(t, conf.Performance.ForceInitStats)
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 
 	_, err = f.WriteString(`
 [log.file]
