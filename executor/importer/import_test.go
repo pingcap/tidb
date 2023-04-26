@@ -33,11 +33,6 @@ import (
 )
 
 func TestInitDefaultOptions(t *testing.T) {
-	ignoreInTest = true
-	t.Cleanup(func() {
-		ignoreInTest = false
-	})
-
 	plan := &Plan{}
 	plan.initDefaultOptions()
 	require.Equal(t, LogicalImportMode, plan.ImportMode)
