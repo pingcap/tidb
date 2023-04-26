@@ -522,6 +522,10 @@ engineLoop:
 		en := ti.createEngine(importTableCtx, importTableCancelFn, engineCP.Chunks, dataEngine)
 		en.asyncSort(ti, sortPool, indexEngine)
 		engineCh <- en
+		failpoint.Inject("SyncAfterSendEngine", func() {
+			TestSyncCh <- struct{}{}
+			<-TestSyncCh
+		})
 	}
 
 	close(engineCh)
@@ -554,7 +558,7 @@ func (ti *TableImporter) ingestAndCleanupEngines(ctx context.Context, importTabl
 			// cancel goroutines used for sorting
 			importTableCancelFn()
 			failpoint.Inject("SetImportCancelledOnErr", func() {
-				TestImportCancelledOnErr = true
+				TestImportCancelledOnErr.Store(true)
 			})
 		}
 	}

@@ -72,7 +72,7 @@ func (s *mockGCSSuite) createPhysicalImporter(sql string) *importer.TableImporte
 	}
 	importPlan, err := importer.NewPlan(s.tk.Session(), plan, tbl)
 	s.NoError(err)
-	controller, err := importer.NewLoadDataController(s.tk.Session(), importPlan, tbl)
+	controller, err := importer.NewLoadDataController(importPlan, tbl, importer.ASTArgsFromPlan(plan))
 	s.NoError(err)
 	err = controller.InitDataFiles(context.Background())
 	s.NoError(err)
@@ -124,7 +124,7 @@ func (s *mockGCSSuite) TestCancelOnSortErr() {
 		s.NoError(ti.Close())
 	}()
 
-	importer.TestImportCancelledOnErr = false
+	importer.TestImportCancelledOnErr.Store(false)
 
 	// chunk in engine 0 wait
 	// chunk in engine 1 fail and should trigger cancel
@@ -139,7 +139,7 @@ func (s *mockGCSSuite) TestCancelOnSortErr() {
 	go func() {
 		defer wg.Done()
 		require.Eventually(s.T(), func() bool {
-			return importer.TestImportCancelledOnErr
+			return importer.TestImportCancelledOnErr.Load()
 		}, 5*time.Second, time.Millisecond*100)
 
 		importer.TestSyncCh <- struct{}{}
@@ -184,7 +184,7 @@ func (s *mockGCSSuite) TestCancelOnIngestErr() {
 		s.NoError(ti.Close())
 	}()
 
-	importer.TestImportCancelledOnErr = false
+	importer.TestImportCancelledOnErr.Store(false)
 
 	// engine 0 sort success, but ingest fail. engine 1/2 wait on sort.
 	// continue engine 1/2, and fail with context canceled, and should not reach AfterProcessChunkSync
@@ -198,7 +198,7 @@ func (s *mockGCSSuite) TestCancelOnIngestErr() {
 	go func() {
 		defer wg.Done()
 		require.Eventually(s.T(), func() bool {
-			return importer.TestImportCancelledOnErr
+			return importer.TestImportCancelledOnErr.Load()
 		}, 5*time.Second, time.Millisecond*100)
 
 		// continue engine 1/2

@@ -434,7 +434,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	if importMode == importer.LogicalImportMode {
 		s.enableFailpoint("github.com/pingcap/tidb/executor/SyncAfterCommitOneTask", `return`)
 	} else {
-		s.enableFailpoint("github.com/pingcap/tidb/executor/importer/SyncAfterIngestDataEngine", `return`)
+		s.enableFailpoint("github.com/pingcap/tidb/executor/importer/SyncAfterSendEngine", `return`)
 	}
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t*.tsv?endpoint=%s'
 		INTO TABLE load_tsv.t %s;`, gcsEndpoint, withOptions)

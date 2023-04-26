@@ -58,7 +58,7 @@ func (en *engine) asyncSort(importer *TableImporter, pool *worker.Pool, indexEng
 				// ingest routine too.
 				en.importTableCancel()
 				failpoint.Inject("SetImportCancelledOnErr", func() {
-					TestImportCancelledOnErr = true
+					TestImportCancelledOnErr.Store(true)
 				})
 				return err
 			}
@@ -87,10 +87,6 @@ func (en *engine) ingestAndCleanup(ctx context.Context, importer *TableImporter)
 	}
 
 	failpoint.Inject("AfterIngestDataEngine", nil)
-	failpoint.Inject("SyncAfterIngestDataEngine", func() {
-		TestSyncCh <- struct{}{}
-		<-TestSyncCh
-	})
 	return nil
 }
 

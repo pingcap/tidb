@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -994,5 +995,5 @@ func GetMsgFromBRError(err error) string {
 var (
 	// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
 	TestSyncCh               = make(chan struct{})
-	TestImportCancelledOnErr bool
+	TestImportCancelledOnErr atomic.Bool
 )
