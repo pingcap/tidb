@@ -581,6 +581,8 @@ var functionSetForReturnTypeNotNullOnNotNull = set.StringSet{
 	ast.Mul:   {},
 }
 
+const groupingImplName = "grouping_impl"
+
 // funcs holds all registered builtin functions. When new function is added,
 // check expression/function_traits.go to see if it should be appended to
 // any set there.
@@ -799,7 +801,7 @@ var funcs = map[string]functionClass{
 	ast.UUIDToBin:       &uuidToBinFunctionClass{baseFunctionClass{ast.UUIDToBin, 1, 2}},
 	ast.BinToUUID:       &binToUUIDFunctionClass{baseFunctionClass{ast.BinToUUID, 1, 2}},
 	ast.TiDBShard:       &tidbShardFunctionClass{baseFunctionClass{ast.TiDBShard, 1, 1}},
-	ast.Grouping:        &groupingImplFunctionClass{baseFunctionClass{ast.Grouping, 1, 1}},
+	groupingImplName:    &groupingImplFunctionClass{baseFunctionClass{groupingImplName, 1, 1}},
 
 	ast.GetLock:     &lockFunctionClass{baseFunctionClass{ast.GetLock, 2, 2}},
 	ast.ReleaseLock: &releaseLockFunctionClass{baseFunctionClass{ast.ReleaseLock, 1, 1}},

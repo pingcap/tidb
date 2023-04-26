@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
@@ -29,7 +28,7 @@ import (
 
 func createGroupingFunc(ctx sessionctx.Context, args []Expression) (*builtinGroupingImplSig, error) {
 	argTp := []types.EvalType{types.ETInt}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, ast.Grouping, args, types.ETInt, argTp...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, groupingImplName, args, types.ETInt, argTp...)
 	if err != nil {
 		return nil, err
 	}
