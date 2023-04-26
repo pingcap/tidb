@@ -17,9 +17,11 @@ build:release --workspace_status_command=./build/print-workspace-status.sh --sta
 build:release --config=ci
 build:race --config=ci
 build:race --@io_bazel_rules_go//go/config:race --test_env=GORACE=halt_on_error=1 --test_sharding_strategy=disabled
+build --noremote_accept_cached
 
 test --test_env=TZ=Asia/Shanghai
 test --test_output=errors --test_summary=testcase
+test --noremote_accept_cached
 test:ci --color=yes
 test:ci --verbose_failures --test_verbose_timeout_warnings
 test:ci --test_env=GO_TEST_WRAP_TESTV=1
