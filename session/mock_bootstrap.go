@@ -109,7 +109,7 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 	}
 }
 
-func addMockBootstrapVersion() {
+func addMockBootstrapVersionForTest() {
 	if !*WithMockUpgrade {
 		return
 	}
