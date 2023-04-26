@@ -59,7 +59,7 @@ func runCommonTest(t *testing.T, sorter extsort.ExternalSorter) {
 	require.NoError(t, w.Close())
 
 	_, err = sorter.NewIterator(ctx)
-	require.ErrorIs(t, err, extsort.ErrNotSorted)
+	require.Error(t, err)
 
 	require.NoError(t, sorter.Sort(ctx))
 	iter, err := sorter.NewIterator(ctx)

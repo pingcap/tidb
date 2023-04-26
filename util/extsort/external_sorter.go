@@ -14,30 +14,28 @@
 
 package extsort
 
-import (
-	"context"
-	"errors"
-)
-
-var (
-	// ErrSorted is returned when the sorter is already sorted, new writers cannot be created.
-	ErrSorted = errors.New("already sorted")
-	// ErrNotSorted is returned when the sorter is not sorted yet, iterators are not ready.
-	ErrNotSorted = errors.New("not sorted")
-)
+import "context"
 
 // ExternalSorter is an interface for sorting key-value pairs in external storage.
 // The key-value pairs are sorted by the key, duplicate keys are automatically removed.
 type ExternalSorter interface {
 	// NewWriter creates a new writer for writing key-value pairs before sorting.
+	// If the sorter starts sorting or is already sorted, it will return an error.
+	//
 	// Multiple writers can be opened and used concurrently.
 	NewWriter(ctx context.Context) (Writer, error)
 	// Sort sorts the key-value pairs written by the writer.
 	// It should be called after all open writers are closed.
+	//
+	// Implementations should guarantee that Sort() is idempotent and atomic.
+	// If it returns an error, or process is killed during Sort(), the sorter should be able
+	// to recover from the error or crash, and the external storage should not be corrupted.
 	Sort(ctx context.Context) error
-	// IsSorted returns true if the key-value pairs are sorted, iterators are ready to create.
+	// IsSorted returns true if the sorter is already sorted, iterators are ready to create.
 	IsSorted() bool
 	// NewIterator creates a new iterator for iterating over the key-value pairs after sorting.
+	// If the sorter is not sorted yet, it will return an error.
+	//
 	// Multiple iterators can be opened and used concurrently.
 	NewIterator(ctx context.Context) (Iterator, error)
 	// Close releases all resources held by the sorter. It will not clean up the external storage,

@@ -29,17 +29,23 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+const (
+	diskSorterStateWriting = 0
+	diskSorterStateSorting = 1
+	diskSorterStateSorted  = 2
+)
+
 // DiskSorter is an external sorter that sorts data on disk.
 type DiskSorter struct {
 	db     *pebble.DB
 	dbOpts *pebble.Options
 
 	opts   *DiskSorterOptions
-	dbDir  string // directory for the pebble database
-	tmpDir string // directory for temporary files
-
+	dbDir  string        // directory for the pebble database
+	tmpDir string        // directory for temporary files
 	idGen  *atomic.Int64 // id generator for sst files
-	sorted bool
+
+	state atomic.Int32
 }
 
 // DiskSorterOptions holds the optional parameters for DiskSorter.
@@ -109,8 +115,8 @@ func OpenDiskSorter(dirname string, opts *DiskSorterOptions) (*DiskSorter, error
 
 // NewWriter implements the ExternalSorter.NewWriter.
 func (d *DiskSorter) NewWriter(_ context.Context) (Writer, error) {
-	if d.sorted {
-		return nil, errors.Trace(ErrSorted)
+	if d.state.Load() > diskSorterStateWriting {
+		return nil, errors.Errorf("diskSorter started sorting, cannot write more data")
 	}
 	return &diskSorterWriter{
 		d:   d,
@@ -119,11 +125,19 @@ func (d *DiskSorter) NewWriter(_ context.Context) (Writer, error) {
 }
 
 // Sort implements the ExternalSorter.Sort.
-func (d *DiskSorter) Sort(_ context.Context) error {
-	if d.sorted {
+func (d *DiskSorter) Sort(ctx context.Context) error {
+	if d.state.Load() == diskSorterStateSorted {
 		return nil
 	}
+	d.state.Store(diskSorterStateSorting)
+	if err := d.doSort(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	d.state.Store(diskSorterStateSorted)
+	return nil
+}
 
+func (d *DiskSorter) doSort(_ context.Context) error {
 	iter := d.db.NewIter(nil)
 	if !iter.Last() {
 		// No keys or any error occurred.
@@ -138,23 +152,18 @@ func (d *DiskSorter) Sort(_ context.Context) error {
 	// Compact treats end as an exclusive bound,
 	// it doesn't matter since correctness is not affected.
 	err := d.db.Compact(nil, end)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	d.sorted = true
-	return nil
+	return errors.Trace(err)
 }
 
 // IsSorted implements the ExternalSorter.IsSorted.
 func (d *DiskSorter) IsSorted() bool {
-	return d.sorted
+	return d.state.Load() == diskSorterStateSorted
 }
 
 // NewIterator implements the ExternalSorter.NewIterator.
 func (d *DiskSorter) NewIterator(_ context.Context) (Iterator, error) {
-	if !d.sorted {
-		return nil, errors.Trace(ErrNotSorted)
+	if d.state.Load() != diskSorterStateSorted {
+		return nil, errors.Errorf("diskSorter is not sorted")
 	}
 	return &diskSorterIterator{iter: d.db.NewIter(nil)}, nil
 }
