@@ -16,6 +16,7 @@ package bootstraptest_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -219,4 +220,63 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, "host", strings.ToLower(row.GetString(0)))
 	require.Equal(t, "char(255)", strings.ToLower(row.GetString(1)))
+}
+
+func TestUpgradeVersionMockLatest(t *testing.T) {
+	*session.WithMockUpgrade = true
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.MustExec(t, seV, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", session.CurrentBootstrapVersion-1))
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
+	dom.Close()
+	domLatestV, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domLatestV.Close()
+
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show create table mysql.mock_sys_t").Check(testkit.Rows(
+		"mock_sys_t CREATE TABLE `mock_sys_t` (\n" +
+			"  `c1` int(11) DEFAULT NULL,\n" +
+			"  `c2` int(11) NOT NULL,\n" +
+			"  `c11` char(10) DEFAULT NULL,\n" +
+			"  `c4` bigint(20) DEFAULT NULL,\n" +
+			"  `mayNullCol` bigint(20) NOT NULL DEFAULT '1',\n" +
+			"  KEY `fk_c1` (`c1`),\n" +
+			"  UNIQUE KEY `idx_uc2` (`c2`),\n" +
+			"  KEY `idx_c2` (`c2`),\n" +
+			"  KEY `idx_v` (`c1`) /*!80000 INVISIBLE */,\n" +
+			"  KEY `rename_idx2` (`c1`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table mysql.mock_sys_partition").Check(testkit.Rows(
+		"mock_sys_partition CREATE TABLE `mock_sys_partition` (\n" +
+			"  `c1` int(11) NOT NULL,\n" +
+			"  `c2` int(11) DEFAULT NULL,\n" +
+			"  `c3` int(11) DEFAULT NULL,\n" +
+			"  UNIQUE KEY `c3_index` (`c1`),\n" +
+			"  PRIMARY KEY (`c1`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`c1`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (1024),\n" +
+			" PARTITION `p1` VALUES LESS THAN (2048),\n" +
+			" PARTITION `p2` VALUES LESS THAN (3072),\n" +
+			" PARTITION `p3` VALUES LESS THAN (4096),\n" +
+			" PARTITION `p4` VALUES LESS THAN (7096))"))
 }
