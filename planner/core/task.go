@@ -1138,9 +1138,27 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 			if plan, ok := finalScan.(*PhysicalTableScan); ok {
 				plan.ByItems = p.ByItems
+				tblInfo := plan.Table
+				if tblInfo.GetPartitionInfo() != nil {
+					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
+					plan.schema.Append(&expression.Column{
+						RetType:  types.NewFieldType(mysql.TypeLonglong),
+						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+						ID:       model.ExtraPhysTblID,
+					})
+				}
 			}
 			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
 				plan.ByItems = p.ByItems
+				tblInfo := plan.Table
+				if tblInfo.GetPartitionInfo() != nil && !plan.Index.Global {
+					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
+					plan.schema.Append(&expression.Column{
+						RetType:  types.NewFieldType(mysql.TypeLonglong),
+						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+						ID:       model.ExtraPhysTblID,
+					})
+				}
 			}
 			partialScans = append(partialScans, finalScan)
 		}
