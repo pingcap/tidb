@@ -381,7 +381,7 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 		Then(clientv3.OpPut(ownerKey, string(newOwnerVal))).
 		Commit()
 	logutil.BgLogger().Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
-		zap.Stringer("old Op", op), zap.Stringer("op", op), zap.Bool("isSuc", resp.Succeeded), zap.Error(err))
+		zap.Stringer("old Op", currOp), zap.Stringer("op", op), zap.Bool("isSuc", resp.Succeeded), zap.Error(err))
 	if !resp.Succeeded {
 		err = errors.New("put owner key failed, cmp is false")
 	}
