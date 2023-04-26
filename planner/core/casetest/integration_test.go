@@ -948,6 +948,8 @@ func TestKeepOrderHint(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, primary key(a));")
 	tk.MustExec("create table t1(a int, b int, index idx_a(a));")
 	tk.MustExec("create table th (a int, key(a)) partition by hash(a) partitions 4;")
+	tk.MustExec("create table thp (a int, primary key(a)) partition by hash(a) partitions 4;")
+	tk.MustExec("create table thh (a int, b int, key(a)) partition by hash(a) partitions 4;")
 	tk.MustExec("create definer='root'@'localhost' view v as select * from t1 where a<10 order by a limit 1;")
 	tk.MustExec("create definer='root'@'localhost' view v1 as select * from t where a<10 order by a limit 1;")
 
@@ -958,13 +960,14 @@ func TestKeepOrderHint(t *testing.T) {
 	err = tk.ExecToErr("explain select /*+ order_index(t, primary) */ * from t where a<10 limit 1;")
 	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 
-	// The partition table can not keep order
 	tk.MustExec("analyze table th;")
+	tk.MustExec("analyze table thp;")
+	tk.MustExec("analyze table thh;")
 	err = tk.ExecToErr("select a from th where a<1 order by a limit 1;")
 	require.NoError(t, err)
 
-	err = tk.ExecToErr("select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1;")
-	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	err = tk.ExecToErr("select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1;")
+	require.NoError(t, err)
 
 	var input []string
 	var output []struct {
