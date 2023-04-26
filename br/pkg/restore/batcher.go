@@ -59,7 +59,7 @@ type Batcher struct {
 	batchSizeThreshold int
 	size               int32
 
-	tree map[int64]rtree.RangeTree
+	checkpointTrees map[int64]rtree.RangeTree
 }
 
 // Len calculate the current size of this batcher.
@@ -297,7 +297,7 @@ func (b *Batcher) drainRanges() DrainResult {
 	defer b.cachedTablesMu.Unlock()
 
 	for offset, thisTable := range b.cachedTables {
-		t, exists := b.tree[thisTable.Table.ID]
+		t, exists := b.checkpointTrees[thisTable.Table.ID]
 		thisTableLen := len(thisTable.Range)
 		collected := len(result.Ranges)
 
@@ -418,6 +418,6 @@ func (b *Batcher) SetThreshold(newThreshold int) {
 	b.batchSizeThreshold = newThreshold
 }
 
-func (b *Batcher) SetCheckpoint(tree map[int64]rtree.RangeTree) {
-	b.tree = tree
+func (b *Batcher) SetCheckpoint(trees map[int64]rtree.RangeTree) {
+	b.checkpointTrees = trees
 }

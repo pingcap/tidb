@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/model"
@@ -164,4 +165,21 @@ func ExistsCheckpointTaskInfo(
 	clusterID uint64,
 ) (bool, error) {
 	return s.FileExists(ctx, getCheckpointTaskInfoPathByID(clusterID))
+}
+
+func removeCheckpointTaskInfoForLogRestore(ctx context.Context, s storage.ExternalStorage, clusterID uint64) error {
+	return s.DeleteFile(ctx, getCheckpointTaskInfoPathByID(clusterID))
+}
+
+func RemoveCheckpointDataForLogRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+	clusterID uint64,
+) error {
+	if err := removeCheckpointTaskInfoForLogRestore(ctx, s, clusterID); err != nil {
+		return errors.Annotatef(err, "failed to r emove task info file: cluster-id is %d", clusterID)
+	}
+	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
+	return removeCheckpointData(ctx, s, prefix)
 }
