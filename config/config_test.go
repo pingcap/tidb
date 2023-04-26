@@ -203,6 +203,14 @@ stores-refresh-interval = 30
 enable-forwarding = true
 [performance]
 txn-total-size-limit=2000
+<<<<<<< HEAD
+=======
+tcp-no-delay = false
+enable-load-fmsketch = true
+plan-replayer-dump-worker-concurrency = 1
+lite-init-stats = true
+force-init-stats = true
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -246,6 +254,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
 	c.Assert(conf.AlterPrimaryKey, Equals, true)
 
+<<<<<<< HEAD
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))
 	c.Assert(conf.TiKVClient.AsyncCommit.TotalKeySizeLimit, Equals, uint64(1024))
@@ -282,6 +291,51 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
 	c.Assert(conf.EnableForwarding, Equals, true)
 	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
+=======
+	require.Equal(t, "41s", conf.TiKVClient.CommitTimeout)
+	require.Equal(t, uint(123), conf.TiKVClient.AsyncCommit.KeysLimit)
+	require.Equal(t, uint64(1024), conf.TiKVClient.AsyncCommit.TotalKeySizeLimit)
+	require.Equal(t, uint(128), conf.TiKVClient.MaxBatchSize)
+	require.Equal(t, uint(6000), conf.TiKVClient.RegionCacheTTL)
+	require.Equal(t, int64(0), conf.TiKVClient.StoreLimit)
+	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
+	require.Equal(t, uint(1000), conf.TokenLimit)
+	require.True(t, conf.EnableTableLock)
+	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
+	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
+	require.True(t, conf.RepairMode)
+	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
+	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
+	require.Equal(t, uint32(10), conf.TiDBMaxReuseChunk)
+	require.Equal(t, uint32(20), conf.TiDBMaxReuseColumn)
+	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
+	require.Equal(t, 3080, conf.MaxIndexLength)
+	require.Equal(t, 70, conf.IndexLimit)
+	require.Equal(t, uint32(4000), conf.TableColumnCountLimit)
+	require.True(t, conf.SkipRegisterToDashboard)
+	require.Equal(t, 3, len(conf.Labels))
+	require.Equal(t, "bar", conf.Labels["foo"])
+	require.Equal(t, "abc", conf.Labels["group"])
+	require.Equal(t, "dc-1", conf.Labels["zone"])
+	require.Equal(t, SpilledFileEncryptionMethodPlaintext, conf.Security.SpilledFileEncryptionMethod)
+	require.True(t, conf.DeprecateIntegerDisplayWidth)
+	require.False(t, conf.EnableEnumLengthLimit)
+	require.True(t, conf.EnableForwarding)
+	require.Equal(t, uint64(30), conf.StoresRefreshInterval)
+	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
+	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
+	require.True(t, conf.PessimisticTxn.PessimisticAutoCommit.Load())
+	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
+	require.True(t, conf.Experimental.AllowsExpressionIndex)
+	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
+	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
+	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
+	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
+	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
+	require.True(t, conf.Performance.EnableLoadFMSketch)
+	require.True(t, conf.Performance.LiteInitStats)
+	require.True(t, conf.Performance.ForceInitStats)
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 
 	_, err = f.WriteString(`
 [log.file]
