@@ -2189,20 +2189,9 @@
                         ]
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*TopN).BetweenCount": [
-                          {
-                            "Related TopN Range": {
-                              "Count": [],
-                              "FirstEncoded": null,
-                              "FirstIdx": 0,
-                              "LastEncoded": null,
-                              "LastIdx": -1
-                            }
-                          },
-                          {
-                            "Result": 0
-                          }
-                        ]
+                        "github.com/pingcap/tidb/statistics.(*TopN).BetweenCount": {
+                          "Result": 0
+                        }
                       },
                       {
                         "github.com/pingcap/tidb/statistics.(*Histogram).outOfRangeRowCount": [
@@ -2488,20 +2477,9 @@
                         ]
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*TopN).BetweenCount": [
-                          {
-                            "Related TopN Range": {
-                              "Count": [],
-                              "FirstEncoded": null,
-                              "FirstIdx": 0,
-                              "LastEncoded": null,
-                              "LastIdx": -1
-                            }
-                          },
-                          {
-                            "Result": 0
-                          }
-                        ]
+                        "github.com/pingcap/tidb/statistics.(*TopN).BetweenCount": {
+                          "Result": 0
+                        }
                       },
                       {
                         "github.com/pingcap/tidb/statistics.(*Histogram).outOfRangeRowCount": [
@@ -2629,20 +2607,9 @@
                         ]
                       },
                       {
-                        "github.com/pingcap/tidb/statistics.(*TopN).BetweenCount": [
-                          {
-                            "Related TopN Range": {
-                              "Count": [],
-                              "FirstEncoded": null,
-                              "FirstIdx": 10,
-                              "LastEncoded": null,
-                              "LastIdx": 9
-                            }
-                          },
-                          {
-                            "Result": 0
-                          }
-                        ]
+                        "github.com/pingcap/tidb/statistics.(*TopN).BetweenCount": {
+                          "Result": 0
+                        }
                       },
                       {
                         "End estimate range": {
