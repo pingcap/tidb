@@ -681,6 +681,16 @@ type Performance struct {
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
+<<<<<<< HEAD
+=======
+
+	LiteInitStats bool `toml:"lite-init-stats" json:"lite-init-stats"`
+
+	// If ForceInitStats is true, when tidb starts up, it doesn't provide service until init stats is finished.
+	// If ForceInitStats is false, tidb can provide service before init stats is finished. Note that during the period
+	// of init stats the optimizer may make bad decisions due to pseudo stats.
+	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -929,6 +939,7 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
+<<<<<<< HEAD
 		IndexUsageSyncLease:              "0s",
 		GOGC:                             100,
 		EnforceMPP:                       false,
@@ -939,6 +950,21 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:         false,
 		RunAutoAnalyze:                   true,
 		EnableLoadFMSketch:               false,
+=======
+		IndexUsageSyncLease:               "0s",
+		GOGC:                              100,
+		EnforceMPP:                        false,
+		PlanReplayerGCLease:               "10m",
+		StatsLoadConcurrency:              5,
+		StatsLoadQueueSize:                1000,
+		AnalyzePartitionConcurrencyQuota:  16,
+		PlanReplayerDumpWorkerConcurrency: 1,
+		EnableStatsCacheMemQuota:          false,
+		RunAutoAnalyze:                    true,
+		EnableLoadFMSketch:                false,
+		LiteInitStats:                     false,
+		ForceInitStats:                    false,
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
