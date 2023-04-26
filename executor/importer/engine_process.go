@@ -16,7 +16,6 @@ package importer
 
 import (
 	"context"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -47,7 +47,8 @@ type engine struct {
 }
 
 func (en *engine) asyncSort(importer *TableImporter, pool *worker.Pool, indexEngine *backend.OpenedEngine) {
-	for _, chunkCP := range en.chunks {
+	for i := range en.chunks {
+		chunkCP := en.chunks[i]
 		w := pool.Apply()
 		en.sortEG.Go(func() error {
 			defer pool.Recycle(w)
@@ -56,8 +57,8 @@ func (en *engine) asyncSort(importer *TableImporter, pool *worker.Pool, indexEng
 				// there might be multiple engine sorting at the same time, we need cancel other engines and
 				// ingest routine too.
 				en.importTableCancel()
-				failpoint.Inject("ProcessChunkFail", func() {
-					TestProcessChunkFailed = true
+				failpoint.Inject("SetImportCancelledOnErr", func() {
+					TestImportCancelledOnErr = true
 				})
 				return err
 			}
@@ -104,13 +105,13 @@ func ProcessChunk(
 ) error {
 	failpoint.Inject("BeforeProcessChunkSync", func(v failpoint.Value) {
 		items := strings.Split(v.(string), ",")
-		if strconv.Itoa(int(dataEngine.GetID())) == items[0] && chunk.Key.Path == items[1] {
+		if slices.Contains(items, chunk.Key.Path) {
 			<-TestSyncCh
 		}
 	})
 	failpoint.Inject("BeforeProcessChunkFail", func(v failpoint.Value) {
 		items := strings.Split(v.(string), ",")
-		if strconv.Itoa(int(dataEngine.GetID())) == items[0] && chunk.Key.Path == items[1] {
+		if slices.Contains(items, chunk.Key.Path) {
 			failpoint.Return(errors.New("mock process chunk fail"))
 		}
 	})
@@ -181,8 +182,11 @@ func ProcessChunk(
 		return err
 	}
 	tableImporter.setLastInsertID(encoder.GetLastInsertID())
-	failpoint.Inject("AfterProcessChunkSync", func() {
-		<-TestSyncCh
+	failpoint.Inject("AfterProcessChunkSync", func(v failpoint.Value) {
+		items := strings.Split(v.(string), ",")
+		if slices.Contains(items, chunk.Key.Path) {
+			<-TestSyncCh
+		}
 	})
 	return nil
 }

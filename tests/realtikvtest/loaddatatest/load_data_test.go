@@ -19,7 +19,6 @@ import (
 	"compress/gzip"
 	"fmt"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
@@ -854,58 +853,4 @@ func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed boo
 		"4 400",
 		"5 500",
 	))
-}
-
-func (s *mockGCSSuite) TestConcurrentPhysicalModeCancelOnErr() {
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "cancel-on-err",
-			Name:       "t-01.csv",
-		},
-		Content: []byte(`1,test1,11`),
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "cancel-on-err",
-			Name:       "t-02.csv",
-		},
-		Content: []byte(`4,test4,44`),
-	})
-
-	// separated into 2 engines
-	backup := config.DefaultBatchSize
-	config.DefaultBatchSize = 1
-	s.T().Cleanup(func() {
-		config.DefaultBatchSize = backup
-	})
-
-	importer.TestProcessChunkFailed = false
-
-	// chunk in engine 0 wait
-	// chunk in engine 1 fail and should trigger cancel
-	// chunk in engine 0 continue, and fail with context canceled, and should not reach AfterProcessChunkSync
-	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/BeforeProcessChunkSync", `return("0,t-01.csv")`)
-	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/BeforeProcessChunkFail", `return("1,t-02.csv")`)
-	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/AfterProcessChunkSync", `return()`)
-	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/ProcessChunkFail", `return()`)
-	s.prepareAndUseDB("load_data")
-	s.tk.MustExec("drop table if exists t;")
-	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
-	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://cancel-on-err/t-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with import_mode='physical', thread=2`, gcsEndpoint)
-
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		require.Eventually(s.T(), func() bool {
-			return importer.TestProcessChunkFailed
-		}, 5*time.Second, time.Millisecond*100)
-
-		importer.TestSyncCh <- struct{}{}
-	}()
-	err := s.tk.ExecToErr(loadDataSQL)
-	require.ErrorContains(s.T(), err, "mock process chunk fail")
-
-	wg.Wait()
 }

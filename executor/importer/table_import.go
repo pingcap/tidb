@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -160,7 +161,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		JobImportParam:     param,
 		LoadDataController: e,
 		backend:            localBackend,
-		tableCp: &checkpoints.TableCheckpoint{
+		TableCP: &checkpoints.TableCheckpoint{
 			Engines: map[int32]*checkpoints.EngineCheckpoint{},
 		},
 		tableInfo: &checkpoints.TidbTableInfo{
@@ -196,8 +197,9 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 type TableImporter struct {
 	*JobImportParam
 	*LoadDataController
-	backend   *local.Backend
-	tableCp   *checkpoints.TableCheckpoint
+	backend *local.Backend
+	// some fields are exported to ease testing.
+	TableCP   *checkpoints.TableCheckpoint
 	tableInfo *checkpoints.TidbTableInfo
 	tableMeta *mydump.MDTableMeta
 	// this table has a separate id allocator used to record the max row id allocated.
@@ -325,8 +327,8 @@ func (ti *TableImporter) verifyChecksum(ctx context.Context) (err error) {
 		task.End(zap.ErrorLevel, err)
 	}()
 	var localChecksum verify.KVChecksum
-	for _, engine := range ti.tableCp.Engines {
-		for _, chunk := range engine.Chunks {
+	for _, en := range ti.TableCP.Engines {
+		for _, chunk := range en.Chunks {
 			localChecksum.Add(&chunk.Checksum)
 		}
 	}
@@ -371,12 +373,12 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (ecp map[int32]*che
 	var maxRowID int64
 	timestamp := time.Now().Unix()
 	for _, region := range tableRegions {
-		engine, found := ti.tableCp.Engines[region.EngineID]
+		engine, found := ti.TableCP.Engines[region.EngineID]
 		if !found {
 			engine = &checkpoints.EngineCheckpoint{
 				Status: checkpoints.CheckpointStatusLoaded,
 			}
-			ti.tableCp.Engines[region.EngineID] = engine
+			ti.TableCP.Engines[region.EngineID] = engine
 		}
 		ccp := &checkpoints.ChunkCheckpoint{
 			Key: checkpoints.ChunkCheckpointKey{
@@ -407,15 +409,15 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (ecp map[int32]*che
 	}
 
 	// Add index engine checkpoint
-	ti.tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
-	return ti.tableCp.Engines, nil
+	ti.TableCP.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
+	return ti.TableCP.Engines, nil
 }
 
 func (ti *TableImporter) rebaseChunkRowID(rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
 	}
-	for _, engine := range ti.tableCp.Engines {
+	for _, engine := range ti.TableCP.Engines {
 		for _, chunk := range engine.Chunks {
 			chunk.Chunk.PrevRowIDMax += rowIDBase
 			chunk.Chunk.RowIDMax += rowIDBase
@@ -432,7 +434,7 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context) (*backend.OpenedEn
 	if !common.TableHasAutoRowID(ti.tableInfo.Core) {
 		idxCnt--
 	}
-	threshold := local.EstimateCompactionThreshold(ti.tableMeta.DataFiles, ti.tableCp, int64(idxCnt))
+	threshold := local.EstimateCompactionThreshold(ti.tableMeta.DataFiles, ti.TableCP, int64(idxCnt))
 	idxEngineCfg.Local = backend.LocalEngineConfig{
 		Compact:            threshold > 0,
 		CompactConcurrency: 4,
@@ -483,7 +485,7 @@ func (ti *TableImporter) sortAndIngestEngines(ctx context.Context) (err error) {
 	}()
 
 	encodePool := worker.NewPool(ctx, int(ti.ThreadCnt), "encoder")
-	engineCh := make(chan *engine, len(ti.tableCp.Engines))
+	engineCh := make(chan *engine, len(ti.TableCP.Engines))
 
 	importTableCtx, importTableCancelFn := context.WithCancel(ctx)
 	ingestGroup, _ := errgroup.WithContext(importTableCtx)
@@ -491,7 +493,7 @@ func (ti *TableImporter) sortAndIngestEngines(ctx context.Context) (err error) {
 		return ti.ingestAndCleanupEngines(importTableCtx, importTableCancelFn, engineCh)
 	})
 engineLoop:
-	for id, engineCP := range ti.tableCp.Engines {
+	for id, engineCP := range ti.TableCP.Engines {
 		// skip index engine
 		if id == common.IndexEngineID {
 			continue
@@ -547,6 +549,9 @@ func (ti *TableImporter) ingestAndCleanupEngines(ctx context.Context, importTabl
 			ti.firstErr.Set(err)
 			// cancel goroutines used for encoding & sorting
 			importTableCancelFn()
+			failpoint.Inject("SetImportCancelledOnErr", func() {
+				TestImportCancelledOnErr = true
+			})
 		}
 	}
 	return ti.firstErr.Get()
@@ -554,6 +559,9 @@ func (ti *TableImporter) ingestAndCleanupEngines(ctx context.Context, importTabl
 
 // IngestAndCleanup imports the engine and cleanup the engine data.
 func (ti *TableImporter) IngestAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
+	failpoint.Inject("IngestAndCleanupError", func() {
+		failpoint.Return(errors.New("mock ingest fail"))
+	})
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
