@@ -27,14 +27,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createGroupingFunc(ctx sessionctx.Context, args []Expression) (*builtinGroupingSig, error) {
+func createGroupingFunc(ctx sessionctx.Context, args []Expression) (*builtinGroupingImplSig, error) {
 	argTp := []types.EvalType{types.ETInt}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, ast.Grouping, args, types.ETInt, argTp...)
 	if err != nil {
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinGroupingSig{bf, 0, map[int64]struct{}{}}
+	sig := &builtinGroupingImplSig{bf, 0, map[int64]struct{}{}}
 	sig.setPbCode(tipb.ScalarFuncSig_GroupingSig)
 	return sig, nil
 }
@@ -78,8 +78,8 @@ func TestGrouping(t *testing.T) {
 		args := datumsToConstants(types.MakeDatums(testCase.groupingID))
 
 		groupingFunc, err := createGroupingFunc(ctx, args)
-		groupingFunc.SetMetaVersion(testCase.mode)
-		groupingFunc.SetMetaGroupingIDs(testCase.groupingIDs)
+		groupingFunc.SetGroupingMode(testCase.mode)
+		groupingFunc.SetMetaGroupingMarks(testCase.groupingIDs)
 		require.NoError(t, err, comment)
 
 		actualResult, err := evalBuiltinFunc(groupingFunc, chunk.Row{})

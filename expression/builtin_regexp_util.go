@@ -72,13 +72,6 @@ func fillNullStringIntoResult(result *chunk.Column, num int) {
 	}
 }
 
-func fillNullBytesIntoResult(result *chunk.Column, num int) {
-	result.ReserveBytes(num)
-	for i := 0; i < num; i++ {
-		result.AppendNull()
-	}
-}
-
 // check if this is a valid position argument when position is out of range
 func checkOutRangePos(strLen int, pos int64) bool {
 	// false condition:
