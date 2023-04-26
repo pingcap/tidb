@@ -194,11 +194,121 @@ skip-register-to-dashboard = true
 [performance]
 txn-entry-size-limit=1000
 txn-total-size-limit=2000
+<<<<<<< HEAD
+=======
+tcp-no-delay = false
+enable-load-fmsketch = true
+plan-replayer-dump-worker-concurrency = 1
+lite-init-stats = true
+force-init-stats = true
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
+<<<<<<< HEAD
+=======
+ttl-refreshed-txn-size=8192
+resolve-lock-lite-threshold = 16
+[tikv-client.async-commit]
+keys-limit=123
+total-key-size-limit=1024
+[experimental]
+allow-expression-index = true
+[isolation-read]
+engines = ["tiflash"]
+[labels]
+foo= "bar"
+group= "abc"
+zone= "dc-1"
+[security]
+spilled-file-encryption-method = "plaintext"
+[pessimistic-txn]
+deadlock-history-capacity = 123
+deadlock-history-collect-retryable = true
+pessimistic-auto-commit = true
+[top-sql]
+receiver-address = "127.0.0.1:10100"
+[status]
+grpc-keepalive-time = 20
+grpc-keepalive-timeout = 10
+grpc-concurrent-streams = 2048
+grpc-initial-window-size = 10240
+grpc-max-send-msg-size = 40960
+[instance]
+max_connections = 200
+`)
+
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+
+	require.NoError(t, conf.Load(configFile))
+
+	// Test that the original value will not be clear by load the config file that does not contain the option.
+	require.True(t, conf.Binlog.Enable)
+	require.Equal(t, "hash", conf.Binlog.Strategy)
+
+	// Test that the value will be overwritten by the config file.
+	require.Equal(t, uint64(2000), conf.Performance.TxnTotalSizeLimit)
+	require.True(t, conf.AlterPrimaryKey)
+	require.False(t, conf.Performance.TCPNoDelay)
+
+	require.Equal(t, "41s", conf.TiKVClient.CommitTimeout)
+	require.Equal(t, uint(123), conf.TiKVClient.AsyncCommit.KeysLimit)
+	require.Equal(t, uint64(1024), conf.TiKVClient.AsyncCommit.TotalKeySizeLimit)
+	require.Equal(t, uint(128), conf.TiKVClient.MaxBatchSize)
+	require.Equal(t, uint(6000), conf.TiKVClient.RegionCacheTTL)
+	require.Equal(t, int64(0), conf.TiKVClient.StoreLimit)
+	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
+	require.Equal(t, uint(1000), conf.TokenLimit)
+	require.True(t, conf.EnableTableLock)
+	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
+	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
+	require.True(t, conf.RepairMode)
+	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
+	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
+	require.Equal(t, uint32(10), conf.TiDBMaxReuseChunk)
+	require.Equal(t, uint32(20), conf.TiDBMaxReuseColumn)
+	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
+	require.Equal(t, 3080, conf.MaxIndexLength)
+	require.Equal(t, 70, conf.IndexLimit)
+	require.Equal(t, uint32(4000), conf.TableColumnCountLimit)
+	require.True(t, conf.SkipRegisterToDashboard)
+	require.Equal(t, 3, len(conf.Labels))
+	require.Equal(t, "bar", conf.Labels["foo"])
+	require.Equal(t, "abc", conf.Labels["group"])
+	require.Equal(t, "dc-1", conf.Labels["zone"])
+	require.Equal(t, SpilledFileEncryptionMethodPlaintext, conf.Security.SpilledFileEncryptionMethod)
+	require.True(t, conf.DeprecateIntegerDisplayWidth)
+	require.False(t, conf.EnableEnumLengthLimit)
+	require.True(t, conf.EnableForwarding)
+	require.Equal(t, uint64(30), conf.StoresRefreshInterval)
+	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
+	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
+	require.True(t, conf.PessimisticTxn.PessimisticAutoCommit.Load())
+	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
+	require.True(t, conf.Experimental.AllowsExpressionIndex)
+	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
+	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
+	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
+	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
+	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
+	require.True(t, conf.Performance.EnableLoadFMSketch)
+	require.True(t, conf.Performance.LiteInitStats)
+	require.True(t, conf.Performance.ForceInitStats)
+
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	_, err = f.WriteString(`
+[log.file]
+log-rotate = true
+[performance]
+mem-profile-interval="1m"
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 [stmt-summary]
 enable=false
 enable-internal-query=true
