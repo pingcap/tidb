@@ -1325,6 +1325,7 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	return statsOwner
 }
 
+<<<<<<< HEAD
 func (do *Domain) loadStatsWorker() {
 	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
 	lease := do.statsLease
@@ -1337,7 +1338,13 @@ func (do *Domain) loadStatsWorker() {
 		do.wg.Done()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
+=======
+func (do *Domain) initStats() {
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 	statsHandle := do.StatsHandle()
+	defer func() {
+		close(statsHandle.InitStatsDone)
+	}()
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
@@ -1345,6 +1352,24 @@ func (do *Domain) loadStatsWorker() {
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
 	}
+}
+
+func (do *Domain) loadStatsWorker() {
+	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
+	lease := do.statsLease
+	if lease == 0 {
+		lease = 3 * time.Second
+	}
+	loadTicker := time.NewTicker(lease)
+	updStatsHealthyTicker := time.NewTicker(20 * lease)
+	defer func() {
+		loadTicker.Stop()
+		updStatsHealthyTicker.Stop()
+		logutil.BgLogger().Info("loadStatsWorker exited.")
+	}()
+	do.initStats()
+	statsHandle := do.StatsHandle()
+	var err error
 	for {
 		select {
 		case <-loadTicker.C:
