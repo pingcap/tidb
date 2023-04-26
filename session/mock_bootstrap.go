@@ -20,6 +20,7 @@ package session
 
 import (
 	"flag"
+	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -104,6 +105,7 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 	for _, sql := range allDDLs {
 		mustExecute(s, sql)
 		logutil.BgLogger().Info("mock upgrade exec", zap.String("sql", sql))
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
