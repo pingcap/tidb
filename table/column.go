@@ -485,16 +485,27 @@ func (c *Column) IsCommonHandleColumn(tbInfo *model.TableInfo) bool {
 	return mysql.HasPriKeyFlag(c.GetFlag()) && tbInfo.IsCommonHandle
 }
 
+type getColOriginDefaultValue struct {
+	StrictSQLMode bool
+}
+
 // GetColOriginDefaultValue gets default value of the column from original default value.
 func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue())
+	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), nil)
+}
+
+// GetColOriginDefaultValueWithStrictSQLMode gets default value of the column from original default value with Strict SQL mode.
+func GetColOriginDefaultValueWithStrictSQLMode(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
+	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), &getColOriginDefaultValue{
+		StrictSQLMode: true,
+	})
 }
 
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
 	defaultValue := col.GetDefaultValue()
 	if !col.DefaultIsExpr {
-		return getColDefaultValue(ctx, col, defaultValue)
+		return getColDefaultValue(ctx, col, defaultValue, nil)
 	}
 	return getColDefaultExprValue(ctx, col, defaultValue.(string))
 }
@@ -532,9 +543,9 @@ func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defau
 	return value, nil
 }
 
-func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {
+func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}, args *getColOriginDefaultValue) (types.Datum, error) {
 	if defaultVal == nil {
-		return getColDefaultValueFromNil(ctx, col)
+		return getColDefaultValueFromNil(ctx, col, args)
 	}
 
 	switch col.GetType() {
@@ -577,7 +588,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	return value, nil
 }
 
-func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
+func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo, args *getColOriginDefaultValue) (types.Datum, error) {
 	if !mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
 		return types.Datum{}, nil
 	}
@@ -599,7 +610,13 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	}
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
-	if !vars.StrictSQLMode {
+	var strictSQLMode bool
+	if args != nil {
+		strictSQLMode = args.StrictSQLMode
+	} else {
+		strictSQLMode = vars.StrictSQLMode
+	}
+	if strictSQLMode {
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
 		if mysql.HasNotNullFlag(col.GetFlag()) {
 			return GetZeroValue(col), nil
