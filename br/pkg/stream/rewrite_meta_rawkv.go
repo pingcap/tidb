@@ -68,7 +68,7 @@ type SchemasReplace struct {
 	status             RewriteStatus
 	DbMap              map[UpstreamID]*DBReplace
 	globalTableIdMap   map[UpstreamID]DownstreamID
-	idMapNeedConstruct bool
+	needConstructIdMap bool
 
 	ingestRecorder  *ingestrec.IngestRecorder
 	TiflashRecorder *tiflashrec.TiFlashRecorder
@@ -105,7 +105,7 @@ func NewDBReplace(name string, newID DownstreamID) *DBReplace {
 // NewSchemasReplace creates a SchemasReplace struct.
 func NewSchemasReplace(
 	dbMap map[UpstreamID]*DBReplace,
-	idMapNeedConstruct bool,
+	needConstructIdMap bool,
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	restoreTS uint64,
 	tableFilter filter.Filter,
@@ -127,7 +127,7 @@ func NewSchemasReplace(
 	return &SchemasReplace{
 		DbMap:                     dbMap,
 		globalTableIdMap:          globalTableIdMap,
-		idMapNeedConstruct:        idMapNeedConstruct,
+		needConstructIdMap:        needConstructIdMap,
 		ingestRecorder:            ingestrec.New(),
 		TiflashRecorder:           tiflashRecorder,
 		RewriteTS:                 restoreTS,
@@ -140,7 +140,7 @@ func NewSchemasReplace(
 }
 
 func (sr *SchemasReplace) NeedConstructIdMap() bool {
-	return sr.idMapNeedConstruct
+	return sr.needConstructIdMap
 }
 
 // TidySchemaMaps produces schemas id maps from up-stream to down-stream.
