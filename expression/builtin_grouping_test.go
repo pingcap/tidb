@@ -26,9 +26,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// This is an temporary function, and should not be existence for a long time.
+// After the completion of full rollup feature, the construction of 'bf' in
+// 'createGroupingFunc' should be implemented by 'newBaseBuiltinFuncWithTp'
+func constructFieldType() types.FieldType {
+	var tp types.FieldType
+	tp.Init(8)
+	tp.AddFlag(128)
+	tp.SetFlen(20)
+	tp.SetCharset("binary")
+	tp.SetCollate("binary")
+	return tp
+}
+
 func createGroupingFunc(ctx sessionctx.Context, args []Expression) (*builtinGroupingImplSig, error) {
-	argTp := []types.EvalType{types.ETInt}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, groupingImplName, args, types.ETInt, argTp...)
+	// TODO We should use the commented codes after the completion of rollup
+	// argTp := []types.EvalType{types.ETInt}
+	tp := constructFieldType()
+	// bf, err := newBaseBuiltinFuncWithTp(ctx, groupingImplName, args, types.ETInt, argTp...)
+	bf, err := newBaseBuiltinFuncWithFieldType(ctx, &tp, args)
 	if err != nil {
 		return nil, err
 	}
