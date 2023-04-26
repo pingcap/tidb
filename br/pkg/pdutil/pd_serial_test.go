@@ -199,10 +199,22 @@ func TestPDRequestRetry(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer ts.Close()
 	taddr = ts.URL
 	_, reqErr = pdRequest(ctx, taddr, "", cli, http.MethodGet, nil)
 	require.Error(t, reqErr)
+	ts.Close()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/pdutil/InjectClosed", fmt.Sprintf("return(%d)", pdRequestRetryTime-1)))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/pdutil/InjectClosed"))
+	}()
+	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	taddr = ts.URL
+	_, reqErr = pdRequest(ctx, taddr, "", cli, http.MethodGet, nil)
+	require.NoError(t, reqErr)
 }
 
 func TestPDResetTSCompatibility(t *testing.T) {
