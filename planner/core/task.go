@@ -913,7 +913,7 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 			Exprs: expression.Column2Exprs(p.schema.Columns),
 		}.Init(p.SCtx(), p.statsInfo(), p.blockOffset, nil)
 		extraProj.SetSchema(p.schema)
-		// If the root.p is ready a Projection. We left the optimization for the later Projection Elimination.
+		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
 		extraProj.SetChildren(root.p)
 		root.p = extraProj
 	}

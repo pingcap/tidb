@@ -4328,12 +4328,11 @@
       {
         "SQL": "explain select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
-          "Limit_12 1.00 root  offset:0, count:1",
-          "└─Projection_17 1.00 root  test.t1.a, test.t1.b",
-          "  └─IndexLookUp_16 1.00 root  ",
-          "    ├─Limit_15(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "    │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
-          "    └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection_17 1.00 root  test.t1.a, test.t1.b",
+          "└─IndexLookUp_16 1.00 root  limit embedded(offset:0, count:1)",
+          "  ├─Limit_15(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "  │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
+          "  └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -4443,48 +4442,44 @@
       {
         "SQL": "explain select /*+ order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
-          "Limit_12 1.00 root  offset:0, count:1",
-          "└─Projection_19 1.00 root  test.t1.a, test.t1.b",
-          "  └─IndexLookUp_18 1.00 root  ",
-          "    ├─Limit_17(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "    │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
-          "    └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection_19 1.00 root  test.t1.a, test.t1.b",
+          "└─IndexLookUp_18 1.00 root  limit embedded(offset:0, count:1)",
+          "  ├─Limit_17(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "  │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
+          "  └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select /*+ order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
         "Plan": [
-          "Limit_12 1.00 root  offset:0, count:1",
-          "└─Projection_19 1.00 root  test.t1.a, test.t1.b",
-          "  └─IndexLookUp_18 1.00 root  ",
-          "    ├─Limit_17(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "    │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
-          "    └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection_19 1.00 root  test.t1.a, test.t1.b",
+          "└─IndexLookUp_18 1.00 root  limit embedded(offset:0, count:1)",
+          "  ├─Limit_17(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "  │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
+          "  └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select /*+ order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
-          "Limit_12 1.00 root  offset:0, count:1",
-          "└─Projection_19 1.00 root  test.t1.a, test.t1.b",
-          "  └─IndexLookUp_18 1.00 root  ",
-          "    ├─Limit_17(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "    │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
-          "    └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection_19 1.00 root  test.t1.a, test.t1.b",
+          "└─IndexLookUp_18 1.00 root  limit embedded(offset:0, count:1)",
+          "  ├─Limit_17(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "  │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
+          "  └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select /*+ order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
         "Plan": [
-          "Limit_12 1.00 root  offset:0, count:1",
-          "└─Projection_19 1.00 root  test.t1.a, test.t1.b",
-          "  └─IndexLookUp_18 1.00 root  ",
-          "    ├─Limit_17(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "    │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
-          "    └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection_19 1.00 root  test.t1.a, test.t1.b",
+          "└─IndexLookUp_18 1.00 root  limit embedded(offset:0, count:1)",
+          "  ├─Limit_17(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "  │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
+          "  └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -4657,12 +4652,11 @@
       {
         "SQL": "explain select /*+ qb_name(qb, v) order_index(t1@qb, idx_a) */ * from v",
         "Plan": [
-          "Limit_14 1.00 root  offset:0, count:1",
-          "└─Projection_19 1.00 root  test.t1.a, test.t1.b",
-          "  └─IndexLookUp_18 1.00 root  ",
-          "    ├─Limit_17(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "    │ └─IndexRangeScan_15 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
-          "    └─TableRowIDScan_16(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection_19 1.00 root  test.t1.a, test.t1.b",
+          "└─IndexLookUp_18 1.00 root  limit embedded(offset:0, count:1)",
+          "  ├─Limit_17(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "  │ └─IndexRangeScan_15 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
+          "  └─TableRowIDScan_16(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -4700,20 +4694,19 @@
       {
         "SQL": "explain WITH CTE AS (select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
-          "HashAgg_30 2.00 root  group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(Column#9)->Column#9",
-          "└─Union_31 1.28 root  ",
-          "  ├─Selection_33 0.64 root  lt(test.t1.a, 18)",
-          "  │ └─CTEFullScan_34 0.80 root CTE:cte data:CTE_0",
-          "  └─Selection_36 0.64 root  gt(test.t1.b, 1)",
-          "    └─CTEFullScan_37 0.80 root CTE:cte data:CTE_0",
+          "HashAgg_31 2.00 root  group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(Column#9)->Column#9",
+          "└─Union_32 1.28 root  ",
+          "  ├─Selection_34 0.64 root  lt(test.t1.a, 18)",
+          "  │ └─CTEFullScan_35 0.80 root CTE:cte data:CTE_0",
+          "  └─Selection_37 0.64 root  gt(test.t1.b, 1)",
+          "    └─CTEFullScan_38 0.80 root CTE:cte data:CTE_0",
           "CTE_0 0.80 root  Non-Recursive CTE",
           "└─Selection_18(Seed Part) 0.80 root  or(lt(test.t1.a, 18), gt(test.t1.b, 1))",
-          "  └─Limit_24 1.00 root  offset:0, count:1",
-          "    └─Projection_29 1.00 root  test.t1.a, test.t1.b",
-          "      └─IndexLookUp_28 1.00 root  ",
-          "        ├─Limit_27(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "        │ └─IndexRangeScan_25 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
-          "        └─TableRowIDScan_26(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "  └─Projection_29 1.00 root  test.t1.a, test.t1.b",
+          "    └─IndexLookUp_28 1.00 root  limit embedded(offset:0, count:1)",
+          "      ├─Limit_27(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "      │ └─IndexRangeScan_25 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
+          "      └─TableRowIDScan_26(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -4815,12 +4808,11 @@
       {
         "SQL": "explain select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1",
         "Plan": [
-          "Limit_12 1.00 root  offset:0, count:1",
-          "└─Projection_17 1.00 root  test.thh.a, test.thh.b",
-          "  └─IndexLookUp_16 1.00 root partition:all ",
-          "    ├─Limit_15(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "    │ └─IndexRangeScan_13 1.00 cop[tikv] table:thh, index:a(a) range:[-inf,1), keep order:true, stats:pseudo",
-          "    └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:thh keep order:false, stats:pseudo"
+          "Projection_17 1.00 root  test.thh.a, test.thh.b",
+          "└─IndexLookUp_16 1.00 root partition:all limit embedded(offset:0, count:1)",
+          "  ├─Limit_15(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "  │ └─IndexRangeScan_13 1.00 cop[tikv] table:thh, index:a(a) range:[-inf,1), keep order:true, stats:pseudo",
+          "  └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:thh keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
