@@ -19,6 +19,7 @@ import (
 	"database/sql/driver"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -101,11 +102,18 @@ func isSingleRetryableError(err error) bool {
 		if nerr.Timeout() {
 			return true
 		}
-		if cause, ok := nerr.(*net.OpError); ok {
-			syscallErr, ok := cause.Unwrap().(*os.SyscallError)
-			if ok {
-				return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
-			}
+		var (
+			syscallErr *os.SyscallError
+			ok         bool
+		)
+		switch cause := nerr.(type) {
+		case *net.OpError:
+			syscallErr, ok = cause.Unwrap().(*os.SyscallError)
+		case *url.Error:
+			syscallErr, ok = cause.Unwrap().(*os.SyscallError)
+		}
+		if ok {
+			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
 		}
 		return false
 	case *mysql.MySQLError:

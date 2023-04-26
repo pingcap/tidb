@@ -11,9 +11,12 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -166,21 +169,28 @@ func pdRequestWithCode(
 		return 0, nil, errors.Trace(err)
 	}
 	resp, err := cli.Do(req)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
-	}
 	count := 0
 	for {
 		count++
-		if count > pdRequestRetryTime || resp.StatusCode < 500 {
+		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
+			if failTimes, ok := v.(int); ok && count <= failTimes {
+				resp, err = nil, &net.OpError{
+					Op:  "read",
+					Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+				}
+			}
+		})
+		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) || (err != nil && !common.IsRetryableError(err)) {
 			break
 		}
-		_ = resp.Body.Close()
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
 		time.Sleep(pdRequestRetryInterval())
 		resp, err = cli.Do(req)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
+	}
+	if err != nil {
+		return 0, nil, errors.Trace(err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
