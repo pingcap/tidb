@@ -215,6 +215,9 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL()
+	if config.GetGlobalConfig().Performance.ForceInitStats {
+		<-dom.StatsHandle().InitStatsDone
+	}
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()

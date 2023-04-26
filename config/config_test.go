@@ -224,6 +224,13 @@ enable-global-kill = true
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
+<<<<<<< HEAD
+=======
+enable-load-fmsketch = true
+plan-replayer-dump-worker-concurrency = 1
+lite-init-stats = true
+force-init-stats = true
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -310,6 +317,12 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
+<<<<<<< HEAD
+=======
+	require.True(t, conf.Performance.EnableLoadFMSketch)
+	require.True(t, conf.Performance.LiteInitStats)
+	require.True(t, conf.Performance.ForceInitStats)
+>>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
