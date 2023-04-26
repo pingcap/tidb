@@ -1530,11 +1530,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 				})
 			}
 			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
-		}
-		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
-			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
-			cop.extraHandleCol = col
-			if ds.tableInfo.GetPartitionInfo() != nil && !is.Index.Global {
+			if !is.Index.Global && cop.tablePlan != nil {
 				is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
 				is.schema.Append(&expression.Column{
 					RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -1542,6 +1538,11 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 					ID:       model.ExtraPhysTblID,
 				})
 			}
+		}
+
+		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
+			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			cop.extraHandleCol = col
 			cop.needExtraProj = cop.needExtraProj || isNew
 		}
 	}
