@@ -4772,6 +4772,58 @@
           "        └─TableRangeScan_25 3333.33 cop[tikv] table:t range:[-inf,10), keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1",
+        "Plan": [
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─IndexReader_15 1.00 root partition:all index:Limit_14",
+          "  └─Limit_14 1.00 cop[tikv]  offset:0, count:1",
+          "    └─IndexRangeScan_13 1.00 cop[tikv] table:th, index:a(a) range:[-inf,1), keep order:true, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ no_order_index(th, a) */ a from th where a<1 order by a limit 1",
+        "Plan": [
+          "TopN_8 1.00 root  test.th.a, offset:0, count:1",
+          "└─IndexReader_15 1.00 root partition:all index:TopN_14",
+          "  └─TopN_14 1.00 cop[tikv]  test.th.a, offset:0, count:1",
+          "    └─IndexRangeScan_13 3323.33 cop[tikv] table:th, index:a(a) range:[-inf,1), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ order_index(thp, primary) */ a from thp where a<1 order by a limit 1",
+        "Plan": [
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─TableReader_15 1.00 root partition:all data:Limit_14",
+          "  └─Limit_14 1.00 cop[tikv]  offset:0, count:1",
+          "    └─TableRangeScan_13 3333.33 cop[tikv] table:thp range:[-inf,1), keep order:true, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ no_order_index(thp, primary) */ a from thp where a<1 order by a limit 1",
+        "Plan": [
+          "TopN_8 1.00 root  test.thp.a, offset:0, count:1",
+          "└─TableReader_15 1.00 root partition:all data:TopN_14",
+          "  └─TopN_14 1.00 cop[tikv]  test.thp.a, offset:0, count:1",
+          "    └─TableRangeScan_13 3333.33 cop[tikv] table:thp range:[-inf,1), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1",
+        "Plan": [
+          "Limit_12 1.00 root  offset:0, count:1",
+          "└─Projection_17 1.00 root  test.thh.a, test.thh.b",
+          "  └─IndexLookUp_16 1.00 root partition:all ",
+          "    ├─Limit_15(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "    │ └─IndexRangeScan_13 1.00 cop[tikv] table:thh, index:a(a) range:[-inf,1), keep order:true, stats:pseudo",
+          "    └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:thh keep order:false, stats:pseudo"
+        ],
+        "Warn": null
       }
     ]
   },
