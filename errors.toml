@@ -38,7 +38,7 @@ invalid argument
 
 ["BR:Common:ErrInvalidMetaFile"]
 error = '''
-invalid metafile
+invalid metafile: %s
 '''
 
 ["BR:Common:ErrUndefinedDbOrTable"]
@@ -1596,7 +1596,7 @@ error = '''
 TiDB admin check table failed.
 '''
 
-["executor:8067"]
+["executor:8068"]
 error = '''
 Load data: unmatched columns
 '''
@@ -1753,7 +1753,12 @@ The current job status cannot perform the operation. %s
 
 ["executor:8172"]
 error = '''
-The job can not be DETACHED when LOAD DATA LOCAL INFILE
+Unsupported option for LOAD DATA LOCAL INFILE: %s
+'''
+
+["executor:8173"]
+error = '''
+PreCheck failed: %s
 '''
 
 ["executor:8212"]
@@ -1886,7 +1891,7 @@ error = '''
 A path expression is not a path to a cell in an array.
 '''
 
-["json:8066"]
+["json:8067"]
 error = '''
 JSON_OBJECTAGG: unsupported second argument type %v
 '''
@@ -3019,6 +3024,11 @@ invalid year format
 ["types:8033"]
 error = '''
 invalid year
+'''
+
+["types:8034"]
+error = '''
+Incorrect datetime value: '%s'
 '''
 
 ["types:8037"]

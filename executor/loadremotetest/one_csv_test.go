@@ -19,7 +19,6 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
 )
 
 func (s *mockGCSSuite) TestLoadCSV() {
@@ -266,92 +265,4 @@ mynull,"mynull"
 		FIELDS TERMINATED BY ',' DEFINED NULL BY 'mynull' OPTIONALLY ENCLOSED
 		LINES TERMINATED BY '\n';`, gcsEndpoint)
 	s.tk.MustMatchErrMsg(sql, `must specify FIELDS \[OPTIONALLY\] ENCLOSED BY`)
-}
-
-func (s *mockGCSSuite) TestMultiValueIndex() {
-	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
-	s.tk.MustExec("CREATE DATABASE load_csv;")
-	s.tk.MustExec(`CREATE TABLE load_csv.t (
-    	i INT, j JSON,
-    	KEY idx ((cast(json_extract(j, '$[*]') as signed array)))
-    	);`)
-
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-load-csv",
-			Name:       "1.csv",
-		},
-		Content: []byte(`i,s
-1,"[1,2,3]"
-2,"[2,3,4]"`),
-	})
-
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-csv/1.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
-		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, gcsEndpoint)
-	s.tk.MustExec(sql)
-	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
-		"1 [1, 2, 3]",
-		"2 [2, 3, 4]",
-	))
-}
-
-func (s *mockGCSSuite) TestGBK() {
-	s.tk.MustExec("DROP DATABASE IF EXISTS load_charset;")
-	s.tk.MustExec("CREATE DATABASE load_charset;")
-	s.tk.MustExec(`CREATE TABLE load_charset.gbk (
-    	i INT, j VARCHAR(255)
-    	) CHARACTER SET gbk;`)
-	s.tk.MustExec(`CREATE TABLE load_charset.utf8mb4 (
-    	i INT, j VARCHAR(255)
-    	) CHARACTER SET utf8mb4;`)
-
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-load",
-			Name:       "gbk.tsv",
-		},
-		Content: []byte{
-			// 1	一丁丂七丄丅丆万丈三上下丌不与丏
-			0x31, 0x09, 0xd2, 0xbb, 0xb6, 0xa1, 0x81, 0x40, 0xc6, 0xdf, 0x81,
-			0x41, 0x81, 0x42, 0x81, 0x43, 0xcd, 0xf2, 0xd5, 0xc9, 0xc8, 0xfd,
-			0xc9, 0xcf, 0xcf, 0xc2, 0xd8, 0xa2, 0xb2, 0xbb, 0xd3, 0xeb, 0x81,
-			0x44, 0x0a,
-			// 2	丐丑丒专且丕世丗丘丙业丛东丝丞丢
-			0x32, 0x09, 0xd8, 0xa4, 0xb3, 0xf3, 0x81, 0x45, 0xd7, 0xa8, 0xc7,
-			0xd2, 0xd8, 0xa7, 0xca, 0xc0, 0x81, 0x46, 0xc7, 0xf0, 0xb1, 0xfb,
-			0xd2, 0xb5, 0xb4, 0xd4, 0xb6, 0xab, 0xcb, 0xbf, 0xd8, 0xa9, 0xb6,
-			0xaa,
-		},
-	})
-
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
-		INTO TABLE load_charset.gbk CHARACTER SET gbk`, gcsEndpoint)
-	s.tk.MustExec(sql)
-	s.tk.MustQuery("SELECT * FROM load_charset.gbk;").Check(testkit.Rows(
-		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
-		"2 丐丑丒专且丕世丗丘丙业丛东丝丞丢",
-	))
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8mb4 CHARACTER SET gbk`, gcsEndpoint)
-	s.tk.MustExec(sql)
-	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
-		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
-		"2 丐丑丒专且丕世丗丘丙业丛东丝丞丢",
-	))
-
-	s.tk.MustExec("TRUNCATE TABLE load_charset.utf8mb4;")
-	s.tk.MustExec("SET SESSION character_set_database = 'gbk';")
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8mb4;`, gcsEndpoint)
-	s.tk.MustExec(sql)
-	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
-		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
-		"2 丐丑丒专且丕世丗丘丙业丛东丝丞丢",
-	))
-
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8mb4 CHARACTER SET unknown`, gcsEndpoint)
-	err := s.tk.ExecToErr(sql)
-	require.ErrorContains(s.T(), err, "Unknown character set: 'unknown'")
 }

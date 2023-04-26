@@ -696,6 +696,8 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
@@ -706,8 +708,15 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo(), false, false)
-		if err != nil {
+		if err = e.handleErr(gCol, &val, rowIdx, err); err != nil {
 			return nil, err
+		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				newWarnings[k].Err = completeInsertErr(gCol.ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
 		}
 		// Handle the bad null error.
 		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx, rowCntInLoadData); err != nil {
@@ -1211,7 +1220,7 @@ CheckAndInsert:
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
 						// lock duplicated row key on insert-ignore
-						txnCtx.AddUnchangedRowKey(r.handleKey.newKey)
+						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey)
 					}
 					continue
 				}
@@ -1247,7 +1256,7 @@ CheckAndInsert:
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
 						// lock duplicated unique key on insert-ignore
-						txnCtx.AddUnchangedRowKey(uk.newKey)
+						txnCtx.AddUnchangedKeyForLock(uk.newKey)
 					}
 					continue CheckAndInsert
 				}
@@ -1301,8 +1310,7 @@ func (e *InsertValues) removeRow(
 		if inReplace {
 			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 		}
-		_, err := appendUnchangedRowForLock(e.ctx, r.t, handle, oldRow)
-		if err != nil {
+		if _, err := addUnchangedKeysForLockByRow(e.ctx, r.t, handle, oldRow, lockRowKey|lockUniqueKeys); err != nil {
 			return false, err
 		}
 		return true, nil

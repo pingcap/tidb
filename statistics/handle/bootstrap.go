@@ -48,7 +48,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache
 		newHistColl := statistics.HistColl{
 			PhysicalID:     physicalID,
 			HavePhysicalID: true,
-			Count:          row.GetInt64(3),
+			RealtimeCount:  row.GetInt64(3),
 			ModifyCount:    row.GetInt64(2),
 			Columns:        make(map[int64]*statistics.Column, len(tableInfo.Columns)),
 			Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
@@ -84,6 +84,77 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		h.initStatsMeta4Chunk(is, &tables, iter)
 	}
 	return tables, nil
+}
+
+func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *statsCache, iter *chunk.Iterator4Chunk) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		tblID := row.GetInt64(0)
+		table, ok := cache.Get(tblID)
+		if !ok {
+			continue
+		}
+		isIndex := row.GetInt64(1)
+		id := row.GetInt64(2)
+		ndv := row.GetInt64(3)
+		version := row.GetUint64(4)
+		nullCount := row.GetInt64(5)
+		statsVer := row.GetInt64(7)
+		flag := row.GetInt64(9)
+		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
+		tbl, _ := h.getTableByPhysicalID(is, table.PhysicalID)
+		if isIndex > 0 {
+			var idxInfo *model.IndexInfo
+			for _, idx := range tbl.Meta().Indices {
+				if idx.ID == id {
+					idxInfo = idx
+					break
+				}
+			}
+			if idxInfo == nil {
+				continue
+			}
+			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), 0, 0)
+			index := &statistics.Index{
+				Histogram:  *hist,
+				Info:       idxInfo,
+				StatsVer:   statsVer,
+				Flag:       flag,
+				PhysicalID: tblID,
+			}
+			lastAnalyzePos.Copy(&index.LastAnalyzePos)
+			if index.IsAnalyzed() {
+				index.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			}
+			table.Indices[hist.ID] = index
+		} else {
+			var colInfo *model.ColumnInfo
+			for _, col := range tbl.Meta().Columns {
+				if col.ID == id {
+					colInfo = col
+					break
+				}
+			}
+			if colInfo == nil {
+				continue
+			}
+			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, row.GetInt64(6))
+			hist.Correlation = row.GetFloat64(8)
+			col := &statistics.Column{
+				Histogram:  *hist,
+				PhysicalID: tblID,
+				Info:       colInfo,
+				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				Flag:       flag,
+				StatsVer:   statsVer,
+			}
+			lastAnalyzePos.Copy(&col.LastAnalyzePos)
+			if col.StatsAvailable() {
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			}
+			table.Columns[hist.ID] = col
+		}
+		cache.Put(tblID, table)
+	}
 }
 
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *statsCache, iter *chunk.Iterator4Chunk) {
@@ -138,23 +209,12 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			if colInfo == nil {
 				continue
 			}
-			var topnCount int64
-			// If this is stats of the Version2, we need to consider the topn's count as well.
-			// See the comments of Version2 for more details.
-			if statsVer >= statistics.Version2 {
-				var err error
-				topnCount, err = h.initTopNCountSum(tblID, id)
-				if err != nil {
-					terror.Log(err)
-				}
-			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
 			col := &statistics.Column{
 				Histogram:  *hist,
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
-				Count:      nullCount + topnCount,
 				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
@@ -164,6 +224,29 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 		}
 		cache.Put(tblID, table)
 	}
+}
+
+func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache *statsCache) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer terror.Call(rc.Close)
+	req := rc.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		err := rc.Next(ctx, req)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		h.initStatsHistograms4ChunkLite(is, cache, iter)
+	}
+	return nil
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache) error {
@@ -306,7 +389,6 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 			if !ok {
 				continue
 			}
-			column.Count += row.GetInt64(3)
 			if !mysql.HasPriKeyFlag(column.Info.GetFlag()) {
 				continue
 			}
@@ -332,31 +414,6 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 		}
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(3), row.GetInt64(4), row.GetInt64(7))
 	}
-}
-
-func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
-	// Before stats ver 2, histogram represents all data in this column.
-	// In stats ver 2, histogram + TopN represent all data in this column.
-	// So we need to add TopN total count here.
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	selSQL := "select sum(count) from mysql.stats_top_n where table_id = %? and is_index = 0 and hist_id = %?"
-	rs, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, selSQL, tableID, colID)
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
-	if err != nil {
-		return 0, err
-	}
-	req := rs.NewChunk(nil)
-	iter := chunk.NewIterator4Chunk(req)
-	err = rs.Next(ctx, req)
-	if err != nil {
-		return 0, err
-	}
-	if req.NumRows() == 0 {
-		return 0, nil
-	}
-	return iter.Begin().GetMyDecimal(0).ToInt()
 }
 
 func (h *Handle) initStatsBuckets(cache *statsCache) error {
@@ -399,7 +456,41 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 	return nil
 }
 
-// InitStats will init the stats cache using full load strategy.
+// InitStatsLite initiates the stats cache. The function is liter and faster than InitStats.
+// Column/index stats are not loaded, i.e., we only load scalars such as NDV, NullCount, Correlation and don't load CMSketch/Histogram/TopN.
+func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	defer func() {
+		_, err1 := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
+		if err == nil && err1 != nil {
+			err = err1
+		}
+	}()
+	_, err = h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+	if err != nil {
+		return err
+	}
+	cache, err := h.initStatsMeta(is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = h.initStatsHistogramsLite(is, &cache)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	lastVersion := uint64(0)
+	for _, table := range cache.Values() {
+		lastVersion = mathutil.Max(lastVersion, table.Version)
+	}
+	cache.version = lastVersion
+	cache.FreshMemUsage()
+	h.updateStatsCache(cache)
+	return nil
+}
+
+// InitStats initiates the stats cache.
+// Index/PK stats are fully loaded.
+// Column stats are not loaded, i.e., we only load scalars such as NDV, NullCount, Correlation and don't load CMSketch/Histogram/TopN.
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -438,7 +529,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	// Set columns' stats status.
 	for _, table := range cache.Values() {
 		for _, col := range table.Columns {
-			if col.StatsVer != statistics.Version0 || col.Count > 0 {
+			if col.StatsAvailable() {
 				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
 					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 				} else {

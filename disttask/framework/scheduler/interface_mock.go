@@ -27,8 +27,8 @@ type MockTaskTable struct {
 	mock.Mock
 }
 
-// GetTasksInStates implements TaskTable.GetTasksInStates.
-func (t *MockTaskTable) GetTasksInStates(states ...interface{}) ([]*proto.Task, error) {
+// GetGlobalTasksInStates implements TaskTable.GetTasksInStates.
+func (t *MockTaskTable) GetGlobalTasksInStates(states ...interface{}) ([]*proto.Task, error) {
 	args := t.Called(states...)
 	if args.Error(1) != nil {
 		return nil, args.Error(1)
@@ -39,8 +39,8 @@ func (t *MockTaskTable) GetTasksInStates(states ...interface{}) ([]*proto.Task, 
 	}
 }
 
-// GetTaskByID implements TaskTable.GetTaskByID.
-func (t *MockTaskTable) GetTaskByID(id int64) (*proto.Task, error) {
+// GetGlobalTaskByID implements TaskTable.GetTaskByID.
+func (t *MockTaskTable) GetGlobalTaskByID(id int64) (*proto.Task, error) {
 	args := t.Called(id)
 	if args.Error(1) != nil {
 		return nil, args.Error(1)
@@ -51,14 +51,9 @@ func (t *MockTaskTable) GetTaskByID(id int64) (*proto.Task, error) {
 	}
 }
 
-// MockSubtaskTable is a mock of SubtaskTable.
-type MockSubtaskTable struct {
-	mock.Mock
-}
-
 // GetSubtaskInStates implements SubtaskTable.GetSubtaskInStates.
-func (m *MockSubtaskTable) GetSubtaskInStates(instanceID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
-	args := m.Called(instanceID, taskID, states)
+func (t *MockTaskTable) GetSubtaskInStates(instanceID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
+	args := t.Called(instanceID, taskID, states)
 	if args.Error(1) != nil {
 		return nil, args.Error(1)
 	} else if args.Get(0) == nil {
@@ -68,15 +63,15 @@ func (m *MockSubtaskTable) GetSubtaskInStates(instanceID string, taskID int64, s
 	}
 }
 
-// UpdateSubtaskState implements SubtaskTable.UpdateSubtaskState.
-func (m *MockSubtaskTable) UpdateSubtaskState(id int64, state string) error {
-	args := m.Called(id, state)
+// UpdateSubtaskStateAndError implements SubtaskTable.UpdateSubtaskState.
+func (t *MockTaskTable) UpdateSubtaskStateAndError(id int64, state string, _ string) error {
+	args := t.Called(id, state)
 	return args.Error(0)
 }
 
 // HasSubtasksInStates implements SubtaskTable.HasSubtasksInStates.
-func (m *MockSubtaskTable) HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error) {
-	args := m.Called(instanceID, taskID, states)
+func (t *MockTaskTable) HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error) {
+	args := t.Called(instanceID, taskID, states)
 	return args.Bool(0), args.Error(1)
 }
 
@@ -129,9 +124,18 @@ func (m *MockScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 }
 
 // SplitSubtask implements Scheduler.SplitSubtask.
-func (m *MockScheduler) SplitSubtask(subtask []byte) []proto.MinimalTask {
-	args := m.Called(subtask)
-	return args.Get(0).([]proto.MinimalTask)
+func (m *MockScheduler) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+	args := m.Called(ctx, subtask)
+	if args.Error(1) != nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]proto.MinimalTask), nil
+}
+
+// OnSubtaskFinished implements Scheduler.OnSubtaskFinished.
+func (m *MockScheduler) OnSubtaskFinished(ctx context.Context, subtask []byte) error {
+	args := m.Called(ctx, subtask)
+	return args.Error(0)
 }
 
 // CleanupSubtaskExecEnv implements Scheduler.CleanupSubtaskExecEnv.

@@ -136,6 +136,16 @@
     ]
   },
   {
+    "name": "TestMPPPreferBCJ",
+    "cases": [
+      "explain select * from t1, t2 where t1.a=t2.b",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+      "explain select * from t1, t2 where t1.a=t2.b",
+      "insert into t2 values (9); analyze table t2;",
+      "explain select * from t1, t2 where t1.a=t2.b"
+    ]
+  },
+  {
     "name": "TestMPPBCJModelOneTiFlash",
     "cases": [
       "set @@session.tidb_allow_mpp=true",
@@ -143,6 +153,17 @@
       "explain select * from t t1, t t2 where t1.a=t2.a",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
       "explain select * from t t1, t t2 where t1.a=t2.a"
+    ]
+  },
+  {
+    "name": "TestMPPRightSemiJoin",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+      "set @@session.tidb_broadcast_join_threshold_size=0",
+      "set @@session.tidb_broadcast_join_threshold_count=0",
+      "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)"
     ]
   },
   {
@@ -775,6 +796,7 @@
   {
     "name": "TestSingleConsumerCTE",
     "cases": [
+      "with base1 as (WITH RECURSIVE cte(a) AS (with tmp as (select 1 as a) SELECT a from tmp UNION SELECT a+1 FROM cte) SELECT * FROM cte) select * from base1; -- issue #43318",
       "with cte as (select 1) select * from cte; -- inline cte",
       "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union select * from cte2; -- inline cte1, cte2",
       "with cte as (select 1) select * from cte union select * from cte; -- cannot be inlined",
@@ -1249,7 +1271,7 @@
       "select count(*) from t where a=1",
       "select count(*) from t_pick_row_id",
       "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- shouldn't be rewritten",
-      "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten",
+      "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten",
       "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten",
       "select count(distinct 1) from t -- shouldn't be rewritten",
       "select count(1), count(a), count(b) from t -- shouldn't be rewritten",
@@ -1265,7 +1287,7 @@
       "select count(*) from t where a=1",
       "select count(*) from t_pick_row_id",
       "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive",
-      "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten for correlated sub query",
+      "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten for correlated sub query",
       "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
       "select count(distinct 1) from t -- shouldn't be rewritten",
       "select count(1), count(a), count(b) from t -- keep count(1)",
@@ -1292,7 +1314,9 @@
       "select * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2",
       "select * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2",
       "select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2",
-      "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2"
+      "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2",
+      "select * from tcommon where a = 1 or b = 1 order by c limit 2",
+      "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2"
     ]
   }
 ]

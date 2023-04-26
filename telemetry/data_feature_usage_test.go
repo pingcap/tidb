@@ -589,38 +589,6 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	require.Equal(t, true, usage.DDLUsageCounter.MetadataLockUsed)
 }
 
-func TestDistReorgUsage(t *testing.T) {
-	t.Skip("skip in order to pass the test quickly")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	usage, err := telemetry.GetFeatureUsage(tk.Session())
-	require.NoError(t, err)
-	initCount := usage.DDLUsageCounter.DistReorgUsed
-
-	tk.MustExec("set @@global.tidb_enable_dist_task = off")
-	allow := variable.EnableDistTask.Load()
-	require.Equal(t, false, allow)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tele_t")
-	tk.MustExec("create table tele_t(id int, b int)")
-	tk.MustExec("insert into tele_t values(1,1),(2,2);")
-	tk.MustExec("alter table tele_t add index idx_org(b)")
-	usage, err = telemetry.GetFeatureUsage(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, initCount, usage.DDLUsageCounter.DistReorgUsed)
-
-	tk.MustExec("set @@global.tidb_enable_dist_task = on")
-	allow = variable.EnableDistTask.Load()
-	require.Equal(t, true, allow)
-	usage, err = telemetry.GetFeatureUsage(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, initCount, usage.DDLUsageCounter.DistReorgUsed)
-	tk.MustExec("alter table tele_t add index idx_new(b)")
-	usage, err = telemetry.GetFeatureUsage(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, initCount+1, usage.DDLUsageCounter.DistReorgUsed)
-}
-
 func TestGlobalMemoryControl(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

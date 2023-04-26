@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -63,7 +64,7 @@ type delRangeManager interface {
 
 type delRange struct {
 	store      kv.Storage
-	sessPool   *sessionPool
+	sessPool   *sess.Pool
 	emulatorCh chan struct{}
 	keys       []kv.Key
 	quitCh     chan struct{}
@@ -73,7 +74,7 @@ type delRange struct {
 }
 
 // newDelRangeManager returns a delRangeManager.
-func newDelRangeManager(store kv.Storage, sessPool *sessionPool) delRangeManager {
+func newDelRangeManager(store kv.Storage, sessPool *sess.Pool) delRangeManager {
 	dr := &delRange{
 		store:        store,
 		sessPool:     sessPool,
@@ -89,11 +90,11 @@ func newDelRangeManager(store kv.Storage, sessPool *sessionPool) delRangeManager
 
 // addDelRangeJob implements delRangeManager interface.
 func (dr *delRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
-	sctx, err := dr.sessPool.get()
+	sctx, err := dr.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dr.sessPool.put(sctx)
+	defer dr.sessPool.Put(sctx)
 
 	if job.MultiSchemaInfo != nil {
 		err = insertJobIntoDeleteRangeTableMultiSchema(ctx, sctx, job)
@@ -127,11 +128,11 @@ func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, sctx sessionc
 
 // removeFromGCDeleteRange implements delRangeManager interface.
 func (dr *delRange) removeFromGCDeleteRange(ctx context.Context, jobID int64) error {
-	sctx, err := dr.sessPool.get()
+	sctx, err := dr.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dr.sessPool.put(sctx)
+	defer dr.sessPool.Put(sctx)
 	err = util.RemoveMultiFromGCDeleteRange(ctx, sctx, jobID)
 	return errors.Trace(err)
 }
@@ -171,12 +172,12 @@ func (dr *delRange) startEmulator() {
 }
 
 func (dr *delRange) doDelRangeWork() error {
-	sctx, err := dr.sessPool.get()
+	sctx, err := dr.sessPool.Get()
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] delRange emulator get session failed", zap.Error(err))
 		return errors.Trace(err)
 	}
-	defer dr.sessPool.put(sctx)
+	defer dr.sessPool.Put(sctx)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	ranges, err := util.LoadDeleteRanges(ctx, sctx, math.MaxInt64)

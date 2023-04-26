@@ -36,7 +36,7 @@ var (
 // ManagerBuilder is used to build a Manager.
 type ManagerBuilder struct {
 	newPool      func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
-	newScheduler func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler
+	newScheduler func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler
 }
 
 // NewManagerBuilder creates a new ManagerBuilder.
@@ -55,15 +55,14 @@ func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32
 }
 
 // setSchedulerFactory sets the schedulerFactory to mock the InternalScheduler in unit test.
-func (b *ManagerBuilder) setSchedulerFactory(schedulerFactory func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler) {
+func (b *ManagerBuilder) setSchedulerFactory(schedulerFactory func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler) {
 	b.newScheduler = schedulerFactory
 }
 
 // Manager monitors the global task table and manages the schedulers.
 type Manager struct {
-	globalTaskTable TaskTable
-	subtaskTable    SubtaskTable
-	schedulerPool   Pool
+	taskTable     TaskTable
+	schedulerPool Pool
 	// taskType -> subtaskExecutorPool
 	subtaskExecutorPools map[string]Pool
 	mu                   struct {
@@ -78,15 +77,14 @@ type Manager struct {
 	cancel       context.CancelFunc
 	logCtx       context.Context
 	newPool      func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
-	newScheduler func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler
+	newScheduler func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler
 }
 
 // BuildManager builds a Manager.
-func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, globalTaskTable TaskTable, subtaskTable SubtaskTable) (*Manager, error) {
+func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
 	m := &Manager{
 		id:                   id,
-		globalTaskTable:      globalTaskTable,
-		subtaskTable:         subtaskTable,
+		taskTable:            taskTable,
 		subtaskExecutorPools: make(map[string]Pool),
 		logCtx:               logutil.WithKeyValue(context.Background(), "dist_task_manager", id),
 		newPool:              b.newPool,
@@ -149,7 +147,7 @@ func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 			logutil.Logger(m.logCtx).Info("fetchAndHandleRunnableTasks done")
 			return
 		case <-ticker.C:
-			tasks, err := m.globalTaskTable.GetTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting)
+			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting)
 			if err != nil {
 				m.onError(err)
 				continue
@@ -169,7 +167,7 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 			logutil.Logger(m.logCtx).Info("fetchAndFastCancelTasks done")
 			return
 		case <-ticker.C:
-			tasks, err := m.globalTaskTable.GetTasksInStates(proto.TaskStateReverting)
+			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateReverting)
 			if err != nil {
 				m.onError(err)
 				continue
@@ -183,13 +181,13 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
-		logutil.Logger(m.logCtx).Info("onRunnableTasks", zap.Any("task", task))
 		if _, ok := m.subtaskExecutorPools[task.Type]; !ok {
 			logutil.Logger(m.logCtx).Error("unknown task type", zap.String("type", task.Type))
 			continue
 		}
-		exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending)
+		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending)
 		if err != nil {
+			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.onError(err)
 			continue
 		}
@@ -259,7 +257,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 		return
 	}
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks
-	scheduler := m.newScheduler(ctx, m.id, taskID, m.subtaskTable, m.subtaskExecutorPools[taskType])
+	scheduler := m.newScheduler(ctx, m.id, taskID, m.taskTable, m.subtaskExecutorPools[taskType])
 	scheduler.Start()
 	defer scheduler.Stop()
 	for {
@@ -268,7 +266,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 			return
 		case <-time.After(checkTime):
 		}
-		task, err := m.globalTaskTable.GetTaskByID(taskID)
+		task, err := m.taskTable.GetGlobalTaskByID(taskID)
 		if err != nil {
 			m.onError(err)
 			return
@@ -278,7 +276,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 			return
 		}
 		// TODO: intergrate with heartbeat mechanism
-		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
+		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
 			m.onError(err)
 			return
 		} else if !exist {

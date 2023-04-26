@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "casetest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "binary_plan_test.go",
         "cbo_test.go",
@@ -27,6 +27,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",

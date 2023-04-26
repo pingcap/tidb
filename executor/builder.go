@@ -839,7 +839,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 			}
 		}
 	case *ast.CalibrateResourceStmt:
-		return b.buildCalibrateResource(v.Schema())
+		return &calibrateResourceExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), 0),
+			workloadType: s.Tp,
+			optionList:   s.DynamicCalibrateResourceOptionList,
+		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
 			baseExecutor: newBaseExecutor(b.ctx, nil, 0),
@@ -2493,7 +2497,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		}
 		oldHist = idx.Histogram.Copy()
 	} else {
-		_, bktID := idx.LessRowCountWithBktIdx(idx.LastAnalyzePos)
+		_, bktID := idx.LessRowCountWithBktIdx(nil, idx.LastAnalyzePos)
 		if bktID == 0 {
 			return analyzeTask
 		}
@@ -2657,25 +2661,25 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task pl
 		return defaultRate
 	}
 	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
-	if statsTbl.Count == 0 && !hasPD {
+	if statsTbl.RealtimeCount == 0 && !hasPD {
 		return 1
 	}
 	// we have issue https://github.com/pingcap/tidb/issues/29216.
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
 	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
 	// we think that we meet this issue and use the approximate count to calculate the sample rate.
-	if float64(statsTbl.Count*5) < approxiCount {
+	if float64(statsTbl.RealtimeCount*5) < approxiCount {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		return math.Min(1, 150000/approxiCount)
 	}
 	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
-	if statsTbl.Count == 0 {
+	if statsTbl.RealtimeCount == 0 {
 		return 1
 	}
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
-	return math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.Count))
+	return math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
@@ -2831,7 +2835,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 			b.err = err
 			return nil
 		}
-		_, bktID := col.LessRowCountWithBktIdx(d)
+		_, bktID := col.LessRowCountWithBktIdx(nil, d)
 		if bktID == 0 {
 			return analyzeTask
 		}
@@ -3765,6 +3769,21 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	}
 
 	if is.Index.Global {
+		tmp, ok := b.is.TableByID(ret.table.Meta().ID)
+		if !ok {
+			b.err = infoschema.ErrTableNotExists
+			return nil
+		}
+		tbl, ok := tmp.(table.PartitionedTable)
+		if !ok {
+			b.err = exeerrors.ErrBuildExecutor
+			return nil
+		}
+		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, &v.PartitionInfo)
+		if err != nil {
+			b.err = err
+			return nil
+		}
 		return ret
 	}
 
@@ -3797,17 +3816,36 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tbl, err
 }
 
-func buildIndexReq(ctx sessionctx.Context, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
+// buildIndexReq is designed to create a DAG for index request.
+// If len(ByItems) != 0 means index request should return related columns
+// to sort result rows in TiDB side for parition tables.
+func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := constructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
+
 	indexReq.OutputOffsets = []uint32{}
-	for i := 0; i < handleLen; i++ {
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen+i))
+	if len(plans[0].(*plannercore.PhysicalIndexScan).ByItems) != 0 {
+		idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+		tblInfo := idxScan.Table
+		for _, item := range idxScan.ByItems {
+			c, ok := item.Expr.(*expression.Column)
+			if !ok {
+				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
+			}
+			column := model.FindColumnInfoByID(tblInfo.Columns, c.ID)
+			for i, idxColumn := range columns {
+				if idxColumn.Name.L == column.Name.L {
+					indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+					break
+				}
+			}
+		}
 	}
-	if len(indexReq.OutputOffsets) == 0 {
-		indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
+
+	for i := 0; i < handleLen; i++ {
+		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
 	}
 	return indexReq, err
 }
@@ -3820,11 +3858,11 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	} else {
 		handleLen = 1
 	}
-	if is.Index.Global {
+	if is.Index.Global || len(is.ByItems) != 0 {
 		// Should output pid col.
 		handleLen++
 	}
-	indexReq, err := buildIndexReq(b.ctx, len(is.Index.Columns), handleLen, v.IndexPlans)
+	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -3854,6 +3892,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		table:             tbl,
 		index:             is.Index,
 		keepOrder:         is.KeepOrder,
+		byItems:           is.ByItems,
 		desc:              is.Desc,
 		tableRequest:      tableReq,
 		columns:           ts.Columns,
@@ -3938,14 +3977,14 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return ret
 	}
 
-	if is.Index.Global {
+	if is.Index.Global || len(is.ByItems) != 0 {
 		tmp, ok := b.is.TableByID(ts.Table.ID)
 		if !ok {
 			b.err = err
 			return nil
 		}
-		tbl, ok1 := tmp.(table.PartitionedTable)
-		if !ok1 {
+		tbl, ok := tmp.(table.PartitionedTable)
+		if !ok {
 			b.err = exeerrors.ErrBuildExecutor
 			return nil
 		}
@@ -3955,7 +3994,9 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 			return nil
 		}
 
-		return ret
+		if is.Index.Global {
+			return ret
+		}
 	}
 	if ok, _ := is.IsPartition(); ok {
 		// Already pruned when translated to logical union.
@@ -3993,7 +4034,11 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, err = buildIndexReq(b.ctx, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
+			handleLen := ts.HandleCols.NumCols()
+			if len(is.ByItems) != 0 && is.Table.Partition != nil {
+				handleLen += 1
+			}
+			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 		} else {
@@ -4049,6 +4094,9 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		isCorColInTableFilter:    isCorColInTableFilter,
 		isCorColInPartialAccess:  isCorColInPartialAccess,
 		isIntersection:           v.IsIntersectionType,
+		byItems:                  v.ByItems,
+		pushedLimit:              v.PushedLimit,
+		keepOrder:                v.KeepOrder,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
@@ -4473,6 +4521,30 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, err
 	}
 
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	if is.Index.Global {
+		tmp, ok := builder.is.TableByID(tbInfo.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists
+		}
+		tbl, ok := tmp.(table.PartitionedTable)
+		if !ok {
+			return nil, exeerrors.ErrBuildExecutor
+		}
+		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PartitionInfo)
+		if err != nil {
+			return nil, err
+		}
+
+		if e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
+			return nil, err
+		}
+		if err := e.Open(ctx); err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
 	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
@@ -4522,6 +4594,32 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		err = e.open(ctx)
 		return e, err
 	}
+
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	if is.Index.Global {
+		tmp, ok := builder.is.TableByID(ts.Table.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists
+		}
+		tbl, ok := tmp.(table.PartitionedTable)
+		if !ok {
+			return nil, exeerrors.ErrBuildExecutor
+		}
+		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PartitionInfo)
+		if err != nil {
+			return nil, err
+		}
+		e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		if err != nil {
+			return nil, err
+		}
+		if err := e.Open(ctx); err != nil {
+			return nil, err
+		}
+		return e, err
+	}
+
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
 	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
@@ -4976,6 +5074,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		waitTime:     plan.LockWaitTime,
 		partExpr:     plan.PartitionExpr,
 		partPos:      plan.PartitionColPos,
+		planPhysIDs:  plan.PartitionIDs,
 		singlePart:   plan.SinglePart,
 		partTblID:    plan.PartTblID,
 		columns:      plan.Columns,

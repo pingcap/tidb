@@ -14,10 +14,13 @@ go_library(
         "//types",
         "//util/chunk",
         "//util/dbterror/exeerrors",
+        "//util/logutil",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -25,11 +28,8 @@ go_test(
     name = "asyncloaddata_test",
     timeout = "short",
     srcs = [
-        "detach_test.go",
         "main_test.go",
-        "operate_test.go",
         "progress_test.go",
-        "show_test.go",
         "util_test.go",
     ],
     embed = [":asyncloaddata"],
@@ -37,16 +37,9 @@ go_test(
     race = "on",
     shard_count = 6,
     deps = [
-        "//br/pkg/lightning/config",
-        "//executor/importer",
-        "//kv",
-        "//parser/auth",
         "//testkit",
         "//util/sqlexec",
-        "@com_github_fsouza_fake_gcs_server//fakestorage",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@com_github_stretchr_testify//suite",
         "@org_uber_go_goleak//:goleak",
     ],
 )

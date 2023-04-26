@@ -23,9 +23,9 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+// metric label values.
 const (
-	// states used for the TableCounter labels
-	TableStatePending   = "pending"
+	TableStatePending   = "pending" // for the TableCounter labels, below too
 	TableStateImported  = "imported"
 	TableStateCompleted = "completed"
 
@@ -38,12 +38,10 @@ const (
 	ProgressPhaseRestore = "restore" // restore engine progress
 	ProgressPhaseImport  = "import"  // import engine progress
 
-	// results used for the TableCounter labels
-	TableResultSuccess = "success"
+	TableResultSuccess = "success" // for the TableCounter labels, below too
 	TableResultFailure = "failure"
 
-	// states used for the ChunkCounter labels
-	ChunkStateEstimated = "estimated"
+	ChunkStateEstimated = "estimated" // for the ChunkCounter labels, below too
 	ChunkStatePending   = "pending"
 	ChunkStateRunning   = "running"
 	ChunkStateFinished  = "finished"
@@ -53,6 +51,7 @@ const (
 	BlockDeliverKindData  = "data"
 )
 
+// Metrics contains all metrics used by lightning.
 type Metrics struct {
 	ImporterEngineCounter                *prometheus.CounterVec
 	IdleWorkersGauge                     *prometheus.GaugeVec
@@ -294,6 +293,7 @@ func (m *Metrics) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(m.ProgressGauge)
 }
 
+// RecordTableCount records the number of tables processed.
 func (m *Metrics) RecordTableCount(status string, err error) {
 	var result string
 	if err != nil {
@@ -304,6 +304,7 @@ func (m *Metrics) RecordTableCount(status string, err error) {
 	m.TableCounter.WithLabelValues(status, result).Inc()
 }
 
+// RecordEngineCount records the number of engines processed.
 func (m *Metrics) RecordEngineCount(status string, err error) {
 	var result string
 	if err != nil {

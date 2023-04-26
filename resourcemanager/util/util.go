@@ -52,4 +52,6 @@ const (
 	UNKNOWN Component = iota
 	// DDL is for ddl component
 	DDL
+	// DistTask is for disttask component.
+	DistTask
 )

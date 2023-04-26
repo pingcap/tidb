@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -169,40 +170,6 @@ func FMSketchFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64
 	return DecodeFMSketch(rows[0].GetBytes(0))
 }
 
-// columnCountFromStorage reads column count from storage
-func columnCountFromStorage(reader *StatsReader, tableID, colID, statsVer int64) (int64, error) {
-	count := int64(0)
-	rows, _, err := reader.Read("select sum(count) from mysql.stats_buckets where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	// If there doesn't exist any buckets, the SQL will return NULL. So we only use the result if it's not NULL.
-	if !rows[0].IsNull(0) {
-		count, err = rows[0].GetMyDecimal(0).ToInt()
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-	}
-
-	if statsVer >= Version2 {
-		// Before stats ver 2, histogram represents all data in this column.
-		// In stats ver 2, histogram + TopN represent all data in this column.
-		// So we need to add TopN total count here.
-		rows, _, err = reader.Read("select sum(count) from mysql.stats_top_n where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if !rows[0].IsNull(0) {
-			topNCount, err := rows[0].GetMyDecimal(0).ToInt()
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			count += topNCount
-		}
-	}
-	return count, err
-}
-
 // ExtendedStatsFromStorage reads extended stats from storage.
 func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int64, loadAll bool) (*Table, error) {
 	failpoint.Inject("injectExtStatsLoadErr", func() {
@@ -253,7 +220,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int6
 	return table, nil
 }
 
-func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
+func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -270,7 +237,31 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 		if histID != idxInfo.ID {
 			continue
 		}
-		if idx == nil || idx.LastUpdateVersion < histVer {
+		// We will not load buckets, topn and cmsketch if:
+		// 1. lease > 0, and:
+		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
+		// 3. loadAll is false.
+		// 4. lite-init-stats is true(remove the condition when lite init stats is GA).
+		notNeedLoad := lease > 0 &&
+			(idx == nil || ((!idx.IsStatsInitialized() || idx.IsAllEvicted()) && idx.LastUpdateVersion < histVer)) &&
+			!loadAll &&
+			config.GetGlobalConfig().Performance.LiteInitStats
+		if notNeedLoad {
+			idx = &Index{
+				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0),
+				ErrorRate:  errorRate,
+				StatsVer:   statsVer,
+				Info:       idxInfo,
+				Flag:       flag,
+				PhysicalID: table.PhysicalID,
+			}
+			if idx.IsAnalyzed() {
+				idx.StatsLoadedStatus = NewStatsAllEvictedStatus()
+			}
+			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
+			break
+		}
+		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
 			hg, err := HistogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
 			if err != nil {
 				return errors.Trace(err)
@@ -334,10 +325,10 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 			continue
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
-		// We will not load buckets if:
+		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
-		// 2. this column is not handle, and:
-		// 3. the column doesn't has any statistics before, and:
+		// 2. this column is not handle or lite-init-stats is true(remove the condition when lite init stats is GA), and:
+		// 3. the column doesn't have any of buckets, topn, cmsketch in memory before, and:
 		// 4. loadAll is false.
 		//
 		// Here is the explanation of the condition `!col.IsStatsInitialized() || col.IsAllEvicted()`.
@@ -351,29 +342,20 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		// 3. If some parts(Histogram/TopN/CMSketch) of stats for it exist in TiDB memory currently, we choose to load all of
 		//    its new stats once we find stats version is updated.
 		notNeedLoad := lease > 0 &&
-			!isHandle &&
+			(!isHandle || config.GetGlobalConfig().Performance.LiteInitStats) &&
 			(col == nil || ((!col.IsStatsInitialized() || col.IsAllEvicted()) && col.LastUpdateVersion < histVer)) &&
 			!loadAll
-		// Here is
-		//For one column, if there is no stats for it in the storage(analyze is never)
 		if notNeedLoad {
-			count, err := columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
-			if err != nil {
-				return errors.Trace(err)
-			}
 			col = &Column{
 				PhysicalID: table.PhysicalID,
 				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
 				Info:       colInfo,
-				Count:      count + nullCount,
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
-			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-			// So we need add col.Count > 0 here.
-			if statsVer != Version0 || col.Count > 0 {
+			if col.StatsAvailable() {
 				col.StatsLoadedStatus = NewStatsAllEvictedStatus()
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
@@ -410,11 +392,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
-			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
-			col.Count = int64(col.TotalRowCount())
-			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-			// So we need add colHist.Count > 0 here.
-			if statsVer != Version0 || col.Count > 0 {
+			if col.StatsAvailable() {
 				col.StatsLoadedStatus = NewStatsFullLoadStatus()
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
@@ -463,7 +441,7 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 		return nil, err
 	}
 	table.ModifyCount = rows[0].GetInt64(0)
-	table.Count = rows[0].GetInt64(1)
+	table.RealtimeCount = rows[0].GetInt64(1)
 
 	rows, _, err = reader.Read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
 	// Check deleted table.
@@ -472,7 +450,7 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			err = indexStatsFromStorage(reader, row, table, tableInfo, loadAll)
+			err = indexStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
 		} else {
 			err = columnStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
 		}

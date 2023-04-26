@@ -18,12 +18,14 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 )
 
+// TidbDBInfo is the database info in TiDB.
 type TidbDBInfo struct {
 	ID     int64
 	Name   string
 	Tables map[string]*TidbTableInfo
 }
 
+// TidbTableInfo is the table info in TiDB.
 type TidbTableInfo struct {
 	ID   int64
 	DB   string

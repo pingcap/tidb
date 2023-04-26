@@ -32,7 +32,7 @@ func TestSchedulerRun(t *testing.T) {
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
-	mockSubtaskTable := &MockSubtaskTable{}
+	mockSubtaskTable := &MockTaskTable{}
 	mockPool := &MockPool{}
 	mockScheduler := &MockScheduler{}
 	mockSubtaskExecutor := &MockSubtaskExecutor{}
@@ -77,7 +77,7 @@ func TestSchedulerRun(t *testing.T) {
 	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	mockPool.On("RunWithConcurrency", mock.Anything, mock.Anything).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateRunning).Return(updateSubtaskErr).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateRunning).Return(updateSubtaskErr).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	err = scheduler.Run(runCtx, &proto.Task{Type: tp, ID: taskID})
 	require.EqualError(t, err, updateSubtaskErr.Error())
@@ -88,9 +88,9 @@ func TestSchedulerRun(t *testing.T) {
 	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	mockPool.On("RunWithConcurrency", mock.Anything, mock.Anything).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateRunning).Return(nil).Once()
-	mockScheduler.On("SplitSubtask", mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateFailed).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateRunning).Return(nil).Once()
+	mockScheduler.On("SplitSubtask", mock.Anything, mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}, nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateFailed).Return(nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	err = scheduler.Run(runCtx, &proto.Task{Type: tp, ID: taskID, Concurrency: concurrency})
 	require.EqualError(t, err, subtaskExecutorRegisterErr.Error())
@@ -104,10 +104,10 @@ func TestSchedulerRun(t *testing.T) {
 	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	mockPool.On("RunWithConcurrency", mock.Anything, mock.Anything).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateRunning).Return(nil).Once()
-	mockScheduler.On("SplitSubtask", mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateRunning).Return(nil).Once()
+	mockScheduler.On("SplitSubtask", mock.Anything, mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}, nil).Once()
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(runSubtaskErr).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateFailed).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateFailed).Return(nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	err = scheduler.Run(runCtx, &proto.Task{Type: tp, ID: taskID, Concurrency: concurrency})
 	require.EqualError(t, err, runSubtaskErr.Error())
@@ -116,10 +116,11 @@ func TestSchedulerRun(t *testing.T) {
 	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	mockPool.On("RunWithConcurrency", mock.Anything, mock.Anything).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateRunning).Return(nil).Once()
-	mockScheduler.On("SplitSubtask", mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateRunning).Return(nil).Once()
+	mockScheduler.On("SplitSubtask", mock.Anything, mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}, nil).Once()
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateSucceed).Return(nil).Once()
+	mockScheduler.On("OnSubtaskFinished", mock.Anything, mock.Anything).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateSucceed).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(nil, nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	err = scheduler.Run(runCtx, &proto.Task{Type: tp, ID: taskID, Concurrency: concurrency})
@@ -129,11 +130,11 @@ func TestSchedulerRun(t *testing.T) {
 	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	mockPool.On("RunWithConcurrency", mock.Anything, mock.Anything).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateRunning).Return(nil).Once()
-	mockScheduler.On("SplitSubtask", mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}, MockMinimalTask{}}).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateRunning).Return(nil).Once()
+	mockScheduler.On("SplitSubtask", mock.Anything, mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}, MockMinimalTask{}}, nil).Once()
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(nil).Once()
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(context.Canceled).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateCanceled).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateCanceled).Return(nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 
 	var wg sync.WaitGroup
@@ -159,7 +160,7 @@ func TestSchedulerRollback(t *testing.T) {
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
-	mockSubtaskTable := &MockSubtaskTable{}
+	mockSubtaskTable := &MockTaskTable{}
 	mockPool := &MockPool{}
 	mockScheduler := &MockScheduler{}
 
@@ -188,24 +189,24 @@ func TestSchedulerRollback(t *testing.T) {
 	// 4. update subtask error
 	updateSubtaskErr := errors.New("update subtask error")
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateReverting).Return(updateSubtaskErr).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverting).Return(updateSubtaskErr).Once()
 	err = scheduler.Rollback(runCtx, &proto.Task{Type: tp, ID: taskID})
 	require.EqualError(t, err, updateSubtaskErr.Error())
 
 	// rollback failed
 	rollbackErr := errors.New("rollback error")
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateReverting).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverting).Return(nil).Once()
 	mockScheduler.On("Rollback", mock.Anything).Return(rollbackErr).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateRevertFailed).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateRevertFailed).Return(nil).Once()
 	err = scheduler.Rollback(runCtx, &proto.Task{Type: tp, ID: taskID})
 	require.EqualError(t, err, rollbackErr.Error())
 
 	// rollback success
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateReverting).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverting).Return(nil).Once()
 	mockScheduler.On("Rollback", mock.Anything).Return(nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateReverted).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverted).Return(nil).Once()
 	err = scheduler.Rollback(runCtx, &proto.Task{Type: tp, ID: taskID})
 	require.NoError(t, err)
 
@@ -222,7 +223,7 @@ func TestScheduler(t *testing.T) {
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
-	mockSubtaskTable := &MockSubtaskTable{}
+	mockSubtaskTable := &MockTaskTable{}
 	mockPool := &MockPool{}
 	mockScheduler := &MockScheduler{}
 	mockSubtaskExecutor := &MockSubtaskExecutor{}
@@ -243,19 +244,19 @@ func TestScheduler(t *testing.T) {
 	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	mockPool.On("RunWithConcurrency", mock.Anything, mock.Anything).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateRunning).Return(nil).Once()
-	mockScheduler.On("SplitSubtask", mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateRunning).Return(nil).Once()
+	mockScheduler.On("SplitSubtask", mock.Anything, mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}, nil).Once()
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(runSubtaskErr).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateFailed).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateFailed).Return(nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	err := scheduler.Run(runCtx, &proto.Task{Type: tp, ID: taskID, Concurrency: concurrency})
 	require.EqualError(t, err, runSubtaskErr.Error())
 
 	// rollback success
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateReverting).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverting).Return(nil).Once()
 	mockScheduler.On("Rollback", mock.Anything).Return(nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskState", taskID, proto.TaskStateReverted).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverted).Return(nil).Once()
 	err = scheduler.Rollback(runCtx, &proto.Task{Type: tp, ID: taskID})
 	require.NoError(t, err)
 

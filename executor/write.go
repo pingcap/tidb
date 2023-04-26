@@ -137,7 +137,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		if sctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		_, err := appendUnchangedRowForLock(sctx, t, h, oldData)
+		_, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockRowKey|lockUniqueKeys)
 		return false, err
 	}
 
@@ -191,6 +191,10 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			}
 			return false, err
 		}
+		// Lock unique keys when handle unchanged
+		if _, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockUniqueKeys); err != nil {
+			return false, err
+		}
 	}
 	for _, fkt := range fkChecks {
 		err := fkt.updateRowNeedToCheck(sc, oldData, newData)
@@ -215,22 +219,51 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	return true, nil
 }
 
-func appendUnchangedRowForLock(sctx sessionctx.Context, t table.Table, h kv.Handle, row []types.Datum) (bool, error) {
+const (
+	lockRowKey = 1 << iota
+	lockUniqueKeys
+)
+
+func addUnchangedKeysForLockByRow(sctx sessionctx.Context, t table.Table, h kv.Handle, row []types.Datum, keyset int) (int, error) {
 	txnCtx := sctx.GetSessionVars().TxnCtx
-	if !txnCtx.IsPessimistic {
-		return false, nil
+	if !txnCtx.IsPessimistic || keyset == 0 {
+		return 0, nil
 	}
+	count := 0
 	physicalID := t.Meta().ID
 	if pt, ok := t.(table.PartitionedTable); ok {
 		p, err := pt.GetPartitionByRow(sctx, row)
 		if err != nil {
-			return false, err
+			return 0, err
 		}
 		physicalID = p.GetPhysicalID()
 	}
-	unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
-	txnCtx.AddUnchangedRowKey(unchangedRowKey)
-	return true, nil
+	if keyset&lockRowKey > 0 {
+		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
+		txnCtx.AddUnchangedKeyForLock(unchangedRowKey)
+		count++
+	}
+	if keyset&lockUniqueKeys > 0 {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		clustered := t.Meta().HasClusteredIndex()
+		for _, idx := range t.Indices() {
+			meta := idx.Meta()
+			if !meta.Unique || !meta.IsPublic() || (meta.Primary && clustered) {
+				continue
+			}
+			ukVals, err := idx.FetchValues(row, nil)
+			if err != nil {
+				return count, err
+			}
+			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(stmtCtx, idx.TableMeta(), meta, physicalID, ukVals, h, nil)
+			if err != nil {
+				return count, err
+			}
+			txnCtx.AddUnchangedKeyForLock(unchangedUniqueKey)
+			count++
+		}
+	}
+	return count, nil
 }
 
 func rebaseAutoRandomValue(ctx context.Context, sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column) error {

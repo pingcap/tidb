@@ -478,6 +478,7 @@ func TestPreparedUpdate(t *testing.T) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect hit counter in this UT.
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
 
@@ -550,6 +551,7 @@ func TestPreparedDelete(t *testing.T) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect hit counter in this UT.
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
 
@@ -608,7 +610,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("drop table if exists prepare_test")
 	tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
 
-	require.Equal(t, 0, tk.Session().GetPlanCache(false).Size())
+	require.Equal(t, 0, tk.Session().GetSessionPlanCache().Size())
 	tk.MustExec(`prepare stmt1 from 'select id from prepare_test'`)
 	tk.MustExec("execute stmt1")
 	tk.MustExec(`prepare stmt2 from 'select c1 from prepare_test'`)
@@ -617,20 +619,20 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("execute stmt3")
 	tk.MustExec(`prepare stmt4 from 'select * from prepare_test'`)
 	tk.MustExec("execute stmt4")
-	require.Equal(t, 3, tk.Session().GetPlanCache(false).Size())
+	require.Equal(t, 3, tk.Session().GetSessionPlanCache().Size())
 
 	tk.MustExec("deallocate prepare stmt1")
-	require.Equal(t, 3, tk.Session().GetPlanCache(false).Size())
+	require.Equal(t, 3, tk.Session().GetSessionPlanCache().Size())
 	tk.MustExec("deallocate prepare stmt2")
 	tk.MustExec("deallocate prepare stmt3")
 	tk.MustExec("deallocate prepare stmt4")
-	require.Equal(t, 0, tk.Session().GetPlanCache(false).Size())
+	require.Equal(t, 0, tk.Session().GetSessionPlanCache().Size())
 
 	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
 	tk.MustExec(`execute stmt1`)
 	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
 	tk.MustExec(`execute stmt2`)
-	require.Equal(t, 1, tk.Session().GetPlanCache(false).Size()) // use the same cached plan since they have the same statement
+	require.Equal(t, 1, tk.Session().GetSessionPlanCache().Size()) // use the same cached plan since they have the same statement
 
 	tk.MustExec(`drop database if exists plan_cache`)
 	tk.MustExec(`create database plan_cache`)
@@ -638,7 +640,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec(`create table prepare_test (id int PRIMARY KEY, c1 int)`)
 	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
 	tk.MustExec(`execute stmt3`)
-	require.Equal(t, 2, tk.Session().GetPlanCache(false).Size()) // stmt3 has different DB
+	require.Equal(t, 2, tk.Session().GetSessionPlanCache().Size()) // stmt3 has different DB
 }
 
 func TestPreparedIssue8153(t *testing.T) {

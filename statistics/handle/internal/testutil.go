@@ -23,11 +23,10 @@ import (
 
 // AssertTableEqual is to assert whether two table is equal
 func AssertTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
-	require.Equal(t, b.Count, a.Count)
+	require.Equal(t, b.RealtimeCount, a.RealtimeCount)
 	require.Equal(t, b.ModifyCount, a.ModifyCount)
 	require.Len(t, a.Columns, len(b.Columns))
 	for i := range a.Columns {
-		require.Equal(t, b.Columns[i].Count, a.Columns[i].Count)
 		require.True(t, statistics.HistogramEqual(&a.Columns[i].Histogram, &b.Columns[i].Histogram, false))
 		if a.Columns[i].CMSketch == nil {
 			require.Nil(t, b.Columns[i].CMSketch)

@@ -441,6 +441,12 @@ func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
 	return v, err
 }
 
+// EncodeSchemaDiffKey returns the raw kv key for a schema diff
+func (m *Meta) EncodeSchemaDiffKey(schemaVersion int64) kv.Key {
+	diffKey := m.schemaDiffKey(schemaVersion)
+	return m.txn.EncodeStringDataKey(diffKey)
+}
+
 // GetSchemaVersion gets current global schema version.
 func (m *Meta) GetSchemaVersion() (int64, error) {
 	return m.txn.GetInt64(mSchemaVersionKey)
@@ -863,6 +869,32 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	}
 
 	err = m.txn.HSet(dbKey, tableKey, data)
+	return errors.Trace(err)
+}
+
+// IterTables iterates all the table at once, in order to avoid oom.
+func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	err := m.txn.HGetIter(dbKey, func(r structure.HashPair) error {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			return nil
+		}
+
+		tbInfo := &model.TableInfo{}
+		err := json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = fn(tbInfo)
+		return errors.Trace(err)
+	})
 	return errors.Trace(err)
 }
 

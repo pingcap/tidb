@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
@@ -59,6 +61,8 @@ func init() {
 	// Setup the Hooks to dynamic control global resource controller.
 	variable.EnableGlobalResourceControlFunc = tikv.EnableResourceControl
 	variable.DisableGlobalResourceControlFunc = tikv.DisableResourceControl
+	// cannot use this package directly, it causes import cycle
+	importer.GetKVStore = getKVStore
 }
 
 // Option is a function that changes some config of Driver
@@ -106,9 +110,14 @@ func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv
 	if err != nil {
 		return err
 	}
+	executor.SetResourceGroupController(control)
 	tikv.SetResourceControlInterceptor(control)
 	control.Start(ctx)
 	return nil
+}
+
+func getKVStore(path string, tls config.Security) (kv.Storage, error) {
+	return TiKVDriver{}.OpenWithOptions(path, WithSecurity(tls))
 }
 
 // TiKVDriver implements engine TiKV.
@@ -138,7 +147,7 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
 // unspecified options will be set to global config
-func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage, error) {
+func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv.Storage, err error) {
 	mc.Lock()
 	defer mc.Unlock()
 	d.setDefaultAndOptions(options...)
@@ -147,7 +156,28 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		return nil, errors.Trace(err)
 	}
 
-	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
+	var (
+		pdCli pd.Client
+		spkv  *tikv.EtcdSafePointKV
+		s     *tikv.KVStore
+	)
+	defer func() {
+		if err != nil {
+			if s != nil {
+				// if store is created, it will close spkv and pdCli inside
+				_ = s.Close()
+				return
+			}
+			if spkv != nil {
+				_ = spkv.Close()
+			}
+			if pdCli != nil {
+				pdCli.Close()
+			}
+		}
+	}()
+
+	pdCli, err = pd.NewClient(etcdAddrs, pd.SecurityOption{
 		CAPath:   d.security.ClusterSSLCA,
 		CertPath: d.security.ClusterSSLCert,
 		KeyPath:  d.security.ClusterSSLKey,
@@ -160,15 +190,15 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
 		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
-	pdCli = util.InterceptedPDClient{Client: pdCli}
-
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	pdCli = util.InterceptedPDClient{Client: pdCli}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
 	if store, ok := mc.cache[uuid]; ok {
+		pdCli.Close()
 		return store, nil
 	}
 
@@ -177,7 +207,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		return nil, errors.Trace(err)
 	}
 
-	spkv, err := tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig)
+	spkv, err = tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -205,7 +235,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		tikv.WithCodec(codec),
 	)
 
-	s, err := tikv.NewKVStore(uuid, pdClient, spkv, rpcClient)
+	s, err = tikv.NewKVStore(uuid, pdClient, spkv, rpcClient)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

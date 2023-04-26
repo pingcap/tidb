@@ -2,6 +2,7 @@ package mydump
 
 import (
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -84,7 +85,8 @@ func ToStorageCompressType(compression Compression) (storage.CompressType, error
 	case CompressionNone:
 		return storage.NoCompression, nil
 	default:
-		return storage.NoCompression, errors.Errorf("compression %d doesn't have related storage compressType", compression)
+		return storage.NoCompression,
+			errors.Errorf("compression %d doesn't have related storage compressType", compression)
 	}
 }
 
@@ -128,6 +130,20 @@ func (s SourceType) String() string {
 	}
 }
 
+// ParseCompressionOnFileExtension parses the compression type from the file extension.
+func ParseCompressionOnFileExtension(filename string) Compression {
+	fileExt := strings.ToLower(filepath.Ext(filename))
+	if len(fileExt) == 0 {
+		return CompressionNone
+	}
+	tp, err := parseCompressionType(fileExt[1:])
+	if err != nil {
+		// file extension is not a compression type, just ignore it
+		return CompressionNone
+	}
+	return tp
+}
+
 func parseCompressionType(t string) (Compression, error) {
 	switch strings.ToLower(strings.TrimSpace(t)) {
 	case "gz", "gzip":
@@ -157,13 +173,17 @@ var defaultFileRouteRules = []*config.FileRouteRule{
 	// ignore backup files
 	{Pattern: `(?i).*\.(sql|csv|parquet)(\.(\w+))?\.(bak|BAK)$`, Type: "ignore"},
 	// db schema create file pattern, matches files like '{schema}-schema-create.sql[.{compress}]'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "", Type: SchemaSchema, Compression: "$2", Unescape: true},
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql(?:\.(\w*?))?$`,
+		Schema: "$1", Table: "", Type: SchemaSchema, Compression: "$2", Unescape: true},
 	// table schema create file pattern, matches files like '{schema}.{table}-schema.sql[.{compress}]'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "$2", Type: TableSchema, Compression: "$3", Unescape: true},
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql(?:\.(\w*?))?$`,
+		Schema: "$1", Table: "$2", Type: TableSchema, Compression: "$3", Unescape: true},
 	// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql[.{compress}]'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "$2", Type: ViewSchema, Compression: "$3", Unescape: true},
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql(?:\.(\w*?))?$`,
+		Schema: "$1", Table: "$2", Type: ViewSchema, Compression: "$3", Unescape: true},
 	// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}[.{compress}]'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)(?:\.(\w+))?$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3", Compression: "$5", Unescape: true},
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)(?:\.(\w+))?$`,
+		Schema: "$1", Table: "$2", Type: "$4", Key: "$3", Compression: "$5", Unescape: true},
 }
 
 // FileRouter provides some operations to apply a rule to route file path to target schema/table

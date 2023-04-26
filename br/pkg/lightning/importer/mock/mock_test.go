@@ -24,14 +24,14 @@ import (
 )
 
 func TestMockImportSourceBasic(t *testing.T) {
-	mockDataMap := map[string]*MockDBSourceData{
+	mockDataMap := map[string]*DBSourceData{
 		"db01": {
 			Name: "db01",
-			Tables: map[string]*MockTableSourceData{
+			Tables: map[string]*TableSourceData{
 				"tbl01": {
 					DBName:    "db01",
 					TableName: "tbl01",
-					SchemaFile: &MockSourceFile{
+					SchemaFile: &SourceFile{
 						FileName: "/db01/tbl01/tbl01.schema.sql",
 						Data:     []byte("CREATE TABLE db01.tbl01(id INTEGER PRIMARY KEY AUTO_INCREMENT, strval VARCHAR(64))"),
 					},
@@ -39,11 +39,11 @@ func TestMockImportSourceBasic(t *testing.T) {
 				"tbl02": {
 					DBName:    "db01",
 					TableName: "tbl02",
-					SchemaFile: &MockSourceFile{
+					SchemaFile: &SourceFile{
 						FileName: "/db01/tbl02/tbl02.schema.sql",
 						Data:     []byte("CREATE TABLE db01.tbl02(id INTEGER PRIMARY KEY AUTO_INCREMENT, val VARCHAR(64))"),
 					},
-					DataFiles: []*MockSourceFile{
+					DataFiles: []*SourceFile{
 						{
 							FileName: "/db01/tbl02/tbl02.data.csv",
 							Data:     []byte("val\naaa\nbbb"),
@@ -58,11 +58,11 @@ func TestMockImportSourceBasic(t *testing.T) {
 		},
 		"db02": {
 			Name: "db02",
-			Tables: map[string]*MockTableSourceData{
+			Tables: map[string]*TableSourceData{
 				"tbl01": {
 					DBName:    "db02",
 					TableName: "tbl01",
-					SchemaFile: &MockSourceFile{
+					SchemaFile: &SourceFile{
 						FileName: "/db02/tbl01/tbl01.schema.sql",
 						Data:     []byte("CREATE TABLE db02.tbl01(id INTEGER PRIMARY KEY AUTO_INCREMENT, strval VARCHAR(64))"),
 					},
@@ -72,7 +72,7 @@ func TestMockImportSourceBasic(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mockEnv, err := NewMockImportSource(mockDataMap)
+	mockEnv, err := NewImportSource(mockDataMap)
 	require.Nil(t, err)
 	dbFileMetas := mockEnv.GetAllDBFileMetas()
 	require.Equal(t, len(mockDataMap), len(dbFileMetas), "compare db count")
@@ -102,7 +102,7 @@ func TestMockImportSourceBasic(t *testing.T) {
 func TestMockTargetInfoBasic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ti := NewMockTargetInfo()
+	ti := NewTargetInfo()
 	var _ importer.TargetInfoGetter = ti
 	const replicaCount = 3
 	const emptyRegionCount = 5
@@ -157,7 +157,7 @@ func TestMockTargetInfoBasic(t *testing.T) {
 	require.Equal(t, emptyRegionCount, len(ri.Regions))
 
 	ti.SetTableInfo("testdb", "testtbl1",
-		&MockTableInfo{
+		&TableInfo{
 			TableModel: &model.TableInfo{
 				ID:   1,
 				Name: model.NewCIStr("testtbl1"),
@@ -177,7 +177,7 @@ func TestMockTargetInfoBasic(t *testing.T) {
 		},
 	)
 	ti.SetTableInfo("testdb", "testtbl2",
-		&MockTableInfo{
+		&TableInfo{
 			RowCount: 100,
 		},
 	)

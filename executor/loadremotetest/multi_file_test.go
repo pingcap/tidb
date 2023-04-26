@@ -70,16 +70,18 @@ func (s *mockGCSSuite) TestFilenameAsterisk() {
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
-		INTO TABLE multi_load.t;`, gcsEndpoint)
+		INTO TABLE multi_load.t WITH thread=2;`, gcsEndpoint)
 	s.tk.MustExec(sql)
+	s.Equal(uint64(0), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"1 test1", "2 test2", "3 test3", "4 test4", "5 test5", "6 test6",
 	))
 
 	s.tk.MustExec("TRUNCATE TABLE multi_load.t;")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
-		INTO TABLE multi_load.t IGNORE 1 LINES;`, gcsEndpoint)
+		INTO TABLE multi_load.t IGNORE 1 LINES WITH thread=20;`, gcsEndpoint)
 	s.tk.MustExec(sql)
+	s.Equal(uint64(0), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"2 test2", "4 test4", "6 test6",
 	))
@@ -87,11 +89,45 @@ func (s *mockGCSSuite) TestFilenameAsterisk() {
 	// only '*' is supported in pattern matching
 	s.tk.MustExec("TRUNCATE TABLE multi_load.t;")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/not.me.[1-9].tsv?endpoint=%s'
-		INTO TABLE multi_load.t;`, gcsEndpoint)
+		INTO TABLE multi_load.t with thread=1;`, gcsEndpoint)
 	s.tk.MustExec(sql)
+	s.Equal(uint64(0), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"7 test7", "8 test8",
 	))
+}
+
+func (s *mockGCSSuite) TestLastInsertID() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
+	s.tk.MustExec("CREATE DATABASE multi_load;")
+	s.tk.MustExec("CREATE TABLE multi_load.t (i INT auto_increment PRIMARY KEY, s varchar(32));")
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "last-insert-id",
+			Name:       "db.tbl.001.tsv",
+		},
+		Content: []byte("1\ttest1\n" +
+			"2\ttest2"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "last-insert-id",
+			Name:       "db.tbl.002.tsv",
+		},
+		Content: []byte("3\ttest3\n" +
+			"4\ttest4"),
+	})
+
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://last-insert-id/db.tbl.00*.tsv?endpoint=%s'
+		INTO TABLE multi_load.t (@1, s) with thread=1;`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.Equal(uint64(1), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
+	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
+		"1 test1", "2 test2", "3 test3", "4 test4",
+	))
+
+	// we don't test for auto_random, since the auto_id is not stable.
 }
 
 func (s *mockGCSSuite) TestMultiBatchWithIgnoreLines() {
@@ -124,7 +160,7 @@ func (s *mockGCSSuite) TestMultiBatchWithIgnoreLines() {
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/multi-batch.*.tsv?endpoint=%s'
-		INTO TABLE multi_load.t2 IGNORE 2 LINES WITH batch_size = 3;`, gcsEndpoint)
+		INTO TABLE multi_load.t2 IGNORE 2 LINES WITH batch_size = 3, thread=1;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t2;").Check(testkit.Rows(
 		"3", "4", "5", "6", "7", "8", "9", "10",

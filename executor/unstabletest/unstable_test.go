@@ -15,6 +15,7 @@
 package unstabletest
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +40,7 @@ func TestCartesianJoinPanic(t *testing.T) {
 		tk.MustExec("insert into t select * from t")
 	}
 	err := tk.QueryToErr("desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;")
-	require.ErrorContains(t, err, "Out Of Memory Quota!")
+	require.ErrorContains(t, err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
 }
 
 func TestGlobalMemoryControl(t *testing.T) {
@@ -85,7 +86,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		func() {
 			tracker3.Consume(1)
 		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+			require.True(t, strings.Contains(r.(string), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
 		})
 	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
 	time.Sleep(500 * time.Millisecond)
@@ -104,7 +105,125 @@ func TestGlobalMemoryControl(t *testing.T) {
 		func() {
 			tracker2.Consume(1)
 		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+			require.True(t, strings.Contains(r.(string), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
 		})
 	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
+}
+
+func TestAdminCheckTable(t *testing.T) {
+	// test NULL value.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_null (
+		a int(11) NOT NULL,
+		c int(11) NOT NULL,
+		PRIMARY KEY (a, c),
+		KEY idx_a (a)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin`)
+
+	tk.MustExec(`insert into test_null(a, c) values(2, 2);`)
+	tk.MustExec(`ALTER TABLE test_null ADD COLUMN b int NULL DEFAULT '1795454803' AFTER a;`)
+	tk.MustExec(`ALTER TABLE test_null add index b(b);`)
+	tk.MustExec("ADMIN CHECK TABLE test_null")
+
+	// Fix unflatten issue in CheckExec.
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`create table test (
+		a time,
+		PRIMARY KEY (a)
+		);`)
+
+	tk.MustExec(`insert into test set a='12:10:36';`)
+	tk.MustExec(`admin check table test`)
+
+	// Test decimal
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec("CREATE TABLE test (  a decimal, PRIMARY KEY (a));")
+	tk.MustExec("insert into test set a=10;")
+	tk.MustExec("admin check table test;")
+
+	// Test timestamp type check table.
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`create table test ( a  TIMESTAMP, primary key(a) );`)
+	tk.MustExec(`insert into test set a='2015-08-10 04:18:49';`)
+	tk.MustExec(`admin check table test;`)
+
+	// Test partitioned table.
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`create table test (
+		      a int not null,
+		      c int not null,
+		      primary key (a, c),
+		      key idx_a (a)) partition by range (c) (
+		      partition p1 values less than (1),
+		      partition p2 values less than (4),
+		      partition p3 values less than (7),
+		      partition p4 values less than (11))`)
+	for i := 1; i <= 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into test values (%d, %d);", i, i))
+	}
+	tk.MustExec(`admin check table test;`)
+
+	// Test index in virtual generated column.
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`create table test ( b json , c int as (JSON_EXTRACT(b,'$.d')), index idxc(c));`)
+	tk.MustExec(`INSERT INTO test set b='{"d": 100}';`)
+	tk.MustExec(`admin check table test;`)
+	// Test prefix index.
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (
+	  			ID CHAR(32) NOT NULL,
+	  			name CHAR(32) NOT NULL,
+	  			value CHAR(255),
+	  			INDEX indexIDname (ID(8),name(8)));`)
+	tk.MustExec(`INSERT INTO t VALUES ('keyword','urlprefix','text/ /text');`)
+	tk.MustExec(`admin check table t;`)
+
+	tk.MustExec("use mysql")
+	tk.MustExec(`admin check table test.t;`)
+	err := tk.ExecToErr("admin check table t")
+	require.Error(t, err)
+
+	// test add index on time type column which have default value
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`CREATE TABLE t1 (c2 YEAR, PRIMARY KEY (c2))`)
+	tk.MustExec(`INSERT INTO t1 SET c2 = '1912'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c3 TIMESTAMP NULL DEFAULT '1976-08-29 16:28:11'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c4 DATE      NULL DEFAULT '1976-08-29'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c5 TIME      NULL DEFAULT '16:28:11'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c6 YEAR      NULL DEFAULT '1976'`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx1 (c2, c3,c4,c5,c6)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx2 (c2)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx3 (c3)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx4 (c4)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx5 (c5)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx6 (c6)`)
+	tk.MustExec(`admin check table t1`)
+
+	// Test add index on decimal column.
+	tk.MustExec(`drop table if exists td1;`)
+	tk.MustExec(`CREATE TABLE td1 (c2 INT NULL DEFAULT '70');`)
+	tk.MustExec(`INSERT INTO td1 SET c2 = '5';`)
+	tk.MustExec(`ALTER TABLE td1 ADD COLUMN c4 DECIMAL(12,8) NULL DEFAULT '213.41598062';`)
+	tk.MustExec(`ALTER TABLE td1 ADD INDEX id2 (c4) ;`)
+	tk.MustExec(`ADMIN CHECK TABLE td1;`)
+
+	// Test add not null column, then add index.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1 (a int);`)
+	tk.MustExec(`insert into t1 set a=2;`)
+	tk.MustExec(`alter table t1 add column b timestamp not null;`)
+	tk.MustExec(`alter table t1 add index(b);`)
+	tk.MustExec(`admin check table t1;`)
+
+	// Test for index with change decimal precision.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1 (a decimal(2,1), index(a))`)
+	tk.MustExec(`insert into t1 set a='1.9'`)
+	err = tk.ExecToErr(`alter table t1 modify column a decimal(3,2);`)
+	require.NoError(t, err)
+	tk.MustExec(`delete from t1;`)
+	tk.MustExec(`admin check table t1;`)
 }

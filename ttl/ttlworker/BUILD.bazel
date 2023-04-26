@@ -46,7 +46,7 @@ go_library(
 
 go_test(
     name = "ttlworker_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "del_test.go",
         "job_manager_integration_test.go",
@@ -59,7 +59,7 @@ go_test(
     embed = [":ttlworker"],
     flaky = True,
     race = "on",
-    shard_count = 30,
+    shard_count = 35,
     deps = [
         "//domain",
         "//infoschema",

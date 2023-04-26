@@ -272,6 +272,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // estRows won't be updated if hit cache.
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table exp_backoff(a int, b int, c int, d int, index idx(a, b, c, d))")
 	tk.MustExec("insert into exp_backoff values(1, 1, 1, 1), (1, 1, 1, 2), (1, 1, 2, 3), (1, 2, 2, 4), (1, 2, 3, 5)")
@@ -770,7 +771,6 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	require.NoError(t, err)
 	for i := 1; i <= 2; i++ {
 		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
-			Count:             500000,
 			Histogram:         *mockStatsHistogram(int64(i), colValues, 1000, types.NewFieldType(mysql.TypeLonglong)),
 			Info:              tblInfo.Columns[i-1],
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
@@ -820,7 +820,6 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	pkColValues, err := generateIntDatum(1, 100000)
 	require.NoError(t, err)
 	mockStatsTbl.Columns[1] = &statistics.Column{
-		Count:             100000,
 		Histogram:         *mockStatsHistogram(1, pkColValues, 1, types.NewFieldType(mysql.TypeLonglong)),
 		Info:              tblInfo.Columns[0],
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
@@ -837,7 +836,6 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 
 	for i := 2; i <= 3; i++ {
 		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
-			Count:             100000,
 			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
 			Info:              tblInfo.Columns[i-1],
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),

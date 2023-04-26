@@ -823,6 +823,62 @@ func TestMPPBCJModel(t *testing.T) {
 	}
 }
 
+func TestMPPPreferBCJ(t *testing.T) {
+	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (b int)")
+
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6), (7), (8);")
+
+	{
+		tk.MustExec("alter table t1 set tiflash replica 1")
+		tb := external.GetTableByName(t, tk, "test", "t1")
+		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		require.NoError(t, err)
+	}
+	{
+		tk.MustExec("alter table t2 set tiflash replica 1")
+		tb := external.GetTableByName(t, tk, "test", "t2")
+		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		require.NoError(t, err)
+	}
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	{
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "insert") {
+				tk.MustExec(tt)
+				continue
+			}
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			res := tk.MustQuery(tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	}
+}
+
 func TestMPPBCJModelOneTiFlash(t *testing.T) {
 	/*
 		if there are 1 mpp stores, planner should choose broadcast join if `tidb_prefer_broadcast_join_by_exchange_data_size` is ON
@@ -882,6 +938,62 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
+func TestMPPRightSemiJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (b int)")
+
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6), (7), (8);")
+
+	{
+		tk.MustExec("alter table t1 set tiflash replica 1")
+		tb := external.GetTableByName(t, tk, "test", "t1")
+		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		require.NoError(t, err)
+	}
+	{
+		tk.MustExec("alter table t2 set tiflash replica 1")
+		tb := external.GetTableByName(t, tk, "test", "t2")
+		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		require.NoError(t, err)
+	}
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	{
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "insert") {
+				tk.MustExec(tt)
+				continue
+			}
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			res := tk.MustQuery(tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
 	}
 }
 
@@ -2408,6 +2520,7 @@ func TestIndexMergeOrderPushDown(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table t (a int, b int, c int, index idx(a, c), index idx2(b, c))")
+	tk.MustExec("create table tcommon (a int, b int, c int, primary key(a, c), index idx2(b, c))")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
