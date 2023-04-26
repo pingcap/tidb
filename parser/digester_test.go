@@ -64,7 +64,9 @@ func TestNormalize(t *testing.T) {
 		{"select @a=b from t", "select @a = `b` from `t`"},
 		{"select * from `table", "select * from"},
 		{"Select * from t where (i, j) in ((1,1), (2,2))", "select * from `t` where ( `i` , `j` ) in ( ( ... ) )"},
-		{"insert into t values (1,1)", "insert into `t` values ( ... )"},
+		{"insert into t values (1,1), (2,2)", "insert into `t` values ( ... )"},
+		{"insert into t values (1), (2)", "insert into `t` values ( ... )"},
+		{"insert into t values (1)", "insert into `t` values ( ? )"},
 	}
 	for _, test := range tests {
 		normalized := parser.Normalize(test.input)
