@@ -1148,15 +1148,17 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	replicaRead := worker.req.ReplicaRead
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(replicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel:    isolationLevelToPB(worker.req.IsolationLevel),
-		Priority:          priorityToPB(worker.req.Priority),
-		NotFillCache:      worker.req.NotFillCache,
-		RecordTimeStat:    true,
-		RecordScanStat:    true,
-		TaskId:            worker.req.TaskID,
-		RequestSource:     task.requestSource.GetRequestSource(),
-		ResourceGroupName: worker.req.ResourceGroupName,
-		BusyThresholdMs:   uint32(task.busyThreshold.Milliseconds()),
+		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
+		Priority:       priorityToPB(worker.req.Priority),
+		NotFillCache:   worker.req.NotFillCache,
+		RecordTimeStat: true,
+		RecordScanStat: true,
+		TaskId:         worker.req.TaskID,
+		RequestSource:  task.requestSource.GetRequestSource(),
+		ResourceControlContext: &kvrpcpb.ResourceControlContext{
+			ResourceGroupName: worker.req.ResourceGroupName,
+		},
+		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
 	})
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
@@ -1166,7 +1168,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.kvclient.Stats == nil {
 		worker.kvclient.Stats = make(map[tikvrpc.CmdType]*tikv.RPCRuntimeStats)
 	}
+	// set ReadReplicaScope and TxnScope so that req.IsStaleRead will be true when it's a global scope stale read.
 	req.ReadReplicaScope = worker.req.ReadReplicaScope
+	req.TxnScope = worker.req.TxnScope
 	if worker.req.IsStaleness {
 		req.EnableStaleRead()
 	}

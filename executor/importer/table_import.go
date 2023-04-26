@@ -35,9 +35,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
@@ -45,11 +47,10 @@ import (
 	"go.uber.org/zap"
 )
 
-func prepareSortDir(e *LoadDataController) (string, error) {
+func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 	tidbCfg := tidb.GetGlobalConfig()
-	// todo: add job id too
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
-	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(jobID, 10))
 
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
@@ -83,7 +84,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
-	dir, err := prepareSortDir(e)
+	dir, err := prepareSortDir(e, param.Job.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +124,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		ShouldCheckTiKV:         true,
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
-		StoreWriteBWLimit:       int(e.maxWriteSpeed),
+		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
 		// todo: we can set it false when we support switch import mode.
 		ShouldCheckWriteStall: true,
 		MaxOpenFiles:          int(util.GenRLimit()),
@@ -196,6 +197,9 @@ type TableImporter struct {
 	logger          *zap.Logger
 	regionSplitSize int64
 	regionSplitKeys int64
+	// the smallest auto-generated ID in current import.
+	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
+	lastInsertID uint64
 }
 
 var _ JobImporter = &TableImporter{}
@@ -214,8 +218,22 @@ func (ti *TableImporter) Import() {
 }
 
 // Result implements JobImporter.Result.
-func (ti *TableImporter) Result() string {
-	return ""
+func (ti *TableImporter) Result() JobImportResult {
+	var (
+		numWarnings uint64
+		numRecords  uint64
+		numDeletes  uint64
+		numSkipped  uint64
+	)
+	numRecords = ti.Progress.ReadRowCnt.Load()
+	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
+	// we can have it when there's duplicate detection.
+	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
+	return JobImportResult{
+		Msg:          msg,
+		Affected:     ti.Progress.LoadedRowCnt.Load(),
+		LastInsertID: ti.lastInsertID,
+	}
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -242,9 +260,9 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
-			SQLMode:        ti.sqlMode,
+			SQLMode:        ti.SQLMode,
 			Timestamp:      chunk.Timestamp,
-			SysVars:        ti.importantSysVars,
+			SysVars:        ti.ImportantSysVars,
 			AutoRandomSeed: chunk.Chunk.PrevRowIDMax,
 		},
 		Path:   chunk.FileMeta.Path,
@@ -266,7 +284,44 @@ func (ti *TableImporter) importTable(ctx context.Context) error {
 	if err := ti.importEngines(ctx); err != nil {
 		return err
 	}
+	return ti.postProcess(ctx)
+}
+
+func (ti *TableImporter) postProcess(ctx context.Context) error {
 	// todo: post process
+	if ti.Checksum != config.OpLevelOff {
+		return ti.checksumTable(ctx)
+	}
+	return nil
+}
+
+func (ti *TableImporter) checksumTable(ctx context.Context) error {
+	var localChecksum verify.KVChecksum
+	for _, engine := range ti.tableCp.Engines {
+		for _, chunk := range engine.Chunks {
+			localChecksum.Add(&chunk.Checksum)
+		}
+	}
+	ti.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.DistSQLScanConcurrency))
+	remoteChecksum, err := manager.Checksum(ctx, ti.tableInfo)
+	if err != nil {
+		return err
+	}
+	if remoteChecksum.IsEqual(&localChecksum) {
+		ti.logger.Info("checksum pass", zap.Object("local", &localChecksum))
+	} else {
+		err2 := common.ErrChecksumMismatch.GenWithStackByArgs(
+			remoteChecksum.Checksum, localChecksum.Sum(),
+			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
+			remoteChecksum.TotalBytes, localChecksum.SumSize(),
+		)
+		if ti.Checksum == config.OpLevelOptional {
+			ti.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err2))
+			err2 = nil
+		}
+		return err2
+	}
 	return nil
 }
 
@@ -440,4 +495,13 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 func (ti *TableImporter) Close() error {
 	ti.backend.Close()
 	return nil
+}
+
+func (ti *TableImporter) setLastInsertID(id uint64) {
+	if id == 0 {
+		return
+	}
+	if ti.lastInsertID == 0 || id < ti.lastInsertID {
+		ti.lastInsertID = id
+	}
 }

@@ -135,9 +135,13 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 		if column.IsIndex {
 			continue
 		}
-		tbl, ok := ctx.GetDomainInfoSchema().(infoschema.InfoSchema).TableByID(column.TableID)
+		is := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		tbl, ok := is.TableByID(column.TableID)
 		if !ok {
-			continue
+			tbl, _, _ = is.FindTableByPartitionID(column.TableID)
+			if tbl == nil {
+				continue
+			}
 		}
 		colName := tbl.Meta().FindColumnNameByID(column.ID)
 		if colName == "" {

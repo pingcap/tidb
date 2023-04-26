@@ -1477,14 +1477,22 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	if len(paths) == 0 {
 		helpMsg := ""
 		if engineVals == "tiflash" {
-			helpMsg = ". Please check tiflash replica or ensure the query is readonly"
+			helpMsg = ". Please check tiflash replica"
+			if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+				helpMsg += " or check if the query is not readonly and sql mode is strict"
+			}
 		}
 		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
 			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
 	}
 	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-			fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
+		if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because the query is not readonly and sql mode is strict.")
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
+		}
 	}
 	return paths, err
 }
@@ -4247,6 +4255,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
 		Options:            options,
+		Stmt:               ld.Text(),
 	}.Init(b.ctx)
 	user := b.ctx.GetSessionVars().User
 	var insertErr, deleteErr error

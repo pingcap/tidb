@@ -181,8 +181,11 @@ type Client struct {
 	rewriteMode RewriteMode
 
 	// checkpoint information for snapshot restore
-	checkpointRunner   *checkpoint.RestoreRunner
+	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
+
+	// checkpoint information for log restore
+	useCheckpoint bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -332,35 +335,43 @@ func (rc *Client) WaitForFinishCheckpoint(ctx context.Context) {
 	}
 }
 
-func (rc *Client) GetCheckpointRunner() *checkpoint.RestoreRunner {
+func (rc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType] {
 	return rc.checkpointRunner
 }
 
-func (rc *Client) StartCheckpointRunnerForLogRestore(ctx context.Context, taskName string) (*checkpoint.LogRestoreRunner, error) {
+func (rc *Client) StartCheckpointRunnerForLogRestore(ctx context.Context, taskName string) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
 	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.storage, rc.cipher, taskName)
 	return runner, errors.Trace(err)
 }
 
 func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {
-	// if the checkpoint metadata exists in the external storage, the restore is not
-	// for the first time.
-	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
+	rc.useCheckpoint = true
 
-	if exists {
-		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, rc.storage, taskName)
+	// it shows that the user has modified gc-ratio, if `gcRatio` doesn't equal to "1.1".
+	// update the `gcRatio` for checkpoint metadata.
+	if gcRatio == utils.DefaultGcRatioVal {
+		// if the checkpoint metadata exists in the external storage, the restore is not
+		// for the first time.
+		exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
 
-		return meta.GcRatio, nil
+		if exists {
+			// load the checkpoint since this is not the first time to restore
+			meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, rc.storage, taskName)
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+
+			log.Info("reuse gc ratio from checkpoint metadata", zap.String("gc-ratio", gcRatio))
+			return meta.GcRatio, nil
+		}
 	}
 
 	// initialize the checkpoint metadata since it is the first time to restore.
-	if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, rc.storage, &checkpoint.CheckpointMetadataForRestore{
+	log.Info("save gc ratio into checkpoint metadata", zap.String("gc-ratio", gcRatio))
+	if err := checkpoint.SaveCheckpointMetadataForRestore(ctx, rc.storage, &checkpoint.CheckpointMetadataForRestore{
 		GcRatio: gcRatio,
 	}, taskName); err != nil {
 		return gcRatio, errors.Trace(err)
@@ -495,14 +506,18 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 	return nil
 }
 
-func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
+func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
 	rc.rawKVClient = c
+}
+
+func (rc *Client) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
+	return !(backupMeta.IsRawKv || backupMeta.IsTxnKv)
 }
 
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
@@ -511,7 +526,7 @@ func (rc *Client) InitBackupMeta(
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader) error {
-	if !backupMeta.IsRawKv {
+	if rc.needLoadSchemas(backupMeta) {
 		databases, err := utils.LoadBackupTables(c, reader)
 		if err != nil {
 			return errors.Trace(err)
@@ -534,7 +549,7 @@ func (rc *Client) InitBackupMeta(
 	}
 	rc.backupMeta = backupMeta
 
-	rc.InitClients(backend, backupMeta.IsRawKv)
+	rc.InitClients(backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
 }
@@ -1194,7 +1209,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, RewriteModeLegacy)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, rc.rewriteMode)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1399,6 +1414,25 @@ func (rc *Client) RestoreSSTFiles(
 	return ctx.Err()
 }
 
+func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.File, updateCh glue.Progress) error {
+	errCh := make(chan error, len(files))
+	eg, ectx := errgroup.WithContext(ctx)
+	defer close(errCh)
+
+	for _, file := range files {
+		fileReplica := file
+		rc.workerPool.ApplyOnErrorGroup(eg,
+			func() error {
+				defer updateCh.Inc()
+				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
+			})
+	}
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // RestoreRaw tries to restore raw keys in the specified range.
 func (rc *Client) RestoreRaw(
 	ctx context.Context, startKey []byte, endKey []byte, files []*backuppb.File, updateCh glue.Progress,
@@ -1411,30 +1445,13 @@ func (rc *Client) RestoreRaw(
 			logutil.Key("endKey", endKey),
 			zap.Duration("take", elapsed))
 	}()
-	errCh := make(chan error, len(files))
-	eg, ectx := errgroup.WithContext(ctx)
-	defer close(errCh)
-
 	err := rc.fileImporter.SetRawRange(startKey, endKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	for _, file := range files {
-		fileReplica := file
-		rc.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
-				defer updateCh.Inc()
-				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
-			})
-	}
-	if err := eg.Wait(); err != nil {
-		log.Error(
-			"restore raw range failed",
-			logutil.Key("startKey", startKey),
-			logutil.Key("endKey", endKey),
-			zap.Error(err),
-		)
+	err = rc.WaitForFilesRestored(ctx, files, updateCh)
+	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Info(
@@ -2233,7 +2250,7 @@ func (rc *Client) RestoreKVFiles(
 	rules map[int64]*RewriteRules,
 	idrules map[int64]int64,
 	logIter LogIter,
-	runner *checkpoint.LogRestoreRunner,
+	runner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType],
 	pitrBatchCount uint32,
 	pitrBatchSize uint32,
 	updateStats func(kvCount uint64, size uint64),
@@ -2340,16 +2357,78 @@ func (rc *Client) CleanUpKVFiles(
 	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
+func (rc *Client) initSchemasMap(
+	ctx context.Context,
+	clusterID uint64,
+	restoreTS uint64,
+) ([]*backuppb.PitrDBMap, error) {
+	filename := metautil.PitrIDMapsFilename(clusterID, restoreTS)
+	exist, err := rc.storage.FileExists(ctx, filename)
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to check filename:%s ", filename)
+	} else if !exist {
+		log.Info("pitr id maps isn't existed", zap.String("file", filename))
+		return nil, nil
+	}
+
+	metaData, err := rc.storage.ReadFile(ctx, filename)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	backupMeta := &backuppb.BackupMeta{}
+	if err = backupMeta.Unmarshal(metaData); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return backupMeta.GetDbMaps(), nil
+}
+
+type InitSchemaConfig struct {
+	// required
+	IsNewTask      bool
+	HasFullRestore bool
+	TableFilter    filter.Filter
+
+	// optional
+	TiFlashRecorder *tiflashrec.TiFlashRecorder
+	Tables          map[int64]*metautil.Table
+}
+
 // InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
 func (rc *Client) InitSchemasReplaceForDDL(
-	dbMaps []*backuppb.PitrDBMap,
-	tables *map[int64]*metautil.Table,
-	tableFilter filter.Filter,
+	ctx context.Context,
+	cfg *InitSchemaConfig,
 ) (*stream.SchemasReplace, error) {
-	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
+	var (
+		err    error
+		dbMaps []*backuppb.PitrDBMap
+
+		dbReplaces = make(map[stream.UpstreamID]*stream.DBReplace)
+	)
+
+	// not new task, load schemas map from external storage
+	if !cfg.IsNewTask {
+		log.Info("try to load pitr id maps")
+		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.restoreTS)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	// a new task, but without full snapshot restore, tries to load
+	// schemas map whose `restore-ts`` is the task's `start-ts`.
+	if len(dbMaps) <= 0 && !cfg.HasFullRestore {
+		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
+		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
 	if len(dbMaps) <= 0 {
-		for _, t := range *tables {
+		log.Info("no id maps, build the table replaces from cluster")
+		for _, t := range cfg.Tables {
 			dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
 			newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
 			if !exist {
@@ -2402,7 +2481,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	}
 
 	rp := stream.NewSchemasReplace(
-		dbReplaces, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
+		dbReplaces, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
 		rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
 	return rp, nil
 }
@@ -2989,7 +3068,7 @@ func (rc *Client) SaveIDMap(
 ) error {
 	idMaps := sr.TidySchemaMaps()
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := metautil.PitrIDMapsFilename(clusterID)
+	metaFileName := metautil.PitrIDMapsFilename(clusterID, rc.restoreTS)
 	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
@@ -2999,6 +3078,22 @@ func (rc *Client) SaveIDMap(
 
 	if err := metaWriter.FlushBackupMeta(ctx); err != nil {
 		return errors.Trace(err)
+	}
+	if rc.useCheckpoint {
+		var items map[int64]model.TiFlashReplicaInfo
+		if sr.TiflashRecorder != nil {
+			items = sr.TiflashRecorder.GetItems()
+		}
+		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
+		if err := checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, rc.storage, &checkpoint.CheckpointTaskInfoForLogRestore{
+			Progress:     checkpoint.InLogRestoreAndIdMapPersist,
+			StartTS:      rc.startTS,
+			RestoreTS:    rc.restoreTS,
+			RewriteTS:    rc.currentTS,
+			TiFlashItems: items,
+		}, rc.GetClusterID(ctx)); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }

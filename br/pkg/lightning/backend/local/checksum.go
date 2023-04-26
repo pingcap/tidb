@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -58,6 +59,13 @@ type RemoteChecksum struct {
 	Checksum   uint64
 	TotalKVs   uint64
 	TotalBytes uint64
+}
+
+// IsEqual checks whether the checksum is equal to the other.
+func (rc *RemoteChecksum) IsEqual(other *verification.KVChecksum) bool {
+	return rc.Checksum == other.Sum() &&
+		rc.TotalKVs == other.SumKVS() &&
+		rc.TotalBytes == other.SumSize()
 }
 
 // ChecksumManager is a manager that manages checksums.

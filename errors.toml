@@ -1756,6 +1756,11 @@ error = '''
 Unsupported option for LOAD DATA LOCAL INFILE: %s
 '''
 
+["executor:8173"]
+error = '''
+PreCheck failed: %s
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -3019,6 +3024,11 @@ invalid year format
 ["types:8033"]
 error = '''
 invalid year
+'''
+
+["types:8034"]
+error = '''
+Incorrect datetime value: '%s'
 '''
 
 ["types:8037"]

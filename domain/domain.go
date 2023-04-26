@@ -90,6 +90,7 @@ import (
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -1037,13 +1038,17 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	backoffCfg := backoff.DefaultConfig
+	backoffCfg.MaxDelay = 3 * time.Second
 	cli, err := clientv3.New(clientv3.Config{
 		LogConfig:        &etcdLogCfg,
 		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
-			grpc.WithBackoffMaxDelay(time.Second * 3),
+			grpc.WithConnectParams(grpc.ConnectParams{
+				Backoff: backoffCfg,
+			}),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
 				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
@@ -2164,11 +2169,17 @@ func (do *Domain) loadStatsWorker() {
 	}()
 	statsHandle := do.StatsHandle()
 	t := time.Now()
-	err := statsHandle.InitStats(do.InfoSchema())
-	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Duration("take time", time.Since(t)), zap.Error(err))
+	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	var err error
+	if liteInitStats {
+		err = statsHandle.InitStatsLite(do.InfoSchema())
 	} else {
-		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
+		err = statsHandle.InitStats(do.InfoSchema())
+	}
+	if err != nil {
+		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
 	for {
 		select {
