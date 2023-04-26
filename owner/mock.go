@@ -79,7 +79,7 @@ func (m *mockManager) GetOwnerID(_ context.Context) (string, error) {
 	return "", errors.New("no owner")
 }
 
-func (m *mockManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
+func (*mockManager) SetOwnerOpValue(_ context.Context, _ OpType) error {
 	return nil
 }
 
