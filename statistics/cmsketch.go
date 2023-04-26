@@ -103,6 +103,9 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 
 	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
 		if val.(bool) {
+			// The earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count.
+			// So we need to make the order here fully deterministic to make the stats from analyze ver1 stable.
+			// See (*SampleCollector).ExtractTopN(), which calls this function, for details
 			sort.SliceStable(sorted, func(i, j int) bool {
 				return sorted[i].cnt > sorted[j].cnt ||
 					(sorted[i].cnt == sorted[j].cnt && string(sorted[i].data) < string(sorted[j].data))
