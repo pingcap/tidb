@@ -1,0 +1,2 @@
+[tikv-importer]
+backend = 'local'

@@ -902,6 +902,11 @@ func (s *testAnalyzeSuite) TestUpdateProjEliminate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("explain update t t1, (select distinct b from t) t2 set t1.b = t2.b")
+
+	tk.MustExec("drop table if exists tb1, tb2")
+	tk.MustExec("create table tb1(a int, b int, primary key(a))")
+	tk.MustExec("create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));")
+	tk.MustExec("update tb1 set tb1.b=(select tb2.b from tb2 where tb2.a=tb1.a order by c desc limit 1);")
 }
 
 func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {

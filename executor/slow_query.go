@@ -66,6 +66,7 @@ type slowQueryRetriever struct {
 	fileLine              int
 	checker               *slowLogChecker
 	columnValueFactoryMap map[string]slowQueryColumnValueFactory
+	instanceFactory       func([]types.Datum)
 
 	taskList      chan slowLogTask
 	stats         *slowQueryRuntimeStats
@@ -96,6 +97,13 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	// initialize column value factories.
 	e.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(e.outputCols))
 	for idx, col := range e.outputCols {
+		if col.Name.O == util.ClusterTableInstanceColumnName {
+			e.instanceFactory, err = getInstanceColumnValueFactory(sctx, idx)
+			if err != nil {
+				return err
+			}
+			continue
+		}
 		factory, err := getColumnValueFactoryByName(sctx, col.Name.O, idx)
 		if err != nil {
 			return err
@@ -226,6 +234,11 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx
 		}
 		if len(rows) == 0 {
 			continue
+		}
+		if e.instanceFactory != nil {
+			for i := range rows {
+				e.instanceFactory(rows[i])
+			}
 		}
 		e.lastFetchSize = calculateDatumsSize(rows)
 		return rows, nil
@@ -643,6 +656,17 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types.Datum, tz *time.Location, field, value string, checker *slowLogChecker, lineNum int) bool {
 	factory := e.columnValueFactoryMap[field]
 	if factory == nil {
+		// Fix issue 34320, when slow log time is not in the output columns, the time filter condition is mistakenly discard.
+		if field == variable.SlowLogTimeStr && checker != nil {
+			t, err := ParseTime(value)
+			if err != nil {
+				err = fmt.Errorf("Parse slow log at line %v, failed field is %v, failed value is %v, error is %v", lineNum, field, value, err)
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				return false
+			}
+			timeValue := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
+			return checker.isTimeValid(timeValue)
+		}
 		return true
 	}
 	valid, err := factory(row, value, tz, checker)
@@ -766,17 +790,18 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 			row[columnIdx] = types.NewDatum(v)
 			return true, nil
 		}, nil
-	case util.ClusterTableInstanceColumnName:
-		instanceAddr, err := infoschema.GetInstanceAddr(sctx)
-		if err != nil {
-			return nil, err
-		}
-		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
-			row[columnIdx] = types.NewStringDatum(instanceAddr)
-			return true, nil
-		}, nil
 	}
 	return nil, nil
+}
+
+func getInstanceColumnValueFactory(sctx sessionctx.Context, columnIdx int) (func(row []types.Datum), error) {
+	instanceAddr, err := infoschema.GetInstanceAddr(sctx)
+	if err != nil {
+		return nil, err
+	}
+	return func(row []types.Datum) {
+		row[columnIdx] = types.NewStringDatum(instanceAddr)
+	}, nil
 }
 
 func parsePlan(planString string) string {

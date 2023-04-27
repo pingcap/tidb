@@ -177,6 +177,9 @@ func (e *RevokeExec) revokeOneUser(internalSession sessionctx.Context, user, hos
 }
 
 func (e *RevokeExec) revokePriv(internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
+	if priv.Priv == mysql.UsagePriv {
+		return nil
+	}
 	switch e.Level.Level {
 	case ast.GrantLevelGlobal:
 		return e.revokeGlobalPriv(internalSession, priv, user, host)

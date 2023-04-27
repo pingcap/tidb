@@ -618,9 +618,6 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
-		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
-			continue
-		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
@@ -692,6 +689,11 @@ func killConn(conn *clientConn) {
 	conn.mu.RUnlock()
 	if cancelFunc != nil {
 		cancelFunc()
+	}
+	if conn.bufReadConn != nil {
+		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+		}
 	}
 }
 

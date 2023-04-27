@@ -481,7 +481,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
 		names := prepared.CachedNames.(types.NameSlice)
-		err := e.rebuildRange(plan)
+		err := e.RebuildPlan(plan)
 		if err != nil {
 			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 			goto REBUILD
@@ -528,7 +528,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					}
 				}
 				if planValid {
-					err := e.rebuildRange(cachedVal.Plan)
+					err := e.RebuildPlan(cachedVal.Plan)
 					if err != nil {
 						logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 						goto REBUILD
@@ -574,6 +574,10 @@ REBUILD:
 	e.Plan = p
 	// We only cache the tableDual plan when the number of vars are zero.
 	if containTableDual(p) && varsNum > 0 {
+		stmtCtx.SkipPlanCache = true
+	}
+	// plan has shuffle operator will not be cached.
+	if !stmtCtx.SkipPlanCache && containShuffleOperator(p) {
 		stmtCtx.SkipPlanCache = true
 	}
 	if prepared.UseCache && !stmtCtx.SkipPlanCache {
@@ -623,6 +627,25 @@ func containTableDual(p Plan) bool {
 	return childContainTableDual
 }
 
+func containShuffleOperator(p Plan) bool {
+	if _, isShuffle := p.(*PhysicalShuffle); isShuffle {
+		return true
+	}
+	if _, isShuffleRecv := p.(*PhysicalShuffleReceiverStub); isShuffleRecv {
+		return true
+	}
+	physicalPlan, ok := p.(PhysicalPlan)
+	if !ok {
+		return false
+	}
+	for _, child := range physicalPlan.Children() {
+		if containShuffleOperator(child) {
+			return true
+		}
+	}
+	return false
+}
+
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
@@ -652,6 +675,14 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 	}
 	return err
+}
+
+// RebuildPlan will rebuild this plan under current user parameters.
+func (e *Execute) RebuildPlan(p Plan) error {
+	sc := p.SCtx().GetSessionVars().StmtCtx
+	sc.InPreparedPlanBuilding = true
+	defer func() { sc.InPreparedPlanBuilding = false }()
+	return e.rebuildRange(p)
 }
 
 func (e *Execute) rebuildRange(p Plan) error {
@@ -981,7 +1012,7 @@ type Simple struct {
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
-//   Used for simple statements executing in coprocessor.
+// Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
 	basePhysicalPlan
 	Inner Simple
