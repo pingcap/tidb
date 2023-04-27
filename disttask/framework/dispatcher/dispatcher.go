@@ -404,7 +404,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	// Generate all available TiDB nodes for this global tasks.
 	serverNodes, err1 := GenerateSchedulerNodes(d.ctx)
 	if err1 != nil {
-		return err
+		return err1
 	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
