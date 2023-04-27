@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -173,6 +174,7 @@ type IndexReaderExecutor struct {
 	ranges          []*ranger.Range
 	partitions      []table.PhysicalTable
 	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
+	partitionIDMap  map[int64]struct{}        // partitionIDs that global index access
 
 	// kvRanges are only used for union scan.
 	kvRanges         []kv.KeyRange
@@ -325,6 +327,42 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		}
 	}
 
+	if e.index.Global {
+		idxScanExec := e.dagPB.Executors[0]
+		args := make([]expression.Expression, 0, len(e.partitionIDMap))
+		column := &expression.Column{
+			UniqueID: model.ExtraPidColID,
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Index:    len(idxScanExec.IdxScan.Columns) - 1,
+			OrigName: model.ExtraPartitionIdName.L,
+		}
+		args = append(args, column)
+		for pid := range e.partitionIDMap {
+			args = append(args, expression.NewInt64Const(pid))
+		}
+
+		inCondition, err := expression.NewFunction(e.ctx, ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+		if err != nil {
+			return err
+		}
+		pbConditions, err := expression.ExpressionsToPBList(e.ctx.GetSessionVars().StmtCtx, []expression.Expression{inCondition}, e.ctx.GetClient())
+		if err != nil {
+			return err
+		}
+		if len(e.dagPB.Executors) > 1 && e.dagPB.Executors[1].Tp == tipb.ExecType_TypeSelection {
+			e.dagPB.Executors[1].Selection.Conditions = append(e.dagPB.Executors[1].Selection.Conditions, pbConditions...)
+		} else {
+			selExec := &tipb.Selection{
+				Conditions: pbConditions,
+			}
+			executors := make([]*tipb.Executor, 0, len(e.dagPB.Executors)+1)
+			executors = append(executors, e.dagPB.Executors[0])
+			executors = append(executors, &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec})
+			executors = append(executors, e.dagPB.Executors[1:]...)
+			e.dagPB.Executors = executors
+		}
+	}
+
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
@@ -377,7 +415,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			}
 			results = append(results, result)
 		}
-		e.result = distsql.NewSortedSelectResults(results, nil, e.Schema(), e.byItems, e.memTracker)
+		e.result = distsql.NewSortedSelectResults(results, e.Schema(), e.byItems, e.memTracker)
 	}
 	return nil
 }
@@ -585,7 +623,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 }
 
 func (e *IndexLookUpExecutor) hasExtralPidCol() bool {
-	return e.index.Global || len(e.byItems) > 0
+	return e.index.Global || (e.partitionTableMode && len(e.byItems) > 0)
 }
 
 func (e *IndexLookUpExecutor) isCommonHandle() bool {
@@ -606,7 +644,7 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	} else {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
-	if e.index.Global {
+	if e.hasExtralPidCol() {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	if e.checkIndexValue != nil {
@@ -666,8 +704,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		pids := make([]int64, 0, len(kvRanges))
-		for partTblIdx, kvRange := range kvRanges {
+		for _, kvRange := range kvRanges {
 			// check if executor is closed
 			finished := false
 			select {
@@ -695,14 +732,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				break
 			}
 			results = append(results, result)
-			if e.partitionTableMode {
-				pids = append(pids, e.prunedPartitions[partTblIdx].GetPhysicalID())
-			}
 		}
 		worker.batchSize = mathutil.Min(initBatchSize, worker.maxBatchSize)
 		if len(results) > 1 && len(e.byItems) != 0 {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
-			ssr := distsql.NewSortedSelectResults(results, pids, nil, e.byItems, e.memTracker)
+			ssr := distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)
@@ -947,12 +981,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			}
 		}
 	}()
-	retTps := w.idxLookup.getRetTpsForIndexReader()
-	// for sortedSelectResult, add pids in last column
-	if !w.idxLookup.index.Global && len(w.idxLookup.byItems) > 0 {
-		retTps = append(retTps, types.NewFieldType(mysql.TypeLonglong))
-	}
-	chk := w.idxLookup.ctx.GetSessionVars().GetNewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize, w.idxLookup.maxChunkSize, w.idxLookup.AllocPool)
+	chk := w.idxLookup.ctx.GetSessionVars().GetNewChunkWithCapacity(w.idxLookup.getRetTpsForIndexReader(), w.idxLookup.maxChunkSize, w.idxLookup.maxChunkSize, w.idxLookup.AllocPool)
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if idxID != w.idxLookup.id && w.idxLookup.stats != nil {
@@ -1192,8 +1221,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 		}
 	}
 	if e.hasExtralPidCol() {
-		pidOffset := row.Len() - 1
-		pid := row.GetInt64(pidOffset)
+		pid := row.GetInt64(row.Len() - 1)
 		handle = kv.NewPartitionHandle(pid, handle)
 	}
 	return

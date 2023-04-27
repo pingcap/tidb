@@ -658,7 +658,21 @@ func (s *session) doCommit(ctx context.Context) error {
 	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
-	s.txn.SetOption(kv.TxnSource, sessVars.CDCWriteSource)
+
+	var txnSource uint64
+	if val := s.txn.GetOption(kv.TxnSource); val != nil {
+		txnSource, _ = val.(uint64)
+	}
+	// If the transaction is started by CDC, we need to set the CDCWriteSource option.
+	if sessVars.CDCWriteSource != 0 {
+		err := kv.SetCDCWriteSource(&txnSource, sessVars.CDCWriteSource)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		s.txn.SetOption(kv.TxnSource, txnSource)
+	}
+
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
 		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
@@ -706,7 +720,7 @@ func (c *cachedTableRenewLease) start(ctx context.Context) error {
 	return err
 }
 
-func (c *cachedTableRenewLease) stop(ctx context.Context) {
+func (c *cachedTableRenewLease) stop(_ context.Context) {
 	close(c.exit)
 }
 
@@ -1138,7 +1152,7 @@ func (s *session) isInternal() bool {
 	return s.sessionVars.InRestrictedSQL
 }
 
-func (s *session) isTxnRetryableError(err error) bool {
+func (*session) isTxnRetryableError(err error) bool {
 	if atomic.LoadUint32(&SchemaChangedWithoutRetry) == 1 {
 		return kv.IsTxnRetryableError(err)
 	}
@@ -2381,7 +2395,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 type ExecStmtVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k ExecStmtVarKeyType) String() string {
+func (ExecStmtVarKeyType) String() string {
 	return "exec_stmt_var_key"
 }
 
@@ -2963,7 +2977,7 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 }
 
 // RefreshVars implements the sessionctx.Context interface.
-func (s *session) RefreshVars(ctx context.Context) error {
+func (s *session) RefreshVars(_ context.Context) error {
 	pruneMode, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
 	if err != nil {
 		return err
@@ -3786,8 +3800,7 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 }
 
 // GetStartTSFromSession returns the startTS in the session `se`
-func GetStartTSFromSession(se interface{}) (uint64, uint64) {
-	var startTS, processInfoID uint64
+func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
 	tmp, ok := se.(*session)
 	if !ok {
 		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
@@ -4160,7 +4173,8 @@ func (s *session) SetMemoryFootprintChangeHook() {
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
-func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (s *session) EncodeSessionStates(ctx context.Context,
+	_ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	// Transaction status is hard to encode, so we do not support it.
 	s.txn.mu.Lock()
 	valid := s.txn.Valid()
@@ -4228,7 +4242,8 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
-func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (s *session) DecodeSessionStates(ctx context.Context,
+	_ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	// Decode prepared statements and sql bindings.
 	for _, handler := range s.sessionStatesHandlers {
 		if err := handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {

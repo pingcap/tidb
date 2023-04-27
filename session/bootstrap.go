@@ -865,11 +865,14 @@ const (
 	version142 = 142
 	// version 143 add column `error` to `mysql.tidb_global_task` and `mysql.tidb_background_subtask`
 	version143 = 143
+	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
+	// if it's upgraded from an existing old version cluster.
+	version144 = 144
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version143
+var currentBootstrapVersion int64 = version144
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1001,6 +1004,7 @@ var (
 		upgradeToVer141,
 		upgradeToVer142,
 		upgradeToVer143,
+		upgradeToVer144,
 	}
 )
 
@@ -1089,6 +1093,9 @@ func upgrade(s Session) {
 	if isNull {
 		upgradeToVer99Before(s)
 	}
+
+	// It is only used in test.
+	addMockBootstrapVersionForTest()
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
@@ -2426,7 +2433,7 @@ func upgradeToVer136(s Session, ver int64) {
 	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer137(s Session, ver int64) {
+func upgradeToVer137(_ Session, _ int64) {
 	// NOOP, we don't depend on ddl to init the default group due to backward compatible issue.
 }
 
@@ -2504,6 +2511,25 @@ func upgradeToVer143(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer144(s Session, ver int64) {
+	if ver >= version144 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
 }
 
 func writeOOMAction(s Session) {

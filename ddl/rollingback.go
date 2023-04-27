@@ -16,12 +16,9 @@ package ddl
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -78,19 +75,7 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		return ver, errors.Trace(err1)
 	}
 	job.State = model.JobStateRollingback
-	if job.ReorgMeta != nil && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-		cleanupLocalIndexData(job.ID)
-	}
 	return ver, errors.Trace(err)
-}
-
-func cleanupLocalIndexData(jobID int64) {
-	sortPath := ingest.ConfigSortPath()
-	f := filepath.Join(sortPath, ingest.EncodeBackendTag(jobID))
-	err := os.RemoveAll(f)
-	if err != nil {
-		logutil.BgLogger().Error("[ddl-ingest] can not remove local index data", zap.Error(err))
-	}
 }
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
