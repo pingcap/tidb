@@ -209,28 +209,54 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
+	var err error
 	childTasks := make([]task, 0, len(p.children))
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
-	for _, pp := range physicalPlans {
+	iteration := func(
+		selfPhysicalPlan PhysicalPlan,
+		childTasks []task,
+		childCnts []int64,
+		prop *property.PhysicalProperty,
+		opt *physicalOptimizeOp,
+	) ([]task, int64, []int64, error) {
 		// Find best child tasks firstly.
 		childTasks = childTasks[:0]
 		// The curCntPlan records the number of possible plans for pp
-		curCntPlan = 1
-		timeStampNow := p.GetLogicalTS4TaskMap()
-		savedPlanID := p.ctx.GetSessionVars().PlanID.Load()
+		curCntPlan := int64(1)
 		for j, child := range p.children {
-			childProp := pp.GetChildReqProps(j)
+			childProp := selfPhysicalPlan.GetChildReqProps(j)
 			childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
 			childCnts[j] = cnt
 			if err != nil {
-				return nil, 0, err
+				return nil, 0, childCnts, err
 			}
 			curCntPlan = curCntPlan * cnt
 			if childTask != nil && childTask.invalid() {
-				break
+				return nil, 0, childCnts, nil
 			}
 			childTasks = append(childTasks, childTask)
+		}
+
+		// This check makes sure that there is no invalid child task.
+		if len(childTasks) != len(p.children) {
+			return nil, 0, childCnts, nil
+		}
+		return childTasks, curCntPlan, childCnts, nil
+	}
+
+	if seq, ok := p.self.(*LogicalSequence); ok {
+		iteration = seq.iterateChildPlan
+	}
+
+	for _, pp := range physicalPlans {
+		timeStampNow := p.GetLogicalTS4TaskMap()
+		savedPlanID := p.ctx.GetSessionVars().PlanID.Load()
+
+		childTasks, curCntPlan, childCnts, err = iteration(pp, childTasks, childCnts, prop, opt)
+
+		if err != nil {
+			return nil, 0, err
 		}
 
 		// This check makes sure that there is no invalid child task.
@@ -289,113 +315,62 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	return bestTask, cntPlan, nil
 }
 
-func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan,
-	prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
-	var bestTask task = invalidTask
-	var curCntPlan, cntPlan int64
-	childTasks := make([]task, 0, len(p.children))
-	childCnts := make([]int64, len(p.children))
-	cntPlan = 0
-	for _, pp := range physicalPlans {
-		// Find best child tasks firstly.
-		childTasks = childTasks[:0]
-		// The curCntPlan records the number of possible plans for pp
-		curCntPlan = 1
-		timeStampNow := p.GetLogicalTS4TaskMap()
-		savedPlanID := p.ctx.GetSessionVars().PlanID.Load()
-		lastIdx := len(p.children) - 1
-		for j := 0; j < lastIdx; j++ {
-			child := p.children[j]
-			childProp := pp.GetChildReqProps(j)
-			childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
-			childCnts[j] = cnt
-			if err != nil {
-				return nil, 0, err
-			}
-			curCntPlan = curCntPlan * cnt
-			if childTask != nil && childTask.invalid() {
-				break
-			}
-			_, isMpp := childTask.(*mppTask)
-			if !isMpp && prop.IsFlashProp() {
-				break
-			}
-			childTasks = append(childTasks, childTask)
-		}
-		// This check makes sure that there is no invalid child task.
-		if len(childTasks) != len(p.children)-1 {
-			continue
-		}
-
-		lastChildProp := pp.GetChildReqProps(lastIdx).CloneEssentialFields()
-		if lastChildProp.IsFlashProp() {
-			lastChildProp.CTEProducerStatus = property.AllCTECanMpp
-		}
-		lastChildTask, cnt, err := p.Children()[lastIdx].findBestTask(lastChildProp, &PlanCounterDisabled, opt)
-		childCnts[lastIdx] = cnt
+// iterateChildPlan does the special part for sequence. We need to iterate its child one by one to check whether the former child is a valid plan and then go to the nex
+func (p *LogicalSequence) iterateChildPlan(
+	selfPhysicalPlan PhysicalPlan,
+	childTasks []task,
+	childCnts []int64,
+	prop *property.PhysicalProperty,
+	opt *physicalOptimizeOp,
+) ([]task, int64, []int64, error) {
+	// Find best child tasks firstly.
+	childTasks = childTasks[:0]
+	// The curCntPlan records the number of possible plans for pp
+	curCntPlan := int64(1)
+	lastIdx := len(p.children) - 1
+	for j := 0; j < lastIdx; j++ {
+		child := p.children[j]
+		childProp := selfPhysicalPlan.GetChildReqProps(j)
+		childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
+		childCnts[j] = cnt
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		curCntPlan = curCntPlan * cnt
-		if lastChildTask != nil && lastChildTask.invalid() {
-			continue
+		if childTask != nil && childTask.invalid() {
+			return nil, 0, nil, nil
 		}
-
-		if _, ok := lastChildTask.(*mppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
-			continue
-		}
-
-		childTasks = append(childTasks, lastChildTask)
-
-		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
-		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
-			p.ctx.GetSessionVars().PlanID.Store(savedPlanID)
-			curCntPlan = int64(*planCounter)
-			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*planCounter), timeStampNow, opt)
-			if err != nil {
-				return nil, 0, err
-			}
-		}
-
-		// Combine best child tasks with parent physical plan.
-		curTask := pp.attach2Task(childTasks...)
-
-		if curTask.invalid() {
-			continue
-		}
-
-		// An optimal task could not satisfy the property, so it should be converted here.
-		if _, ok := curTask.(*rootTask); !ok && prop.TaskTp == property.RootTaskType {
-			curTask = curTask.convertToRootTask(p.ctx)
-		}
-
-		// Enforce curTask property
-		if addEnforcer {
-			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
-		}
-
-		// Optimize by shuffle executor to running in parallel manner.
-		if _, isMpp := curTask.(*mppTask); !isMpp && prop.IsSortItemEmpty() {
-			// Currently, we do not regard shuffled plan as a new plan.
-			curTask = optimizeByShuffle(curTask, p.basePlan.ctx)
-		}
-
-		cntPlan += curCntPlan
-		planCounter.Dec(curCntPlan)
-
-		if planCounter.Empty() {
-			bestTask = curTask
+		_, isMpp := childTask.(*mppTask)
+		if !isMpp && prop.IsFlashProp() {
 			break
 		}
-		opt.appendCandidate(p, curTask.plan(), prop)
-		// Get the most efficient one.
-		if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask, opt); err != nil {
-			return nil, 0, err
-		} else if curIsBetter {
-			bestTask = curTask
-		}
+		childTasks = append(childTasks, childTask)
 	}
-	return bestTask, cntPlan, nil
+	// This check makes sure that there is no invalid child task.
+	if len(childTasks) != len(p.children)-1 {
+		return nil, 0, nil, nil
+	}
+
+	lastChildProp := selfPhysicalPlan.GetChildReqProps(lastIdx).CloneEssentialFields()
+	if lastChildProp.IsFlashProp() {
+		lastChildProp.CTEProducerStatus = property.AllCTECanMpp
+	}
+	lastChildTask, cnt, err := p.Children()[lastIdx].findBestTask(lastChildProp, &PlanCounterDisabled, opt)
+	childCnts[lastIdx] = cnt
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	curCntPlan = curCntPlan * cnt
+	if lastChildTask != nil && lastChildTask.invalid() {
+		return nil, 0, nil, nil
+	}
+
+	if _, ok := lastChildTask.(*mppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
+		return nil, 0, nil, nil
+	}
+
+	childTasks = append(childTasks, lastChildTask)
+	return childTasks, curCntPlan, childCnts, nil
 }
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
@@ -494,6 +469,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	if prop == nil {
 		return nil, 1, nil
 	}
+	enumPhysicalPlans4Task := p.enumeratePhysicalPlans4Task
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
 	bestTask = p.getTask(prop)
@@ -558,7 +534,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 
 	var cnt int64
 	var curTask task
-	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt); err != nil {
+	if bestTask, cnt, err = enumPhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
@@ -566,107 +542,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 
-	curTask, cnt, err = p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp, true, planCounter, opt)
-	if err != nil {
-		return nil, 0, err
-	}
-	cntPlan += cnt
-	if planCounter.Empty() {
-		bestTask = curTask
-		goto END
-	}
-	opt.appendCandidate(p, curTask.plan(), prop)
-	if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask, opt); err != nil {
-		return nil, 0, err
-	} else if curIsBetter {
-		bestTask = curTask
-	}
-
-END:
-	p.storeTask(prop, bestTask)
-	return bestTask, cntPlan, nil
-}
-
-// findBestTask implements LogicalPlan interface.
-func (p *LogicalSequence) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (bestTask task, cntPlan int64, err error) {
-	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
-	// and set inner child prop nil, so here we do nothing.
-	if prop == nil {
-		return nil, 1, nil
-	}
-	// Look up the task with this prop in the task map.
-	// It's used to reduce double counting.
-	bestTask = p.getTask(prop)
-	if bestTask != nil {
-		planCounter.Dec(1)
-		return bestTask, 1, nil
-	}
-
-	canAddEnforcer := prop.CanAddEnforcer
-
-	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
-		// Currently all plan cannot totally push down to TiKV.
-		p.storeTask(prop, invalidTask)
-		return invalidTask, 0, nil
-	}
-
-	cntPlan = 0
-	// prop should be read only because its cached hashcode might be not consistent
-	// when it is changed. So we clone a new one for the temporary changes.
-	newProp := prop.CloneEssentialFields()
-	var plansFitsProp, plansNeedEnforce []PhysicalPlan
-	var hintWorksWithProp bool
-	// Maybe the plan can satisfy the required property,
-	// so we try to get the task without the enforced sort first.
-	plansFitsProp, hintWorksWithProp, err = p.self.exhaustPhysicalPlans(newProp)
-	if err != nil {
-		return nil, 0, err
-	}
-	if !hintWorksWithProp && !newProp.IsSortItemEmpty() {
-		// If there is a hint in the plan and the hint cannot satisfy the property,
-		// we enforce this property and try to generate the PhysicalPlan again to
-		// make sure the hint can work.
-		canAddEnforcer = true
-	}
-
-	if canAddEnforcer {
-		// Then, we use the empty property to get physicalPlans and
-		// try to get the task with an enforced sort.
-		newProp.SortItems = []property.SortItem{}
-		newProp.SortItemsForPartition = []property.SortItem{}
-		newProp.ExpectedCnt = math.MaxFloat64
-		newProp.MPPPartitionCols = nil
-		newProp.MPPPartitionTp = property.AnyType
-		var hintCanWork bool
-		plansNeedEnforce, hintCanWork, err = p.self.exhaustPhysicalPlans(newProp)
-		if err != nil {
-			return nil, 0, err
-		}
-		if hintCanWork && !hintWorksWithProp {
-			// If the hint can work with the empty property, but cannot work with
-			// the required property, we give up `plansFitProp` to make sure the hint
-			// can work.
-			plansFitsProp = nil
-		}
-		if !hintCanWork && !hintWorksWithProp && !prop.CanAddEnforcer {
-			// If the original property is not enforced and hint cannot
-			// work anyway, we give up `plansNeedEnforce` for efficiency,
-			plansNeedEnforce = nil
-		}
-		newProp = prop
-	}
-
-	var cnt int64
-	var curTask task
-	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt); err != nil {
-		return nil, 0, err
-	}
-	cntPlan += cnt
-	if planCounter.Empty() {
-		goto END
-	}
-
-	curTask, cnt, err = p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp, true, planCounter, opt)
+	curTask, cnt, err = enumPhysicalPlans4Task(plansNeedEnforce, newProp, true, planCounter, opt)
 	if err != nil {
 		return nil, 0, err
 	}
