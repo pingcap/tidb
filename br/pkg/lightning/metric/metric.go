@@ -49,6 +49,10 @@ const (
 	ChunkStateFinished  = "finished"
 	ChunkStateFailed    = "failed"
 
+	SSTProcessSplit  = "split" // for the SSTSecondsHistogram labels, below too
+	SSTProcessWrite  = "write"
+	SSTProcessIngest = "ingest"
+
 	BlockDeliverKindIndex = "index"
 	BlockDeliverKindData  = "data"
 )
@@ -73,6 +77,7 @@ type Metrics struct {
 	BlockDeliverBytesHistogram           *prometheus.HistogramVec
 	BlockDeliverKVPairsHistogram         *prometheus.HistogramVec
 	ChecksumSecondsHistogram             prometheus.Histogram
+	SSTSecondsHistogram                  *prometheus.HistogramVec
 	LocalStorageUsageBytesGauge          *prometheus.GaugeVec
 	ProgressGauge                        *prometheus.GaugeVec
 }
@@ -224,6 +229,13 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 				Help:      "time needed to complete the checksum stage",
 				Buckets:   prometheus.ExponentialBuckets(1, 2.2679331552660544, 10),
 			}),
+		SSTSecondsHistogram: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "lightning",
+				Name:      "sst_seconds",
+				Help:      "time needed to complete the sst operations",
+				Buckets:   prometheus.ExponentialBuckets(1, 2.2679331552660544, 10),
+			}, []string{"kind"}),
 
 		LocalStorageUsageBytesGauge: factory.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -263,6 +275,7 @@ func (m *Metrics) RegisterTo(r promutil.Registry) {
 		m.BlockDeliverBytesHistogram,
 		m.BlockDeliverKVPairsHistogram,
 		m.ChecksumSecondsHistogram,
+		m.SSTSecondsHistogram,
 		m.LocalStorageUsageBytesGauge,
 		m.ProgressGauge,
 	)
@@ -289,6 +302,7 @@ func (m *Metrics) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(m.BlockDeliverBytesHistogram)
 	r.Unregister(m.BlockDeliverKVPairsHistogram)
 	r.Unregister(m.ChecksumSecondsHistogram)
+	r.Unregister(m.SSTSecondsHistogram)
 	r.Unregister(m.LocalStorageUsageBytesGauge)
 	r.Unregister(m.ProgressGauge)
 }
