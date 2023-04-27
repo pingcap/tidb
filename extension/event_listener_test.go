@@ -266,7 +266,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 		},
 		{
 			sql:          "insert into t1 values(1, 10), (2, 20)",
-			redactText:   "insert into `t1` values ( ... ) , ( ... )",
+			redactText:   "insert into `t1` values ( ... )",
 			affectedRows: 2,
 			tables: []stmtctx.TableEntry{
 				{DB: "test", Table: "t1"},
