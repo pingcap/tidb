@@ -43,6 +43,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
+<<<<<<< HEAD
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20210308075244-560097d1309b
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
@@ -58,6 +59,28 @@ require (
 	github.com/soheilhy/cmux v0.1.4
 	github.com/spaolacci/murmur3 v1.1.0
 	github.com/syndtr/goleveldb v1.0.1-0.20190625010220-02440ea7a285 // indirect
+=======
+	github.com/pingcap/kvproto v0.0.0-20230424092600-14ac513b9eff
+	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
+	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
+	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
+	github.com/pingcap/tipb v0.0.0-20230427024529-aed92caf20b9
+	github.com/pkg/errors v0.9.1
+	github.com/prometheus/client_golang v1.15.0
+	github.com/prometheus/client_model v0.3.0
+	github.com/prometheus/common v0.42.0
+	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
+	github.com/sasha-s/go-deadlock v0.2.0
+	github.com/shirou/gopsutil/v3 v3.23.3
+	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
+	github.com/soheilhy/cmux v0.1.5
+	github.com/spf13/cobra v1.6.1
+	github.com/spf13/pflag v1.0.5
+	github.com/spkg/bom v1.0.0
+	github.com/stathat/consistent v1.0.0
+	github.com/stretchr/testify v1.8.2
+	github.com/tdakkota/asciicheck v0.2.0
+>>>>>>> 9b9796fc5c8 (unistore: Adjust some behaviors to be consistent with TiKV (#43397))
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/pd v0.0.0-20210105112549-e5be7fd38659
 	github.com/uber-go/atomic v1.4.0
