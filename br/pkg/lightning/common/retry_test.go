@@ -97,6 +97,8 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(status.Error(codes.Unavailable, "")))
 	require.True(t, IsRetryableError(status.Error(codes.DataLoss, "")))
 
+	require.True(t, IsRetryableError(errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d", 1, 2)))
+
 	// sqlmock errors
 	require.False(t, IsRetryableError(fmt.Errorf("call to database Close was not expected")))
 	require.False(t, IsRetryableError(errors.New("call to database Close was not expected")))
