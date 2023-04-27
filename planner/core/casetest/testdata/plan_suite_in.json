@@ -167,6 +167,17 @@
     ]
   },
   {
+    "name": "TestMPPRightOuterJoin",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+      "set @@session.tidb_broadcast_join_threshold_size=0",
+      "set @@session.tidb_broadcast_join_threshold_count=0",
+      "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d"
+    ]
+  },
+  {
     "name": "TestIssue37520",
     "cases": [
       "select /*+ inl_join(t1@sel_2) */ a, (select b from t1 where t1.a = t2.b) from t2;",
