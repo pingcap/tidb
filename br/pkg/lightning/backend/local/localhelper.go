@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -96,9 +97,18 @@ func (local *local) SplitAndScatterRegionByRanges(
 	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
 	regionSplitSize int64,
-) error {
+) (err error) {
 	if len(ranges) == 0 {
 		return nil
+	}
+
+	if m, ok := metric.FromContext(ctx); ok {
+		begin := time.Now()
+		defer func() {
+			if err == nil {
+				m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessSplit).Observe(time.Since(begin).Seconds())
+			}
+		}()
 	}
 
 	db, err := local.g.GetDB()
