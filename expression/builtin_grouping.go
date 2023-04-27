@@ -116,8 +116,8 @@ func (b *builtinGroupingImplSig) getMetaGroupingMarks() map[int64]struct{} {
 
 func (b *builtinGroupingImplSig) getMetaGroupingID() int64 {
 	var metaGroupingID int64
-	grouping_ids := b.getMetaGroupingMarks()
-	for key := range grouping_ids {
+	groupingIDs := b.getMetaGroupingMarks()
+	for key := range groupingIDs {
 		metaGroupingID = key
 	}
 	return metaGroupingID
@@ -128,10 +128,10 @@ func (b *builtinGroupingImplSig) checkMetadata() error {
 		return errors.Errorf("Meta data hasn't been initialized")
 	}
 	mode := b.getGroupingMode()
-	grouping_ids := b.getMetaGroupingMarks()
+	groupingIDs := b.getMetaGroupingMarks()
 	if mode != tipb.GroupingMode_ModeBitAnd && mode != tipb.GroupingMode_ModeNumericCmp && mode != tipb.GroupingMode_ModeNumericSet {
 		return errors.Errorf("Mode of meta data in grouping function is invalid. input mode: %d", mode)
-	} else if (mode == tipb.GroupingMode_ModeBitAnd || mode == tipb.GroupingMode_ModeNumericCmp) && len(grouping_ids) != 1 {
+	} else if (mode == tipb.GroupingMode_ModeBitAnd || mode == tipb.GroupingMode_ModeNumericCmp) && len(groupingIDs) != 1 {
 		return errors.Errorf("Invalid number of groupingID. mode: %d, number of groupingID: %d", mode, len(b.groupingMarks))
 	}
 	return nil
@@ -152,8 +152,8 @@ func (b *builtinGroupingImplSig) groupingImplNumericCmp(groupingID int64, metaGr
 }
 
 func (b *builtinGroupingImplSig) groupingImplNumericSet(groupingID int64) int64 {
-	grouping_ids := b.getMetaGroupingMarks()
-	_, ok := grouping_ids[groupingID]
+	groupingIDs := b.getMetaGroupingMarks()
+	_, ok := groupingIDs[groupingID]
 	if ok {
 		return 0
 	}
