@@ -1041,6 +1041,25 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				PrimaryKey: x.PrimaryKey,
 			},
 		}
+<<<<<<< HEAD
+=======
+	case *kverrors.ErrAssertionFailed:
+		return &kvrpcpb.KeyError{
+			AssertionFailed: &kvrpcpb.AssertionFailed{
+				StartTs:          x.StartTS,
+				Key:              x.Key,
+				Assertion:        x.Assertion,
+				ExistingStartTs:  x.ExistingStartTS,
+				ExistingCommitTs: x.ExistingCommitTS,
+			},
+		}
+	case *kverrors.ErrPrimaryMismatch:
+		return &kvrpcpb.KeyError{
+			PrimaryMismatch: &kvrpcpb.PrimaryMismatch{
+				LockInfo: x.Lock.ToLockInfo(x.Key),
+			},
+		}
+>>>>>>> 9b9796fc5c8 (unistore: Adjust some behaviors to be consistent with TiKV (#43397))
 	default:
 		return &kvrpcpb.KeyError{
 			Abort: err.Error(),

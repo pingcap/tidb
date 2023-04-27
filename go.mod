@@ -48,10 +48,16 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
+<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20220614124712-cd832493ec73
 	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
+=======
+	github.com/pingcap/kvproto v0.0.0-20230424092600-14ac513b9eff
+	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
+	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
+>>>>>>> 9b9796fc5c8 (unistore: Adjust some behaviors to be consistent with TiKV (#43397))
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20220222072611-9b6db18731e5
 	github.com/prometheus/client_golang v1.5.1
