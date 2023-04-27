@@ -89,10 +89,12 @@ func TestGrouping(t *testing.T) {
 	}
 
 	for _, testCase := range tests {
-		comment := fmt.Sprintf(`for grouping = "%d", version = "%d", groupingIDs = "%v", expectRes = "%d""`, testCase.groupingID, testCase.mode, testCase.groupingIDs, testCase.expectResult)
+		comment := fmt.Sprintf(`for grouping = "%d", version = "%d", groupingIDs = "%v", expectRes = "%d"`, testCase.groupingID, testCase.mode, testCase.groupingIDs, testCase.expectResult)
 		args := datumsToConstants(types.MakeDatums(testCase.groupingID))
 
 		groupingFunc, err := createGroupingFunc(ctx, args)
+		require.NoError(t, err, comment)
+
 		err = groupingFunc.SetMetadata(testCase.mode, testCase.groupingIDs)
 		require.NoError(t, err, comment)
 

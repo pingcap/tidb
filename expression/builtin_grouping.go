@@ -67,11 +67,12 @@ type builtinGroupingImplSig struct {
 func (b *builtinGroupingImplSig) SetMetadata(mode tipb.GroupingMode, groupingMarks map[int64]struct{}) error {
 	b.setGroupingMode(mode)
 	b.setMetaGroupingMarks(groupingMarks)
+	b.isMetaInited = true
 	err := b.checkMetadata()
 	if err != nil {
+		b.isMetaInited = false
 		return err
 	}
-	b.isMetaInited = true
 	return nil
 }
 
