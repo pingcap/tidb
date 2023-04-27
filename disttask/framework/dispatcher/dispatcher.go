@@ -408,8 +408,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
-		pos := i % len(serverNodes)
-		instanceID, err := GetEligibleInstance(serverNodes, pos)
+		instanceID, err := GetEligibleInstance(serverNodes, i)
 		if err != nil {
 			logutil.BgLogger().Warn("get a eligible instance failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
 			return err
@@ -420,12 +419,13 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 }
 
 // GetEligibleInstance gets an eligible instance.
-func GetEligibleInstance(severNodes []*infosync.ServerInfo, pos int) (string, error) {
-	if pos >= len(severNodes) {
-		errMsg := fmt.Sprintf("available TiDB nodes range is 0 to %d, but request position: %d", len(severNodes)-1, pos)
+func GetEligibleInstance(serverNodes []*infosync.ServerInfo, pos int) (string, error) {
+	if pos >= len(serverNodes) && pos < 0 {
+		errMsg := fmt.Sprintf("available TiDB nodes range is 0 to %d, but request position: %d", len(serverNodes)-1, pos)
 		return "", errors.New(errMsg)
 	}
-	return severNodes[pos].ID, nil
+	pos = pos % len(serverNodes)
+	return serverNodes[pos].ID, nil
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
