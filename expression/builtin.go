@@ -581,8 +581,6 @@ var functionSetForReturnTypeNotNullOnNotNull = set.StringSet{
 	ast.Mul:   {},
 }
 
-const groupingImplName = "grouping_impl"
-
 // funcs holds all registered builtin functions. When new function is added,
 // check expression/function_traits.go to see if it should be appended to
 // any set there.
