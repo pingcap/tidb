@@ -93,7 +93,7 @@ func TestGrouping(t *testing.T) {
 		args := datumsToConstants(types.MakeDatums(testCase.groupingID))
 
 		groupingFunc, err := createGroupingFunc(ctx, args)
-		groupingFunc.SetMetadata(testCase.mode, testCase.groupingIDs)
+		err = groupingFunc.SetMetadata(testCase.mode, testCase.groupingIDs)
 		require.NoError(t, err, comment)
 
 		actualResult, err := evalBuiltinFunc(groupingFunc, chunk.Row{})
