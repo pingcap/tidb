@@ -171,7 +171,7 @@ func pdRequestWithCode(
 	var resp *http.Response
 	count := 0
 	for {
-		resp, err = cli.Do(req)
+		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
 		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
 			if failTimes, ok := v.(int); ok && count <= failTimes {
