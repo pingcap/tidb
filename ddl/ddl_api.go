@@ -6781,6 +6781,34 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
+	// Only call RenameIndex if the corresponding index exists and the index was created by FK
+	cols := make([]model.CIStr, len(indexColumns))
+	for i := 0; i < len(indexColumns); i++ {
+		cols[i] = indexColumns[i].Name
+	}
+	if index := model.FindIndexByColumns(t.Meta(), t.Meta().Indices, cols...); index != nil {
+		foreignKeys := t.Meta().ForeignKeys
+		isFK := false
+		for i := 0; i < len(foreignKeys); i++ {
+			if foreignKeys[i].Name == index.Name {
+				isFK = true
+				break
+			}
+		}
+
+		if isFK {
+			ident := ast.Ident{Schema: schema.Name, Name: t.Meta().Name}
+			spec := &ast.AlterTableSpec{}
+			spec.FromKey = index.Name
+			spec.ToKey = indexName
+			err = d.RenameIndex(ctx, ident, spec)
+			if err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+
 	global := false
 	if unique && tblInfo.GetPartitionInfo() != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
@@ -6960,7 +6988,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	if err != nil {
 		return err
 	}
-	if model.FindIndexByColumns(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
+	if index := model.FindIndexByColumns(t.Meta(), t.Meta().Indices, fkInfo.Cols...); index == nil {
 		// Need to auto create index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
@@ -6976,6 +7004,25 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		err = d.createIndex(ctx, ti, ast.IndexKeyTypeNone, fkInfo.Name, indexPartSpecifications, indexOption, false)
 		if err != nil {
 			return err
+		}
+	} else if fkInfo.Name != index.Name {
+		fkInfoArr := t.Meta().ForeignKeys
+		isFk := false
+		for i := 0; i < len(fkInfoArr); i++ {
+			if fkInfoArr[i].Name == index.Name {
+				isFk = true
+				break
+			}
+		}
+		if isFk {
+			ident := ast.Ident{Schema: schema.Name, Name: t.Meta().Name}
+			spec := &ast.AlterTableSpec{}
+			spec.FromKey = index.Name
+			spec.ToKey = fkInfo.Name
+			err = d.RenameIndex(ctx, ident, spec)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

@@ -177,6 +177,43 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	require.Equal(t, []byte{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}, iter.Value())
 }
 
+// TestAddFkIndexRenameOld this case will test
+// Instead of creating a new index caused by Fk when having the same columns, rename the old index
+func TestAddFkIndexRenameOld(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE user (
+  		id INTEGER AUTO_INCREMENT NOT NULL,
+  		PRIMARY KEY (id)
+		);`)
+	tk.MustExec(`CREATE TABLE post (
+  		id INTEGER AUTO_INCREMENT NOT NULL,
+  		user_id INTEGER NOT NULL,
+  		CONSTRAINT custom_name FOREIGN KEY (user_id) REFERENCES User(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  		PRIMARY KEY (id)
+		);`)
+	tk.MustExec("CREATE INDEX post_user_id_idx ON post (user_id);")
+	idx1 := testutil.FindIdxInfo(dom, "test", "post", "post_user_id_idx")
+	require.NotNil(t, idx1)
+	idx2 := testutil.FindIdxInfo(dom, "test", "post", "custom_name")
+	require.Nil(t, idx2)
+
+	tk.MustExec(`CREATE TABLE a (
+  		id  int primary key,
+  		foo int not null
+		);`)
+	tk.MustExec(`CREATE TABLE b (
+  		id int primary key
+		);`)
+	tk.MustExec("ALTER TABLE a ADD CONSTRAINT fk_1 FOREIGN KEY (foo) REFERENCES B(id) ON DELETE CASCADE ON UPDATE CASCADE;")
+	tk.MustExec("ALTER TABLE a ADD CONSTRAINT fk_2 FOREIGN KEY (foo) REFERENCES B(id) ON DELETE RESTRICT ON UPDATE RESTRICT;")
+	idx3 := testutil.FindIdxInfo(dom, "test", "a", "fk_2")
+	require.NotNil(t, idx3)
+	idx4 := testutil.FindIdxInfo(dom, "test", "a", "fk_1")
+	require.Nil(t, idx4)
+}
+
 func TestAddIndexMergeIndexUntouchedValue(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
