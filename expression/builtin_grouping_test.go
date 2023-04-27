@@ -49,7 +49,7 @@ func createGroupingFunc(ctx sessionctx.Context, args []Expression) (*builtinGrou
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinGroupingImplSig{bf, 0, map[int64]struct{}{}}
+	sig := &builtinGroupingImplSig{bf, 0, map[int64]struct{}{}, false}
 	sig.setPbCode(tipb.ScalarFuncSig_GroupingSig)
 	return sig, nil
 }
@@ -93,8 +93,7 @@ func TestGrouping(t *testing.T) {
 		args := datumsToConstants(types.MakeDatums(testCase.groupingID))
 
 		groupingFunc, err := createGroupingFunc(ctx, args)
-		groupingFunc.SetGroupingMode(testCase.mode)
-		groupingFunc.SetMetaGroupingMarks(testCase.groupingIDs)
+		groupingFunc.SetMetadata(testCase.mode, testCase.groupingIDs)
 		require.NoError(t, err, comment)
 
 		actualResult, err := evalBuiltinFunc(groupingFunc, chunk.Row{})
