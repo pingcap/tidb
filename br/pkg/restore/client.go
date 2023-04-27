@@ -1332,7 +1332,7 @@ func (rc *Client) WrapLogFilesIterWithCheckpoint(
 	logIter LogIter,
 	downstreamIdset map[int64]struct{},
 	taskName string,
-	updateStats func(kvCount uint64, size uint64),
+	updateStats func(kvCount, size uint64),
 	onProgress func(),
 ) (LogIter, error) {
 	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset, taskName)
@@ -1801,14 +1801,16 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 		}
 		newTableInfo := newTable.Meta()
 		var definitions []model.PartitionDefinition
-		for _, def := range newTableInfo.Partition.Definitions {
-			upid, ok := reidRules[def.ID]
-			if ok {
-				log.Panic("no rewrite rule for parition table id", zap.Int64("id", def.ID))
+		if newTableInfo.Partition != nil {
+			for _, def := range newTableInfo.Partition.Definitions {
+				upid, ok := reidRules[def.ID]
+				if ok {
+					log.Panic("no rewrite rule for parition table id", zap.Int64("id", def.ID))
+				}
+				definitions = append(definitions, model.PartitionDefinition{
+					ID: upid,
+				})
 			}
-			definitions = append(definitions, model.PartitionDefinition{
-				ID: upid,
-			})
 		}
 		oldPartition := &model.PartitionInfo{
 			Definitions: definitions,
