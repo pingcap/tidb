@@ -424,6 +424,9 @@ func GetEligibleInstance(serverNodes []*infosync.ServerInfo, pos int) (string, e
 		errMsg := fmt.Sprintf("available TiDB nodes range is 0 to %d, but request position: %d", len(serverNodes)-1, pos)
 		return "", errors.New(errMsg)
 	}
+	if len(serverNodes) == 0 {
+		return "", errors.New("no available TiDB node")
+	}
 	pos = pos % len(serverNodes)
 	return serverNodes[pos].ID, nil
 }
