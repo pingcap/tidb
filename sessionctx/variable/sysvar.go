@@ -1304,6 +1304,15 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableRowLevelChecksum, Value: BoolToOnOff(DefTiDBEnableRowLevelChecksum), Type: TypeBool,
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableRowLevelChecksum.Load()), nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			EnableRowLevelChecksum.Store(TiDBOptOn(s))
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		result, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {

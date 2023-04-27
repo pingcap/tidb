@@ -175,6 +175,9 @@ const (
 	// TiDBRowFormatVersion is used to control tidb row format version current.
 	TiDBRowFormatVersion = "tidb_row_format_version"
 
+	// TiDBEnableRowLevelChecksum is used to control whether to append checksum to row values.
+	TiDBEnableRowLevelChecksum = "tidb_enable_row_level_checksum"
+
 	// TiDBEnableTablePartition is used to control table partition feature.
 	// The valid value include auto/on/off:
 	// on or auto: enable table partition if the partition type is implemented.
@@ -1264,6 +1267,7 @@ const (
 	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 	DefTiDBPlanCacheInvalidationOnFreshStats         = true
+	DefTiDBEnableRowLevelChecksum                    = false
 )
 
 // Process global variables.
@@ -1317,6 +1321,8 @@ var (
 	// EnableForeignKey indicates whether to enable foreign key feature.
 	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
+	// EnableRowLevelChecksum indicates whether to append checksum to row values.
+	EnableRowLevelChecksum = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
