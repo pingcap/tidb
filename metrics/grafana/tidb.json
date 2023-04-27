@@ -10349,23 +10349,12 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_tikvclient_stale_read_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", direction=\"out\"}[1m])) by (result)",
+              "expr": "sum(rate(tidb_tikvclient_stale_read_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (result, direction)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{result}}-out",
+              "legendFormat": "{{result}}-{{direction}}",
               "refId": "A",
-              "step": 30
-            },
-            {
-              "exemplar": true,
-              "expr": "sum(rate(tidb_tikvclient_stale_read_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", direction=\"in\"}[1m])) by (result)",
-              "format": "time_series",
-              "hide": false,
-              "interval": "",
-              "intervalFactor": 2,
-              "legendFormat": "{{result}}-in",
-              "refId": "B",
               "step": 30
             }
           ],
