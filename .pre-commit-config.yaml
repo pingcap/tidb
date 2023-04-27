@@ -22,3 +22,10 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: go-mod-tidy
+        name: Run go mod tidy
+        entry: make tidy
+        files: '\.go$|go.mod$|go.sum$'
+        language: system
+        pass_filenames: false
+        always_run: false
