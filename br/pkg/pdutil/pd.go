@@ -174,10 +174,19 @@ func pdRequestWithCode(
 		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
 		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
-			if failTimes, ok := v.(int); ok && count <= failTimes {
-				resp, err = nil, &net.OpError{
-					Op:  "read",
-					Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+			if failType, ok := v.(int); ok && count <= pdRequestRetryTime-1 {
+				resp = nil
+				switch failType {
+				case 0:
+					err = &net.OpError{
+						Op:  "read",
+						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+					}
+				default:
+					err = &url.Error{
+						Op:  "read",
+						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+					}
 				}
 			}
 		})
