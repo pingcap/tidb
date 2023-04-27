@@ -404,7 +404,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
 	}
-	checksumData := t.initChecksumData(sctx)
+	checksumData := t.initChecksumData(sctx, h)
 	needChecksum := len(checksumData) > 0
 
 	for _, col := range t.Columns {
@@ -428,13 +428,13 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 					if err != nil {
 						return err
 					}
-					checksumData = t.appendInChangeColForChecksum(sctx, checksumData, col.ToInfo(), &newData[col.DependencyColumnOffset], &v)
+					checksumData = t.appendInChangeColForChecksum(sctx, h, checksumData, col.ToInfo(), &newData[col.DependencyColumnOffset], &v)
 				} else {
 					v, err := table.GetColOriginDefaultValue(sctx, col.ToInfo())
 					if err != nil {
 						return err
 					}
-					checksumData = t.appendNonPublicColForChecksum(sctx, checksumData, col.ToInfo(), &v)
+					checksumData = t.appendNonPublicColForChecksum(sctx, h, checksumData, col.ToInfo(), &v)
 				}
 			}
 			continue
@@ -452,13 +452,13 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 				}
 				newData[col.Offset] = value
 				touched[col.Offset] = touched[col.DependencyColumnOffset]
-				checksumData = t.appendInChangeColForChecksum(sctx, checksumData, col.ToInfo(), &newData[col.DependencyColumnOffset], &value)
+				checksumData = t.appendInChangeColForChecksum(sctx, h, checksumData, col.ToInfo(), &newData[col.DependencyColumnOffset], &value)
 			} else if needChecksum {
-				checksumData = t.appendNonPublicColForChecksum(sctx, checksumData, col.ToInfo(), &value)
+				checksumData = t.appendNonPublicColForChecksum(sctx, h, checksumData, col.ToInfo(), &value)
 			}
 		} else {
 			value = newData[col.Offset]
-			checksumData = t.appendPublicColForChecksum(sctx, checksumData, col.ToInfo(), &value)
+			checksumData = t.appendPublicColForChecksum(sctx, h, checksumData, col.ToInfo(), &value)
 		}
 		if !t.canSkip(col, &value) {
 			colIDs = append(colIDs, col.ID)
@@ -493,7 +493,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, checksumData, writeBufs.RowValBuf)
+	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, h, checksumData, writeBufs.RowValBuf)
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	if err != nil {
 		return err
@@ -845,7 +845,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	defer memBuffer.Cleanup(sh)
 
 	sessVars := sctx.GetSessionVars()
-	checksumData := t.initChecksumData(sctx)
+	checksumData := t.initChecksumData(sctx, recordID)
 	needChecksum := len(checksumData) > 0
 
 	for _, col := range t.Columns {
@@ -858,13 +858,13 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 					if err != nil {
 						return nil, err
 					}
-					checksumData = t.appendInChangeColForChecksum(sctx, checksumData, col.ToInfo(), &r[col.DependencyColumnOffset], &v)
+					checksumData = t.appendInChangeColForChecksum(sctx, recordID, checksumData, col.ToInfo(), &r[col.DependencyColumnOffset], &v)
 				} else {
 					v, err := table.GetColOriginDefaultValue(sctx, col.ToInfo())
 					if err != nil {
 						return nil, err
 					}
-					checksumData = t.appendNonPublicColForChecksum(sctx, checksumData, col.ToInfo(), &v)
+					checksumData = t.appendNonPublicColForChecksum(sctx, recordID, checksumData, col.ToInfo(), &v)
 				}
 			}
 			continue
@@ -884,12 +884,12 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			}
 			row = append(row, value)
 			colIDs = append(colIDs, col.ID)
-			checksumData = t.appendInChangeColForChecksum(sctx, checksumData, col.ToInfo(), &r[col.DependencyColumnOffset], &value)
+			checksumData = t.appendInChangeColForChecksum(sctx, recordID, checksumData, col.ToInfo(), &r[col.DependencyColumnOffset], &value)
 			continue
 		}
 		if col.State == model.StatePublic {
 			value = r[col.Offset]
-			checksumData = t.appendPublicColForChecksum(sctx, checksumData, col.ToInfo(), &value)
+			checksumData = t.appendPublicColForChecksum(sctx, recordID, checksumData, col.ToInfo(), &value)
 		} else {
 			// col.ChangeStateInfo must be nil here.
 			// because `col.State != model.StatePublic` is true here, if col.ChangeStateInfo is not nil, the col should
@@ -913,7 +913,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 					r = append(r, value)
 				}
 			}
-			checksumData = t.appendNonPublicColForChecksum(sctx, checksumData, col.ToInfo(), &value)
+			checksumData = t.appendNonPublicColForChecksum(sctx, recordID, checksumData, col.ToInfo(), &value)
 		}
 		if !t.canSkip(col, &value) {
 			colIDs = append(colIDs, col.ID)
@@ -927,7 +927,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	logutil.BgLogger().Debug("addRecord",
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, checksumData, writeBufs.RowValBuf)
+	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, recordID, checksumData, writeBufs.RowValBuf)
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	if err != nil {
 		return nil, err
@@ -1718,7 +1718,7 @@ func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation 
 
 // initChecksumData allocates data for checksum calculation, returns nil if checksum is disabled or unavailable. The
 // length of returned data can be considered as the number of checksums we need to write.
-func (t *TableCommon) initChecksumData(sctx sessionctx.Context) [][]rowcodec.ColData {
+func (t *TableCommon) initChecksumData(sctx sessionctx.Context, h kv.Handle) [][]rowcodec.ColData {
 	if !sctx.GetSessionVars().IsRowLevelChecksumEnabled() {
 		return nil
 	}
@@ -1726,7 +1726,7 @@ func (t *TableCommon) initChecksumData(sctx sessionctx.Context) [][]rowcodec.Col
 	if numNonPubCols > 1 {
 		logWithContext(sctx, logutil.BgLogger().Warn,
 			"skip checksum since the number of non-public columns is greater than 1",
-			zap.Int64("tblID", t.meta.ID), zap.Any("cols", t.meta.Columns))
+			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("cols", t.meta.Columns))
 		return nil
 	}
 	return make([][]rowcodec.ColData, 1+numNonPubCols)
@@ -1736,7 +1736,7 @@ func (t *TableCommon) initChecksumData(sctx sessionctx.Context) [][]rowcodec.Col
 // and it will be reset for each col, so do NOT pass a buf that contains data you may use later. If the capacity of
 // `buf` is enough, it gets returned directly, otherwise a new bytes with larger capacity will be returned, and you can
 // hold the returned buf for later use (to avoid memory allocation).
-func (t *TableCommon) calcChecksums(sctx sessionctx.Context, data [][]rowcodec.ColData, buf []byte) ([]uint32, []byte) {
+func (t *TableCommon) calcChecksums(sctx sessionctx.Context, h kv.Handle, data [][]rowcodec.ColData, buf []byte) ([]uint32, []byte) {
 	if len(data) == 0 {
 		return nil, buf
 	}
@@ -1750,7 +1750,8 @@ func (t *TableCommon) calcChecksums(sctx sessionctx.Context, data [][]rowcodec.C
 		buf = row.Data
 		if err != nil {
 			logWithContext(sctx, logutil.BgLogger().Error,
-				"skip checksum due to encode error", zap.Int64("tblID", t.meta.ID), zap.Error(err))
+				"skip checksum due to encode error",
+				zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Error(err))
 			return nil, buf
 		}
 		checksums[i] = checksum
@@ -1761,14 +1762,15 @@ func (t *TableCommon) calcChecksums(sctx sessionctx.Context, data [][]rowcodec.C
 // appendPublicColForChecksum appends a public column data for checksum. If the column is in changing, that is, it's the
 // old column of an on-going modify-column ddl, then skip it since it will be handle by `appendInChangeColForChecksum`.
 func (t *TableCommon) appendPublicColForChecksum(
-	sctx sessionctx.Context, data [][]rowcodec.ColData, c *model.ColumnInfo, d *types.Datum,
+	sctx sessionctx.Context, h kv.Handle, data [][]rowcodec.ColData, c *model.ColumnInfo, d *types.Datum,
 ) [][]rowcodec.ColData {
 	if len(data) == 0 { // no need for checksum
 		return nil
 	}
 	if c.State != model.StatePublic { // assert col is public
 		logWithContext(sctx, logutil.BgLogger().Error,
-			"skip checksum due to inconsistent column state", zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
+			"skip checksum due to inconsistent column state",
+			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
 		return nil
 	}
 	for _, offset := range t.dependencyColumnOffsets {
@@ -1791,18 +1793,20 @@ func (t *TableCommon) appendPublicColForChecksum(
 // value of this column. The extra checksum shall be calculated without this non-public column, thus nothing to do with
 // data[1].
 func (t *TableCommon) appendNonPublicColForChecksum(
-	sctx sessionctx.Context, data [][]rowcodec.ColData, c *model.ColumnInfo, d *types.Datum,
+	sctx sessionctx.Context, h kv.Handle, data [][]rowcodec.ColData, c *model.ColumnInfo, d *types.Datum,
 ) [][]rowcodec.ColData {
 	if size := len(data); size == 0 { // no need for checksum
 		return nil
 	} else if size == 1 { // assert that 2 checksums are required
 		logWithContext(sctx, logutil.BgLogger().Error,
-			"skip checksum due to inconsistent length of column data", zap.Int64("tblID", t.meta.ID))
+			"skip checksum due to inconsistent length of column data",
+			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID))
 		return nil
 	}
 	if c.State == model.StatePublic || c.ChangeStateInfo != nil { // assert col is not public and is not in changing
 		logWithContext(sctx, logutil.BgLogger().Error,
-			"skip checksum due to inconsistent column state", zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
+			"skip checksum due to inconsistent column state",
+			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
 		return nil
 	}
 	data[0] = appendColForChecksum(data[0], t, c, d)
@@ -1814,18 +1818,20 @@ func (t *TableCommon) appendNonPublicColForChecksum(
 // there is a non-public column. The first checksum should be calculate with the old version of this column and the extra
 // checksum should be calculated with the new version of column.
 func (t *TableCommon) appendInChangeColForChecksum(
-	sctx sessionctx.Context, data [][]rowcodec.ColData, c *model.ColumnInfo, oldVal *types.Datum, newVal *types.Datum,
+	sctx sessionctx.Context, h kv.Handle, data [][]rowcodec.ColData, c *model.ColumnInfo, oldVal *types.Datum, newVal *types.Datum,
 ) [][]rowcodec.ColData {
 	if size := len(data); size == 0 { // no need for checksum
 		return nil
 	} else if size == 1 { // assert that 2 checksums are required
 		logWithContext(sctx, logutil.BgLogger().Error,
-			"skip checksum due to inconsistent length of column data", zap.Int64("tblID", t.meta.ID))
+			"skip checksum due to inconsistent length of column data",
+			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID))
 		return nil
 	}
 	if c.State == model.StatePublic || c.ChangeStateInfo == nil { // assert col is not public and is in changing
 		logWithContext(sctx, logutil.BgLogger().Error,
-			"skip checksum due to inconsistent column state", zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
+			"skip checksum due to inconsistent column state",
+			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
 		return nil
 	}
 	// calculate the checksum with the old version of col
