@@ -74,6 +74,7 @@ func TestMetricsRegister(t *testing.T) {
 	assert.True(t, r.Unregister(m.BlockDeliverBytesHistogram))
 	assert.True(t, r.Unregister(m.BlockDeliverKVPairsHistogram))
 	assert.True(t, r.Unregister(m.ChecksumSecondsHistogram))
+	assert.True(t, r.Unregister(m.SSTSecondsHistogram))
 	assert.True(t, r.Unregister(m.LocalStorageUsageBytesGauge))
 	assert.True(t, r.Unregister(m.ProgressGauge))
 }
@@ -101,6 +102,7 @@ func TestMetricsUnregister(t *testing.T) {
 	assert.False(t, r.Unregister(m.BlockDeliverBytesHistogram))
 	assert.False(t, r.Unregister(m.BlockDeliverKVPairsHistogram))
 	assert.False(t, r.Unregister(m.ChecksumSecondsHistogram))
+	assert.False(t, r.Unregister(m.SSTSecondsHistogram))
 	assert.False(t, r.Unregister(m.LocalStorageUsageBytesGauge))
 	assert.False(t, r.Unregister(m.ProgressGauge))
 }
