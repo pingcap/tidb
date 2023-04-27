@@ -254,21 +254,30 @@ func newDrainResult() DrainResult {
 // fileterOutRanges filter out the range from `drained-range` that is overlapped with ranges in the `range-tree`
 func (b *Batcher) filterOutRanges(tree rtree.RangeTree, drained []rtree.Range) []rtree.Range {
 	newRanges := make([]rtree.Range, 0, len(drained))
-	progress := int64(0)
+	progress := int(0)
+	totalKVs := uint64(0)
+	totalBytes := uint64(0)
 	for _, rg := range drained {
 		if r := tree.Find(&rg); r != nil {
 			// The range is overlapped with ranges in the tree,
 			// so skip it and update the summary information.
-			progress += 2 // split/scatter + download/ingest
+			progress += 1
 			for _, f := range rg.Files {
-				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
-				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+				totalKVs += f.TotalKvs
+				totalBytes += f.TotalBytes
 			}
 		} else {
 			newRanges = append(newRanges, rg)
 		}
 	}
-	b.updateCh.IncBy(progress)
+	if progress > 0 {
+		// split/scatter + download/ingest
+		b.updateCh.IncBy(int64(progress) * 2)
+		summary.CollectSuccessUnit(summary.TotalKV, progress, totalKVs)
+		summary.CollectSuccessUnit(summary.CheckpointSkipTotalKV, progress, totalKVs)
+		summary.CollectSuccessUnit(summary.TotalBytes, progress, totalBytes)
+		summary.CollectSuccessUnit(summary.CheckpointSkipTotalBytes, progress, totalBytes)
+	}
 	return newRanges
 }
 

@@ -1159,7 +1159,10 @@ func RunStreamRestore(
 		}
 		cfg.Config.Storage = logStorage
 	} else {
-		_, err := glue.GetConsole(g).Out().Write([]byte(fmt.Sprintf("%s command is skipped due to checkpoint mode for restore\n", FullRestoreCmd)))
+		skipMsg := []byte(fmt.Sprintf("%s command is skipped due to checkpoint mode for restore\n", FullRestoreCmd))
+		if _, err := glue.GetConsole(g).Out().Write(skipMsg); err != nil {
+			return errors.Trace(err)
+		}
 		if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
 			log.Info("load tiflash records from checkpoint")
 			if err != nil {
@@ -1185,10 +1188,12 @@ func restoreStream(
 	logMinTS, logMaxTS uint64,
 ) (err error) {
 	var (
-		totalKVCount uint64
-		totalSize    uint64
-		mu           sync.Mutex
-		startTime    = time.Now()
+		totalKVCount           uint64
+		totalSize              uint64
+		checkpointTotalKVCount uint64
+		checkpointTotalSize    uint64
+		mu                     sync.Mutex
+		startTime              = time.Now()
 	)
 	defer func() {
 		if err != nil {
@@ -1200,7 +1205,9 @@ func restoreStream(
 				zap.String("restore-from", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
 				zap.String("restore-to", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
 				zap.Uint64("total-kv-count", totalKVCount),
+				zap.Uint64("checkpoint-skip-total-kv-count", checkpointTotalKVCount),
 				zap.String("total-size", units.HumanSize(float64(totalSize))),
+				zap.String("checkpoint-skip-total-size", units.HumanSize(float64(checkpointTotalSize))),
 				zap.String("average-speed", units.HumanSize(float64(totalSize)/totalDureTime.Seconds())+"/s"),
 			)
 		}
@@ -1373,7 +1380,15 @@ func restoreStream(
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		if cfg.UseCheckpoint {
-			logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, taskName, updateStats, p.Inc)
+			updateStatsWithCheckpoint := func(kvCount, size uint64) {
+				mu.Lock()
+				defer mu.Unlock()
+				totalKVCount += kvCount
+				totalSize += size
+				checkpointTotalKVCount += kvCount
+				checkpointTotalSize += size
+			}
+			logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, taskName, updateStatsWithCheckpoint, p.Inc)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -28,6 +28,10 @@ const (
 	BackupDataSize = "backup data size(after compressed)"
 	// RestoreDataSize is a field we collection after restore finish
 	RestoreDataSize = "restore data size(after compressed)"
+	// CheckpointSkipTotalKV is a field we skip during backup/restore
+	CheckpointSkipTotalKV = "checkpoint skip total kv"
+	// CheckpointSkipTotalBytes is a field we skip during backup/restore
+	CheckpointSkipTotalBytes = "checkpoint skip total bytes"
 )
 
 // LogCollector collects infos into summary log.
