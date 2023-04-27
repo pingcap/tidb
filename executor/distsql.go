@@ -765,6 +765,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		workerID := i
 		worker := &tableWorker{
+			workerID:        workerID,
 			idxLookup:       e,
 			workCh:          workCh,
 			finished:        e.finished,
@@ -1138,6 +1139,7 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *
 
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableWorker struct {
+	workerID  int
 	idxLookup *IndexLookUpExecutor
 	workCh    <-chan *lookupTableTask
 	finished  <-chan struct{}
@@ -1342,6 +1344,8 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		}
 	}
 
+	chunksDone := 0
+	rowsDone := 0
 	for {
 		err := Next(ctx, tableReader, chk)
 		if err != nil {
@@ -1366,6 +1370,17 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				return err
 			}
 			break
+		}
+
+		// Report progress every 1000 chunks (1_000_000 rows)
+		if chunksDone%1000 == 0 {
+			logutil.Logger(ctx).Info("Comparing index with table data",
+				zap.String("table", tblInfo.Name.String()),
+				zap.String("index", w.idxLookup.index.Name.O),
+				zap.Int("workerID", w.workerID),
+				zap.Int("chunkSize", chk.NumRows()),
+				zap.Int("chunksDone", chunksDone),
+				zap.Int("rowsDone", rowsDone))
 		}
 
 		iter := chunk.NewIterator4Chunk(chk)
@@ -1414,6 +1429,8 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				}
 			}
 		}
+		chunksDone += 1
+		rowsDone += chk.NumRows()
 	}
 	return nil
 }
