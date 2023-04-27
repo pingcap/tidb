@@ -369,11 +369,15 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			region.Id, leaderID)
 	}
 
+	takeTime := time.Since(begin)
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
 		zap.Int64("buf_size", bytesBuf.TotalSize()),
-		zap.Stringer("takeTime", time.Since(begin)))
+		zap.Stringer("takeTime", takeTime))
+	if m, ok := metric.FromContext(ctx); ok {
+		m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
+	}
 
 	j.writeResult = &tikvWriteResult{
 		sstMeta:           leaderPeerMetas,
@@ -390,7 +394,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 // set job to a proper stage with nil error returned.
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
-func (local *Backend) ingest(ctx context.Context, j *regionJob) error {
+func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 	if j.stage != wrote {
 		return nil
 	}
@@ -405,6 +409,15 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) error {
 	if len(j.writeResult.sstMeta) == 0 {
 		j.convertStageTo(ingested)
 		return nil
+	}
+
+	if m, ok := metric.FromContext(ctx); ok {
+		begin := time.Now()
+		defer func() {
+			if err == nil {
+				m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessIngest).Observe(time.Since(begin).Seconds())
+			}
+		}()
 	}
 
 	for retry := 0; retry < maxRetryTimes; retry++ {
