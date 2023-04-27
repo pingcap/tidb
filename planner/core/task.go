@@ -1374,7 +1374,7 @@ func (p *PhysicalTopN) checkOrderPropForSubIndexScan(idxCols []*expression.Colum
 				idxPos++
 				break
 			}
-			if len(constColsByCond) == 0 || idxPos >= len(constColsByCond) || !constColsByCond[idxPos] {
+			if idxPos >= len(constColsByCond) || !constColsByCond[idxPos] {
 				found = false
 				break
 			}
