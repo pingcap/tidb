@@ -123,6 +123,9 @@ func (b *builtinGroupingImplSig) getMetaGroupingID() int64 {
 }
 
 func (b *builtinGroupingImplSig) checkMetadata() error {
+	if !b.isMetaInited {
+		return errors.Errorf("Meta data hasn't been initialized")
+	}
 	mode := b.getGroupingMode()
 	grouping_ids := b.getMetaGroupingMarks()
 	if mode != tipb.GroupingMode_ModeBitAnd && mode != tipb.GroupingMode_ModeNumericCmp && mode != tipb.GroupingMode_ModeNumericSet {
