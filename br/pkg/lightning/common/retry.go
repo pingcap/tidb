@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	goerrors "errors"
 	"io"
 	"net"
 	"os"
@@ -101,11 +102,8 @@ func isSingleRetryableError(err error) bool {
 		if nerr.Timeout() {
 			return true
 		}
-		if cause, ok := nerr.(*net.OpError); ok {
-			syscallErr, ok := cause.Unwrap().(*os.SyscallError)
-			if ok {
-				return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
-			}
+		if syscallErr, ok := goerrors.Unwrap(err).(*os.SyscallError); ok {
+			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
 		}
 		return false
 	case *mysql.MySQLError:
