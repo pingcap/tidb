@@ -238,13 +238,6 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 }
 
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
-	e := &BRIEExec{
-		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
-		info: &brieTaskInfo{
-			kind: s.Kind,
-		},
-	}
-
 	if s.Kind == ast.BRIEKindShowBackupMeta {
 		return execOnce(&showMetaExec{
 			baseExecutor: newBaseExecutor(b.ctx, schema, 0),
@@ -264,6 +257,13 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			baseExecutor: newBaseExecutor(b.ctx, schema, 0),
 			targetID:     uint64(s.JobID),
 		}
+	}
+
+	e := &BRIEExec{
+		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
+		info: &brieTaskInfo{
+			kind: s.Kind,
+		},
 	}
 
 	tidbCfg := config.GetGlobalConfig()
@@ -398,7 +398,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	return e
 }
 
-// oneshotExecutor warps a executor, making its `Next` would only be called once.
+// oneshotExecutor wraps a executor, making its `Next` would only be called once.
 type oneshotExecutor struct {
 	Executor
 	finished bool
