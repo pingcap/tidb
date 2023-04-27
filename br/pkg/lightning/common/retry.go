@@ -17,9 +17,9 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	goerrors "errors"
 	"io"
 	"net"
-	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -102,17 +102,7 @@ func isSingleRetryableError(err error) bool {
 		if nerr.Timeout() {
 			return true
 		}
-		var (
-			syscallErr *os.SyscallError
-			ok         bool
-		)
-		switch cause := nerr.(type) {
-		case *net.OpError:
-			syscallErr, ok = cause.Unwrap().(*os.SyscallError)
-		case *url.Error:
-			syscallErr, ok = cause.Unwrap().(*os.SyscallError)
-		}
-		if ok {
+		if syscallErr, ok := goerrors.Unwrap(err).(*os.SyscallError); ok {
 			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
 		}
 		return false
