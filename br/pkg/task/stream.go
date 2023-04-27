@@ -1158,13 +1158,15 @@ func RunStreamRestore(
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
-	} else if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
-		log.Info("load tiflash records from checkpoint")
+	} else {
 		_, err := glue.GetConsole(g).Out().Write([]byte(fmt.Sprintf("%s command is skipped due to checkpoint mode for restore\n", FullRestoreCmd)))
-		if err != nil {
-			return errors.Trace(err)
+		if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
+			log.Info("load tiflash records from checkpoint")
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.tiflashRecorder.Load(curTaskInfo.TiFlashItems)
 		}
-		cfg.tiflashRecorder.Load(curTaskInfo.TiFlashItems)
 	}
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
@@ -1274,7 +1276,7 @@ func restoreStream(
 	var taskName string
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
 	if cfg.UseCheckpoint {
-		taskName := cfg.generateLogRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
+		taskName = cfg.generateLogRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
 		if err != nil {
 			return errors.Trace(err)

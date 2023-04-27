@@ -2975,7 +2975,7 @@ func (rc *Client) restoreMetaKvEntries(
 		failpoint.Inject("failed-when-restore-N-metakv", func(v failpoint.Value) {
 			j := v.(int)
 			if i+1 == j {
-				failpoint.Return(errors.Errorf("failpoint: failed when restore %d metakv", j))
+				failpoint.Return(0, 0, errors.Errorf("failpoint: failed when restore %d metakv", j))
 			}
 		})
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {

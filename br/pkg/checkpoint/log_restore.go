@@ -63,7 +63,7 @@ func StartCheckpointRunnerForLogRestore(ctx context.Context,
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, 0)
+	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, 0)
 	return runner, nil
 }
 

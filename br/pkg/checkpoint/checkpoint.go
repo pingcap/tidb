@@ -51,9 +51,9 @@ type flushPosition struct {
 
 const MaxChecksumTotalCost float64 = 60.0
 
-const tickDurationForFlush = 30 * time.Second
+const defaultTickDurationForFlush = 30 * time.Second
 
-const tickDurationForLock = 4 * time.Minute
+const defaultTickDurationForLock = 4 * time.Minute
 
 const lockTimeToLive = 5 * time.Minute
 
@@ -465,6 +465,10 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 		if tickDurationForLock > 0 {
 			tickDurationForLock = 1 * time.Second
 		}
+		log.Info("adjust the tick duration for flush or lock",
+			zap.Duration("flush", tickDurationForFlush),
+			zap.Duration("lock", tickDurationForLock),
+		)
 	})
 	r.wg.Add(1)
 	checkpointLoop := func(ctx context.Context) {
