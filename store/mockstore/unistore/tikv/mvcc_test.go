@@ -712,6 +712,15 @@ func TestCheckTxnStatus(t *testing.T) {
 	require.Equal(t, uint64(41), resCommitTs)
 	require.NoError(t, err)
 	require.Equal(t, kvrpcpb.Action_NoAction, action)
+
+	// check on mismatching primary
+	startTs = 43
+	callerStartTs = 44
+	currentTs = 44
+	MustAcquirePessimisticLock([]byte("another_key"), pk, startTs, startTs, store)
+	_, _, _, err = CheckTxnStatus(pk, startTs, callerStartTs, currentTs, true, store)
+	require.IsType(t, &kverrors.ErrPrimaryMismatch{}, errors.Cause(err))
+	MustPessimisticRollback(pk, startTs, startTs, store)
 }
 
 func TestCheckSecondaryLocksStatus(t *testing.T) {
