@@ -204,7 +204,8 @@ func TestPDRequestRetry(t *testing.T) {
 	require.Error(t, reqErr)
 	ts.Close()
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/pdutil/InjectClosed", fmt.Sprintf("return(%d)", pdRequestRetryTime-1)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/pdutil/InjectClosed",
+		fmt.Sprintf("return(%d)", pdRequestRetryTime-1)))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/pdutil/InjectClosed"))
 	}()
