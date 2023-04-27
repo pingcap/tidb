@@ -42,8 +42,8 @@ func BuildLockErr(key []byte, lock *mvcc.Lock) *ErrLocked {
 func (e *ErrLocked) Error() string {
 	lock := e.Lock
 	return fmt.Sprintf(
-		"key is locked, key: %q, Type: %v, primary: %q, startTS: %v, forUpdateTS: %v, useAsyncCommit: %v",
-		e.Key, lock.Op, lock.Primary, lock.StartTS, lock.ForUpdateTS, lock.UseAsyncCommit,
+		"key is locked, key: %v, lock: %v",
+		hex.EncodeToString(e.Key), lock.String(),
 	)
 }
 
@@ -132,3 +132,30 @@ type ErrTxnNotFound struct {
 func (e *ErrTxnNotFound) Error() string {
 	return "txn not found"
 }
+<<<<<<< HEAD:store/mockstore/unistore/tikv/errors.go
+=======
+
+// ErrAssertionFailed is returned if any assertion fails on a transaction request.
+type ErrAssertionFailed struct {
+	StartTS          uint64
+	Key              []byte
+	Assertion        kvrpcpb.Assertion
+	ExistingStartTS  uint64
+	ExistingCommitTS uint64
+}
+
+func (e *ErrAssertionFailed) Error() string {
+	return fmt.Sprintf("AssertionFailed { StartTS: %v, Key: %v, Assertion: %v, ExistingStartTS: %v, ExistingCommitTS: %v }",
+		e.StartTS, hex.EncodeToString(e.Key), e.Assertion.String(), e.ExistingStartTS, e.ExistingCommitTS)
+}
+
+// ErrPrimaryMismatch is returned if CheckTxnStatus request is sent to a secondary lock.
+type ErrPrimaryMismatch struct {
+	Key  []byte
+	Lock *mvcc.Lock
+}
+
+func (e *ErrPrimaryMismatch) Error() string {
+	return fmt.Sprintf("primary mismatch, key: %v, lock: %v", hex.EncodeToString(e.Key), e.Lock.String())
+}
+>>>>>>> 9b9796fc5c8 (unistore: Adjust some behaviors to be consistent with TiKV (#43397)):store/mockstore/unistore/tikv/kverrors/errors.go
