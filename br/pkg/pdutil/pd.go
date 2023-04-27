@@ -168,9 +168,10 @@ func pdRequestWithCode(
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	resp, err := cli.Do(req)
+	var resp *http.Response
 	count := 0
 	for {
+		resp, err = cli.Do(req)
 		count++
 		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
 			if failTimes, ok := v.(int); ok && count <= failTimes {
@@ -180,14 +181,14 @@ func pdRequestWithCode(
 				}
 			}
 		})
-		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) || (err != nil && !common.IsRetryableError(err)) {
+		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
+			(err != nil && !common.IsRetryableError(err)) {
 			break
 		}
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
 		time.Sleep(pdRequestRetryInterval())
-		resp, err = cli.Do(req)
 	}
 	if err != nil {
 		return 0, nil, errors.Trace(err)
