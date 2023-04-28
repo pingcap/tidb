@@ -1108,8 +1108,14 @@ func minCmp(ctx sessionctx.Context, lowVal []types.Datum, columnsPruner *rangeCo
 						}
 					}
 				case types.ETDatetime:
-					if con.Value.GetMysqlTime().IsZero() {
-						return false
+					if con.RetType.EvalType() == types.ETDatetime {
+						if con.Value.GetMysqlTime().IsZero() {
+							return false
+						}
+					} else if con.RetType.EvalType() == types.ETString {
+						if len(con.Value.GetString()) == 0 {
+							return false
+						}
 					}
 				case types.ETString:
 					if len(con.Value.GetString()) == 0 {

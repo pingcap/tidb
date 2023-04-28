@@ -453,3 +453,25 @@ func TestIssue33231(t *testing.T) {
 		Sort().
 		Check(testkit.Rows("6 beautiful curran 6 vigorous rhodes", "7 affectionate curie 7 sweet aryabhata", "7 epic kalam 7 sweet aryabhata"))
 }
+
+func TestIssue43459(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database issue43459")
+	defer tk.MustExec("drop database issue43459")
+	tk.MustExec("use issue43459")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec(`CREATE TABLE test1 (ID varchar(50) NOT NULL,
+		PARTITION_NO int(11) NOT NULL DEFAULT '0',
+		CREATE_TIME datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (ID,PARTITION_NO,CREATE_TIME), 
+		KEY index_partition_no (PARTITION_NO)
+		) PARTITION BY RANGE COLUMNS(PARTITION_NO,CREATE_TIME)
+		(PARTITION 2023p1 VALUES LESS THAN (200000,'2023-01-01 00:00:00'),
+		PARTITION 2023p2 VALUES LESS THAN (300000,'2023-01-01 00:00:00')) `)
+	tk.MustExec(`insert into test1 values("uuid", 200000, "2022-12-29 12:00:00")`)
+	tk.MustExec(`analyze table test1`)
+	tk.MustQuery(`select * from test1`).Check(testkit.Rows("uuid 200000 2022-12-29 12:00:00"))
+	tk.MustQuery(`select * from test1 where partition_no = 200000;`).Check(testkit.Rows("uuid 200000 2022-12-29 12:00:00"))
+	tk.MustQuery(`select * from test1 where partition_no >= 200000;`).Check(testkit.Rows("uuid 200000 2022-12-29 12:00:00"))
+}
