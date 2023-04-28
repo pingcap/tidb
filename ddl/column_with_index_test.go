@@ -67,6 +67,31 @@ func TestDropColumnWithUniqCompositeIndex(t *testing.T) {
 	tk.MustExec("alter table t2 drop column b")
 }
 
+func TestDropColumnWithUniqAndNormalCompositeIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, c int, unique index i_ab(a, b), index i_ac(a, c))")
+	tk.MustExec("insert into t1 values(1, 1, 1), (2, 1, 2), (3, 1, 3)")
+	tk.MustGetErrCode("alter table t1 drop column a", errno.ErrDupEntry)
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a int, b int, c int, index i_ac(a, c), unique index i_ab(a, b))")
+	tk.MustExec("insert into t2 values(1, 1, 1), (2, 1, 2), (3, 1, 3)")
+	tk.MustGetErrCode("alter table t2 drop column a", errno.ErrDupEntry)
+
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (a int, b int, c int, index i_bc(b, c), unique index i_ab(a, b))")
+	tk.MustExec("insert into t3 values(1, 1, 1), (2, 1, 2), (3, 1, 3)")
+	tk.MustExec("alter table t3 drop column b")
+
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4 (a int, b int, c int, unique index i_ab(a, b), index i_bc(b, c))")
+	tk.MustExec("insert into t4 values(1, 1, 1), (2, 1, 2), (3, 1, 3)")
+	tk.MustExec("alter table t4 drop column b")
+}
+
 func TestDropColumnWithAutoIncrementColumnCoveredCompositeIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

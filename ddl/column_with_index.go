@@ -229,6 +229,21 @@ func dropColumnWithoutCompositeIndex(d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	return ver, errors.Trace(err)
 }
 
+func reorderCompositeIndexInfos(cidxInfos []*model.IndexInfo) []*model.IndexInfo {
+	var (
+		uniqIdxes   []*model.IndexInfo
+		normalIdxes []*model.IndexInfo
+	)
+	for _, info := range cidxInfos {
+		if info.Unique {
+			uniqIdxes = append(uniqIdxes, info)
+		} else {
+			normalIdxes = append(normalIdxes, info)
+		}
+	}
+	return append(uniqIdxes, normalIdxes...)
+}
+
 /*
  * Drop column with composite index job status:
  *
@@ -259,6 +274,7 @@ func dropColumnWithoutCompositeIndex(d *ddlCtx, t *meta.Meta, job *model.Job, tb
 // dropColumnWithoutCompositeIndex will run the drop column process and the column is covered by composite index
 func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, colInfo *model.ColumnInfo, idxInfos []*model.IndexInfo, cidxInfos []*model.IndexInfo, ifExists bool) (ver int64, err error) {
 	colOriginalState := colInfo.State
+	cidxInfos = reorderCompositeIndexInfos(cidxInfos)
 	if job.IsRollingback() {
 		// Handle rolling back
 		ctidxInfos := getTempCompositeIndexes(tblInfo, cidxInfos)
@@ -290,7 +306,10 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 		switch ctidxInfos[0].State {
 		case model.StateNone:
 			// none -> delete only
-			reorgTp := pickBackfillType(job)
+			reorgTp, err := pickBackfillType(w.ctx, job, ctidxInfos[0].Unique)
+			if err != nil {
+				break
+			}
 			if reorgTp.NeedMergeProcess() {
 				for _, idxInfo := range ctidxInfos {
 					// Increase telemetryAddIndexIngestUsage
@@ -355,11 +374,7 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 				if job.MultiSchemaInfo != nil {
 					done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, reorgIdxInfo)
 				} else {
-					if job.ReorgMeta.IsDistReorg {
-						done, ver, err = doReorgWorkForCreateIndexWithDistReorg(w, d, t, job, tbl, reorgIdxInfo)
-					} else {
-						done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, reorgIdxInfo)
-					}
+					done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, reorgIdxInfo)
 				}
 
 				if !done {
