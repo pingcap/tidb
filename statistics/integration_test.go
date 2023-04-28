@@ -658,3 +658,29 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestColumnStatsLazyLoad(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	originLease := h.Lease()
+	defer h.SetLease(originLease)
+	// Set `Lease` to `Millisecond` to enable column stats lazy load.
+	h.SetLease(time.Millisecond)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("analyze table t")
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	c1 := tblInfo.Columns[0]
+	c2 := tblInfo.Columns[1]
+	require.True(t, h.GetTableStats(tblInfo).Columns[c1.ID].IsAllEvicted())
+	require.True(t, h.GetTableStats(tblInfo).Columns[c2.ID].IsAllEvicted())
+	tk.MustExec("analyze table t")
+	require.True(t, h.GetTableStats(tblInfo).Columns[c1.ID].IsAllEvicted())
+	require.True(t, h.GetTableStats(tblInfo).Columns[c2.ID].IsAllEvicted())
+}
