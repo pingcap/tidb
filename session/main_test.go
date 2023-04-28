@@ -21,10 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/types"
@@ -34,15 +30,12 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 1)
-
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
 
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
 
 	SetSchemaLease(20 * time.Millisecond)
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -69,29 +62,9 @@ func TestMain(m *testing.M) {
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
 		time.Sleep(time.Second)
-		testDataMap.GenerateOutputIfNeeded()
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func GetClusteredIndexSuiteData() testdata.TestData {
-	return testDataMap["clustered_index_suite"]
-}
-
-func createStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	dom, err := BootstrapSession(store)
-	require.NoError(t, err)
-	return store, dom
-}
-
-func createSessionAndSetID(t *testing.T, store kv.Storage) Session {
-	se, err := CreateSession4Test(store)
-	se.SetConnectionID(sessionKitIDGenerator.Inc())
-	require.NoError(t, err)
-	return se
 }
 
 func mustExec(t *testing.T, se Session, sql string, args ...interface{}) {

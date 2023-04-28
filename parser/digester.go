@@ -294,6 +294,15 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 		return
 	}
 
+	// Aggressive reduce lists.
+	last4 := d.tokens.back(4)
+	if d.isGenericLists(last4) {
+		d.tokens.popBack(4)
+		currTok.tok = genericSymbolList
+		currTok.lit = "..."
+		return
+	}
+
 	// order by n => order by n
 	if currTok.tok == intLit {
 		if d.isOrderOrGroupBy() {
@@ -304,6 +313,25 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 	// 2 => ?
 	currTok.tok = genericSymbol
 	currTok.lit = "?"
+}
+
+func (d *sqlDigester) isGenericLists(last4 []token) bool {
+	if len(last4) < 4 {
+		return false
+	}
+	if !(last4[0].tok == genericSymbol || last4[0].tok == genericSymbolList) {
+		return false
+	}
+	if last4[1].lit != ")" {
+		return false
+	}
+	if !d.isComma(last4[2]) {
+		return false
+	}
+	if last4[3].lit != "(" {
+		return false
+	}
+	return true
 }
 
 func (d *sqlDigester) isPrefixByUnary(currTok int) (isUnary bool) {

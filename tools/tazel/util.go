@@ -41,8 +41,6 @@ func skipTazel(path string) bool {
 }
 
 func skipShardCount(path string) bool {
-	return strings.HasPrefix(path, "br") ||
-		strings.HasPrefix(path, "tests") ||
-		strings.HasPrefix(path, "dumpling") ||
+	return strings.HasPrefix(path, "tests") ||
 		strings.HasPrefix(path, "util")
 }

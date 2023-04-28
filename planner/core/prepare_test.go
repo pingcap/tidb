@@ -1237,6 +1237,7 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // insert-tmt can hit the cache and affect hit counter in this UT
 	pb := &dto.Metric{}
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()

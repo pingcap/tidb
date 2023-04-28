@@ -998,12 +998,12 @@ var AutoAnalyzeMinCnt int64 = 1000
 // TableAnalyzed checks if the table is analyzed.
 func TableAnalyzed(tbl *statistics.Table) bool {
 	for _, col := range tbl.Columns {
-		if col.Count > 0 {
+		if col.IsAnalyzed() {
 			return true
 		}
 	}
 	for _, idx := range tbl.Indices {
-		if idx.Histogram.Len() > 0 {
+		if idx.IsAnalyzed() {
 			return true
 		}
 	}
@@ -1325,8 +1325,8 @@ func formatBuckets(hg *statistics.Histogram, lowBkt, highBkt, idxCols int) strin
 }
 
 func colRangeToStr(c *statistics.Column, ran *ranger.Range, actual int64, factor float64) string {
-	lowCount, lowBkt := c.LessRowCountWithBktIdx(ran.LowVal[0])
-	highCount, highBkt := c.LessRowCountWithBktIdx(ran.HighVal[0])
+	lowCount, lowBkt := c.LessRowCountWithBktIdx(nil, ran.LowVal[0])
+	highCount, highBkt := c.LessRowCountWithBktIdx(nil, ran.HighVal[0])
 	return fmt.Sprintf("range: %s, actual: %d, expected: %d, buckets: {%s}", ran.String(), actual,
 		int64((highCount-lowCount)*factor), formatBuckets(&c.Histogram, lowBkt, highBkt, 0))
 }
@@ -1346,11 +1346,11 @@ func logForIndexRange(idx *statistics.Index, ran *ranger.Range, actual int64, fa
 		if err != nil {
 			return ""
 		}
-		return fmt.Sprintf("value: %s, actual: %d, expected: %d", str, actual, int64(float64(idx.QueryBytes(lb))*factor))
+		return fmt.Sprintf("value: %s, actual: %d, expected: %d", str, actual, int64(float64(idx.QueryBytes(nil, lb))*factor))
 	}
 	l, r := types.NewBytesDatum(lb), types.NewBytesDatum(rb)
-	lowCount, lowBkt := idx.LessRowCountWithBktIdx(l)
-	highCount, highBkt := idx.LessRowCountWithBktIdx(r)
+	lowCount, lowBkt := idx.LessRowCountWithBktIdx(nil, l)
+	highCount, highBkt := idx.LessRowCountWithBktIdx(nil, r)
 	return fmt.Sprintf("range: %s, actual: %d, expected: %d, histogram: {%s}", ran.String(), actual,
 		int64((highCount-lowCount)*factor), formatBuckets(&idx.Histogram, lowBkt, highBkt, len(idx.Info.Columns)))
 }
@@ -1378,7 +1378,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 		if err != nil {
 			continue
 		}
-		equalityCount := idx.QueryBytes(bytes)
+		equalityCount := idx.QueryBytes(nil, bytes)
 		rang := ranger.Range{
 			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
 			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
@@ -1536,7 +1536,7 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 		// `betweenRowCount` to compute the estimation since the ranges of feedback are all in `[l, r)`
 		// form, that is to say, we ignore the exclusiveness of ranges from `SplitRange` and just use
 		// its result of boundary values.
-		count := q.Hist.BetweenRowCount(r.LowVal[0], r.HighVal[0])
+		count := q.Hist.BetweenRowCount(nil, r.LowVal[0], r.HighVal[0])
 		// We have to include `NullCount` of histogram for [l, r) cases where l is null because `betweenRowCount`
 		// does not include null values of lower bound.
 		if i == 0 && lowIsNull {
@@ -1604,7 +1604,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 			logutil.BgLogger().Debug("encode keys fail", zap.Error(err))
 			continue
 		}
-		equalityCount := float64(idx.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.RealtimeCount)
+		equalityCount := float64(idx.QueryBytes(nil, bytes)) * idx.GetIncreaseFactor(t.RealtimeCount)
 		rang := &ranger.Range{
 			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
 			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
