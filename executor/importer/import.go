@@ -948,18 +948,23 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
-func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, error) {
+func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []stmtctx.SQLWarn, error) {
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
+	allWarnings := []stmtctx.SQLWarn{}
 	for _, assign := range e.ColumnAssignments {
 		newExpr, err := expression.RewriteAstExpr(sctx, assign.Expr, nil, nil, false)
+		// col assign expr warnings is static, we should generate it for each row processed.
+		// so we save it and clear it here.
+		allWarnings = append(allWarnings, sctx.GetSessionVars().StmtCtx.GetWarnings()...)
+		sctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		res = append(res, newExpr)
 	}
-	return res, nil
+	return res, allWarnings, nil
 }
 
 // JobImportParam is the param of the job import.

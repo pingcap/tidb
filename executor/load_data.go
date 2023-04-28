@@ -422,7 +422,7 @@ func (ji *logicalJobImporter) initEncodeCommitWorkers(e *LoadDataWorker) (err er
 			return err2
 		}
 		createdSessions = append(createdSessions, commitCore.ctx)
-		colAssignExprs, err2 := e.controller.CreateColAssignExprs(encodeCore.ctx)
+		colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(encodeCore.ctx)
 		if err2 != nil {
 			return err2
 		}
@@ -430,6 +430,7 @@ func (ji *logicalJobImporter) initEncodeCommitWorkers(e *LoadDataWorker) (err er
 			InsertValues:   encodeCore,
 			controller:     e.controller,
 			colAssignExprs: colAssignExprs,
+			exprWarnings:   exprWarnings,
 			killed:         &e.UserSctx.GetSessionVars().Killed,
 		}
 		encode.resetBatch()
@@ -588,6 +589,11 @@ func (ji *logicalJobImporter) Result() importer.JobImportResult {
 		numSkipped += commitStmtCtx.RecordRows() - commitStmtCtx.CopiedRows()
 	}
 
+	// col assign expr warnings is generated during init, it's static
+	// we need to generate it for each row processed.
+	colAssignExprWarnings := ji.encodeWorkers[0].exprWarnings
+	numWarnings += numRecords * uint64(len(colAssignExprWarnings))
+
 	if numWarnings > math.MaxUint16 {
 		numWarnings = math.MaxUint16
 	}
@@ -600,6 +606,9 @@ func (ji *logicalJobImporter) Result() importer.JobImportResult {
 	}
 	for _, w := range ji.commitWorkers {
 		n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
+	}
+	for i := 0; i < int(numRecords) && n < len(warns); i++ {
+		n += copy(warns[n:], colAssignExprWarnings)
 	}
 	return importer.JobImportResult{
 		Msg:          msg,
@@ -647,8 +656,11 @@ type encodeWorker struct {
 	*InsertValues
 	controller     *importer.LoadDataController
 	colAssignExprs []expression.Expression
-	killed         *uint32
-	rows           [][]types.Datum
+	// sessionCtx generate warnings when rewrite AST node into expression.
+	// we should generate such warnings for each row encoded.
+	exprWarnings []stmtctx.SQLWarn
+	killed       *uint32
+	rows         [][]types.Datum
 }
 
 // processStream always trys to build a parser from channel and process it. When

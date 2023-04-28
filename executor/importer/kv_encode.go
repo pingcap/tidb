@@ -63,7 +63,7 @@ func newTableKVEncoder(
 	}
 	// we need a non-nil TxnCtx to avoid panic when evaluating set clause
 	baseKVEncoder.SessionCtx.Vars.TxnCtx = new(variable.TransactionContext)
-	colAssignExprs, err := ti.CreateColAssignExprs(baseKVEncoder.SessionCtx)
+	colAssignExprs, _, err := ti.CreateColAssignExprs(baseKVEncoder.SessionCtx)
 	if err != nil {
 		return nil, err
 	}
