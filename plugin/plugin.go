@@ -19,10 +19,12 @@ import (
 	"path/filepath"
 	gplugin "plugin"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -306,14 +308,58 @@ var testHook *struct {
 	loadOne loadFn
 }
 
+type staticPlugins struct {
+	sync.Mutex
+	plugins map[string]func() *Manifest
+}
+
+// Add adds a new plugin
+func (p *staticPlugins) Add(pluginName string, plugin func() *Manifest) error {
+	p.Lock()
+	defer p.Unlock()
+	if p.plugins == nil {
+		p.plugins = make(map[string]func() *Manifest)
+	}
+
+	if _, ok := p.plugins[pluginName]; ok {
+		return errors.Errorf("plugin with name '%s' has already been registered to static plugins", pluginName)
+	}
+
+	p.plugins[pluginName] = plugin
+	return nil
+}
+
+// Get returns a registered plugin
+func (p *staticPlugins) Get(pluginName string) (m func() *Manifest, ok bool) {
+	p.Lock()
+	m, ok = p.plugins[pluginName]
+	p.Unlock()
+	return
+}
+
+// Clear clears all registered plugins
+func (p *staticPlugins) Clear() {
+	p.Lock()
+	p.plugins = nil
+	p.Unlock()
+}
+
+// StaticPlugins is a registry to register plugins for other packages without loading go plugin so
+var StaticPlugins staticPlugins
+
 func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 	pName, pVersion, err := pluginID.Decode()
 	if err != nil {
 		err = errors.Trace(err)
 		return
 	}
+
+	log.Info("start load plugin manifest", zap.String("plugin", string(pluginID)), zap.String("name", pName), zap.String("version", pVersion))
 	var manifest func() *Manifest
-	if testHook == nil {
+	var fromStatic bool
+	if manifest, fromStatic = StaticPlugins.Get(pName); fromStatic {
+		log.Info("plugin discovered from static plugins, use static one", zap.String("plugin", string(pluginID)))
+	} else if testHook == nil {
 		manifest, err = loadManifestByGoPlugin(&plugin, dir, pluginID)
 	} else {
 		manifest, err = testHook.loadOne(&plugin, dir, pluginID)
@@ -326,7 +372,7 @@ func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 		err = errInvalidPluginName.GenWithStackByArgs(string(pluginID), plugin.Name)
 		return
 	}
-	if strconv.Itoa(int(plugin.Version)) != pVersion {
+	if !fromStatic && strconv.Itoa(int(plugin.Version)) != pVersion {
 		err = errInvalidPluginVersion.GenWithStackByArgs(string(pluginID))
 		return
 	}
