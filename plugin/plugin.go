@@ -332,16 +332,16 @@ func (p *staticPlugins) Add(pluginName string, plugin func() *Manifest) error {
 // Get returns a registered plugin
 func (p *staticPlugins) Get(pluginName string) (m func() *Manifest, ok bool) {
 	p.Lock()
-	defer p.Unlock()
 	m, ok = p.plugins[pluginName]
+	p.Unlock()
 	return
 }
 
 // Clear clears all registered plugins
 func (p *staticPlugins) Clear() {
 	p.Lock()
-	defer p.Unlock()
 	p.plugins = nil
+	p.Unlock()
 }
 
 // StaticPlugins is a registry to register plugins for other packages without loading go plugin so
