@@ -1105,7 +1105,7 @@ func (local *local) WriteToTiKV(
 		}
 	}
 
-	// if there is not leader currently, we should directly return an error
+	// if there is no leader currently, we should directly return an error
 	if len(leaderPeerMetas) == 0 {
 		log.FromContext(ctx).Warn("write to tikv no leader", logutil.Region(region.Region), logutil.Leader(region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
