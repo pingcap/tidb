@@ -65,7 +65,7 @@ func StartCheckpointRestoreRunnerForTest(
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
-	runner.startCheckpointMainLoop(ctx, tick, 0)
+	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
 }
 
@@ -79,7 +79,7 @@ func StartCheckpointRunnerForRestore(
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, 0)
+	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
 	return runner, nil
 }
 

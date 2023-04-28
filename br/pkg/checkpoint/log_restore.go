@@ -50,7 +50,7 @@ func StartCheckpointLogRestoreRunnerForTest(
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
-	runner.startCheckpointMainLoop(ctx, tick, 0)
+	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
 }
 
@@ -63,7 +63,7 @@ func StartCheckpointRunnerForLogRestore(ctx context.Context,
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, 0)
+	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
 	return runner, nil
 }
 
@@ -178,7 +178,7 @@ func RemoveCheckpointDataForLogRestore(
 	clusterID uint64,
 ) error {
 	if err := removeCheckpointTaskInfoForLogRestore(ctx, s, clusterID); err != nil {
-		return errors.Annotatef(err, "failed to r emove task info file: cluster-id is %d", clusterID)
+		return errors.Annotatef(err, "failed to remove the task info file: cluster-id is %d", clusterID)
 	}
 	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
 	return removeCheckpointData(ctx, s, prefix)

@@ -1652,7 +1652,6 @@ func (rc *Client) execChecksum(
 
 	item, exists := rc.checkpointChecksum[tbl.Table.ID]
 	if !exists {
-		beginT := time.Now()
 		startTS, err := rc.GetTSWithRetry(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -1679,7 +1678,7 @@ func (rc *Client) execChecksum(
 			TotalBytes: checksumResp.TotalBytes,
 		}
 		if rc.checkpointRunner != nil {
-			err = rc.checkpointRunner.FlushChecksumItem(ctx, item, time.Since(beginT).Seconds())
+			err = rc.checkpointRunner.FlushChecksumItem(ctx, item)
 			if err != nil {
 				return errors.Trace(err)
 			}

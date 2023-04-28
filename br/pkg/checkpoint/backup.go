@@ -58,7 +58,7 @@ func StartCheckpointBackupRunnerForTest(
 	if err != nil {
 		return nil, errors.Annotate(err, "Failed to initialize checkpoint lock.")
 	}
-	runner.startCheckpointMainLoop(ctx, tick, tick)
+	runner.startCheckpointMainLoop(ctx, tick, tick, tick)
 	return runner, nil
 }
 
@@ -74,7 +74,7 @@ func StartCheckpointRunnerForBackup(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTickDurationForLock)
+	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, defaultTickDurationForLock)
 	return runner, nil
 }
 
