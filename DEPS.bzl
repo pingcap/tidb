@@ -4132,8 +4132,13 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:b6sIFrhNA8R5Q+geziSnAenDphJ+BZtHMkGgHyj472I=",
         version = "v2.0.8-0.20230419123920-35c1ee47c4f9",
+=======
+        sum = "h1:bsHddossVMw8NSwMj6ruEWoDxBiPTYsIq9t5wL3FcW4=",
+        version = "v2.0.8-0.20230428110356-62cc95123c00",
+>>>>>>> 275696aa449 (resource_control: Fix missing resource group name for kv_get requests (#43501))
     )
     go_repository(
         name = "com_github_tikv_pd",
