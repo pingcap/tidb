@@ -15,9 +15,14 @@
 package issuetest
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 // It's a case for index merge's order prop push down.
@@ -39,4 +44,28 @@ func TestIssue43178(t *testing.T) {
 	      ) ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin COMMENT='320f8401'`)
 	// Should not panic
 	tk.MustExec("explain select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where IsNull( `aa311c3c`.`b80b3746` ) or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95")
+}
+
+// It's a case for Columns in tableScan and indexScan with double reader
+func TestIssue43461(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index b(b), index b_c(b, c)) partition by hash(a) partitions 4;")
+	tk.MustExec("analyze table t")
+
+	stmt, err := parser.New().ParseOneStmt("select * from t use index(b) where b > 1 order by b limit 1", "", "")
+	require.NoError(t, err)
+
+	p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, domain.InfoSchema())
+	require.NoError(t, err)
+	require.NotNil(t, p)
+
+	idxLookUpPlan, ok := p.(*core.PhysicalLimit).Children()[0].(*core.PhysicalProjection).Children()[0].(*core.PhysicalIndexLookUpReader)
+	require.True(t, ok)
+
+	is := idxLookUpPlan.IndexPlans[0].(*core.PhysicalIndexScan)
+	ts := idxLookUpPlan.TablePlans[0].(*core.PhysicalTableScan)
+
+	require.NotEqual(t, is.Columns, ts.Columns)
 }
