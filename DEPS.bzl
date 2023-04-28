@@ -4164,8 +4164,13 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:uMwa1WlF51WU3capFUiTHjn7U71wiPHyRmdkde7GWlA=",
         version = "v2.0.8-0.20230524032653-1b2876693630",
+=======
+        sum = "h1:DQjgnd+43C2CWyUh4juc6ewsYLOqrSJuuqgM3kAo47E=",
+        version = "v2.0.8-0.20230427065546-c619a504747d",
+>>>>>>> e9184f7640d (grafana: add traffic metrics for staleread traffic (#43324))
     )
     go_repository(
         name = "com_github_tikv_pd",
