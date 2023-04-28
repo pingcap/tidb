@@ -229,6 +229,7 @@ func dropColumnWithoutCompositeIndex(d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	return ver, errors.Trace(err)
 }
 
+// reorder composite index infos make unique indexes at begins of array
 func reorderCompositeIndexInfos(cidxInfos []*model.IndexInfo) []*model.IndexInfo {
 	var (
 		uniqIdxes   []*model.IndexInfo
