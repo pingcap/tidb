@@ -57,8 +57,6 @@ func TestIssue43461(t *testing.T) {
 	stmt, err := parser.New().ParseOneStmt("select * from t use index(b) where b > 1 order by b limit 1", "", "")
 	require.NoError(t, err)
 
-	domain.InfoSchema()
-
 	p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, domain.InfoSchema())
 	require.NoError(t, err)
 	require.NotNil(t, p)
