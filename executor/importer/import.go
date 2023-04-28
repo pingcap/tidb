@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
+	"github.com/pingcap/tidb/expression"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -191,6 +193,9 @@ type ASTArgs struct {
 type LoadDataController struct {
 	*Plan
 	*ASTArgs
+
+	// used for sync column assignment expression generation.
+	colAssignMu sync.Mutex
 
 	Table table.Table
 
@@ -938,6 +943,23 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 		})
 	}
 	return res
+}
+
+// CreateColAssignExprs creates the column assignment expressions using session context.
+// RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
+// so we sync it.
+func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, error) {
+	e.colAssignMu.Lock()
+	defer e.colAssignMu.Unlock()
+	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
+	for _, assign := range e.ColumnAssignments {
+		newExpr, err := expression.RewriteAstExpr(sctx, assign.Expr, nil, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, newExpr)
+	}
+	return res, nil
 }
 
 // JobImportParam is the param of the job import.

@@ -422,10 +422,15 @@ func (ji *logicalJobImporter) initEncodeCommitWorkers(e *LoadDataWorker) (err er
 			return err2
 		}
 		createdSessions = append(createdSessions, commitCore.ctx)
+		colAssignExprs, err2 := e.controller.CreateColAssignExprs(encodeCore.ctx)
+		if err2 != nil {
+			return err2
+		}
 		encode := &encodeWorker{
-			InsertValues: encodeCore,
-			controller:   e.controller,
-			killed:       &e.UserSctx.GetSessionVars().Killed,
+			InsertValues:   encodeCore,
+			controller:     e.controller,
+			colAssignExprs: colAssignExprs,
+			killed:         &e.UserSctx.GetSessionVars().Killed,
 		}
 		encode.resetBatch()
 		encodeWorkers = append(encodeWorkers, encode)
@@ -640,9 +645,10 @@ func (ji *logicalJobImporter) Close() error {
 // encodeWorker is a sub-worker of LoadDataWorker that dedicated to encode data.
 type encodeWorker struct {
 	*InsertValues
-	controller *importer.LoadDataController
-	killed     *uint32
-	rows       [][]types.Datum
+	controller     *importer.LoadDataController
+	colAssignExprs []expression.Expression
+	killed         *uint32
+	rows           [][]types.Datum
 }
 
 // processStream always trys to build a parser from channel and process it. When
@@ -837,9 +843,9 @@ func (w *encodeWorker) parserData2TableData(
 
 		row = append(row, parserData[i])
 	}
-	for i := 0; i < len(w.controller.ColumnAssignments); i++ {
+	for i := 0; i < len(w.colAssignExprs); i++ {
 		// eval expression of `SET` clause
-		d, err := expression.EvalAstExpr(w.ctx, w.controller.ColumnAssignments[i].Expr)
+		d, err := w.colAssignExprs[i].Eval(chunk.Row{})
 		if err != nil {
 			if w.controller.Restrictive {
 				return nil, err
