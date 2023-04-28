@@ -6,5 +6,11 @@ go_test(
     srcs = ["planner_issue_test.go"],
     flaky = True,
     race = "on",
-    deps = ["//testkit"],
+    deps = [
+        "//parser",
+        "//planner",
+        "//planner/core",
+        "//testkit",
+        "@com_github_stretchr_testify//require",
+    ],
 )
