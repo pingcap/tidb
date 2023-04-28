@@ -259,6 +259,9 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL()
+	if config.GetGlobalConfig().Performance.ForceInitStats {
+		<-dom.StatsHandle().InitStatsDone
+	}
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()
@@ -709,7 +712,7 @@ func setGlobalVars() {
 
 	if len(cfg.TiDBEdition) > 0 {
 		versioninfo.TiDBEdition = cfg.TiDBEdition
-		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 5.7 compatible")
+		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 8.0 compatible")
 	}
 	if len(cfg.VersionComment) > 0 {
 		variable.SetSysVar(variable.VersionComment, cfg.VersionComment)

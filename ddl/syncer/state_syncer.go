@@ -132,7 +132,7 @@ func (s *serverStateSyncer) IsUpgradingState() bool {
 	return s.clusterState.State == StateUpgrading
 }
 
-func (s *serverStateSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) ([]*mvccpb.KeyValue, error) {
+func (*serverStateSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) ([]*mvccpb.KeyValue, error) {
 	var err error
 	var resp *clientv3.GetResponse
 	for i := 0; i < retryCnt; i++ {

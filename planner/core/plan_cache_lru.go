@@ -274,7 +274,9 @@ func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOp
 			continue
 		}
 		// table stats has changed
-		if plan.matchOpts.StatsVersionHash != matchOpts.StatsVersionHash {
+		// this check can be disabled by turning off system variable tidb_plan_cache_invalidation_on_fresh_stats
+		if l.sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats &&
+			plan.matchOpts.StatsVersionHash != matchOpts.StatsVersionHash {
 			continue
 		}
 
