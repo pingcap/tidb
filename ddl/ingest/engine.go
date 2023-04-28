@@ -109,6 +109,7 @@ func (ei *engineInfo) Clean() {
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return
 	}
 	ei.openedEngine = nil
 	err = ei.closeWriters()

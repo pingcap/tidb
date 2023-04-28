@@ -16,7 +16,7 @@ package dispatcher
 
 import (
 	"context"
-	"math/rand"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -401,9 +401,14 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		return nil
 	}
 
+	// Generate all available TiDB nodes for this global tasks.
+	serverNodes, err1 := GenerateSchedulerNodes(d.ctx)
+	if err1 != nil {
+		return err1
+	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
-	for _, meta := range metas {
-		instanceID, err := GetEligibleInstance(d.ctx)
+	for i, meta := range metas {
+		instanceID, err := GetEligibleInstance(serverNodes, i)
 		if err != nil {
 			logutil.BgLogger().Warn("get a eligible instance failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
 			return err
@@ -414,24 +419,33 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 }
 
 // GetEligibleInstance gets an eligible instance.
-func GetEligibleInstance(ctx context.Context) (string, error) {
+func GetEligibleInstance(serverNodes []*infosync.ServerInfo, pos int) (string, error) {
+	if pos >= len(serverNodes) && pos < 0 {
+		errMsg := fmt.Sprintf("available TiDB nodes range is 0 to %d, but request position: %d", len(serverNodes)-1, pos)
+		return "", errors.New(errMsg)
+	}
+	if len(serverNodes) == 0 {
+		return "", errors.New("no available TiDB node")
+	}
+	pos = pos % len(serverNodes)
+	return serverNodes[pos].ID, nil
+}
+
+// GenerateSchedulerNodes generate a eligible TiDB nodes.
+func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error) {
 	serverInfos, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(serverInfos) == 0 {
-		return "", errors.New("not found instance")
+		return nil, errors.New("not found instance")
 	}
 
-	// TODO: Consider valid instances, and then consider scheduling strategies.
-	num := rand.Intn(len(serverInfos))
-	for _, info := range serverInfos {
-		if num == 0 {
-			return info.ID, nil
-		}
-		num--
+	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
+	for _, serverInfo := range serverInfos {
+		serverNodes = append(serverNodes, serverInfo)
 	}
-	return "", errors.New("not found instance")
+	return serverNodes, nil
 }
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
