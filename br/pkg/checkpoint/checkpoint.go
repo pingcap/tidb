@@ -53,6 +53,8 @@ const MaxChecksumTotalCost float64 = 60.0
 
 const defaultTickDurationForFlush = 30 * time.Second
 
+const defaultTckDurationForChecksum = 5 * time.Second
+
 const defaultTickDurationForLock = 4 * time.Minute
 
 const lockTimeToLive = 5 * time.Minute
@@ -139,124 +141,6 @@ type ChecksumInfo struct {
 	DureTime time.Duration `json:"dure-time"`
 }
 
-type ChecksumRunner struct {
-	sync.Mutex
-
-	checkpointChecksumDir string
-	checksumItems         ChecksumItems
-
-	// a failpoint value to record how many times the checkpoint flushes checksum
-	flushCnt int
-
-	// when the total time cost is large than the threshold,
-	// begin to flush checksum
-	totalCost float64
-
-	err        error
-	wg         sync.WaitGroup
-	workerPool utils.WorkerPool
-}
-
-func NewChecksumRunner(checkpointChecksumDir string) *ChecksumRunner {
-	return &ChecksumRunner{
-		checkpointChecksumDir: checkpointChecksumDir,
-		workerPool:            *utils.NewWorkerPool(4, "checksum flush worker"),
-	}
-}
-
-func (cr *ChecksumRunner) RecordError(err error) {
-	cr.Lock()
-	cr.err = err
-	cr.Unlock()
-}
-
-// FlushChecksumItem save the checksum in the memory temporarily
-// and flush to the external storage if checksum take much time
-func (cr *ChecksumRunner) FlushChecksumItem(
-	ctx context.Context,
-	s storage.ExternalStorage,
-	checksumItem *ChecksumItem,
-	timeCost float64,
-) error {
-	var toBeFlushedChecksumItems *ChecksumItems = nil
-	cr.Lock()
-	if cr.err != nil {
-		err := cr.err
-		cr.Unlock()
-		return err
-	}
-	if cr.checksumItems.Items == nil {
-		// reset the checksumInfo
-		cr.totalCost = 0
-		cr.checksumItems.Items = make([]*ChecksumItem, 0)
-	}
-	cr.totalCost += timeCost
-	cr.checksumItems.Items = append(cr.checksumItems.Items, checksumItem)
-	// When the table is large, the time spent executing checksum will span
-	// several breakpoint persistence cycles. So we'd better to immediately persist
-	// the checksum of these large tables.
-	failpoint.Inject("checkpoint-more-quickly-flush", func(_ failpoint.Value) {
-		cr.totalCost = MaxChecksumTotalCost + 1
-	})
-	if cr.totalCost > MaxChecksumTotalCost {
-		toBeFlushedChecksumItems = &ChecksumItems{
-			Items: cr.checksumItems.Items,
-		}
-		cr.checksumItems.Items = nil
-		failpoint.Inject("failed-after-checkpoint-flushes-checksum-x-times", func(_ failpoint.Value) {
-			cr.flushCnt += 1
-		})
-	}
-	checksumDir := cr.checkpointChecksumDir
-	cr.Unlock()
-
-	// now lock is free
-	if toBeFlushedChecksumItems == nil {
-		return nil
-	}
-
-	// create a goroutine to flush checksumInfo to external storage
-	cr.wg.Add(1)
-	cr.workerPool.Apply(func() {
-		defer cr.wg.Done()
-
-		failpoint.Inject("failed-after-checkpoint-flushes-checksum-x-times", func(v failpoint.Value) {
-			errCnt := v.(int)
-			if errCnt >= cr.flushCnt {
-				cr.RecordError(errors.Errorf("failpoint: failed after checkpoint flushes checksum %d times", errCnt))
-				failpoint.Return()
-			}
-		})
-
-		content, err := json.Marshal(toBeFlushedChecksumItems)
-		if err != nil {
-			cr.RecordError(err)
-			return
-		}
-
-		checksum := sha256.Sum256(content)
-		checksumInfo := &ChecksumInfo{
-			Content:  content,
-			Checksum: checksum[:],
-			DureTime: summary.NowDureTime(),
-		}
-
-		data, err := json.Marshal(checksumInfo)
-		if err != nil {
-			cr.RecordError(err)
-			return
-		}
-
-		fname := fmt.Sprintf("%s/t%d_and__.cpt", checksumDir, checksumItem.TableID)
-		err = s.WriteFile(ctx, fname, data)
-		if err != nil {
-			cr.RecordError(err)
-			return
-		}
-	})
-	return nil
-}
-
 type GlobalTimer interface {
 	GetTS(context.Context) (int64, int64, error)
 }
@@ -265,18 +149,19 @@ type CheckpointRunner[K KeyType, V ValueType] struct {
 	flushPosition
 	lockId uint64
 
-	meta map[K]*RangeGroup[K, V]
-
-	checksumRunner *ChecksumRunner
+	meta     map[K]*RangeGroup[K, V]
+	checksum ChecksumItems
 
 	storage storage.ExternalStorage
 	cipher  *backuppb.CipherInfo
 	timer   GlobalTimer
 
-	appendCh chan *CheckpointMessage[K, V]
-	metaCh   chan map[K]*RangeGroup[K, V]
-	lockCh   chan struct{}
-	errCh    chan error
+	appendCh       chan *CheckpointMessage[K, V]
+	checksumCh     chan *ChecksumItem
+	metaCh         chan map[K]*RangeGroup[K, V]
+	checksumMetaCh chan ChecksumItems
+	lockCh         chan struct{}
+	errCh          chan error
 
 	wg sync.WaitGroup
 }
@@ -291,18 +176,19 @@ func newCheckpointRunner[K KeyType, V ValueType](
 	return &CheckpointRunner[K, V]{
 		flushPosition: f,
 
-		meta: make(map[K]*RangeGroup[K, V]),
-
-		checksumRunner: NewChecksumRunner(f.CheckpointChecksumDir),
+		meta:     make(map[K]*RangeGroup[K, V]),
+		checksum: ChecksumItems{Items: make([]*ChecksumItem, 0)},
 
 		storage: storage,
 		cipher:  cipher,
 		timer:   timer,
 
-		appendCh: make(chan *CheckpointMessage[K, V]),
-		metaCh:   make(chan map[K]*RangeGroup[K, V]),
-		lockCh:   make(chan struct{}),
-		errCh:    make(chan error, 1),
+		appendCh:       make(chan *CheckpointMessage[K, V]),
+		checksumCh:     make(chan *ChecksumItem),
+		metaCh:         make(chan map[K]*RangeGroup[K, V]),
+		checksumMetaCh: make(chan ChecksumItems),
+		lockCh:         make(chan struct{}),
+		errCh:          make(chan error, 1),
 	}
 }
 
@@ -312,7 +198,6 @@ func (r *CheckpointRunner[K, V]) FlushChecksum(
 	crc64xor uint64,
 	totalKvs uint64,
 	totalBytes uint64,
-	timeCost float64,
 ) error {
 	checksumItem := &ChecksumItem{
 		TableID:    tableID,
@@ -320,15 +205,21 @@ func (r *CheckpointRunner[K, V]) FlushChecksum(
 		TotalKvs:   totalKvs,
 		TotalBytes: totalBytes,
 	}
-	return r.FlushChecksumItem(ctx, checksumItem, timeCost)
+	return r.FlushChecksumItem(ctx, checksumItem)
 }
 
 func (r *CheckpointRunner[K, V]) FlushChecksumItem(
 	ctx context.Context,
 	checksumItem *ChecksumItem,
-	timeCost float64,
 ) error {
-	return r.checksumRunner.FlushChecksumItem(ctx, r.storage, checksumItem, timeCost)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-r.errCh:
+		return err
+	case r.checksumCh <- checksumItem:
+		return nil
+	}
 }
 
 func (r *CheckpointRunner[K, V]) Append(
@@ -349,10 +240,9 @@ func (r *CheckpointRunner[K, V]) Append(
 func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context) {
 	// can not append anymore
 	close(r.appendCh)
+	close(r.checksumCh)
 	// wait the range flusher exit
 	r.wg.Wait()
-	// wait the checksum flusher exit
-	r.checksumRunner.wg.Wait()
 	// remove the checkpoint lock
 	if r.lockId > 0 {
 		err := r.storage.DeleteFile(ctx, r.CheckpointLockPath)
@@ -360,6 +250,23 @@ func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context) {
 			log.Warn("failed to remove the checkpoint lock", zap.Error(err))
 		}
 	}
+}
+
+// Send the checksum to the flush goroutine, and reset the CheckpointRunner's checksum
+func (r *CheckpointRunner[K, V]) flushChecksum(ctx context.Context, errCh chan error) error {
+	checksum := ChecksumItems{
+		Items: r.checksum.Items,
+	}
+	r.checksum.Items = make([]*ChecksumItem, 0)
+	// do flush
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errCh:
+		return err
+	case r.checksumMetaCh <- checksum:
+	}
+	return nil
 }
 
 // Send the meta to the flush goroutine, and reset the CheckpointRunner's meta
@@ -396,6 +303,7 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 		defer wg.Done()
 		// a failpoint value to record how many times the checkpoint flushes data
 		var flushCnt int = 0
+		var checksumCnt int = 0
 		var lockCnt int = 0
 		for {
 			select {
@@ -415,6 +323,23 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 					errCnt := v.(int)
 					if errCnt >= flushCnt {
 						err = errors.Errorf("failpoint: failed after checkpoint flushes %d times", errCnt)
+					}
+				})
+				if err != nil {
+					errCh <- err
+					return
+				}
+			case checksums, ok := <-r.checksumMetaCh:
+				if !ok {
+					log.Info("stop checkpoint flush worker")
+					return
+				}
+				err := r.doChecksumFlush(ctx, checksums)
+				failpoint.Inject("failed-after-checkpoint-flushes-checksum-x-times", func(v failpoint.Value) {
+					checksumCnt += 1
+					errCnt := v.(int)
+					if errCnt >= checksumCnt {
+						err = errors.Errorf("failpoint: failed after checkpoint flushes checksum %d times", errCnt)
 					}
 				})
 				if err != nil {
@@ -452,21 +377,23 @@ func (r *CheckpointRunner[K, V]) sendError(err error) {
 	default:
 		log.Error("errCh is blocked", logutil.ShortError(err))
 	}
-	r.checksumRunner.RecordError(err)
 }
 
 func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 	ctx context.Context,
 	tickDurationForFlush,
+	tickDurationForChecksum,
 	tickDurationForLock time.Duration,
 ) {
 	failpoint.Inject("checkpoint-more-quickly-flush", func(_ failpoint.Value) {
+		tickDurationForChecksum = 1 * time.Second
 		tickDurationForFlush = 3 * time.Second
 		if tickDurationForLock > 0 {
 			tickDurationForLock = 1 * time.Second
 		}
 		log.Info("adjust the tick duration for flush or lock",
 			zap.Duration("flush", tickDurationForFlush),
+			zap.Duration("checksum", tickDurationForChecksum),
 			zap.Duration("lock", tickDurationForLock),
 		)
 	})
@@ -479,6 +406,8 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 		errCh := r.startCheckpointFlushLoop(cctx, &wg)
 		flushTicker := time.NewTicker(tickDurationForFlush)
 		defer flushTicker.Stop()
+		checksumTicker := time.NewTicker(tickDurationForChecksum)
+		defer checksumTicker.Stop()
 		// register time ticker, the lock ticker is optional
 		lockTicker := dispatcherTicker(tickDurationForLock)
 		defer lockTicker.Stop()
@@ -494,6 +423,11 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 					r.sendError(err)
 					return
 				}
+			case <-checksumTicker.C:
+				if err := r.flushChecksum(ctx, errCh); err != nil {
+					r.sendError(err)
+					return
+				}
 			case <-flushTicker.C:
 				if err := r.flushMeta(ctx, errCh); err != nil {
 					r.sendError(err)
@@ -505,9 +439,13 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 					if err := r.flushMeta(ctx, errCh); err != nil {
 						r.sendError(err)
 					}
+					if err := r.flushChecksum(ctx, errCh); err != nil {
+						r.sendError(err)
+					}
 					// close the channel to flush worker
 					// and wait it to consumes all the metas
 					close(r.metaCh)
+					close(r.checksumMetaCh)
 					close(r.lockCh)
 					wg.Wait()
 					return
@@ -521,6 +459,24 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 					r.meta[msg.GroupKey] = groups
 				}
 				groups.Group = append(groups.Group, msg.Group...)
+			case msg, ok := <-r.checksumCh:
+				if !ok {
+					log.Info("stop checkpoint runner")
+					if err := r.flushMeta(ctx, errCh); err != nil {
+						r.sendError(err)
+					}
+					if err := r.flushChecksum(ctx, errCh); err != nil {
+						r.sendError(err)
+					}
+					// close the channel to flush worker
+					// and wait it to consumes all the metas
+					close(r.metaCh)
+					close(r.checksumMetaCh)
+					close(r.lockCh)
+					wg.Wait()
+					return
+				}
+				r.checksum.Items = append(r.checksum.Items, msg)
 			case err := <-errCh:
 				// pass flush worker's error back
 				r.sendError(err)
@@ -530,6 +486,33 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 	}
 
 	go checkpointLoop(ctx)
+}
+
+// flush the checksum to the external storage
+func (r *CheckpointRunner[K, V]) doChecksumFlush(ctx context.Context, checksumItems ChecksumItems) error {
+	if len(checksumItems.Items) == 0 {
+		return nil
+	}
+	content, err := json.Marshal(checksumItems)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	checksum := sha256.Sum256(content)
+	checksumInfo := &ChecksumInfo{
+		Content:  content,
+		Checksum: checksum[:],
+		DureTime: summary.NowDureTime(),
+	}
+
+	data, err := json.Marshal(checksumInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	fname := fmt.Sprintf("%s/t%d_and__.cpt", r.CheckpointChecksumDir, checksumItems.Items[0].TableID)
+	err = r.storage.WriteFile(ctx, fname, data)
+	return errors.Trace(err)
 }
 
 // flush the meta to the external storage
