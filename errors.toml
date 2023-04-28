@@ -38,7 +38,7 @@ invalid argument
 
 ["BR:Common:ErrInvalidMetaFile"]
 error = '''
-invalid metafile
+invalid metafile: %s
 '''
 
 ["BR:Common:ErrUndefinedDbOrTable"]
@@ -506,6 +506,11 @@ error = '''
 system requirement not met
 '''
 
+["Lightning:Restore:ErrAddIndexFailed"]
+error = '''
+add index on table %s failed
+'''
+
 ["Lightning:Restore:ErrAllocTableRowIDs"]
 error = '''
 allocate table row id error
@@ -521,9 +526,19 @@ error = '''
 create schema failed, table: %s, stmt: %s
 '''
 
+["Lightning:Restore:ErrDropIndexFailed"]
+error = '''
+drop index %s on table %s failed
+'''
+
 ["Lightning:Restore:ErrEncodeKV"]
 error = '''
 encode kv error in file %s at offset %d
+'''
+
+["Lightning:Restore:ErrFoundDuplicateKey"]
+error = '''
+found duplicate key '%s', value '%s'
 '''
 
 ["Lightning:Restore:ErrInvalidMetaStatus"]
@@ -663,7 +678,7 @@ Too many keys specified; max %d keys allowed
 
 ["ddl:1071"]
 error = '''
-Specified key was too long; max key length is %d bytes
+Specified key was too long (%d bytes); max key length is %d bytes
 '''
 
 ["ddl:1072"]
@@ -1383,7 +1398,7 @@ column %s id %d does not exist, this column may have been updated by other DDL r
 
 ["ddl:8246"]
 error = '''
-Error happened when enable/disable DDL: %s
+Error happened when %s DDL: %s
 '''
 
 ["ddl:8247"]
@@ -1456,9 +1471,29 @@ error = '''
 Subquery returns more than 1 row
 '''
 
+["executor:1261"]
+error = '''
+Row %d doesn't contain data for all columns
+'''
+
+["executor:1262"]
+error = '''
+Row %d was truncated; it contained more data than there were input columns
+'''
+
+["executor:1263"]
+error = '''
+Column set to default value; NULL supplied to NOT NULL column '%s' at row %d
+'''
+
 ["executor:1295"]
 error = '''
 This command is not supported in the prepared statement protocol yet
+'''
+
+["executor:1305"]
+error = '''
+%s %s does not exist
 '''
 
 ["executor:1317"]
@@ -1511,6 +1546,11 @@ error = '''
 Your password does not satisfy the current policy requirements
 '''
 
+["executor:1820"]
+error = '''
+You must reset your password using ALTER USER statement before executing this statement
+'''
+
 ["executor:1827"]
 error = '''
 The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
@@ -1556,7 +1596,7 @@ error = '''
 TiDB admin check table failed.
 '''
 
-["executor:8067"]
+["executor:8068"]
 error = '''
 Load data: unmatched columns
 '''
@@ -1639,6 +1679,86 @@ setting %s has no effect in TiDB
 ["executor:8147"]
 error = '''
 transaction aborted because lazy uniqueness check is enabled and an error occurred: %s
+'''
+
+["executor:8154"]
+error = '''
+Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '%s' needs to specify the clause of LOCAL first
+'''
+
+["executor:8155"]
+error = '''
+Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage
+'''
+
+["executor:8156"]
+error = '''
+The value of INFILE must not be empty when LOAD DATA from LOCAL
+'''
+
+["executor:8157"]
+error = '''
+The FORMAT '%s' is not supported
+'''
+
+["executor:8158"]
+error = '''
+The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
+'''
+
+["executor:8159"]
+error = '''
+Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct
+'''
+
+["executor:8160"]
+error = '''
+Failed to read source files. Reason: %s. %s
+'''
+
+["executor:8162"]
+error = '''
+
+'''
+
+["executor:8163"]
+error = '''
+Unknown option %s
+'''
+
+["executor:8164"]
+error = '''
+Invalid option value for %s
+'''
+
+["executor:8165"]
+error = '''
+Option %s specified more than once
+'''
+
+["executor:8166"]
+error = '''
+Unsupported option %s for %s import mode
+'''
+
+["executor:8170"]
+error = '''
+Job ID %d doesn't exist
+'''
+
+["executor:8171"]
+error = '''
+The current job status cannot perform the operation. %s
+'''
+
+["executor:8172"]
+error = '''
+Unsupported option for LOAD DATA LOCAL INFILE: %s
+'''
+
+["executor:8173"]
+error = '''
+PreCheck failed: %s
 '''
 
 ["executor:8212"]
@@ -1771,7 +1891,7 @@ error = '''
 A path expression is not a path to a cell in an array.
 '''
 
-["json:8066"]
+["json:8067"]
 error = '''
 JSON_OBJECTAGG: unsupported second argument type %v
 '''
@@ -2533,7 +2653,7 @@ Unknown resource group '%-.192s'
 
 ["schema:8250"]
 error = '''
-Resource group feature is disabled
+Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
 '''
 
 ["session:8002"]
@@ -2589,6 +2709,11 @@ The table '%-.192s' is full
 ["table:1192"]
 error = '''
 Can't execute the given command because you have active locked tables or an active transaction
+'''
+
+["table:1292"]
+error = '''
+Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d
 '''
 
 ["table:1364"]
@@ -2704,6 +2829,21 @@ assertion failed: key: %s, assertion: %s, start_ts: %v, existing start ts: %v, e
 ["tikv:8229"]
 error = '''
 TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction
+'''
+
+["tikv:8249"]
+error = '''
+Unknown resource group '%-.192s'
+'''
+
+["tikv:8251"]
+error = '''
+Resource group configuration is unavailable
+'''
+
+["tikv:8252"]
+error = '''
+Exceeded resource group quota limitation
 '''
 
 ["tikv:9001"]
@@ -2884,6 +3024,11 @@ invalid year format
 ["types:8033"]
 error = '''
 invalid year
+'''
+
+["types:8034"]
+error = '''
+Incorrect datetime value: '%s'
 '''
 
 ["types:8037"]

@@ -226,7 +226,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[1], args[2])
 	case ast.Ifnull:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
-	case ast.Like:
+	case ast.Like, ast.Ilike:
 		ec, err = CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args[0], args[1])
 		if err != nil {
 			return nil, err
@@ -274,7 +274,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 			}
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, fieldArgs...)
 		}
-	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
+	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion, ast.CurrentResourceGroup:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
 	case ast.Format, ast.Space, ast.ToBase64, ast.UUID, ast.Hex, ast.MD5, ast.SHA, ast.SHA2, ast.SM3:
@@ -297,14 +297,6 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		}
 	}
 	return ec, nil
-}
-
-// DeriveCollationFromExprs derives collation information from these expressions.
-// Deprecated, use CheckAndDeriveCollationFromExprs instead.
-// TODO: remove this function after the all usage is replaced by CheckAndDeriveCollationFromExprs
-func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
-	collation := inferCollation(exprs...)
-	return collation.Charset, collation.Collation
 }
 
 // CheckAndDeriveCollationFromExprs derives collation information from these expressions, return error if derives collation error.

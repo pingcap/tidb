@@ -433,9 +433,9 @@ func (d Checker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPla
 	panic("implement me")
 }
 
-// CreateResourceGroup implements the DDL interface.
+// AddResourceGroup implements the DDL interface.
 // ResourceGroup do not affect the transaction.
-func (d Checker) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error {
+func (d Checker) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error {
 	return nil
 }
 
@@ -515,6 +515,11 @@ func (d Checker) RegisterStatsHandle(h *handle.Handle) {
 // SchemaSyncer implements the DDL interface.
 func (d Checker) SchemaSyncer() syncer.SchemaSyncer {
 	return d.realDDL.SchemaSyncer()
+}
+
+// StateSyncer implements the DDL interface.
+func (d Checker) StateSyncer() syncer.StateSyncer {
+	return d.realDDL.StateSyncer()
 }
 
 // OwnerManager implements the DDL interface.

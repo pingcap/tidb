@@ -144,6 +144,7 @@ func TestApplyUpdate(t *testing.T) {
 		if test.setEnv {
 			require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
 			require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+			require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
 		}
 		u, err := ParseBackend("s3://bucket/prefix/", &BackendOptions{S3: test.options})
 		require.NoError(t, err)
@@ -210,6 +211,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: true,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "ceph",
 			},
 		},
 		{
@@ -224,6 +226,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: false,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "alibaba",
 			},
 		},
 		{
@@ -238,6 +241,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: false,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "netease",
 			},
 		},
 		{
@@ -260,11 +264,13 @@ func TestApplyUpdate(t *testing.T) {
 				Region:          "us-west-2",
 				AccessKey:       "ab",
 				SecretAccessKey: "cd",
+				SessionToken:    "ef",
 			},
 			s3: &backuppb.S3{
 				Region:          "us-west-2",
 				AccessKey:       "ab",
 				SecretAccessKey: "cd",
+				SessionToken:    "ef",
 				Bucket:          "bucket",
 				Prefix:          "prefix",
 			},
@@ -285,6 +291,9 @@ func TestS3Storage(t *testing.T) {
 		sendCredential bool
 	}
 
+	require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
+	require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+	require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
 	s := createGetBucketRegionServer("us-west-2", 200, true)
 	defer s.Close()
 
@@ -354,6 +363,7 @@ func TestS3Storage(t *testing.T) {
 				Endpoint:        s.URL,
 				AccessKey:       "ab",
 				SecretAccessKey: "cd",
+				SessionToken:    "ef",
 				Bucket:          "bucket",
 				Prefix:          "prefix",
 				ForcePathStyle:  true,
@@ -407,7 +417,17 @@ func TestS3Storage(t *testing.T) {
 }
 
 func TestS3URI(t *testing.T) {
-	backend, err := ParseBackend("s3://bucket/prefix/", nil)
+	accessKey := "ab"
+	secretAccessKey := "cd"
+	sessionToken := "ef"
+	options := &BackendOptions{
+		S3: S3BackendOptions{
+			AccessKey:       accessKey,
+			SecretAccessKey: secretAccessKey,
+			SessionToken:    sessionToken,
+		},
+	}
+	backend, err := ParseBackend("s3://bucket/prefix/", options)
 	require.NoError(t, err)
 	storage, err := New(context.Background(), backend, &ExternalStorageOptions{})
 	require.NoError(t, err)
@@ -1112,10 +1132,12 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 func TestSendCreds(t *testing.T) {
 	accessKey := "ab"
 	secretAccessKey := "cd"
+	sessionToken := "ef"
 	backendOpt := BackendOptions{
 		S3: S3BackendOptions{
 			AccessKey:       accessKey,
 			SecretAccessKey: secretAccessKey,
+			SessionToken:    sessionToken,
 		},
 	}
 	backend, err := ParseBackend("s3://bucket/prefix/", &backendOpt)
@@ -1128,12 +1150,15 @@ func TestSendCreds(t *testing.T) {
 	sentAccessKey := backend.GetS3().AccessKey
 	require.Equal(t, accessKey, sentAccessKey)
 	sentSecretAccessKey := backend.GetS3().SecretAccessKey
-	require.Equal(t, sentSecretAccessKey, sentSecretAccessKey)
+	require.Equal(t, secretAccessKey, sentSecretAccessKey)
+	sentSessionToken := backend.GetS3().SessionToken
+	require.Equal(t, sessionToken, sentSessionToken)
 
 	backendOpt = BackendOptions{
 		S3: S3BackendOptions{
 			AccessKey:       accessKey,
 			SecretAccessKey: secretAccessKey,
+			SessionToken:    sessionToken,
 		},
 	}
 	backend, err = ParseBackend("s3://bucket/prefix/", &backendOpt)
@@ -1147,6 +1172,8 @@ func TestSendCreds(t *testing.T) {
 	require.Equal(t, "", sentAccessKey)
 	sentSecretAccessKey = backend.GetS3().SecretAccessKey
 	require.Equal(t, "", sentSecretAccessKey)
+	sentSessionToken = backend.GetS3().SessionToken
+	require.Equal(t, "", sentSessionToken)
 }
 
 func TestObjectLock(t *testing.T) {
@@ -1192,4 +1219,76 @@ func TestObjectLock(t *testing.T) {
 		}, nil,
 	)
 	require.Equal(t, true, s.storage.IsObjectLockEnabled())
+}
+
+func TestS3StorageBucketRegion(t *testing.T) {
+	type testcase struct {
+		name         string
+		expectRegion string
+		s3           *backuppb.S3
+	}
+
+	require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
+	require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+	require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
+
+	cases := []testcase{
+		{
+			"empty region from aws",
+			"us-east-1",
+			&backuppb.S3{
+				Region:   "",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "aws",
+			},
+		},
+		{
+			"region from different provider",
+			"sdg",
+			&backuppb.S3{
+				Region:   "sdg",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "ovh",
+			},
+		},
+		{
+			"empty region from different provider",
+			"",
+			&backuppb.S3{
+				Region:   "",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "ovh",
+			},
+		},
+		{
+			"region from aws",
+			"us-west-2",
+			&backuppb.S3{
+				Region:   "us-west-2",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "aws",
+			},
+		},
+	}
+	for _, ca := range cases {
+		func(name string, region string, s3 *backuppb.S3) {
+			s := createGetBucketRegionServer(region, 200, true)
+			defer s.Close()
+			s3.ForcePathStyle = true
+			s3.Endpoint = s.URL
+
+			t.Log(name)
+			es, err := New(context.Background(),
+				&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}},
+				&ExternalStorageOptions{})
+			require.NoError(t, err)
+			ss, ok := es.(*S3Storage)
+			require.True(t, ok)
+			require.Equal(t, region, ss.GetOptions().Region)
+		}(ca.name, ca.expectRegion, ca.s3)
+	}
 }

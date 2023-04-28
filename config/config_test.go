@@ -414,6 +414,9 @@ metrics-interval = 15
 # Record statements qps by database name if it is enabled.
 record-db-qps = false
 
+# Record database name label if it is enabled.
+record-db-label = false
+
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
@@ -732,10 +735,14 @@ enable-forwarding = true
 enable-global-kill = true
 tidb-max-reuse-chunk = 10
 tidb-max-reuse-column = 20
+tidb-enable-exit-check = false
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
 enable-load-fmsketch = true
+plan-replayer-dump-worker-concurrency = 1
+lite-init-stats = true
+force-init-stats = true
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -827,6 +834,8 @@ max_connections = 200
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 	require.True(t, conf.Performance.EnableLoadFMSketch)
+	require.True(t, conf.Performance.LiteInitStats)
+	require.True(t, conf.Performance.ForceInitStats)
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
@@ -858,7 +867,7 @@ history-size=100`)
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.EnableTelemetry)
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 enable-table-lock = true
@@ -866,15 +875,15 @@ enable-table-lock = true
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.EnableTelemetry)
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
-enable-telemetry = false
+enable-telemetry = true
 `)
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.False(t, conf.EnableTelemetry)
+	require.True(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 [security]
@@ -1301,5 +1310,22 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 
 	UpdateGlobal(func(conf *Config) {
 		conf.KeyspaceName = ""
+	})
+}
+
+func TestAutoScalerConfig(t *testing.T) {
+	conf := NewConfig()
+	require.False(t, conf.UseAutoScaler)
+
+	conf = GetGlobalConfig()
+	require.False(t, conf.UseAutoScaler)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.UseAutoScaler = true
+	})
+	require.True(t, GetGlobalConfig().UseAutoScaler)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.UseAutoScaler = false
 	})
 }

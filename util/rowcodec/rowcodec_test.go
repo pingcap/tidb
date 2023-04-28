@@ -15,12 +15,16 @@
 package rowcodec_test
 
 import (
+	"encoding/binary"
+	"hash/crc32"
 	"math"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -291,7 +295,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		return d
 	}
 	getTime := func(value string) types.Time {
-		d, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, value, mysql.TypeTimestamp, 6)
+		d, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, value, mysql.TypeTimestamp, 6, nil)
 		require.NoError(t, err)
 		return d
 	}
@@ -863,6 +867,425 @@ func Test65535Bug(t *testing.T) {
 
 	rs := result[1]
 	require.Equal(t, text65535, rs.GetString())
+}
+
+func TestColumnEncode(t *testing.T) {
+	encodeUint64 := func(v uint64) []byte {
+		return binary.LittleEndian.AppendUint64(nil, v)
+	}
+	encodeBytes := func(v []byte) []byte {
+		return append(binary.LittleEndian.AppendUint32(nil, uint32(len(v))), v...)
+	}
+	var (
+		buf     = make([]byte, 0, 128)
+		intZero = 0
+		intPos  = 42
+		intNeg  = -2
+		i8Min   = math.MinInt8
+		i16Min  = math.MinInt16
+		i32Min  = math.MinInt32
+		i64Min  = math.MinInt64
+		i24Min  = -1 << 23
+		ct      = types.FromDate(2023, 1, 2, 3, 4, 5, 678)
+		dur     = types.Duration{Duration: 123456*time.Microsecond + 7*time.Minute + 8*time.Hour, Fsp: 6}
+		decZero = types.NewDecFromStringForTest("0.000")
+		decPos  = types.NewDecFromStringForTest("3.14")
+		decNeg  = types.NewDecFromStringForTest("-1.2")
+		decMin  = types.NewMaxOrMinDec(true, 12, 6)
+		decMax  = types.NewMaxOrMinDec(false, 12, 6)
+		json1   = types.CreateBinaryJSON(nil)
+		json2   = types.CreateBinaryJSON(int64(42))
+		json3   = types.CreateBinaryJSON(map[string]interface{}{"foo": "bar", "a": int64(42)})
+	)
+
+	for _, tt := range []struct {
+		name string
+		typ  *types.FieldType
+		dat  types.Datum
+		raw  []byte
+		ok   bool
+	}{
+		{"unspecified", types.NewFieldType(mysql.TypeUnspecified), types.NewDatum(1), nil, false},
+		{"wrong", types.NewFieldType(42), types.NewDatum(1), nil, false},
+		{"mismatch/timestamp", types.NewFieldType(mysql.TypeTimestamp), types.NewDatum(1), nil, false},
+		{"mismatch/datetime", types.NewFieldType(mysql.TypeDatetime), types.NewDatum(1), nil, false},
+		{"mismatch/date", types.NewFieldType(mysql.TypeDate), types.NewDatum(1), nil, false},
+		{"mismatch/newdate", types.NewFieldType(mysql.TypeNewDate), types.NewDatum(1), nil, false},
+		{"mismatch/decimal", types.NewFieldType(mysql.TypeNewDecimal), types.NewDatum(1), nil, false},
+
+		{"null", types.NewFieldType(mysql.TypeNull), types.NewDatum(1), nil, true},
+		{"geometry", types.NewFieldType(mysql.TypeGeometry), types.NewDatum(1), nil, true},
+
+		{"tinyint/zero", types.NewFieldType(mysql.TypeTiny), types.NewDatum(intZero), encodeUint64(uint64(intZero)), true},
+		{"tinyint/pos", types.NewFieldType(mysql.TypeTiny), types.NewDatum(intPos), encodeUint64(uint64(intPos)), true},
+		{"tinyint/neg", types.NewFieldType(mysql.TypeTiny), types.NewDatum(intNeg), encodeUint64(uint64(intNeg)), true},
+		{"tinyint/min/signed", types.NewFieldType(mysql.TypeTiny), types.NewDatum(i8Min), encodeUint64(uint64(i8Min)), true},
+		{"tinyint/max/signed", types.NewFieldType(mysql.TypeTiny), types.NewDatum(math.MaxInt8), encodeUint64(math.MaxInt8), true},
+		{"tinyint/max/unsigned", types.NewFieldType(mysql.TypeTiny), types.NewDatum(math.MaxUint8), encodeUint64(math.MaxUint8), true},
+
+		{"smallint/zero", types.NewFieldType(mysql.TypeShort), types.NewDatum(intZero), encodeUint64(uint64(intZero)), true},
+		{"smallint/pos", types.NewFieldType(mysql.TypeShort), types.NewDatum(intPos), encodeUint64(uint64(intPos)), true},
+		{"smallint/neg", types.NewFieldType(mysql.TypeShort), types.NewDatum(intNeg), encodeUint64(uint64(intNeg)), true},
+		{"smallint/min/signed", types.NewFieldType(mysql.TypeShort), types.NewDatum(i16Min), encodeUint64(uint64(i16Min)), true},
+		{"smallint/max/signed", types.NewFieldType(mysql.TypeShort), types.NewDatum(math.MaxInt16), encodeUint64(math.MaxInt16), true},
+		{"smallint/max/unsigned", types.NewFieldType(mysql.TypeShort), types.NewDatum(math.MaxUint16), encodeUint64(math.MaxUint16), true},
+
+		{"int/zero", types.NewFieldType(mysql.TypeLong), types.NewDatum(intZero), encodeUint64(uint64(intZero)), true},
+		{"int/pos", types.NewFieldType(mysql.TypeLong), types.NewDatum(intPos), encodeUint64(uint64(intPos)), true},
+		{"int/neg", types.NewFieldType(mysql.TypeLong), types.NewDatum(intNeg), encodeUint64(uint64(intNeg)), true},
+		{"int/min/signed", types.NewFieldType(mysql.TypeLong), types.NewDatum(i32Min), encodeUint64(uint64(i32Min)), true},
+		{"int/max/signed", types.NewFieldType(mysql.TypeLong), types.NewDatum(math.MaxInt32), encodeUint64(math.MaxInt32), true},
+		{"int/max/unsigned", types.NewFieldType(mysql.TypeLong), types.NewDatum(math.MaxUint32), encodeUint64(math.MaxUint32), true},
+
+		{"bigint/zero", types.NewFieldType(mysql.TypeLonglong), types.NewDatum(intZero), encodeUint64(uint64(intZero)), true},
+		{"bigint/pos", types.NewFieldType(mysql.TypeLonglong), types.NewDatum(intPos), encodeUint64(uint64(intPos)), true},
+		{"bigint/neg", types.NewFieldType(mysql.TypeLonglong), types.NewDatum(intNeg), encodeUint64(uint64(intNeg)), true},
+		{"bigint/min/signed", types.NewFieldType(mysql.TypeLonglong), types.NewDatum(i64Min), encodeUint64(uint64(i64Min)), true},
+		{"bigint/max/signed", types.NewFieldType(mysql.TypeLonglong), types.NewDatum(math.MaxInt64), encodeUint64(math.MaxInt64), true},
+		{"bigint/max/unsigned", types.NewFieldType(mysql.TypeLonglong), types.NewDatum(uint64(math.MaxUint64)), encodeUint64(math.MaxUint64), true},
+
+		{"mediumint/zero", types.NewFieldType(mysql.TypeInt24), types.NewDatum(intZero), encodeUint64(uint64(intZero)), true},
+		{"mediumint/pos", types.NewFieldType(mysql.TypeInt24), types.NewDatum(intPos), encodeUint64(uint64(intPos)), true},
+		{"mediumint/neg", types.NewFieldType(mysql.TypeInt24), types.NewDatum(intNeg), encodeUint64(uint64(intNeg)), true},
+		{"mediumint/min/signed", types.NewFieldType(mysql.TypeInt24), types.NewDatum(i24Min), encodeUint64(uint64(i24Min)), true},
+		{"mediumint/max/signed", types.NewFieldType(mysql.TypeInt24), types.NewDatum(1<<23 - 1), encodeUint64(1<<23 - 1), true},
+		{"mediumint/max/unsigned", types.NewFieldType(mysql.TypeInt24), types.NewDatum(1<<24 - 1), encodeUint64(1<<24 - 1), true},
+
+		{"year", types.NewFieldType(mysql.TypeYear), types.NewDatum(2023), encodeUint64(2023), true},
+
+		{"varchar", types.NewFieldType(mysql.TypeVarchar), types.NewDatum("foo"), encodeBytes([]byte("foo")), true},
+		{"varchar/empty", types.NewFieldType(mysql.TypeVarchar), types.NewDatum(""), encodeBytes([]byte{}), true},
+		{"varbinary", types.NewFieldType(mysql.TypeVarString), types.NewDatum([]byte("foo")), encodeBytes([]byte("foo")), true},
+		{"varbinary/empty", types.NewFieldType(mysql.TypeVarString), types.NewDatum([]byte("")), encodeBytes([]byte{}), true},
+		{"char", types.NewFieldType(mysql.TypeString), types.NewDatum("foo"), encodeBytes([]byte("foo")), true},
+		{"char/empty", types.NewFieldType(mysql.TypeString), types.NewDatum(""), encodeBytes([]byte{}), true},
+		{"binary", types.NewFieldType(mysql.TypeString), types.NewDatum([]byte("foo")), encodeBytes([]byte("foo")), true},
+		{"binary/empty", types.NewFieldType(mysql.TypeString), types.NewDatum([]byte("")), encodeBytes([]byte{}), true},
+		{"text", types.NewFieldType(mysql.TypeBlob), types.NewDatum("foo"), encodeBytes([]byte("foo")), true},
+		{"text/empty", types.NewFieldType(mysql.TypeBlob), types.NewDatum(""), encodeBytes([]byte{}), true},
+		{"blob", types.NewFieldType(mysql.TypeBlob), types.NewDatum([]byte("foo")), encodeBytes([]byte("foo")), true},
+		{"blob/empty", types.NewFieldType(mysql.TypeBlob), types.NewDatum([]byte("")), encodeBytes([]byte{}), true},
+		{"longtext", types.NewFieldType(mysql.TypeLongBlob), types.NewDatum("foo"), encodeBytes([]byte("foo")), true},
+		{"longtext/empty", types.NewFieldType(mysql.TypeLongBlob), types.NewDatum(""), encodeBytes([]byte{}), true},
+		{"longblob", types.NewFieldType(mysql.TypeLongBlob), types.NewDatum([]byte("foo")), encodeBytes([]byte("foo")), true},
+		{"longblob/empty", types.NewFieldType(mysql.TypeLongBlob), types.NewDatum([]byte("")), encodeBytes([]byte{}), true},
+		{"mediumtext", types.NewFieldType(mysql.TypeMediumBlob), types.NewDatum("foo"), encodeBytes([]byte("foo")), true},
+		{"mediumtext/empty", types.NewFieldType(mysql.TypeMediumBlob), types.NewDatum(""), encodeBytes([]byte{}), true},
+		{"mediumblob", types.NewFieldType(mysql.TypeMediumBlob), types.NewDatum([]byte("foo")), encodeBytes([]byte("foo")), true},
+		{"mediumblob/empty", types.NewFieldType(mysql.TypeMediumBlob), types.NewDatum([]byte("")), encodeBytes([]byte{}), true},
+		{"tinytext", types.NewFieldType(mysql.TypeTinyBlob), types.NewDatum("foo"), encodeBytes([]byte("foo")), true},
+		{"tinytext/empty", types.NewFieldType(mysql.TypeTinyBlob), types.NewDatum(""), encodeBytes([]byte{}), true},
+		{"tinyblob", types.NewFieldType(mysql.TypeTinyBlob), types.NewDatum([]byte("foo")), encodeBytes([]byte("foo")), true},
+		{"tinyblob/empty", types.NewFieldType(mysql.TypeTinyBlob), types.NewDatum([]byte("")), encodeBytes([]byte{}), true},
+
+		{"float", types.NewFieldType(mysql.TypeFloat), types.NewDatum(float32(3.14)), encodeUint64(math.Float64bits(float64(float32(3.14)))), true},
+		{"float/nan", types.NewFieldType(mysql.TypeFloat), types.NewDatum(float32(math.NaN())), encodeUint64(math.Float64bits(0)), true},
+		{"float/+inf", types.NewFieldType(mysql.TypeFloat), types.NewDatum(float32(math.Inf(1))), encodeUint64(math.Float64bits(0)), true},
+		{"float/-inf", types.NewFieldType(mysql.TypeFloat), types.NewDatum(float32(math.Inf(-1))), encodeUint64(math.Float64bits(0)), true},
+		{"double", types.NewFieldType(mysql.TypeDouble), types.NewDatum(float64(3.14)), encodeUint64(math.Float64bits(3.14)), true},
+		{"double/nan", types.NewFieldType(mysql.TypeDouble), types.NewDatum(math.NaN()), encodeUint64(math.Float64bits(0)), true},
+		{"double/+inf", types.NewFieldType(mysql.TypeDouble), types.NewDatum(math.Inf(1)), encodeUint64(math.Float64bits(0)), true},
+		{"double/-inf", types.NewFieldType(mysql.TypeDouble), types.NewDatum(math.Inf(-1)), encodeUint64(math.Float64bits(0)), true},
+
+		{"enum", types.NewFieldType(mysql.TypeEnum), types.NewDatum(0b010), encodeUint64(0b010), true},
+		{"set", types.NewFieldType(mysql.TypeSet), types.NewDatum(0b101), encodeUint64(0b101), true},
+		{"bit", types.NewFieldType(mysql.TypeBit), types.NewBinaryLiteralDatum([]byte{0x12, 0x34}), encodeUint64(0x1234), true},
+		{"bit/truncate", types.NewFieldType(mysql.TypeBit), types.NewBinaryLiteralDatum([]byte{0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0xff}), encodeUint64(math.MaxUint64), true},
+
+		{
+			"timestamp", types.NewFieldType(mysql.TypeTimestamp),
+			types.NewTimeDatum(types.NewTime(ct, mysql.TypeTimestamp, 3)),
+			encodeBytes([]byte(types.NewTime(ct, mysql.TypeTimestamp, 3).String())),
+			true,
+		},
+		{
+			"timestamp/zero", types.NewFieldType(mysql.TypeTimestamp),
+			types.NewTimeDatum(types.ZeroTimestamp),
+			encodeBytes([]byte(types.ZeroTimestamp.String())),
+			true,
+		},
+		{
+			"timestamp/min", types.NewFieldType(mysql.TypeTimestamp),
+			types.NewTimeDatum(types.MinTimestamp),
+			encodeBytes([]byte(types.MinTimestamp.String())),
+			true,
+		},
+		{
+			"timestamp/max", types.NewFieldType(mysql.TypeTimestamp),
+			types.NewTimeDatum(types.MaxTimestamp),
+			encodeBytes([]byte(types.MaxTimestamp.String())),
+			true,
+		},
+		{
+			"datetime", types.NewFieldType(mysql.TypeDatetime),
+			types.NewTimeDatum(types.NewTime(ct, mysql.TypeDatetime, 3)),
+			encodeBytes([]byte(types.NewTime(ct, mysql.TypeDatetime, 3).String())),
+			true,
+		},
+		{
+			"datetime/zero", types.NewFieldType(mysql.TypeDatetime),
+			types.NewTimeDatum(types.ZeroDatetime),
+			encodeBytes([]byte(types.ZeroTimestamp.String())),
+			true,
+		},
+		{
+			"datetime/min", types.NewFieldType(mysql.TypeDatetime),
+			types.NewTimeDatum(types.NewTime(types.MinDatetime, mysql.TypeDatetime, 6)),
+			encodeBytes([]byte(types.NewTime(types.MinDatetime, mysql.TypeDatetime, 6).String())),
+			true,
+		},
+		{
+			"datetime/max", types.NewFieldType(mysql.TypeDatetime),
+			types.NewTimeDatum(types.NewTime(types.MaxDatetime, mysql.TypeDatetime, 6)),
+			encodeBytes([]byte(types.NewTime(types.MaxDatetime, mysql.TypeDatetime, 6).String())),
+			true,
+		},
+		{
+			"date", types.NewFieldType(mysql.TypeDate),
+			types.NewTimeDatum(types.NewTime(ct, mysql.TypeDate, 3)),
+			encodeBytes([]byte(types.NewTime(ct, mysql.TypeDate, 3).String())),
+			true,
+		},
+		{
+			"date/zero", types.NewFieldType(mysql.TypeDate),
+			types.NewTimeDatum(types.ZeroDate),
+			encodeBytes([]byte(types.ZeroDate.String())),
+			true,
+		},
+		{
+			"date/min",
+			types.NewFieldType(mysql.TypeDate),
+			types.NewTimeDatum(types.NewTime(types.MinDatetime, mysql.TypeDate, 6)),
+			encodeBytes([]byte(types.NewTime(types.MinDatetime, mysql.TypeDate, 6).String())),
+			true,
+		},
+		{
+			"date/max",
+			types.NewFieldType(mysql.TypeDate),
+			types.NewTimeDatum(types.NewTime(types.MaxDatetime, mysql.TypeDate, 6)),
+			encodeBytes([]byte(types.NewTime(types.MaxDatetime, mysql.TypeDate, 6).String())),
+			true,
+		},
+		{
+			"newdate", types.NewFieldType(mysql.TypeNewDate),
+			types.NewTimeDatum(types.NewTime(ct, mysql.TypeNewDate, 3)),
+			encodeBytes([]byte(types.NewTime(ct, mysql.TypeNewDate, 3).String())),
+			true,
+		},
+		{
+			"newdate/zero", types.NewFieldType(mysql.TypeNewDate),
+			types.NewTimeDatum(types.ZeroDate),
+			encodeBytes([]byte(types.ZeroDate.String())),
+			true,
+		},
+		{
+			"newdate/min",
+			types.NewFieldType(mysql.TypeNewDate),
+			types.NewTimeDatum(types.NewTime(types.MinDatetime, mysql.TypeNewDate, 6)),
+			encodeBytes([]byte(types.NewTime(types.MinDatetime, mysql.TypeNewDate, 6).String())),
+			true,
+		},
+		{
+			"newdate/max",
+			types.NewFieldType(mysql.TypeNewDate),
+			types.NewTimeDatum(types.NewTime(types.MaxDatetime, mysql.TypeNewDate, 6)),
+			encodeBytes([]byte(types.NewTime(types.MaxDatetime, mysql.TypeNewDate, 6).String())),
+			true,
+		},
+
+		{"time", types.NewFieldType(mysql.TypeDuration), types.NewDurationDatum(dur), encodeBytes([]byte(dur.String())), true},
+		{"time/zero", types.NewFieldType(mysql.TypeDuration), types.NewDurationDatum(types.ZeroDuration), encodeBytes([]byte(types.ZeroDuration.String())), true},
+		{"time/max", types.NewFieldType(mysql.TypeDuration), types.NewDurationDatum(types.MaxMySQLDuration(3)), encodeBytes([]byte(types.MaxMySQLDuration(3).String())), true},
+
+		{"decimal/zero", types.NewFieldType(mysql.TypeNewDecimal), types.NewDecimalDatum(decZero), encodeBytes([]byte(decZero.String())), true},
+		{"decimal/pos", types.NewFieldType(mysql.TypeNewDecimal), types.NewDecimalDatum(decPos), encodeBytes([]byte(decPos.String())), true},
+		{"decimal/neg", types.NewFieldType(mysql.TypeNewDecimal), types.NewDecimalDatum(decNeg), encodeBytes([]byte(decNeg.String())), true},
+		{"decimal/min", types.NewFieldType(mysql.TypeNewDecimal), types.NewDecimalDatum(decMin), encodeBytes([]byte(decMin.String())), true},
+		{"decimal/max", types.NewFieldType(mysql.TypeNewDecimal), types.NewDecimalDatum(decMax), encodeBytes([]byte(decMax.String())), true},
+
+		{"json/1", types.NewFieldType(mysql.TypeJSON), types.NewJSONDatum(json1), encodeBytes([]byte(json1.String())), true},
+		{"json/2", types.NewFieldType(mysql.TypeJSON), types.NewJSONDatum(json2), encodeBytes([]byte(json2.String())), true},
+		{"json/3", types.NewFieldType(mysql.TypeJSON), types.NewJSONDatum(json3), encodeBytes([]byte(json3.String())), true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			col := rowcodec.ColData{&model.ColumnInfo{FieldType: *tt.typ}, &tt.dat}
+			raw, err := col.Encode(buf[:0])
+			if tt.ok {
+				require.NoError(t, err)
+				if len(tt.raw) == 0 {
+					require.Len(t, raw, 0)
+				} else {
+					require.Equal(t, tt.raw, raw)
+				}
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+
+	t.Run("nulldatum", func(t *testing.T) {
+		for _, typ := range []byte{
+			mysql.TypeUnspecified,
+			mysql.TypeTiny,
+			mysql.TypeShort,
+			mysql.TypeLong,
+			mysql.TypeFloat,
+			mysql.TypeDouble,
+			mysql.TypeNull,
+			mysql.TypeTimestamp,
+			mysql.TypeLonglong,
+			mysql.TypeInt24,
+			mysql.TypeDate,
+			mysql.TypeDuration,
+			mysql.TypeDatetime,
+			mysql.TypeYear,
+			mysql.TypeNewDate,
+			mysql.TypeVarchar,
+			mysql.TypeBit,
+			mysql.TypeJSON,
+			mysql.TypeNewDecimal,
+			mysql.TypeEnum,
+			mysql.TypeSet,
+			mysql.TypeTinyBlob,
+			mysql.TypeMediumBlob,
+			mysql.TypeLongBlob,
+			mysql.TypeBlob,
+			mysql.TypeVarString,
+			mysql.TypeString,
+			mysql.TypeGeometry,
+			42, // wrong type
+		} {
+			ft := types.NewFieldType(typ)
+			dat := types.NewDatum(nil)
+			col := rowcodec.ColData{&model.ColumnInfo{FieldType: *ft}, &dat}
+			raw, err := col.Encode(nil)
+			require.NoError(t, err)
+			require.Len(t, raw, 0)
+		}
+	})
+}
+
+func TestRowChecksum(t *testing.T) {
+	typ1 := types.NewFieldType(mysql.TypeNull)
+	dat1 := types.NewDatum(nil)
+	col1 := rowcodec.ColData{&model.ColumnInfo{ID: 1, FieldType: *typ1}, &dat1}
+	typ2 := types.NewFieldType(mysql.TypeLong)
+	dat2 := types.NewDatum(42)
+	col2 := rowcodec.ColData{&model.ColumnInfo{ID: 2, FieldType: *typ2}, &dat2}
+	typ3 := types.NewFieldType(mysql.TypeVarchar)
+	dat3 := types.NewDatum("foobar")
+	col3 := rowcodec.ColData{&model.ColumnInfo{ID: 2, FieldType: *typ3}, &dat3}
+	buf := make([]byte, 0, 64)
+	for _, tt := range []struct {
+		name string
+		cols []rowcodec.ColData
+	}{
+		{"nil", nil},
+		{"empty", []rowcodec.ColData{}},
+		{"nullonly", []rowcodec.ColData{col1}},
+		{"ordered", []rowcodec.ColData{col1, col2, col3}},
+		{"unordered", []rowcodec.ColData{col3, col1, col2}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			row := rowcodec.RowData{tt.cols, buf}
+			if !sort.IsSorted(row) {
+				sort.Sort(row)
+			}
+			checksum, err := row.Checksum()
+			require.NoError(t, err)
+			raw, err := row.Encode()
+			require.NoError(t, err)
+			require.Equal(t, crc32.ChecksumIEEE(raw), checksum)
+		})
+	}
+}
+
+func TestEncodeDecodeRowWithChecksum(t *testing.T) {
+	sc := new(stmtctx.StatementContext)
+	enc := rowcodec.Encoder{}
+
+	for _, tt := range []struct {
+		name      string
+		checksums []uint32
+	}{
+		{"NoChecksum", nil},
+		{"OneChecksum", []uint32{1}},
+		{"TwoChecksum", []uint32{1, 2}},
+		{"ThreeChecksum", []uint32{1, 2, 3}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := enc.Encode(sc, nil, nil, nil, tt.checksums...)
+			require.NoError(t, err)
+			dec := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{}, sc.TimeZone)
+			_, err = dec.DecodeToDatumMap(raw, nil)
+			require.NoError(t, err)
+			v1, ok1 := enc.GetChecksum()
+			v2, ok2 := enc.GetExtraChecksum()
+			v3, ok3 := dec.GetChecksum()
+			v4, ok4 := dec.GetExtraChecksum()
+			if len(tt.checksums) == 0 {
+				require.False(t, ok1)
+				require.False(t, ok2)
+				require.False(t, ok3)
+				require.False(t, ok4)
+			} else if len(tt.checksums) == 1 {
+				require.True(t, ok1)
+				require.False(t, ok2)
+				require.True(t, ok3)
+				require.False(t, ok4)
+				require.Equal(t, tt.checksums[0], v1)
+				require.Equal(t, tt.checksums[0], v3)
+				require.Zero(t, v2)
+				require.Zero(t, v4)
+			} else {
+				require.True(t, ok1)
+				require.True(t, ok2)
+				require.True(t, ok3)
+				require.True(t, ok4)
+				require.Equal(t, tt.checksums[0], v1)
+				require.Equal(t, tt.checksums[1], v2)
+				require.Equal(t, tt.checksums[0], v3)
+				require.Equal(t, tt.checksums[1], v4)
+			}
+		})
+	}
+
+	t.Run("ReuseDecoder", func(t *testing.T) {
+		dec := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{}, sc.TimeZone)
+
+		raw1, err := enc.Encode(sc, nil, nil, nil)
+		require.NoError(t, err)
+		_, err = dec.DecodeToDatumMap(raw1, nil)
+		require.NoError(t, err)
+		v1, ok1 := dec.GetChecksum()
+		v2, ok2 := dec.GetExtraChecksum()
+		require.False(t, ok1)
+		require.False(t, ok2)
+		require.Zero(t, v1)
+		require.Zero(t, v2)
+
+		raw2, err := enc.Encode(sc, nil, nil, nil, 1, 2)
+		require.NoError(t, err)
+		_, err = dec.DecodeToDatumMap(raw2, nil)
+		require.NoError(t, err)
+		v1, ok1 = dec.GetChecksum()
+		v2, ok2 = dec.GetExtraChecksum()
+		require.True(t, ok1)
+		require.True(t, ok2)
+		require.Equal(t, uint32(1), v1)
+		require.Equal(t, uint32(2), v2)
+
+		raw3, err := enc.Encode(sc, nil, nil, nil, 1)
+		require.NoError(t, err)
+		_, err = dec.DecodeToDatumMap(raw3, nil)
+		require.NoError(t, err)
+		v1, ok1 = dec.GetChecksum()
+		v2, ok2 = dec.GetExtraChecksum()
+		require.True(t, ok1)
+		require.False(t, ok2)
+		require.Equal(t, uint32(1), v1)
+		require.Zero(t, v2)
+	})
 }
 
 var (

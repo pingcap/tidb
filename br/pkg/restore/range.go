@@ -72,7 +72,9 @@ func SortRanges(ranges []rtree.Range, rewriteRules *RewriteRules) ([]rtree.Range
 
 // RewriteRules contains rules for rewriting keys of tables.
 type RewriteRules struct {
-	Data []*import_sstpb.RewriteRule
+	Data        []*import_sstpb.RewriteRule
+	OldKeyspace []byte
+	NewKeyspace []byte
 }
 
 // Append append its argument to this rewrite rules.

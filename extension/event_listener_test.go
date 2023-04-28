@@ -134,6 +134,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 	conn := server.CreateMockConn(t, serv)
 	defer conn.Close()
 
+	require.NoError(t, conn.HandleQuery(context.Background(), "SET tidb_enable_non_prepared_plan_cache=0")) // sctx.InMultiStmts cannot be set correctly in this UT.
 	require.NoError(t, conn.HandleQuery(context.Background(), "SET tidb_multi_statement_mode='ON'"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "use test"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "create table t1(a int, b int)"))
@@ -264,7 +265,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 		},
 		{
 			sql:          "insert into t1 values(1, 10), (2, 20)",
-			redactText:   "insert into `t1` values ( ... ) , ( ... )",
+			redactText:   "insert into `t1` values ( ... )",
 			affectedRows: 2,
 			tables: []stmtctx.TableEntry{
 				{DB: "test", Table: "t1"},

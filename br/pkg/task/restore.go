@@ -4,9 +4,11 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -30,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/tikv/client-go/v2/tikv"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -51,6 +55,8 @@ const (
 	// FlagWithPlacementPolicy corresponds to tidb config with-tidb-placement-mode
 	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
+	// FlagKeyspaceName corresponds to tidb config keyspace-name
+	FlagKeyspaceName = "keyspace-name"
 
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
@@ -81,6 +87,7 @@ const (
 	TableRestoreCmd = "Table Restore"
 	PointRestoreCmd = "Point Restore"
 	RawRestoreCmd   = "Raw Restore"
+	TxnRestoreCmd   = "Txn Restore"
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
@@ -114,7 +121,8 @@ func (cfg *RestoreCommonConfig) adjust() {
 func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
-
+	flags.Uint32(flagConcurrency, 128, "The size of thread pool on BR that executes tasks, "+
+		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
 		"the threshold of merging small regions (Default 96MB, region split size)")
 	flags.Uint64(FlagMergeRegionKeyCount, conn.DefaultMergeRegionKeyCount,
@@ -150,6 +158,7 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	if flags.Lookup(flagWithSysTable) != nil {
 		cfg.WithSysTable, err = flags.GetBool(flagWithSysTable)
 		if err != nil {
@@ -188,6 +197,8 @@ type RestoreConfig struct {
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
 
+	UseCheckpoint bool `json:"use-checkpoint" toml:"use-checkpoint"`
+
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
 	Prepare             bool                  `json:"prepare" toml:"prepare"`
@@ -206,6 +217,10 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
+	flags.String(FlagKeyspaceName, "", "correspond to tidb config keyspace-name")
+
+	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
+	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -276,7 +291,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	cfg.Concurrency, err = flags.GetUint32(flagConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if cfg.Config.Concurrency == 0 {
 		cfg.Config.Concurrency = defaultRestoreConcurrency
 	}
@@ -296,6 +314,14 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.WithPlacementPolicy, err = flags.GetString(FlagWithPlacementPolicy)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
+	}
+	cfg.KeyspaceName, err = flags.GetString(FlagKeyspaceName)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagKeyspaceName)
+	}
+	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", flagUseCheckpoint)
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -393,7 +419,8 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	if cfg.PitrBatchSize == 0 {
 		cfg.PitrBatchSize = defaultPiTRBatchSize
 	}
-
+	// another goroutine is used to iterate the backup file
+	cfg.PitrConcurrency += 1
 	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
 	cfg.Config.Concurrency = cfg.PitrConcurrency
 }
@@ -413,7 +440,15 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
 
-	err := client.LoadRestoreStores(ctx)
+	err := restore.CheckKeyspaceBREnable(ctx, client.GetPDClient())
+	if err != nil {
+		log.Warn("Keyspace BR is not supported in this cluster, fallback to legacy restore", zap.Error(err))
+		client.SetRewriteMode(restore.RewriteModeLegacy)
+	} else {
+		client.SetRewriteMode(restore.RewriteModeKeyspace)
+	}
+
+	err = client.LoadRestoreStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -471,12 +506,44 @@ func IsStreamRestore(cmdName string) bool {
 	return cmdName == PointRestoreCmd
 }
 
+func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF func(context.Context) error, err error) {
+	register := utils.NewTaskRegister(etcdCLI, utils.RegisterRestore, fmt.Sprintf("restore-%s", uuid.New()))
+	err = register.RegisterTask(ctx)
+	return register.Close, errors.Trace(err)
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := etcdCLI.Close(); err != nil {
+			log.Error("failed to close the etcd client", zap.Error(err))
+		}
+	}()
+	if err := checkTaskExists(c, cfg, etcdCLI); err != nil {
+		return errors.Annotate(err, "failed to check task exists")
+	}
+	closeF, err := registerTaskToPD(c, etcdCLI)
+	if err != nil {
+		return errors.Annotate(err, "failed to register task to pd")
+	}
+	defer func() {
+		_ = closeF(c)
+	}()
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = cfg.KeyspaceName
+	})
 	if IsStreamRestore(cmdName) {
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
+	return runRestore(c, g, cmdName, cfg)
+}
 
+func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -496,6 +563,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+	codec := mgr.GetStorage().GetCodec()
 
 	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
 	mergeRegionCount := cfg.MergeSmallRegionKeyCount
@@ -575,6 +643,48 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
+	if client.IsIncremental() {
+		// don't support checkpoint for the ddl restore
+		cfg.UseCheckpoint = false
+	}
+
+	restoreSchedulers, schedulersConfig, err := restorePreWork(ctx, client, mgr, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	schedulersRemovable := false
+	defer func() {
+		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !schedulersRemovable {
+			log.Info("skip removing pd schehduler for next retry")
+			return
+		}
+		log.Info("start to remove the pd scheduler")
+		// run the post-work to avoid being stuck in the import
+		// mode or emptied schedulers.
+		restorePostWork(ctx, client, restoreSchedulers)
+		log.Info("finish removing pd scheduler")
+	}()
+
+	tree, restoreSchedulersFromCheckpoint, err := client.InitCheckpoint(ctx, s, mgr, schedulersConfig, cfg.UseCheckpoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if restoreSchedulersFromCheckpoint != nil {
+		restoreSchedulers = restoreSchedulersFromCheckpoint
+	}
+	if cfg.UseCheckpoint {
+		defer func() {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			if len(cfg.FullBackupStorage) > 0 || !schedulersRemovable {
+				log.Info("wait for flush checkpoint...")
+				client.WaitForFinishCheckpoint(ctx)
+			}
+		}()
+	}
+
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
 		TTL:      utils.DefaultBRGCSafePointTTL,
@@ -582,11 +692,24 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	g.Record("BackupTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)
-
+	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
+	defer func() {
+		log.Info("start to remove gc-safepoint keeper")
+		// close the gc safe point keeper at first
+		gcSafePointKeeperCancel()
+		// set the ttl to 0 to remove the gc-safe-point
+		sp.TTL = 0
+		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
+			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+				zap.Error(err),
+			)
+		}
+		log.Info("finish removing gc-safepoint keeper")
+	}()
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
 	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
-	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -654,10 +777,36 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	errCh := make(chan error, 32)
 
 	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
+
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
 		// don't return immediately, wait all pipeline done.
+	} else {
+		oldKeyspace, _, err := tikv.DecodeKey(files[0].GetStartKey(), backupMeta.ApiVersion)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newKeyspace := codec.GetKeyspace()
+
+		// If the API V2 data occurs in the restore process, the cluster must
+		// support the keyspace rewrite mode.
+		if (len(oldKeyspace) > 0 || len(newKeyspace) > 0) && client.GetRewriteMode() == restore.RewriteModeLegacy {
+			return errors.Annotate(berrors.ErrRestoreModeMismatch, "cluster only supports legacy rewrite mode")
+		}
+
+		// Hijack the tableStream and rewrite the rewrite rules.
+		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+			// Set the keyspace info for the checksum requests
+			t.RewriteRule.OldKeyspace = oldKeyspace
+			t.RewriteRule.NewKeyspace = newKeyspace
+
+			for _, rule := range t.RewriteRule.Data {
+				rule.OldKeyPrefix = append(append([]byte{}, oldKeyspace...), rule.OldKeyPrefix...)
+				rule.NewKeyPrefix = codec.EncodeKey(rule.NewKeyPrefix)
+			}
+			return t
+		})
 	}
 
 	if cfg.tiflashRecorder != nil {
@@ -678,14 +827,6 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	rangeSize := restore.EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
 	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
-
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Always run the post-work even on error, so we don't stuck in the import
-	// mode or emptied schedulers
-	defer restorePostWork(ctx, client, restoreSchedulers)
 
 	// Do not reset timestamp if we are doing incremental restore, because
 	// we are not allowed to decrease timestamp.
@@ -711,12 +852,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		int64(rangeSize+len(files)+len(tables)),
 		!cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
+	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency, client.GetCheckpointRunner())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
-	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
+	batcher.SetCheckpoint(tree)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
 	go restoreTableStream(ctx, rangeStream, batcher, errCh)
@@ -764,6 +906,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// The cost of rename user table / replace into system table wouldn't be so high.
 	// So leave it out of the pipeline for easier implementation.
 	client.RestoreSystemSchemas(ctx, cfg.TableFilter)
+
+	schedulersRemovable = true
 
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
@@ -827,9 +971,9 @@ func filterRestoreFiles(
 
 // restorePreWork executes some prepare work before restore.
 // TODO make this function returns a restore post work.
-func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, error) {
+func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
 	if client.IsOnline() {
-		return pdutil.Nop, nil
+		return pdutil.Nop, nil, nil
 	}
 
 	if switchToImport {
@@ -837,7 +981,7 @@ func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, 
 		client.SwitchToImportMode(ctx)
 	}
 
-	return mgr.RemoveSchedulers(ctx)
+	return mgr.RemoveSchedulersWithConfig(ctx)
 }
 
 // restorePostWork executes some post work after restore.

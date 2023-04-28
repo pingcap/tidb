@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -74,41 +75,6 @@ func (s SchemaState) String() string {
 		return "global txn only"
 	default:
 		return "none"
-	}
-}
-
-// BackfillState is the state used by the backfill-merge process.
-type BackfillState byte
-
-const (
-	// BackfillStateInapplicable means the backfill-merge process is not used.
-	BackfillStateInapplicable BackfillState = iota
-	// BackfillStateRunning is the state that the backfill process is running.
-	// In this state, the index's write and delete operations are redirected to a temporary index.
-	BackfillStateRunning
-	// BackfillStateReadyToMerge is the state that the temporary index's records are ready to be merged back
-	// to the origin index.
-	// In this state, the index's write and delete operations are copied to a temporary index.
-	// This state is used to make sure that all the TiDB instances are aware of the copy during the merge(BackfillStateMerging).
-	BackfillStateReadyToMerge
-	// BackfillStateMerging is the state that the temp index is merging back to the origin index.
-	// In this state, the index's write and delete operations are copied to a temporary index.
-	BackfillStateMerging
-)
-
-// String implements fmt.Stringer interface.
-func (s BackfillState) String() string {
-	switch s {
-	case BackfillStateRunning:
-		return "backfill state running"
-	case BackfillStateReadyToMerge:
-		return "backfill state ready to merge"
-	case BackfillStateMerging:
-		return "backfill state merging"
-	case BackfillStateInapplicable:
-		return "backfill state inapplicable"
-	default:
-		return "backfill state unknown"
 	}
 }
 
@@ -757,6 +723,9 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
 	}
 
+	if t.Partition != nil {
+		nt.Partition = t.Partition.Clone()
+	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
 	}
@@ -1193,6 +1162,8 @@ type PartitionInfo struct {
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	States              []PartitionState      `json:"states"`
 	Num                 uint64                `json:"num"`
+	// Only used during ReorganizePartition so far
+	DDLState SchemaState `json:"ddl_state"`
 }
 
 // Clone clones itself.
@@ -1327,15 +1298,15 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
-func (t *TableInfo) FindPartitionDefinitionByName(partitionDefinitionName string) *PartitionDefinition {
+func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName string) int {
 	lowConstrName := strings.ToLower(partitionDefinitionName)
-	definitions := t.Partition.Definitions
+	definitions := pi.Definitions
 	for i := range definitions {
 		if definitions[i].Name.L == lowConstrName {
-			return &t.Partition.Definitions[i]
+			return i
 		}
 	}
-	return nil
+	return -1
 }
 
 // IndexColumn provides index column info.
@@ -1459,6 +1430,11 @@ func (index *IndexInfo) HasColumnInIndexColumns(tblInfo *TableInfo, colID int64)
 func (index *IndexInfo) FindColumnByName(nameL string) *IndexColumn {
 	_, ret := FindIndexColumnByName(index.Columns, nameL)
 	return ret
+}
+
+// IsPublic checks if the index state is public
+func (index *IndexInfo) IsPublic() bool {
+	return index.State == StatePublic
 }
 
 // FindIndexColumnByName finds IndexColumn by name. When IndexColumn is not found, returns (-1, nil).
@@ -1736,6 +1712,7 @@ type PlacementSettings struct {
 	LearnerConstraints  string `json:"learner_constraints"`
 	FollowerConstraints string `json:"follower_constraints"`
 	VoterConstraints    string `json:"voter_constraints"`
+	SurvivalPreferences string `json:"survival_preferences"`
 }
 
 // PolicyInfo is the struct to store the placement policy.
@@ -1753,6 +1730,9 @@ func (p *PolicyInfo) Clone() *PolicyInfo {
 	return &cloned
 }
 
+// DefaultJobInterval sets the default interval between TTL jobs
+const DefaultJobInterval = time.Hour
+
 // TTLInfo records the TTL config
 type TTLInfo struct {
 	ColumnName      CIStr  `json:"column"`
@@ -1761,6 +1741,7 @@ type TTLInfo struct {
 	IntervalTimeUnit int  `json:"interval_time_unit"`
 	Enable           bool `json:"enable"`
 	// JobInterval is the interval between two TTL scan jobs.
+	// It's suggested to get a duration with `(*TTLInfo).GetJobInterval`
 	JobInterval string `json:"job_interval"`
 }
 
@@ -1768,6 +1749,19 @@ type TTLInfo struct {
 func (t *TTLInfo) Clone() *TTLInfo {
 	cloned := *t
 	return &cloned
+}
+
+// GetJobInterval parses the job interval and return
+// if the job interval is an empty string, the "1h" will be returned, to keep compatible with 6.5 (in which
+// TTL_JOB_INTERVAL attribute doesn't exist)
+// Didn't set TTL_JOB_INTERVAL during upgrade and bootstrap because setting default value here is much simpler
+// and could avoid bugs blocking users from upgrading or bootstrapping the cluster.
+func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
+	if len(t.JobInterval) == 0 {
+		return DefaultJobInterval, nil
+	}
+
+	return duration.ParseDuration(t.JobInterval)
 }
 
 func writeSettingItemToBuilder(sb *strings.Builder, item string) {
@@ -1846,21 +1840,53 @@ type ResourceGroupRefInfo struct {
 
 // ResourceGroupSettings is the settings of the resource group
 type ResourceGroupSettings struct {
-	RRURate          uint64 `json:"rru_per_sec"`
-	WRURate          uint64 `json:"wru_per_sec"`
+	RURate           uint64 `json:"ru_per_sec"`
+	Priority         uint64 `json:"priority"`
 	CPULimiter       string `json:"cpu_limit"`
 	IOReadBandwidth  string `json:"io_read_bandwidth"`
 	IOWriteBandwidth string `json:"io_write_bandwidth"`
+	BurstLimit       int64  `json:"burst_limit"`
 }
+
+// NewResourceGroupSettings creates a new ResourceGroupSettings.
+func NewResourceGroupSettings() *ResourceGroupSettings {
+	return &ResourceGroupSettings{
+		RURate:           0,
+		Priority:         MediumPriorityValue,
+		CPULimiter:       "",
+		IOReadBandwidth:  "",
+		IOWriteBandwidth: "",
+		BurstLimit:       0,
+	}
+}
+
+// PriorityValueToName converts the priority value to corresponding name
+func PriorityValueToName(value uint64) string {
+	switch value {
+	case LowPriorityValue:
+		return "LOW"
+	case MediumPriorityValue:
+		return "MEDIUM"
+	case HighPriorityValue:
+		return "HIGH"
+	default:
+		return "MEDIUM"
+	}
+}
+
+//revive:disable:exported
+const (
+	LowPriorityValue    = 1
+	MediumPriorityValue = 8
+	HighPriorityValue   = 16
+)
 
 func (p *ResourceGroupSettings) String() string {
 	sb := new(strings.Builder)
-	if p.RRURate != 0 {
-		writeSettingIntegerToBuilder(sb, "RRU_PER_SEC", p.RRURate)
+	if p.RURate != 0 {
+		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate)
 	}
-	if p.WRURate != 0 {
-		writeSettingIntegerToBuilder(sb, "WRU_PER_SEC", p.WRURate)
-	}
+	writeSettingItemToBuilder(sb, "PRIORITY="+PriorityValueToName(p.Priority))
 	if len(p.CPULimiter) > 0 {
 		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
 	}
@@ -1870,7 +1896,19 @@ func (p *ResourceGroupSettings) String() string {
 	if len(p.IOWriteBandwidth) > 0 {
 		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth)
 	}
+	// Once burst limit is negative, meaning allow burst with unlimit.
+	if p.BurstLimit < 0 {
+		writeSettingItemToBuilder(sb, "BURSTABLE")
+	}
 	return sb.String()
+}
+
+// Adjust adjusts the resource group settings.
+func (p *ResourceGroupSettings) Adjust() {
+	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec.
+	if p.BurstLimit == 0 {
+		p.BurstLimit = int64(p.RURate)
+	}
 }
 
 // Clone clones the resource group settings.
@@ -1879,7 +1917,7 @@ func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
 	return &cloned
 }
 
-// ResourceGroupInfo is the struct to store the placement policy.
+// ResourceGroupInfo is the struct to store the resource group.
 type ResourceGroupInfo struct {
 	*ResourceGroupSettings
 	ID    int64       `json:"id"`

@@ -610,7 +610,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 			_widec = int16(data[p])
 			if 92 <= data[p] && data[p] <= 92 {
 				_widec = 256 + (int16(data[p]) - 0)
-				if parser.escFlavor != backslashEscapeFlavorNone {
+				if parser.escFlavor != escapeFlavorNone {
 					_widec += 256
 				}
 			}
@@ -639,7 +639,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 			_widec = int16(data[p])
 			if 92 <= data[p] && data[p] <= 92 {
 				_widec = 256 + (int16(data[p]) - 0)
-				if parser.escFlavor != backslashEscapeFlavorNone {
+				if parser.escFlavor != escapeFlavorNone {
 					_widec += 256
 				}
 			}
@@ -685,7 +685,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 			_widec = int16(data[p])
 			if 92 <= data[p] && data[p] <= 92 {
 				_widec = 256 + (int16(data[p]) - 0)
-				if parser.escFlavor != backslashEscapeFlavorNone {
+				if parser.escFlavor != escapeFlavorNone {
 					_widec += 256
 				}
 			}
@@ -716,7 +716,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 			_widec = int16(data[p])
 			if 92 <= data[p] && data[p] <= 92 {
 				_widec = 256 + (int16(data[p]) - 0)
-				if parser.escFlavor != backslashEscapeFlavorNone {
+				if parser.escFlavor != escapeFlavorNone {
 					_widec += 256
 				}
 			}
@@ -745,7 +745,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 			_widec = int16(data[p])
 			if 92 <= data[p] && data[p] <= 92 {
 				_widec = 256 + (int16(data[p]) - 0)
-				if parser.escFlavor != backslashEscapeFlavorNone {
+				if parser.escFlavor != escapeFlavorNone {
 					_widec += 256
 				}
 			}
@@ -791,7 +791,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 			_widec = int16(data[p])
 			if 92 <= data[p] && data[p] <= 92 {
 				_widec = 256 + (int16(data[p]) - 0)
-				if parser.escFlavor != backslashEscapeFlavorNone {
+				if parser.escFlavor != escapeFlavorNone {
 					_widec += 256
 				}
 			}

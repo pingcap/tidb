@@ -23,6 +23,9 @@ import (
 )
 
 func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, recursive bool, partitionIDs []int64) error {
+	if exec == nil {
+		return nil
+	}
 	var child *tipb.Executor
 	switch exec.Tp {
 	case tipb.ExecType_TypeTableScan:
@@ -56,6 +59,8 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, recursive b
 		child = exec.Window.Child
 	case tipb.ExecType_TypeSort:
 		child = exec.Sort.Child
+	case tipb.ExecType_TypeExpand:
+		child = exec.Expand.Child
 	default:
 		return errors.Trace(fmt.Errorf("unknown new tipb protocol %d", exec.Tp))
 	}

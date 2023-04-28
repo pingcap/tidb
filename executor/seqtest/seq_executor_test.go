@@ -624,7 +624,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	require.NoError(t, err)
 	err = do.StatsHandle().Update(do.InfoSchema())
 	require.NoError(t, err)
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
@@ -686,9 +686,15 @@ func TestIndexMergeReaderClose(t *testing.T) {
 	err := tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr"))
 	require.Error(t, err)
-	require.False(t, checkGoroutineExists("fetchLoop"))
-	require.False(t, checkGoroutineExists("fetchHandles"))
-	require.False(t, checkGoroutineExists("waitPartialWorkersAndCloseFetchChan"))
+	require.Eventually(t, func() bool {
+		return !checkGoroutineExists("fetchLoop")
+	}, 5*time.Second, 100*time.Microsecond)
+	require.Eventually(t, func() bool {
+		return !checkGoroutineExists("fetchHandles")
+	}, 5*time.Second, 100*time.Microsecond)
+	require.Eventually(t, func() bool {
+		return !checkGoroutineExists("waitPartialWorkersAndCloseFetchChan")
+	}, 5*time.Second, 100*time.Microsecond)
 }
 
 func TestParallelHashAggClose(t *testing.T) {
@@ -935,12 +941,12 @@ func TestCartesianProduct(t *testing.T) {
 func TestBatchInsertDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	originLimit := kv.TxnTotalSizeLimit.Load()
 	defer func() {
-		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
+		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5900)
+	kv.TxnTotalSizeLimit.Store(6000)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1467,12 +1473,12 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
-	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
+	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
 	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
-	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 }
 
 func TestIssue18744(t *testing.T) {

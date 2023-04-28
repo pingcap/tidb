@@ -23,10 +23,14 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -63,6 +67,12 @@ type MPPGather struct {
 	mppReqs []*kv.MPPDispatchRequest
 
 	respIter distsql.SelectResult
+
+	memTracker *memory.Tracker
+
+	columns                    []*model.ColumnInfo
+	virtualColumnIndex         []int
+	virtualColumnRetFieldTypes []*types.FieldType
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
@@ -93,10 +103,14 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
 			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
 			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-			zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
+			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
+			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
+			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
+		)
 		req := &kv.MPPDispatchRequest{
 			Data:       pbData,
 			Meta:       mppTask.Meta,
@@ -142,7 +156,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 			failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
 		}
 	})
-	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id, e.startTS, e.mppQueryID)
+	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id, e.startTS, e.mppQueryID, e.memTracker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -152,7 +166,14 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 // Next fills data into the chunk passed by its caller.
 func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 	err := e.respIter.Next(ctx, chk)
-	return errors.Trace(err)
+	if err != nil {
+		return err
+	}
+	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema.Columns, e.columns, e.ctx, chk)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // Close and release the used resources.

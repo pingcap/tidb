@@ -115,6 +115,7 @@ const (
 	`
 )
 
+// ErrorManager records errors during the import process.
 type ErrorManager struct {
 	db             *sql.DB
 	taskID         int64
@@ -125,6 +126,7 @@ type ErrorManager struct {
 	logger         log.Logger
 }
 
+// TypeErrorsRemain returns the number of type errors that can be recorded.
 func (em *ErrorManager) TypeErrorsRemain() int64 {
 	return em.remainingError.Type.Load()
 }
@@ -194,7 +196,8 @@ func (em *ErrorManager) RecordTypeError(
 	if em.remainingError.Type.Dec() < 0 {
 		threshold := em.configError.Type.Load()
 		if threshold > 0 {
-			encodeErr = errors.Annotatef(encodeErr, "meet errors exceed the max-error.type threshold '%d'",
+			encodeErr = errors.Annotatef(encodeErr,
+				"The number of type errors exceeds the threshold configured by `max-error.type`: '%d'",
 				em.configError.Type.Load())
 		}
 		return encodeErr
@@ -228,6 +231,7 @@ func (em *ErrorManager) RecordTypeError(
 	return nil
 }
 
+// DataConflictInfo is the information of a data conflict error.
 type DataConflictInfo struct {
 	RawKey   []byte
 	RawValue []byte
@@ -235,23 +239,29 @@ type DataConflictInfo struct {
 	Row      string
 }
 
+// RecordDataConflictError records a data conflict error.
 func (em *ErrorManager) RecordDataConflictError(
 	ctx context.Context,
 	logger log.Logger,
 	tableName string,
 	conflictInfos []DataConflictInfo,
 ) error {
+	var gerr error
 	if len(conflictInfos) == 0 {
 		return nil
 	}
 
 	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
 		threshold := em.configError.Conflict.Load()
-		return errors.Errorf(" meet errors exceed the max-error.conflict threshold '%d'", threshold)
+		// Still need to record this batch of conflict records, and then return this error at last.
+		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
+		gerr = errors.Errorf(
+			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			threshold)
 	}
 
 	if em.db == nil {
-		return nil
+		return gerr
 	}
 
 	exec := common.SQLWithRetry{
@@ -259,7 +269,7 @@ func (em *ErrorManager) RecordDataConflictError(
 		Logger:       logger,
 		HideQueryLog: redact.NeedRedact(),
 	}
-	return exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
+	if err := exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
 		fmt.Fprintf(sb, insertIntoConflictErrorData, em.schemaEscaped)
 		var sqlArgs []interface{}
@@ -279,9 +289,13 @@ func (em *ErrorManager) RecordDataConflictError(
 		}
 		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
 		return err
-	})
+	}); err != nil {
+		gerr = err
+	}
+	return gerr
 }
 
+// RecordIndexConflictError records a index conflict error.
 func (em *ErrorManager) RecordIndexConflictError(
 	ctx context.Context,
 	logger log.Logger,
@@ -290,17 +304,22 @@ func (em *ErrorManager) RecordIndexConflictError(
 	conflictInfos []DataConflictInfo,
 	rawHandles, rawRows [][]byte,
 ) error {
+	var gerr error
 	if len(conflictInfos) == 0 {
 		return nil
 	}
 
 	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
 		threshold := em.configError.Conflict.Load()
-		return errors.Errorf(" meet errors exceed the max-error.conflict threshold %d", threshold)
+		// Still need to record this batch of conflict records, and then return this error at last.
+		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
+		gerr = errors.Errorf(
+			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			threshold)
 	}
 
 	if em.db == nil {
-		return nil
+		return gerr
 	}
 
 	exec := common.SQLWithRetry{
@@ -308,7 +327,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 		Logger:       logger,
 		HideQueryLog: redact.NeedRedact(),
 	}
-	return exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
+	if err := exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
 		fmt.Fprintf(sb, insertIntoConflictErrorIndex, em.schemaEscaped)
 		var sqlArgs []interface{}
@@ -331,7 +350,10 @@ func (em *ErrorManager) RecordIndexConflictError(
 		}
 		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
 		return err
-	})
+	}); err != nil {
+		gerr = err
+	}
+	return gerr
 }
 
 // ResolveAllConflictKeys query all conflicting rows (handle and their
@@ -447,12 +469,13 @@ func (em *ErrorManager) charsetError() int64 {
 	})
 }
 
+// HasError returns true if any error type has reached the limit
 func (em *ErrorManager) HasError() bool {
 	return em.typeErrors() > 0 || em.syntaxError() > 0 ||
 		em.charsetError() > 0 || em.conflictError() > 0
 }
 
-// GenErrorLogFields return a slice of zap.Field for each error type
+// LogErrorDetails return a slice of zap.Field for each error type
 func (em *ErrorManager) LogErrorDetails() {
 	fmtErrMsg := func(cnt int64, errType, tblName string) string {
 		return fmt.Sprintf("Detect %d %s errors in total, please refer to table %s for more details",

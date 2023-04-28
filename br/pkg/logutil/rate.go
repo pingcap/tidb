@@ -51,5 +51,5 @@ func (r *RateTracer) RateAt(instant time.Time) float64 {
 
 // L make a logger with the current speed.
 func (r *RateTracer) L() *zap.Logger {
-	return log.With(zap.String("speed", fmt.Sprintf("%.2f ops/s", r.Rate())))
+	return log.L().With(zap.String("speed", fmt.Sprintf("%.2f ops/s", r.Rate())))
 }

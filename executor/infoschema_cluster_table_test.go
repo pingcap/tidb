@@ -290,7 +290,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 45
+	result := 48
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.
@@ -325,4 +325,42 @@ func TestTableStorageStats(t *testing.T) {
 	}, nil, nil))
 
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
+}
+
+func TestIssue42619(t *testing.T) {
+	s := createInfosSchemaClusterTableSuite(t)
+	mockAddr := s.mockAddr
+	store := &mockStore{
+		s.store.(helper.Storage),
+		mockAddr,
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustQuery("SELECT TABLE_SCHEMA, TABLE_NAME, PEER_COUNT, REGION_COUNT, EMPTY_REGION_COUNT, TABLE_SIZE, TABLE_KEYS " +
+		"FROM information_schema.TABLE_STORAGE_STATS " +
+		"WHERE TABLE_SCHEMA = 'test' and TABLE_NAME='t'").Check(
+		testkit.Rows("test t 1 1 1 1 1"))
+
+	tk.MustExec(
+		"CREATE TABLE tp (a int(11) DEFAULT NULL,b int(11) DEFAULT NULL,c int(11) DEFAULT NULL," +
+			"KEY ia(a), KEY ib(b), KEY ic (c))" +
+			"PARTITION BY RANGE (`a`)" +
+			"(PARTITION `p0` VALUES LESS THAN (300)," +
+			"PARTITION `p1` VALUES LESS THAN (600)," +
+			"PARTITION `p2` VALUES LESS THAN (900)," +
+			"PARTITION `p3` VALUES LESS THAN (MAXVALUE))")
+	tk.MustQuery("SELECT TABLE_SCHEMA, TABLE_NAME, PEER_COUNT, REGION_COUNT, EMPTY_REGION_COUNT, TABLE_SIZE, TABLE_KEYS " +
+		"FROM information_schema.TABLE_STORAGE_STATS " +
+		"WHERE TABLE_SCHEMA = 'test'").Sort().Check(
+		testkit.Rows(
+			"test t 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+		))
 }

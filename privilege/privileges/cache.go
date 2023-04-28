@@ -1014,6 +1014,17 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 	return nil
 }
 
+// matchResoureGroup finds an identity to match resource group.
+func (p *MySQLPrivilege) matchResoureGroup(resourceGroupName string) *UserRecord {
+	for i := 0; i < len(p.User); i++ {
+		record := &p.User[i]
+		if record.ResourceGroup == resourceGroupName {
+			return record
+		}
+	}
+	return nil
+}
+
 // connectionVerification verifies the username + hostname according to exact
 // match from the mysql.user privilege table. call matchIdentity() first if you
 // do not have an exact match yet.

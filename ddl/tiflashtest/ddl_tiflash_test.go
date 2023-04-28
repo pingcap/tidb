@@ -146,12 +146,12 @@ func (s *tiflashContext) CheckFlashback(tk *testkit.TestKit, t *testing.T) {
 	require.NotNil(t, tb)
 	if tb.Meta().Partition != nil {
 		for _, e := range tb.Meta().Partition.Definitions {
-			ruleName := fmt.Sprintf("table-%v-r", e.ID)
+			ruleName := infosync.MakeRuleID(e.ID)
 			_, ok := s.tiflash.GetPlacementRule(ruleName)
 			require.True(t, ok)
 		}
 	} else {
-		ruleName := fmt.Sprintf("table-%v-r", tb.Meta().ID)
+		ruleName := infosync.MakeRuleID(tb.Meta().ID)
 		_, ok := s.tiflash.GetPlacementRule(ruleName)
 		require.True(t, ok)
 	}
@@ -368,7 +368,7 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	s.CheckFlashback(tk, t)
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
-	r, ok := s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
+	r, ok := s.tiflash.GetPlacementRule(infosync.MakeRuleID(tb.Meta().ID))
 	require.NotNil(t, r)
 	require.True(t, ok)
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
@@ -377,7 +377,7 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	require.NoError(t, err)
 	replica := tb.Meta().TiFlashReplica
 	require.Nil(t, replica)
-	r, ok = s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
+	r, ok = s.tiflash.GetPlacementRule(infosync.MakeRuleID(tb.Meta().ID))
 	require.Nil(t, r)
 	require.False(t, ok)
 }
@@ -458,9 +458,7 @@ func TestTiFlashFlashbackCluster(t *testing.T) {
 
 	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
-	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	ChangeGCSafePoint(tk, time.Now().Add(-10*time.Second), "true", "10m0s")
@@ -473,8 +471,7 @@ func TestTiFlashFlashbackCluster(t *testing.T) {
 	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)), errorMsg)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 }
 
 func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, table string) {
@@ -559,7 +556,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res := s.tiflash.CheckPlacementRule(*expectRule)
+	res := s.tiflash.CheckPlacementRule(expectRule)
 	require.True(t, res)
 
 	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
@@ -571,7 +568,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	defer fCancelPD()
 	tk.MustExec("drop table ddltiflash")
 	expectRule = infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res = s.tiflash.CheckPlacementRule(*expectRule)
+	res = s.tiflash.CheckPlacementRule(expectRule)
 	require.True(t, res)
 }
 
@@ -615,7 +612,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res := s.tiflash.CheckPlacementRule(*expectRule)
+	res := s.tiflash.CheckPlacementRule(expectRule)
 	require.True(t, res)
 
 	ChangeGCSafePoint(tk, time.Now().Add(-time.Hour), "true", "10m0s")
@@ -625,7 +622,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 
 	// Wait GC
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
-	res = s.tiflash.CheckPlacementRule(*expectRule)
+	res = s.tiflash.CheckPlacementRule(expectRule)
 	require.False(t, res)
 }
 
@@ -646,7 +643,7 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
-	res := s.tiflash.CheckPlacementRule(*expectRule)
+	res := s.tiflash.CheckPlacementRule(expectRule)
 	require.False(t, res)
 }
 
@@ -1333,4 +1330,24 @@ func TestTiFlashAvailableAfterAddPartition(t *testing.T) {
 	pi := tb.Meta().GetPartitionInfo()
 	require.NotNil(t, pi)
 	require.Equal(t, len(pi.Definitions), 2)
+}
+
+func TestTiFlashAvailableAfterDownOneStore(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10))")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/OneTiFlashStoreDown", `return`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/OneTiFlashStoreDown", `return`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/OneTiFlashStoreDown"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/OneTiFlashStoreDown"))
+	}()
+
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	CheckTableAvailable(s.dom, t, 1, []string{})
 }

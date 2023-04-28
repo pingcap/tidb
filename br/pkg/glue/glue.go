@@ -43,7 +43,8 @@ type Session interface {
 	Execute(ctx context.Context, sql string) error
 	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
-	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error
+	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo,
+		cs ...ddl.CreateTableWithInfoConfigurier) error
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()
 	GetGlobalVariable(name string) (string, error)
@@ -52,7 +53,8 @@ type Session interface {
 
 // BatchCreateTableSession is an interface to batch create table parallelly
 type BatchCreateTableSession interface {
-	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error
+	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo,
+		cs ...ddl.CreateTableWithInfoConfigurier) error
 }
 
 // Progress is an interface recording the current execution progress.

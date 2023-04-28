@@ -32,7 +32,7 @@ func TestHex(t *testing.T) {
 	region.StartKey = []byte{'t', 200, '\\', 000, 000, 000, '\\', 000, 000, 000, 37, '-', 000, 000, 000, 000, 000, 000, 000, 37}
 	region.EndKey = []byte("3asg3asd")
 
-	expected := "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil> IsInFlashback:false}"
+	expected := "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil> IsInFlashback:false FlashbackStartTs:0}"
 	require.Equal(t, expected, logutil.Hex(&region).String())
 }
 

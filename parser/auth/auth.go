@@ -33,6 +33,7 @@ type UserIdentity struct {
 	CurrentUser  bool
 	AuthUsername string // Username matched in privileges system
 	AuthHostname string // Match in privs system (i.e. could be a wildcard)
+	AuthPlugin   string // The plugin specified in handshake, only used during authentication.
 }
 
 // Restore implements Node interface.

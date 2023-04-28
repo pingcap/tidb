@@ -1,0 +1,44 @@
+# Copyright 2023 PingCAP, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM hub.pingcap.net/jenkins/centos7_jenkins
+
+USER root
+WORKDIR /root
+
+ENV GOLANG_VERSION 1.20.1
+ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-amd64.tar.gz
+ENV GOLANG_DOWNLOAD_SHA256 000a5b1fca4f75895f78befeb2eecf10bfff3c428597f3f1e69133b63b911b02
+ENV GOPATH /go
+ENV GOROOT /usr/local/go
+ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH
+ADD https://github.com/bazelbuild/bazel/releases/download/6.0.0/bazel-6.0.0-linux-x86_64 /usr/bin/bazel
+ADD https://uploader.codecov.io/latest/linux/codecov /usr/bin/codecov
+RUN curl https://setup.ius.io | sh || true && \
+    chmod u+x /usr/bin/bazel && yum update -y && \
+    yum install -y supervisor tree libcurl-devel gettext autoconf python-pip python3-pip patch git wget gcc python autoconf make curl-devel expat-devel gettext-devel openssl-devel zlib-devel perl-CPAN perl-devel && \
+    git clone --depth=1 --branch=v2.37.2 https://github.com/git/git && cd git && yum remove -y git && make configure && ./configure --prefix=/usr/local &&  make -j16 install && cd .. && rm -rf git && \
+    pip3 install s3cmd requests && pip3 install requests && \
+    curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
+	&& echo "$GOLANG_DOWNLOAD_SHA256  golang.tar.gz" | sha256sum -c - \
+	&& tar -C /usr/local -xzf golang.tar.gz \
+	&& rm golang.tar.gz && \
+    mkdir /go && chown jenkins:jenkins /go && \
+    curl -fsSL "http://pingcap-dev.hk.ufileos.com/jenkins/jenkins-slave-docker-sqllogictest.tar.gz" | tar xz -C "/git" \
+        && chown -R jenkins:jenkins /git && \
+    chown jenkins:jenkins /usr/bin/bazel && \
+    chown jenkins:jenkins /usr/bin/codecov && \
+    chmod +x /usr/bin/codecov
+USER jenkins
+WORKDIR /home/jenkins

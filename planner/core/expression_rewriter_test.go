@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -379,61 +378,30 @@ func TestInsertOnDuplicateLazyMoreThan1Row(t *testing.T) {
 	tk.MustExec("DROP TABLE if exists t1, t2, source;")
 }
 
-func TestMultiColInExpression(t *testing.T) {
+func TestConvertIfNullToCast(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int)")
-	tk.MustExec("insert into t1 values(1,1),(2,null),(null,3),(4,4)")
-	tk.MustExec("analyze table t1")
-	tk.MustExec("create table t2(a int, b int)")
-	tk.MustExec("insert into t2 values(1,1),(2,null),(null,3),(5,4)")
-	tk.MustExec("analyze table t2")
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-
-	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
-	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
-
-	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
-	expressionRewriterSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Res = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
-	}
+	tk.MustExec("DROP TABLE if exists t1;")
+	tk.MustExec("CREATE TABLE t1(cnotnull tinyint not null, cnull tinyint null);")
+	tk.MustExec("INSERT INTO t1 VALUES(1, 1);")
+	tk.MustQuery("select CAST(IFNULL(cnull, '1') AS DATE), CAST(IFNULL(cnotnull, '1') AS DATE) from t1;").Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("explain format=\"brief\" select IFNULL(cnotnull, '1') from t1;").Check(testkit.Rows(
+		"Projection 10000.00 root  cast(test.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#4]\n" +
+			"[└─TableReader 10000.00 root  data:TableFullScan]\n" +
+			"[  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
 }
 
-func TestBitFuncsReturnType(t *testing.T) {
+func TestColResolutionPriBetweenOuterAndNatureJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("create table t (a timestamp, b varbinary(32))")
-	tk.MustExec("insert into t values ('2006-08-27 21:57:57', 0x373037343631313230)")
-	tk.MustExec("analyze table t")
-	var input []string
-	var output []struct {
-		Plan []string
-	}
-
-	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
-	expressionRewriterSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-	}
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE if exists t0;")
+	tk.MustExec("DROP VIEW if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 TEXT(328) );")
+	tk.MustExec("CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT 'c' FROM t0;")
+	tk.MustExec("INSERT INTO t0 VALUES (-12);")
+	tk.MustQuery("SELECT v0.c0 AS c0 FROM  v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7)));").Check(testkit.Rows())
+	tk.MustQuery("SELECT COUNT(v0.c0) AS c0 FROM v0 WHERE EXISTS(SELECT v0.c0 AS c0 FROM v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7))));").Check(testkit.Rows("0"))
 }

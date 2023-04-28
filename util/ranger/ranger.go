@@ -161,8 +161,8 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
 		if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
-			// do not ignore these errors if in prepared plan building for safety
-			return nil, errors.Trace(err)
+			// skip plan cache in this case for safety.
+			sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("%s when converting %v", err.Error(), point.value))
 		}
 		//revive:disable:empty-block
 		if tp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {

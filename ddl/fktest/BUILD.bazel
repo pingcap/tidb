@@ -2,12 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "fktest_test",
+    timeout = "short",
     srcs = [
         "foreign_key_test.go",
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 4,
+    shard_count = 25,
     deps = [
         "//config",
         "//ddl",

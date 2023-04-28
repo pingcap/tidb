@@ -16,12 +16,10 @@ package model
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 )
 
@@ -226,59 +224,6 @@ func (h *HistoryInfo) Clean() {
 	h.MultipleTableInfos = nil
 }
 
-// DDLReorgMeta is meta info of DDL reorganization.
-type DDLReorgMeta struct {
-	// EndHandle is the last handle of the adding indices table.
-	// We should only backfill indices in the range [startHandle, EndHandle].
-	EndHandle int64 `json:"end_handle"`
-
-	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
-	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
-	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *TimeZoneLocation                `json:"location"`
-	ReorgTp       ReorgType                        `json:"reorg_tp"`
-}
-
-// ReorgType indicates which process is used for the data reorganization.
-type ReorgType int8
-
-const (
-	// ReorgTypeNone means the backfill task is not started yet.
-	ReorgTypeNone ReorgType = iota
-	// ReorgTypeTxn means the index records are backfill with transactions.
-	// All the index KVs are written through the transaction interface.
-	// This is the original backfill implementation.
-	ReorgTypeTxn
-	// ReorgTypeLitMerge means the index records are backfill with lightning.
-	// The index KVs are encoded to SST files and imported to the storage directly.
-	// The incremental index KVs written by DML are redirected to a temporary index.
-	// After the backfill is finished, the temporary index records are merged back to the original index.
-	ReorgTypeLitMerge
-	// ReorgTypeTxnMerge means backfill with transactions and merge incremental changes.
-	// The backfill index KVs are written through the transaction interface.
-	// The incremental index KVs written by DML are redirected to a temporary index.
-	// After the backfill is finished, the temporary index records are merged back to the original index.
-	ReorgTypeTxnMerge
-)
-
-// NeedMergeProcess means the incremental changes need to be merged.
-func (tp ReorgType) NeedMergeProcess() bool {
-	return tp == ReorgTypeLitMerge || tp == ReorgTypeTxnMerge
-}
-
-// String implements fmt.Stringer interface.
-func (tp ReorgType) String() string {
-	switch tp {
-	case ReorgTypeTxn:
-		return "txn"
-	case ReorgTypeLitMerge:
-		return "ingest"
-	case ReorgTypeTxnMerge:
-		return "txn-merge"
-	}
-	return ""
-}
-
 // TimeZoneLocation represents a single time zone.
 type TimeZoneLocation struct {
 	Name     string `json:"name"`
@@ -299,13 +244,6 @@ func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 		tz.location = time.FixedZone(tz.Name, tz.Offset)
 	}
 	return tz.location, err
-}
-
-// NewDDLReorgMeta new a DDLReorgMeta.
-func NewDDLReorgMeta() *DDLReorgMeta {
-	return &DDLReorgMeta{
-		EndHandle: math.MaxInt64,
-	}
 }
 
 // MultiSchemaInfo keeps some information for multi schema change.
@@ -406,6 +344,9 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
+		Charset:         parentJob.Charset,
+		Collate:         parentJob.Collate,
+		AdminOperator:   parentJob.AdminOperator,
 	}
 }
 
@@ -426,38 +367,12 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 type JobMeta struct {
 	SchemaID int64 `json:"schema_id"`
 	TableID  int64 `json:"table_id"`
-	// Query string of the ddl job.
+	// Type is the DDL job's type.
+	Type ActionType `json:"job_type"`
+	// Query is the DDL job's SQL string.
 	Query string `json:"query"`
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
-}
-
-// BackfillMeta is meta info of the backfill job.
-type BackfillMeta struct {
-	PhysicalTableID int64  `json:"physical_table_id"`
-	IsUnique        bool   `json:"is_unique"`
-	EndInclude      bool   `json:"end_include"`
-	ErrMsg          string `json:"err_msg"`
-
-	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
-	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
-	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *TimeZoneLocation                `json:"location"`
-	ReorgTp       ReorgType                        `json:"reorg_tp"`
-
-	*JobMeta `json:"job_meta"`
-}
-
-// Encode encodes BackfillMeta with json format.
-func (bm *BackfillMeta) Encode() ([]byte, error) {
-	b, err := json.Marshal(bm)
-	return b, errors.Trace(err)
-}
-
-// Decode decodes BackfillMeta from the json buffer.
-func (bm *BackfillMeta) Decode(b []byte) error {
-	err := json.Unmarshal(b, bm)
-	return errors.Trace(err)
 }
 
 // Job is for a DDL operation.
@@ -511,6 +426,15 @@ type Job struct {
 
 	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
 	SeqNum uint64 `json:"seq_num"`
+
+	// Charset is the charset when the DDL Job is created.
+	Charset string `json:"charset"`
+	// Collate is the collation the DDL Job is created.
+	Collate string `json:"collate"`
+
+	// AdminOperator indicates where the Admin command comes, by the TiDB
+	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
+	AdminOperator AdminCommandOperator `json:"admin_operator"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -595,13 +519,18 @@ func (job *Job) GetRowCount() int64 {
 
 // SetWarnings sets the warnings of rows handled.
 func (job *Job) SetWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
+	job.Mu.Lock()
 	job.ReorgMeta.Warnings = warnings
 	job.ReorgMeta.WarningsCount = warningsCount
+	job.Mu.Unlock()
 }
 
 // GetWarnings gets the warnings of the rows handled.
 func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {
-	return job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
+	job.Mu.Lock()
+	w, wc := job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
+	job.Mu.Unlock()
+	return w, wc
 }
 
 // Encode encodes job with json format.
@@ -669,7 +598,8 @@ func (job *Job) String() string {
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
 	if job.ReorgMeta != nil {
-		ret += fmt.Sprintf(", UniqueWarnings:%d", len(job.ReorgMeta.Warnings))
+		warnings, _ := job.GetWarnings()
+		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
 	}
 	if job.Type != ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 		ret += fmt.Sprintf(", Multi-Schema Change:true, Revertible:%v", job.MultiSchemaInfo.Revertible)
@@ -812,6 +742,26 @@ func (job *Job) IsCancelling() bool {
 	return job.State == JobStateCancelling
 }
 
+// IsPaused returns whether the job is paused.
+func (job *Job) IsPaused() bool {
+	return job.State == JobStatePaused
+}
+
+// IsPausing indicates whether the job is pausing.
+func (job *Job) IsPausing() bool {
+	return job.State == JobStatePausing
+}
+
+// IsPausable checks whether we can pause the job.
+func (job *Job) IsPausable() bool {
+	return (job.NotStarted() || job.IsRunning()) && job.IsRollbackable()
+}
+
+// IsResumable checks whether the job can be rollback.
+func (job *Job) IsResumable() bool {
+	return job.IsPaused()
+}
+
 // IsSynced returns whether the DDL modification is synced among all TiDB servers.
 func (job *Job) IsSynced() bool {
 	return job.State == JobStateSynced
@@ -840,7 +790,7 @@ func (job *Job) NotStarted() bool {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey:
+	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition:
 		return true
 	case ActionModifyColumn:
 		if len(job.CtxVars) > 0 {
@@ -881,7 +831,7 @@ func (job *Job) IsRollbackable() bool {
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
 	case ActionRebaseAutoID, ActionShardRowID,
-		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
+		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
 		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
@@ -898,7 +848,7 @@ func (job *Job) IsRollbackable() bool {
 }
 
 // JobState is for job state.
-type JobState byte
+type JobState int32
 
 // List job states.
 const (
@@ -918,6 +868,9 @@ const (
 	JobStateCancelling JobState = 7
 	// JobStateQueueing means the job has not yet been started.
 	JobStateQueueing JobState = 8
+
+	JobStatePaused  JobState = 9
+	JobStatePausing JobState = 10
 )
 
 // String implements fmt.Stringer interface.
@@ -939,10 +892,58 @@ func (s JobState) String() string {
 		return "synced"
 	case JobStateQueueing:
 		return "queueing"
+	case JobStatePaused:
+		return "paused"
+	case JobStatePausing:
+		return "pausing"
 	default:
 		return "none"
 	}
 }
+
+// StrToJobState converts string to JobState.
+func StrToJobState(s string) JobState {
+	switch s {
+	case "running":
+		return JobStateRunning
+	case "rollingback":
+		return JobStateRollingback
+	case "rollback done":
+		return JobStateRollbackDone
+	case "done":
+		return JobStateDone
+	case "cancelled":
+		return JobStateCancelled
+	case "cancelling":
+		return JobStateCancelling
+	case "synced":
+		return JobStateSynced
+	case "queueing":
+		return JobStateQueueing
+	case "paused":
+		return JobStatePaused
+	case "pausing":
+		return JobStatePausing
+	default:
+		return JobStateNone
+	}
+}
+
+// AdminCommandOperator indicates where the Cancel/Pause/Resume command on DDL
+// jobs comes from.
+type AdminCommandOperator int
+
+const (
+	// AdminCommandByNotKnown indicates that unknow calling of the
+	// Cancel/Pause/Resume on DDL job.
+	AdminCommandByNotKnown AdminCommandOperator = iota
+	// AdminCommandByEndUser indicates that the Cancel/Pause/Resume command on
+	// DDL job is issued by the end user.
+	AdminCommandByEndUser
+	// AdminCommandBySystem indicates that the Cancel/Pause/Resume command on
+	// DDL job is issued by TiDB itself, such as Upgrade(bootstrap).
+	AdminCommandBySystem
+)
 
 // SchemaDiff contains the schema modification at a particular schema version.
 // It is used to reduce schema reload cost.

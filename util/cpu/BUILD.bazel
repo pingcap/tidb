@@ -18,9 +18,21 @@ go_library(
 
 go_test(
     name = "cpu_test",
-    srcs = ["cpu_test.go"],
-    embed = [":cpu"],
+    timeout = "short",
+    srcs = [
+        "cpu_test.go",
+        "main_test.go",
+    ],
     flaky = True,
     race = "on",
-    deps = ["@com_github_stretchr_testify//require"],
+    shard_count = 2,
+    deps = [
+        ":cpu",
+        "//resourcemanager/scheduler",
+        "//resourcemanager/util",
+        "//testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
 )

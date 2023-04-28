@@ -47,13 +47,27 @@ const insertIntoTTLTask = `INSERT LOW_PRIORITY INTO mysql.tidb_ttl_task SET
 	expire_time = %?,
 	created_time = %?`
 
-// SelectFromTTLTaskWithID returns an SQL statement to get all tasks of the specified job in mysql.tidb_ttl_task
-func SelectFromTTLTaskWithID(jobID string) (string, []interface{}) {
+// SelectFromTTLTaskWithJobID returns an SQL statement to get all tasks of the specified job in mysql.tidb_ttl_task
+func SelectFromTTLTaskWithJobID(jobID string) (string, []interface{}) {
 	return selectFromTTLTask + " WHERE job_id = %?", []interface{}{jobID}
 }
 
+// SelectFromTTLTaskWithID returns an SQL statement to get all tasks of the specified job
+// and scanID in mysql.tidb_ttl_task
+func SelectFromTTLTaskWithID(jobID string, scanID int64) (string, []interface{}) {
+	return selectFromTTLTask + " WHERE job_id = %? AND scan_id = %?", []interface{}{jobID, scanID}
+}
+
+// PeekWaitingTTLTask returns an SQL statement to get `limit` waiting ttl task
+func PeekWaitingTTLTask(hbExpire time.Time) (string, []interface{}) {
+	return selectFromTTLTask +
+			" WHERE status = 'waiting' OR (owner_hb_time < %? AND status = 'running') ORDER BY created_time ASC",
+		[]interface{}{hbExpire.Format("2006-01-02 15:04:05")}
+}
+
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
-func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum, scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []interface{}, error) {
+func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
+	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []interface{}, error) {
 	rangeStart, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, []byte{}, scanRangeStart...)
 	if err != nil {
 		return "", nil, err
@@ -62,7 +76,8 @@ func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, tableID int64, sca
 	if err != nil {
 		return "", nil, err
 	}
-	return insertIntoTTLTask, []interface{}{jobID, tableID, int64(scanID), rangeStart, rangeEnd, expireTime, createdTime}, nil
+	return insertIntoTTLTask, []interface{}{jobID, tableID, int64(scanID),
+		rangeStart, rangeEnd, expireTime, createdTime}, nil
 }
 
 // TaskStatus represents the current status of a task
@@ -115,8 +130,8 @@ func RowToTTLTask(sctx sessionctx.Context, row chunk.Row) (*TTLTask, error) {
 	}
 	if !row.IsNull(3) {
 		scanRangeStartBuf := row.GetBytes(3)
-		// it's still posibble to be nil even this column is not NULL
-		if scanRangeStartBuf != nil {
+		// it's still posibble to be empty even this column is not NULL
+		if len(scanRangeStartBuf) > 0 {
 			task.ScanRangeStart, err = codec.Decode(scanRangeStartBuf, len(scanRangeStartBuf))
 			if err != nil {
 				return nil, err
@@ -125,8 +140,8 @@ func RowToTTLTask(sctx sessionctx.Context, row chunk.Row) (*TTLTask, error) {
 	}
 	if !row.IsNull(4) {
 		scanRangeEndBuf := row.GetBytes(4)
-		// it's still posibble to be nil even this column is not NULL
-		if scanRangeEndBuf != nil {
+		// it's still posibble to be empty even this column is not NULL
+		if len(scanRangeEndBuf) > 0 {
 			task.ScanRangeEnd, err = codec.Decode(scanRangeEndBuf, len(scanRangeEndBuf))
 			if err != nil {
 				return nil, err

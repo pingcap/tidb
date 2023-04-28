@@ -107,8 +107,6 @@ func TestUpdate(t *testing.T) {
 	require.Equal(t, obj1, string(res))
 	require.Equal(t, revision1, revision0)
 
-	time.Sleep(time.Second)
-
 	err = etcdCli.Update(ctx, key, obj2, 3)
 	require.NoError(t, err)
 

@@ -37,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
 )
 
@@ -60,6 +62,7 @@ type MySQLConnectParam struct {
 	Vars                     map[string]string
 }
 
+// ToDriverConfig converts the MySQLConnectParam to a mysql.Config.
 func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
 	cfg := mysql.NewConfig()
 	cfg.Params = make(map[string]string)
@@ -115,7 +118,8 @@ func ConnectMySQL(cfg *mysql.Config) (*sql.DB, error) {
 	// If access is denied and password is encoded by base64, try the decoded string as well.
 	if mysqlErr, ok := errors.Cause(firstErr).(*mysql.MySQLError); ok && mysqlErr.Number == tmysql.ErrAccessDenied {
 		// If password is encoded by base64, try the decoded string as well.
-		if password, decodeErr := base64.StdEncoding.DecodeString(cfg.Passwd); decodeErr == nil && string(password) != cfg.Passwd {
+		password, decodeErr := base64.StdEncoding.DecodeString(cfg.Passwd)
+		if decodeErr == nil && string(password) != cfg.Passwd {
 			cfg.Passwd = string(password)
 			db2, err := tryConnectMySQL(cfg)
 			if err == nil {
@@ -127,6 +131,7 @@ func ConnectMySQL(cfg *mysql.Config) (*sql.DB, error) {
 	return nil, errors.Trace(firstErr)
 }
 
+// Connect creates a new connection to the database.
 func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	db, err := ConnectMySQL(param.ToDriverConfig())
 	if err != nil {
@@ -161,7 +166,7 @@ type SQLWithRetry struct {
 	HideQueryLog bool
 }
 
-func (t SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
+func (SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
 	return Retry(purpose, parentLogger, action)
 }
 
@@ -196,6 +201,7 @@ outside:
 	return errors.Annotatef(err, "%s failed", purpose)
 }
 
+// QueryRow executes a query that is expected to return at most one row.
 func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string, dest ...interface{}) error {
 	logger := t.Logger
 	if !t.HideQueryLog {
@@ -204,6 +210,43 @@ func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string
 	return t.perform(ctx, logger, purpose, func() error {
 		return t.DB.QueryRowContext(ctx, query).Scan(dest...)
 	})
+}
+
+// QueryStringRows executes a query that is expected to return multiple rows
+// whose every column is string.
+func (t SQLWithRetry) QueryStringRows(ctx context.Context, purpose string, query string) ([][]string, error) {
+	var res [][]string
+	logger := t.Logger
+	if !t.HideQueryLog {
+		logger = logger.With(zap.String("query", query))
+	}
+
+	err := t.perform(ctx, logger, purpose, func() error {
+		rows, err := t.DB.QueryContext(ctx, query)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		colNames, err := rows.Columns()
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			row := make([]string, len(colNames))
+			refs := make([]interface{}, 0, len(row))
+			for i := range row {
+				refs = append(refs, &row[i])
+			}
+			if err := rows.Scan(refs...); err != nil {
+				return err
+			}
+			res = append(res, row)
+		}
+		return rows.Err()
+	})
+
+	return res, err
 }
 
 // Transact executes an action in a transaction, and retry if the
@@ -272,6 +315,7 @@ func EscapeIdentifier(identifier string) string {
 	return builder.String()
 }
 
+// WriteMySQLIdentifier writes a MySQL identifier into the string builder.
 // Writes a MySQL identifier into the string builder.
 // The identifier is always escaped into the form "`foo`".
 func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
@@ -291,6 +335,7 @@ func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
 	builder.WriteByte('`')
 }
 
+// InterpolateMySQLString interpolates a string into a MySQL string literal.
 func InterpolateMySQLString(s string) string {
 	var builder strings.Builder
 	builder.Grow(len(s) + 2)
@@ -391,7 +436,15 @@ type KvPair struct {
 	// Val is the value of the KV pair
 	Val []byte
 	// RowID is the row id of the KV pair.
-	RowID int64
+	RowID []byte
+}
+
+// EncodeIntRowIDToBuf encodes an int64 row id to a buffer.
+var EncodeIntRowIDToBuf = codec.EncodeComparableVarint
+
+// EncodeIntRowID encodes an int64 row id.
+func EncodeIntRowID(rowID int64) []byte {
+	return codec.EncodeComparableVarint(nil, rowID)
 }
 
 // TableHasAutoRowID return whether table has auto generated row id
@@ -415,4 +468,23 @@ func StringSliceEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// GetAutoRandomColumn return the column with auto_random, return nil if the table doesn't have it.
+// todo: better put in ddl package, but this will cause import cycle since ddl package import lightning
+func GetAutoRandomColumn(tblInfo *model.TableInfo) *model.ColumnInfo {
+	if !tblInfo.ContainsAutoRandomBits() {
+		return nil
+	}
+	if tblInfo.PKIsHandle {
+		return tblInfo.GetPkColInfo()
+	} else if tblInfo.IsCommonHandle {
+		pk := tables.FindPrimaryIndex(tblInfo)
+		if pk == nil {
+			return nil
+		}
+		offset := pk.Columns[0].Offset
+		return tblInfo.Columns[offset]
+	}
+	return nil
 }

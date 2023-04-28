@@ -168,3 +168,44 @@ func TestGc(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, ratio, "-1.0")
 }
+
+func TestRegionSplitInfo(t *testing.T) {
+	// config format:
+	// MySQL [(none)]> show config where name = 'coprocessor.region-split-size';
+	// +------+-------------------+-------------------------------+-------+
+	// | Type | Instance          | Name                          | Value |
+	// +------+-------------------+-------------------------------+-------+
+	// | tikv | 127.0.0.1:20161   | coprocessor.region-split-size | 10MB  |
+	// +------+-------------------+-------------------------------+-------+
+	// MySQL [(none)]> show config where name = 'coprocessor.region-split-keys';
+	// +------+-------------------+-------------------------------+--------+
+	// | Type | Instance          | Name                          | Value  |
+	// +------+-------------------+-------------------------------+--------+
+	// | tikv | 127.0.0.1:20161   | coprocessor.region-split-keys | 100000 |
+	// +------+-------------------+-------------------------------+--------+
+
+	fields := make([]*ast.ResultField, 4)
+	tps := []*types.FieldType{
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+	}
+	for i := 0; i < len(tps); i++ {
+		rf := new(ast.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = *tps[i]
+		fields[i] = rf
+	}
+	rows := make([]chunk.Row, 0, 1)
+	row := chunk.MutRowFromValues("tikv", "127.0.0.1:20161", "coprocessor.region-split-size", "10MB").ToRow()
+	rows = append(rows, row)
+	s := &mockRestrictedSQLExecutor{rows: rows, fields: fields}
+	require.Equal(t, utils.GetSplitSize(s), uint64(10000000))
+
+	rows = make([]chunk.Row, 0, 1)
+	row = chunk.MutRowFromValues("tikv", "127.0.0.1:20161", "coprocessor.region-split-keys", "100000").ToRow()
+	rows = append(rows, row)
+	s = &mockRestrictedSQLExecutor{rows: rows, fields: fields}
+	require.Equal(t, utils.GetSplitKeys(s), int64(100000))
+}

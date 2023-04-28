@@ -185,7 +185,7 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 
 		result = rows
 		return nil
-	})
+	}, session.TxnModeOptimistic)
 
 	if err != nil {
 		return nil, shouldRetry, err

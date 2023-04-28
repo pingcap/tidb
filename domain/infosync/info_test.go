@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/util"
@@ -67,7 +68,7 @@ func TestTopology(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, false)
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, keyspace.CodecV1, false)
 	require.NoError(t, err)
 
 	err = info.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
@@ -152,7 +153,7 @@ func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 }
 
 func TestPutBundlesRetry(t *testing.T) {
-	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, false)
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, false)
 	require.NoError(t, err)
 
 	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"})
@@ -216,7 +217,7 @@ func TestPutBundlesRetry(t *testing.T) {
 
 func TestTiFlashManager(t *testing.T) {
 	ctx := context.Background()
-	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, false)
+	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, false)
 	tiflash := NewMockTiFlash()
 	SetMockTiFlash(tiflash)
 
@@ -224,7 +225,7 @@ func TestTiFlashManager(t *testing.T) {
 
 	// SetTiFlashPlacementRule/GetTiFlashGroupRules
 	rule := MakeNewRule(1, 2, []string{"a"})
-	require.NoError(t, SetTiFlashPlacementRule(ctx, *rule))
+	require.NoError(t, SetTiFlashPlacementRule(ctx, rule))
 	rules, err := GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
 	require.Equal(t, 1, len(rules))
@@ -261,17 +262,65 @@ func TestTiFlashManager(t *testing.T) {
 	ConfigureTiFlashPDForPartitions(true, &[]model.PartitionDefinition{
 		{
 			ID:       2,
-			Name:     model.NewCIStr("p"),
+			Name:     model.NewCIStr("p1"),
+			LessThan: []string{},
+		},
+		{
+			ID:       3,
+			Name:     model.NewCIStr("p2"),
 			LessThan: []string{},
 		},
 	}, 3, &[]string{}, 100)
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
-	// Have table 1 and 2
-	require.Equal(t, 2, len(rules))
+	// Have table a and partitions p1, p2
+	require.Equal(t, 3, len(rules))
 	z, ok = tiflash.SyncStatus[2]
+	require.Equal(t, true, ok)
+	require.Equal(t, true, z.Accel)
+	z, ok = tiflash.SyncStatus[3]
 	require.Equal(t, true, ok)
 	require.Equal(t, true, z.Accel)
 
 	CloseTiFlashManager(ctx)
+}
+
+func TestRuleOp(t *testing.T) {
+	rule := MakeNewRule(1, 2, []string{"a"})
+	ruleOp := RuleOp{
+		TiFlashRule:      &rule,
+		Action:           RuleOpAdd,
+		DeleteByIDPrefix: false,
+	}
+	j, err := json.Marshal(&ruleOp)
+	require.NoError(t, err)
+	ruleOpExpect := &RuleOp{}
+	json.Unmarshal(j, ruleOpExpect)
+	require.Equal(t, ruleOp.Action, ruleOpExpect.Action)
+	require.Equal(t, *ruleOp.TiFlashRule, *ruleOpExpect.TiFlashRule)
+	ruleOps := make([]RuleOp, 0, 2)
+	for i := 0; i < 10; i += 2 {
+		rule := MakeNewRule(int64(i), 2, []string{"a"})
+		ruleOps = append(ruleOps, RuleOp{
+			TiFlashRule:      &rule,
+			Action:           RuleOpAdd,
+			DeleteByIDPrefix: false,
+		})
+	}
+	for i := 1; i < 10; i += 2 {
+		rule := MakeNewRule(int64(i), 2, []string{"b"})
+		ruleOps = append(ruleOps, RuleOp{
+			TiFlashRule:      &rule,
+			Action:           RuleOpDel,
+			DeleteByIDPrefix: false,
+		})
+	}
+	j, err = json.Marshal(ruleOps)
+	require.NoError(t, err)
+	var ruleOpsExpect []RuleOp
+	json.Unmarshal(j, &ruleOpsExpect)
+	for i := 0; i < len(ruleOps); i++ {
+		require.Equal(t, ruleOps[i].Action, ruleOpsExpect[i].Action)
+		require.Equal(t, *ruleOps[i].TiFlashRule, *ruleOpsExpect[i].TiFlashRule)
+	}
 }

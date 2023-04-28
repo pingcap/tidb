@@ -86,10 +86,14 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}()
 
 	if e.optimizerTrace {
-		if e.optimizerTraceTarget == core.TracePlanTargetEstimation {
+		switch e.optimizerTraceTarget {
+		case core.TracePlanTargetEstimation:
 			return e.nextOptimizerCEPlanTrace(ctx, e.ctx, req)
+		case core.TracePlanTargetDebug:
+			return e.nextOptimizerDebugPlanTrace(ctx, e.ctx, req)
+		default:
+			return e.nextOptimizerPlanTrace(ctx, e.ctx, req)
 		}
-		return e.nextOptimizerPlanTrace(ctx, e.ctx, req)
 	}
 
 	ctx = util.ContextWithTraceExecDetails(ctx)
@@ -119,6 +123,34 @@ func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionctx.
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)
 	err = jsonEncoder.Encode(stmtCtx.OptimizerCETrace)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	res := []byte(writer.String())
+
+	req.AppendBytes(0, res)
+	e.exhausted = true
+	return nil
+}
+
+func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
+	stmtCtx := se.GetSessionVars().StmtCtx
+	origin := stmtCtx.EnableOptimizerDebugTrace
+	stmtCtx.EnableOptimizerDebugTrace = true
+	defer func() {
+		stmtCtx.EnableOptimizerDebugTrace = origin
+	}()
+
+	_, _, err := core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return err
+	}
+
+	writer := strings.Builder{}
+	jsonEncoder := json.NewEncoder(&writer)
+	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
+	jsonEncoder.SetEscapeHTML(false)
+	err = jsonEncoder.Encode(stmtCtx.OptimizerDebugTrace)
 	if err != nil {
 		return errors.AddStack(err)
 	}

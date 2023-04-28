@@ -1,0 +1,25 @@
+[
+    {
+        "group_id": "pd",
+        "group_index": 0,
+        "group_override": false,
+        "rules": [
+            {
+                "group_id": "pd",
+                "id": "default",
+                "start_key": "",
+                "end_key": "",
+                "role": "voter",
+                "count": 2
+            },
+            {
+                "group_id": "pd",
+                "id": "learner",
+                "start_key": "",
+                "end_key": "",
+                "role": "learner",
+                "count": 1
+            }
+        ]
+    }
+]

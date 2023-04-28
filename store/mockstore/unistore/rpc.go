@@ -57,7 +57,7 @@ type RPCClient struct {
 var CheckResourceTagForTopSQLInGoTest bool
 
 // UnistoreRPCClientSendHook exports for test.
-var UnistoreRPCClientSendHook func(*tikvrpc.Request)
+var UnistoreRPCClientSendHook atomic.Pointer[func(*tikvrpc.Request)]
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -68,8 +68,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	})
 
 	failpoint.Inject("unistoreRPCClientSendHook", func(val failpoint.Value) {
-		if val.(bool) && UnistoreRPCClientSendHook != nil {
-			UnistoreRPCClientSendHook(req)
+		if fn := UnistoreRPCClientSendHook.Load(); val.(bool) && fn != nil {
+			(*fn)(req)
 		}
 	})
 
@@ -265,11 +265,21 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				failpoint.Return(nil, errors.New("rpc error"))
 			}
 		})
+		failpoint.Inject("MppVersionError", func(val failpoint.Value) {
+			if v := int64(val.(int)); v > req.EstablishMPPConn().GetReceiverMeta().GetMppVersion() || v > req.EstablishMPPConn().GetSenderMeta().GetMppVersion() {
+				failpoint.Return(nil, context.Canceled)
+			}
+		})
 		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout, storeID)
 	case tikvrpc.CmdMPPTask:
 		failpoint.Inject("mppDispatchTimeout", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
+		failpoint.Inject("MppVersionError", func(val failpoint.Value) {
+			if v := int64(val.(int)); v > req.DispatchMPPTask().GetMeta().GetMppVersion() {
+				failpoint.Return(nil, context.Canceled)
 			}
 		})
 		resp.Resp, err = c.handleDispatchMPPTask(ctx, req.DispatchMPPTask(), storeID)
@@ -322,6 +332,7 @@ func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Reques
 	}, nil
 }
 
+// handleEstablishMPPConnection handle the mock mpp collection came from root or peers.
 func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.EstablishMPPConnectionRequest, timeout time.Duration, storeID uint64) (*tikvrpc.MPPStreamResponse, error) {
 	mockServer := new(mockMPPConnectStreamServer)
 	err := c.usSvr.EstablishMPPConnectionWithStoreID(r, mockServer, storeID)
@@ -338,6 +349,7 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 	_, cancel := context.WithCancel(ctx)
 	streamResp.Lease.Cancel = cancel
 	streamResp.Timeout = timeout
+	// mock the stream resp from the server's resp slice
 	first, err := streamResp.Recv()
 	if err != nil {
 		if errors.Cause(err) != io.EOF {

@@ -29,14 +29,17 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -228,6 +231,7 @@ func TestMppExecution(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=OFF")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -478,6 +482,7 @@ func TestPartitionTable(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(true)`)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=OFF")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -628,8 +633,39 @@ func TestDispatchTaskRetry(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "3*return(true)"))
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from t group by b").Check(testkit.Rows("4"))
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"))
+}
+
+func TestMppVersionError(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("insert into t values(1,0),(2,0),(3,0),(4,0)")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	{
+		item := fmt.Sprintf("return(%d)", kv.GetNewestMppVersion()+1)
+		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError", item))
+	}
+	{
+		err := tk.QueryToErr("select count(*) from t group by b")
+		require.Error(t, err)
+	}
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError"))
+	{
+		item := fmt.Sprintf("return(%d)", kv.GetNewestMppVersion())
+		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError", item))
+	}
+	{
+		tk.MustQuery("select count(*) from t group by b").Check(testkit.Rows("4"))
+	}
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError"))
 }
 
 func TestCancelMppTasks(t *testing.T) {
@@ -660,7 +696,7 @@ func TestCancelMppTasks(t *testing.T) {
 		defer wg.Done()
 		err := tk.QueryToErr("select count(*) from t as t1 , t where t1.a = t.a")
 		require.Error(t, err)
-		require.Equal(t, int(executor.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
+		require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
 	}()
 	time.Sleep(1 * time.Second)
 	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 1)
@@ -828,6 +864,7 @@ func TestAvgOverflow(t *testing.T) {
 	tk.MustExec("insert into td values (10017,-32661);")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=OFF")
 	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
 	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
 	tk.MustExec("drop table if exists td;")
@@ -1233,6 +1270,33 @@ func TestGroupStreamAggOnTiFlash(t *testing.T) {
 	}
 }
 
+// TestIssue41014 test issue that can't find proper physical plan
+func TestIssue41014(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE `tai1` (\n  `aid` int(11) DEFAULT NULL,\n  `rid` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("CREATE TABLE `tai2` (\n  `rid` int(11) DEFAULT NULL,\n  `prilan` varchar(20) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("alter table tai1 set tiflash replica 1")
+	tk.MustExec("alter table tai2 set tiflash replica 1")
+	tk.MustExec("alter table tai2 add index idx((lower(prilan)));")
+	tk.MustExec("set @@tidb_opt_distinct_agg_push_down = 1;")
+
+	tk.MustQuery("explain select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
+		testkit.Rows("HashAgg_11 1.00 root  funcs:count(distinct test.tai1.aid)->Column#8",
+			"└─HashJoin_15 9990.00 root  inner join, equal:[eq(test.tai2.rid, test.tai1.rid)]",
+			"  ├─Selection_20(Build) 8000.00 root  like(lower(test.tai2.prilan), \"%python%\", 92)",
+			"  │ └─Projection_19 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
+			"  │   └─TableReader_18 9990.00 root  data:Selection_17",
+			"  │     └─Selection_17 9990.00 cop[tikv]  not(isnull(test.tai2.rid))",
+			"  │       └─TableFullScan_16 10000.00 cop[tikv] table:tai2 keep order:false, stats:pseudo",
+			"  └─TableReader_23(Probe) 9990.00 root  data:Selection_22",
+			"    └─Selection_22 9990.00 cop[tikv]  not(isnull(test.tai1.rid))",
+			"      └─TableFullScan_21 10000.00 cop[tikv] table:tai1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
+		testkit.Rows("0"))
+}
+
 func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
@@ -1257,7 +1321,15 @@ func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
 func TestDisaggregatedTiFlash(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = true
+		conf.UseAutoScaler = true
 	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+		conf.UseAutoScaler = false
+	})
+	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
+	require.NoError(t, err)
+
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1265,17 +1337,50 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	tk.MustExec("create table t(c1 int)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
 	err = tk.ExecToErr("select * from t;")
-	require.Contains(t, err.Error(), "Please check tiflash_compute node is available")
+	// Expect error, because TestAutoScaler return empty topo.
+	require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
 
+	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "tmpAddr", "tmpClusterID", false)
+	require.NoError(t, err)
+	err = tk.ExecToErr("select * from t;")
+	// Expect error, because AWSAutoScaler is not setup, so http request will fail.
+	require.Contains(t, err.Error(), "[util:1815]Internal : get tiflash_compute topology failed")
+}
+
+// todo: remove this after AutoScaler is stable.
+func TestDisaggregatedTiFlashNonAutoScaler(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DisaggregatedTiFlash = false
+		conf.DisaggregatedTiFlash = true
+		conf.UseAutoScaler = false
 	})
-	tk.MustQuery("select * from t;").Check(testkit.Rows())
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+		conf.UseAutoScaler = true
+	})
+
+	// Setting globalTopoFetcher to nil to can make sure cannot fetch topo from AutoScaler.
+	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.InvalidASStr, "tmpAddr", "tmpClusterID", false)
+	require.Contains(t, err.Error(), "unexpected topo fetch type. expect: mock or aws or gcp, got invalid")
+
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+
+	err = tk.ExecToErr("select * from t;")
+	// This error message means we use PD instead of AutoScaler.
+	require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
 }
 
 func TestDisaggregatedTiFlashQuery(t *testing.T) {
@@ -1304,9 +1409,6 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
-	needCheckTiFlashComputeNode := "false"
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/testDisaggregatedTiFlashQuery", fmt.Sprintf("return(%s)", needCheckTiFlashComputeNode))
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/testDisaggregatedTiFlashQuery")
 	tk.MustExec("explain select max( tbl_1.col_1 ) as r0 , sum( tbl_1.col_1 ) as r1 , sum( tbl_1.col_8 ) as r2 from tbl_1 where tbl_1.col_8 != 68 or tbl_1.col_3 between null and 939 order by r0,r1,r2;")
 
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
@@ -1319,17 +1421,291 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustQuery("explain select * from t1 where c1 < 2").Check(testkit.Rows(
 		"PartitionUnion_10 9970.00 root  ",
-		"├─TableReader_15 3323.33 root  data:ExchangeSender_14",
+		"├─TableReader_15 3323.33 root  MppVersion: 1, data:ExchangeSender_14",
 		"│ └─ExchangeSender_14 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_13 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
-		"├─TableReader_19 3323.33 root  data:ExchangeSender_18",
+		"│     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
+		"├─TableReader_19 3323.33 root  MppVersion: 1, data:ExchangeSender_18",
 		"│ └─ExchangeSender_18 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_17 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_16 10000.00 mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
-		"└─TableReader_23 3323.33 root  data:ExchangeSender_22",
+		"│     └─TableFullScan_16 10000.00 mpp[tiflash] table:t1, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
+		"└─TableReader_23 3323.33 root  MppVersion: 1, data:ExchangeSender_22",
 		"  └─ExchangeSender_22 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Selection_21 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"))
-	// tk.MustQuery("select * from t1 where c1 < 2").Check(testkit.Rows("1 1"))
+		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo"))
+}
+
+func TestMPPMemoryTracker(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_mem_quota_query = 1 << 30")
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set tidb_enforce_mpp = on;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testMPPOOMPanic", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/testMPPOOMPanic"))
+	}()
+	err = tk.QueryToErr("select * from t")
+	require.NotNil(t, err)
+	require.True(t, strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
+}
+
+func TestTiFlashComputeDispatchPolicy(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = true
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+	})
+
+	var err error
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Default policy is 'consistent_hash'
+	tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows("consistent_hash"))
+
+	// tiflash_compute_dispatch_policy is global variable.
+	tk.MustExec("set @@session.tiflash_compute_dispatch_policy = 'consistent_hash';")
+	tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows("consistent_hash"))
+	tk.MustExec("set @@session.tiflash_compute_dispatch_policy = 'round_robin';")
+	tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows("round_robin"))
+	err = tk.ExecToErr("set @@session.tiflash_compute_dispatch_policy = 'error_dispatch_policy';")
+	require.Error(t, err)
+	require.Equal(t, "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got error_dispatch_policy", err.Error())
+
+	// Invalid values.
+	err = tk.ExecToErr("set global tiflash_compute_dispatch_policy = 'error_dispatch_policy';")
+	require.Error(t, err)
+	require.Equal(t, "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got error_dispatch_policy", err.Error())
+	err = tk.ExecToErr("set global tiflash_compute_dispatch_policy = '';")
+	require.Error(t, err)
+	require.Equal(t, "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got ", err.Error())
+	err = tk.ExecToErr("set global tiflash_compute_dispatch_policy = 100;")
+	require.Error(t, err)
+	require.Equal(t, "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got 100", err.Error())
+
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+
+	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
+	require.NoError(t, err)
+
+	useASs := []bool{true, false}
+	// Valid values.
+	defer failpoint.Disable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy")
+	for _, useAS := range useASs {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.UseAutoScaler = useAS
+		})
+		validPolicies := tiflashcompute.GetValidDispatchPolicy()
+		for _, p := range validPolicies {
+			tk.MustExec(fmt.Sprintf("set global tiflash_compute_dispatch_policy = '%s';", p))
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			tk1.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows(p))
+			require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy", fmt.Sprintf(`return("%s")`, p)))
+			err = tk1.ExecToErr("select * from t;")
+			if useAS {
+				// Expect error, because TestAutoScaler return empty topo.
+				require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
+			} else {
+				// This error message means we use PD instead of AutoScaler.
+				require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
+			}
+			require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy"))
+		}
+	}
+}
+
+func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100) AS (lower(c1)));")
+	tk.MustExec("insert into t1(c1) values('ABC');")
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tb := external.GetTableByName(t, tk, "test", "t1")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2(c1 int, c2 varchar(100));")
+	tk.MustExec("insert into t2 values(1, 'xhy'), (2, 'abc');")
+	tk.MustExec("alter table t2 set tiflash replica 1;")
+	tb = external.GetTableByName(t, tk, "test", "t2")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("alter table t2 add index idx2((lower(c2)));")
+
+	nthPlan := 100
+	test1 := func(forceTiFlash bool) {
+		if forceTiFlash {
+			tk.MustExec("set tidb_isolation_read_engines = 'tiflash'")
+		} else {
+			tk.MustExec("set tidb_isolation_read_engines = 'tikv,tiflash'")
+		}
+		sqls := []string{
+			"explain select /*+ nth_plan(%d) */ * from t2 where lower(c2) = 'abc';",
+			"explain select /*+ nth_plan(%d) */ count(*) from t2 where lower(c2) = 'abc';",
+			"explain select /*+ nth_plan(%d) */ count(c1) from t2 where lower(c2) = 'abc';",
+		}
+		for _, sql := range sqls {
+			var genTiFlashPlan bool
+			var selectionPushdownTiFlash bool
+			var aggPushdownTiFlash bool
+
+			for i := 0; i < nthPlan; i++ {
+				s := fmt.Sprintf(sql, i)
+				rows := tk.MustQuery(s).Rows()
+				for _, row := range rows {
+					line := fmt.Sprintf("%v", row)
+					if strings.Contains(line, "tiflash") {
+						genTiFlashPlan = true
+					}
+					if strings.Contains(line, "Selection") && strings.Contains(line, "tiflash") {
+						selectionPushdownTiFlash = true
+					}
+					if strings.Contains(line, "Agg") && strings.Contains(line, "tiflash") {
+						aggPushdownTiFlash = true
+					}
+				}
+			}
+			if forceTiFlash {
+				// Can generate tiflash plan, also Agg/Selection can push down to tiflash.
+				require.True(t, genTiFlashPlan)
+				require.True(t, selectionPushdownTiFlash)
+				if strings.Contains(sql, "count") {
+					require.True(t, aggPushdownTiFlash)
+				}
+			} else {
+				// Can generate tiflash plan, but Agg/Selection cannot push down to tiflash.
+				require.True(t, genTiFlashPlan)
+				require.False(t, selectionPushdownTiFlash)
+				if strings.Contains(sql, "count") {
+					require.False(t, aggPushdownTiFlash)
+				}
+			}
+		}
+	}
+
+	test2 := func() {
+		// Can generate tiflash plan when select generated column.
+		// But Agg cannot push down to tiflash.
+		sqls := []string{
+			"explain select /*+ nth_plan(%d) */ * from t1;",
+			"explain select /*+ nth_plan(%d) */ c2 from t1;",
+			"explain select /*+ nth_plan(%d) */ count(c2) from t1;",
+		}
+		for _, sql := range sqls {
+			var genTiFlashPlan bool
+			var aggPushdownTiFlash bool
+			for i := 0; i < nthPlan; i++ {
+				s := fmt.Sprintf(sql, i)
+				rows := tk.MustQuery(s).Rows()
+				for _, row := range rows {
+					line := fmt.Sprintf("%v", row)
+					if strings.Contains(line, "tiflash") {
+						genTiFlashPlan = true
+					}
+					if strings.Contains(line, "tiflash") && strings.Contains(line, "Agg") {
+						aggPushdownTiFlash = true
+					}
+				}
+			}
+			require.True(t, genTiFlashPlan)
+			if strings.Contains(sql, "count") {
+				require.False(t, aggPushdownTiFlash)
+			}
+		}
+	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+	})
+	test1(true)
+	test1(false)
+	test2()
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = true
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+	})
+	test1(true)
+	test1(false)
+	test2()
+}
+
+func TestMppStoreCntWithErrors(t *testing.T) {
+	// mock non-root tasks return error
+	var mppStoreCountPDError = "github.com/pingcap/tidb/store/copr/mppStoreCountPDError"
+	var mppStoreCountSetMPPCnt = "github.com/pingcap/tidb/store/copr/mppStoreCountSetMPPCnt"
+	var mppStoreCountSetLastUpdateTime = "github.com/pingcap/tidb/store/copr/mppStoreCountSetLastUpdateTime"
+	var mppStoreCountSetLastUpdateTimeP2 = "github.com/pingcap/tidb/store/copr/mppStoreCountSetLastUpdateTimeP2"
+
+	store := testkit.CreateMockStore(t, withMockTiFlash(3))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		require.Equal(t, mppCnt, 3)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountSetMPPCnt, `return(1000)`))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		// meet cache
+		require.Equal(t, mppCnt, 3)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTime, `return("0")`))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		// update cache
+		require.Equal(t, mppCnt, 1000)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountPDError, `return(true)`))
+	{
+		_, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Error(t, err)
+	}
+	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
+	require.Nil(t, failpoint.Enable(mppStoreCountSetMPPCnt, `return(2222)`))
+	// set last update time to the latest
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTime, fmt.Sprintf(`return("%d")`, time.Now().UnixMicro())))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		// still update cache
+		require.Equal(t, mppCnt, 2222)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTime, `return("1")`))
+	// fail to get lock and old cache
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTimeP2, `return("2")`))
+	require.Nil(t, failpoint.Enable(mppStoreCountPDError, `return(true)`))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		require.Equal(t, mppCnt, 2222)
+	}
+	require.Nil(t, failpoint.Disable(mppStoreCountSetMPPCnt))
+	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTime))
+	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTimeP2))
+	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
 }

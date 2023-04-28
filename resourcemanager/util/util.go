@@ -23,21 +23,24 @@ import (
 var (
 	// MinSchedulerInterval is the minimum interval between two scheduling.
 	MinSchedulerInterval = atomic.NewDuration(200 * time.Millisecond)
+
+	// MaxOverclockCount is the maximum number of overclock goroutine.
+	MaxOverclockCount = 1
 )
 
-// GorotinuePool is a pool interface
-type GorotinuePool interface {
+// GoroutinePool is a pool interface
+type GoroutinePool interface {
 	ReleaseAndWait()
-	Tune(size int)
+	Tune(size int32)
 	LastTunerTs() time.Time
-	Cap() int
-	Running() int
+	Cap() int32
+	Running() int32
 	Name() string
 }
 
 // PoolContainer is a pool container
 type PoolContainer struct {
-	Pool      GorotinuePool
+	Pool      GoroutinePool
 	Component Component
 }
 
@@ -49,4 +52,6 @@ const (
 	UNKNOWN Component = iota
 	// DDL is for ddl component
 	DDL
+	// DistTask is for disttask component.
+	DistTask
 )
