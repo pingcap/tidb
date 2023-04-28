@@ -2233,6 +2233,8 @@ const (
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
+	AdminPauseDDLJobs
+	AdminResumeDDLJobs
 	AdminCheckIndex
 	AdminRecoverIndex
 	AdminCleanupIndex
@@ -2439,6 +2441,12 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AdminCancelDDLJobs:
 		ctx.WriteKeyWord("CANCEL DDL JOBS ")
+		restoreJobIDs()
+	case AdminPauseDDLJobs:
+		ctx.WriteKeyWord("PAUSE DDL JOBS ")
+		restoreJobIDs()
+	case AdminResumeDDLJobs:
+		ctx.WriteKeyWord("RESUME DDL JOBS ")
 		restoreJobIDs()
 	case AdminShowDDLJobQueries:
 		ctx.WriteKeyWord("SHOW DDL JOB QUERIES ")
