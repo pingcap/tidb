@@ -1785,7 +1785,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			err := executeDistGlobalTask(reorgInfo)
+			err := w.executeDistGlobalTask(reorgInfo)
 			if err != nil {
 				return err
 			}
@@ -1830,7 +1830,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	return errors.Trace(err)
 }
 
-func executeDistGlobalTask(reorgInfo *reorgInfo) error {
+func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
@@ -1879,11 +1879,6 @@ func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 
 	for {
 		<-ticker.C
-		// TODO: handle cancel correctly.
-		if reorgInfo.Job.IsCancelling() {
-			return dbterror.ErrCancelledDDLJob
-		}
-
 		found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
@@ -1906,6 +1901,18 @@ func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		// TODO: get the original error message.
 		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled {
 			return errors.Errorf("ddl task stopped with state %s, err %s", found.State, found.Error)
+		}
+
+		if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+			if !dbterror.ErrCancelledDDLJob.Equal(err) {
+				return errors.Trace(err)
+			}
+
+			if found.State == proto.TaskStatePending || found.State == proto.TaskStateRunning {
+				if err = globalTaskManager.CancelGlobalTask(globalTask.ID); err != nil {
+					logutil.BgLogger().Error("[ddl] cancel global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
+				}
+			}
 		}
 	}
 }
