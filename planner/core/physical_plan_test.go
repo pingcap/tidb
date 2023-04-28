@@ -524,3 +524,28 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	pp.MPPPartitionCols = append(pp.MPPPartitionCols, &property.MPPPartitionColumn{})
 	require.Greater(t, pp.MemoryUsage(), size)
 }
+
+func TestIndexLookupPlans(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index b(b), index b_c(b, c)) partition by hash(a) partitions 4;")
+	tk.MustExec("analyze table t")
+
+	stmt, err := parser.New().ParseOneStmt("select * from t use index(b) where b > 1 order by b limit 1", "", "")
+	require.NoError(t, err)
+
+	domain.InfoSchema()
+
+	p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, domain.InfoSchema())
+	require.NoError(t, err)
+	require.NotNil(t, p)
+
+	idxLookUpPlan, ok := p.(*core.PhysicalLimit).Children()[0].(*core.PhysicalProjection).Children()[0].(*core.PhysicalIndexLookUpReader)
+	require.True(t, ok)
+
+	is := idxLookUpPlan.IndexPlans[0].(*core.PhysicalIndexScan)
+	ts := idxLookUpPlan.TablePlans[0].(*core.PhysicalTableScan)
+
+	require.NotEqual(t, is.Columns, ts.Columns)
+}
