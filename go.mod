@@ -89,10 +89,17 @@ require (
 	github.com/stretchr/testify v1.8.0
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.4-0.20230524032640-80181bcd339c
 	github.com/tikv/pd/client v0.0.0-20221031025758-80f0d8ca4d07
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20230427065546-c619a504747d
+	github.com/tikv/pd/client v0.0.0-20230419153320-f1d1a80feb95
+	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
+	github.com/twmb/murmur3 v1.1.6
+>>>>>>> e9184f7640d (grafana: add traffic metrics for staleread traffic (#43324))
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
