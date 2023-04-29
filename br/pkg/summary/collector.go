@@ -235,6 +235,11 @@ func (tc *logCollector) Summary(name string) {
 				zap.String("average-speed", units.HumanSize(float64(data)/totalDureTime.Seconds())+"/s"))
 			continue
 		}
+		if name == CheckpointSkipTotalBytes {
+			logFields = append(logFields,
+				zap.String("checkpoint-skip-total-kv-size", units.HumanSize(float64(data))))
+			continue
+		}
 		if name == BackupDataSize {
 			if tc.failureUnitCount+tc.successUnitCount == 0 && !tc.successStatus {
 				logFields = append(logFields, zap.String("Result", "Nothing to bakcup"))

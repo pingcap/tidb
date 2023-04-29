@@ -1836,7 +1836,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 				return errors.Trace(err)
 			}
 			// print to log so that the test script can get final checksum
-			log.Info("checksum complete",
+			log.Info("failpoint checksum completed",
 				zap.String("table-name", newTableInfo.Name.O),
 				zap.Int64("upstream-id", oldTable.Info.ID),
 				zap.Uint64("checksum", checksumResp.Checksum),
@@ -2422,8 +2422,9 @@ func (rc *Client) RestoreKVFiles(
 						} else {
 							for _, f := range files {
 								filenames = append(filenames, f.Path+", ")
-								if e := checkpoint.AppendRangeForLogRestore(ctx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+								if e := checkpoint.AppendRangeForLogRestore(ectx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
 									err = errors.Annotate(e, "failed to append checkpoint data")
+									break
 								}
 							}
 						}
@@ -2719,6 +2720,10 @@ func (rc *Client) RestoreMetaKVFiles(
 	}
 	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
 	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
+
+	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
+	})
 
 	if schemasReplace.NeedConstructIdMap() {
 		// Preconstruct the map and save it into external storage.

@@ -319,10 +319,12 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 				}
 				err := r.doFlush(ctx, meta)
 				failpoint.Inject("failed-after-checkpoint-flushes-x-times", func(v failpoint.Value) {
-					flushCnt += 1
-					errCnt := v.(int)
-					if errCnt >= flushCnt {
-						err = errors.Errorf("failpoint: failed after checkpoint flushes %d times", errCnt)
+					if len(meta) > 0 {
+						flushCnt += 1
+						errCnt := v.(int)
+						if errCnt <= flushCnt {
+							err = errors.Errorf("failpoint: failed after checkpoint flushes %d times", errCnt)
+						}
 					}
 				})
 				if err != nil {
@@ -336,10 +338,12 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 				}
 				err := r.doChecksumFlush(ctx, checksums)
 				failpoint.Inject("failed-after-checkpoint-flushes-checksum-x-times", func(v failpoint.Value) {
-					checksumCnt += 1
-					errCnt := v.(int)
-					if errCnt >= checksumCnt {
-						err = errors.Errorf("failpoint: failed after checkpoint flushes checksum %d times", errCnt)
+					if len(checksums.Items) > 0 {
+						checksumCnt += 1
+						errCnt := v.(int)
+						if errCnt <= checksumCnt {
+							err = errors.Errorf("failpoint: failed after checkpoint flushes checksum %d times", errCnt)
+						}
 					}
 				})
 				if err != nil {
