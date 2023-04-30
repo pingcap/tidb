@@ -3480,6 +3480,14 @@ def go_deps():
         version = "v0.0.0-20221212215047-62379fc7944b",
     )
     go_repository(
+        name = "com_github_prashantv_gostub",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/prashantv/gostub",
+        sum = "h1:BTyx3RfQjRHnUWaGF9oQos79AlQ5k8WNktv7VGvVH4g=",
+        version = "v1.1.0",
+    )
+
+    go_repository(
         name = "com_github_prometheus_client_golang",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/client_golang",
@@ -4154,8 +4162,8 @@ def go_deps():
         name = "com_github_timakin_bodyclose",
         build_file_proto_mode = "disable",
         importpath = "github.com/timakin/bodyclose",
-        sum = "h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=",
-        version = "v0.0.0-20221125081123-e39cf3fc478e",
+        sum = "h1:quvGphlmUVU+nhpFa4gg4yJyTRJ13reZMDHrKwYw53M=",
+        version = "v0.0.0-20230421092635-574207250966",
     )
     go_repository(
         name = "com_github_timonwong_loggercheck",
@@ -6146,8 +6154,8 @@ def go_deps():
         name = "org_uber_go_automaxprocs",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/automaxprocs",
-        sum = "h1:CpDZl6aOlLhReez+8S3eEotD7Jx0Os++lemPlMULQP0=",
-        version = "v1.4.0",
+        sum = "h1:2LxUOGiR3O6tw8ui5sZa2LAaHnsviZdVOUZw4fvbnME=",
+        version = "v1.5.2",
     )
     go_repository(
         name = "org_uber_go_dig",
