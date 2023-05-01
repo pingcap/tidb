@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/autoid_service"
