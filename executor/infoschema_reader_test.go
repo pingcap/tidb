@@ -607,7 +607,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 		// test `End_time` field
 		str, ok := row[6].(string)
 		require.True(t, ok)
-		_, err := time.Parse("2006-01-02 15:04:05", str)
+		_, err := time.Parse(time.DateTime, str)
 		require.NoError(t, err)
 	}
 	rows2 := tk.MustQuery("show analyze status where TABLE_NAME='t1'").Sort().Rows()
