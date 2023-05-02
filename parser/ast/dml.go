@@ -845,7 +845,8 @@ func (n *ByItem) Accept(v Visitor) (Node, bool) {
 // GroupByClause represents group by clause.
 type GroupByClause struct {
 	node
-	Items []*ByItem
+	Items  []*ByItem
+	Rollup bool
 }
 
 // Restore implements Node interface.
@@ -858,6 +859,9 @@ func (n *GroupByClause) Restore(ctx *format.RestoreCtx) error {
 		if err := v.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore GroupByClause.Items[%d]", i)
 		}
+	}
+	if n.Rollup {
+		ctx.WriteKeyWord(" WITH ROLLUP")
 	}
 	return nil
 }
@@ -1273,16 +1277,24 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(",")
 				}
-				if err := field.Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while restore SelectStmt.Fields[%d]", i)
+				if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(field.OriginalText()) > 0 {
+					ctx.WritePlain(field.OriginalText())
+				} else {
+					if err := field.Restore(ctx); err != nil {
+						return errors.Annotatef(err, "An error occurred while restore SelectStmt.Fields[%d]", i)
+					}
 				}
 			}
 		}
 
 		if n.From != nil {
 			ctx.WriteKeyWord(" FROM ")
-			if err := n.From.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore SelectStmt.From")
+			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(n.From.OriginalText()) > 0 {
+				ctx.WritePlain(n.From.OriginalText())
+			} else {
+				if err := n.From.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while restore SelectStmt.From")
+				}
 			}
 		}
 
@@ -2159,8 +2171,12 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			if err := v.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
+			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(v.OriginalText()) > 0 {
+				ctx.WritePlain(v.OriginalText())
+			} else {
+				if err := v.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
+				}
 			}
 		}
 		ctx.WritePlain(")")
@@ -2802,6 +2818,7 @@ const (
 	ShowGrants
 	ShowTriggers
 	ShowProcedureStatus
+	ShowFunctionStatus
 	ShowIndex
 	ShowProcessList
 	ShowCreateDatabase
@@ -2843,6 +2860,7 @@ const (
 	ShowSessionStates
 	ShowCreateResourceGroup
 	ShowLoadDataJobs
+	ShowCreateProcedure
 )
 
 const (
@@ -2863,9 +2881,11 @@ const (
 type ShowStmt struct {
 	dmlNode
 
-	Tp                ShowStmtType // Databases/Tables/Columns/....
-	DBName            string
-	Table             *TableName  // Used for showing columns.
+	Tp     ShowStmtType // Databases/Tables/Columns/....
+	DBName string
+	Table  *TableName // Used for showing columns.
+	// Procedure's naming method is consistent with the table name
+	Procedure         *TableName
 	Partition         model.CIStr // Used for showing partition.
 	Column            *ColumnName // Used for `desc table column`.
 	IndexName         model.CIStr
@@ -2934,6 +2954,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CREATE TABLE ")
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+		}
+	case ShowCreateProcedure:
+		ctx.WriteKeyWord("CREATE PROCEDURE ")
+		if err := n.Procedure.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.Procedure")
 		}
 	case ShowCreateView:
 		ctx.WriteKeyWord("CREATE VIEW ")
@@ -3160,6 +3185,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			restoreShowDatabaseNameOpt()
 		case ShowProcedureStatus:
 			ctx.WriteKeyWord("PROCEDURE STATUS")
+		case ShowFunctionStatus:
+			ctx.WriteKeyWord("FUNCTION STATUS")
 		case ShowEvents:
 			ctx.WriteKeyWord("EVENTS")
 			restoreShowDatabaseNameOpt()

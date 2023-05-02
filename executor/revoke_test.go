@@ -287,3 +287,22 @@ func TestIssue41773(t *testing.T) {
 	tk.MustExec("REVOKE USAGE ON test.* FROM 't1234'@'%';")
 	tk.MustExec("REVOKE USAGE ON test.xx FROM 't1234'@'%';")
 }
+
+// Check https://github.com/pingcap/tidb/issues/41048
+func TestCaseInsensitiveSchemaNames(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test.TABLE_PRIV(id int, name varchar(20));`)
+	// Verify the case-insensitive updates for mysql.tables_priv table.
+	tk.MustExec(`GRANT SELECT ON test.table_priv TO 'root'@'%';`)
+	tk.MustExec(`revoke SELECT ON test.TABLE_PRIV from 'root'@'%';;`)
+
+	// Verify the case-insensitive updates for mysql.db table.
+	tk.MustExec(`GRANT SELECT ON test.* TO 'root'@'%';`)
+	tk.MustExec(`revoke SELECT ON tESt.* from 'root'@'%';;`)
+
+	// Verify the case-insensitive updates for mysql.columns_priv table.
+	tk.MustExec(`GRANT SELECT (id), INSERT (ID, name) ON tEst.TABLE_PRIV TO 'root'@'%';`)
+	tk.MustExec(`REVOKE SELECT (ID) ON test.taBle_priv from 'root'@'%';;`)
+}

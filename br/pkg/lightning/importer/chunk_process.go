@@ -60,7 +60,7 @@ func newChunkProcessor(
 ) (*chunkProcessor, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := mydump.OpenReader(ctx, chunk.FileMeta, store)
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -142,7 +142,7 @@ func (cr *chunkProcessor) process(
 	ctx context.Context,
 	t *TableImporter,
 	engineID int32,
-	dataEngine, indexEngine *backend.LocalEngineWriter,
+	dataEngine, indexEngine backend.EngineWriter,
 	rc *Controller,
 ) error {
 	logger := t.logger.With(
@@ -390,7 +390,7 @@ func (cr *chunkProcessor) deliverLoop(
 	kvsCh <-chan []deliveredKVs,
 	t *TableImporter,
 	engineID int32,
-	dataEngine, indexEngine *backend.LocalEngineWriter,
+	dataEngine, indexEngine backend.EngineWriter,
 	rc *Controller,
 ) (deliverTotalDur time.Duration, err error) {
 	deliverLogger := t.logger.With(
@@ -471,14 +471,14 @@ func (cr *chunkProcessor) deliverLoop(
 			// Write KVs into the engine
 			start := time.Now()
 
-			if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
+			if err = dataEngine.AppendRows(ctx, columns, dataKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					deliverLogger.Error("write to data engine failed", log.ShortError(err))
 				}
 
 				return errors.Trace(err)
 			}
-			if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
+			if err = indexEngine.AppendRows(ctx, columns, indexKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					deliverLogger.Error("write to index engine failed", log.ShortError(err))
 				}
@@ -579,7 +579,7 @@ func (*chunkProcessor) maybeSaveCheckpoint(
 	t *TableImporter,
 	engineID int32,
 	chunk *checkpoints.ChunkCheckpoint,
-	data, index *backend.LocalEngineWriter,
+	data, index backend.EngineWriter,
 ) bool {
 	if data.IsSynced() && index.IsSynced() {
 		saveCheckpoint(rc, t, engineID, chunk)

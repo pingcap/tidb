@@ -69,7 +69,8 @@ func TestGetInstance(t *testing.T) {
 	// test no server
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	instanceID, err := dispatcher.GetEligibleInstance(ctx)
+	serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
+	instanceID, _ := dispatcher.GetEligibleInstance(serverNodes, 0)
 	require.Lenf(t, instanceID, 0, "instanceID:%d", instanceID)
 	require.EqualError(t, err, "not found instance")
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, 1)
@@ -89,7 +90,9 @@ func TestGetInstance(t *testing.T) {
 		},
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	instanceID, err = dispatcher.GetEligibleInstance(ctx)
+	serverNodes, err = dispatcher.GenerateSchedulerNodes(ctx)
+	require.NoError(t, err)
+	instanceID, err = dispatcher.GetEligibleInstance(serverNodes, 0)
 	require.NoError(t, err)
 	if instanceID != uuids[0] && instanceID != uuids[1] {
 		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
@@ -221,7 +224,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateSucceed)
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, "")
 			require.NoError(t, err)
 		}
 		checkGetGTaskState(proto.TaskStateSucceed)
@@ -237,7 +240,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	}()
 	// Mock a subtask fails.
 	for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-		err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateFailed)
+		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, "")
 		require.NoError(t, err)
 	}
 	checkGetGTaskState(proto.TaskStateReverting)
@@ -245,7 +248,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateReverted)
+		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, "")
 		require.NoError(t, err)
 	}
 	checkGetGTaskState(proto.TaskStateReverted)
@@ -294,7 +297,7 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 	return metas, nil
 }
 
-func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
+func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
 }

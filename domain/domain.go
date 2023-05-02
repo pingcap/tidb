@@ -81,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -89,6 +90,7 @@ import (
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -124,7 +126,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
-	m               sync.Mutex
+	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	sysSessionPool  *sessionPool
 	exit            chan struct{}
@@ -170,6 +172,7 @@ type Domain struct {
 
 	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
+	resourcePool    *pools.ResourcePool
 }
 
 type mdlCheckTableInfo struct {
@@ -730,10 +733,15 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
 		return
 	}
+	// Make sure the session is new.
+	if _, err := se.(sqlexec.SQLExecutor).ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), "rollback"); err != nil {
+		se.Close()
+		return
+	}
 	defer do.sysSessionPool.Put(se)
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
-	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
@@ -1030,13 +1038,17 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	backoffCfg := backoff.DefaultConfig
+	backoffCfg.MaxDelay = 3 * time.Second
 	cli, err := clientv3.New(clientv3.Config{
 		LogConfig:        &etcdLogCfg,
 		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
-			grpc.WithBackoffMaxDelay(time.Second * 3),
+			grpc.WithConnectParams(grpc.ConnectParams{
+				Backoff: backoffCfg,
+			}),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
 				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
@@ -1089,6 +1101,7 @@ func (do *Domain) Init(
 		return sysExecutorFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
+	do.resourcePool = sysCtxPool
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
@@ -1106,6 +1119,7 @@ func (do *Domain) Init(
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
+
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			do.ddl = d
@@ -1155,9 +1169,6 @@ func (do *Domain) Init(
 		return err
 	}
 
-	if err = do.initDistTaskLoop(ctx, sysCtxPool); err != nil {
-		return err
-	}
 	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
 	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
@@ -1345,14 +1356,15 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	return nil
 }
 
-func (do *Domain) initDistTaskLoop(ctx context.Context, sePool *pools.ResourcePool) error {
+// InitDistTaskLoop initializes the distributed task framework.
+func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil)
 		}
 	})
 
-	taskManager := storage.NewTaskManager(ctx, sePool)
+	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
 	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
 	if err != nil {
 		return err
@@ -2142,6 +2154,26 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	return statsOwner
 }
 
+func (do *Domain) initStats() {
+	statsHandle := do.StatsHandle()
+	defer func() {
+		close(statsHandle.InitStatsDone)
+	}()
+	t := time.Now()
+	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	var err error
+	if liteInitStats {
+		err = statsHandle.InitStatsLite(do.InfoSchema())
+	} else {
+		err = statsHandle.InitStats(do.InfoSchema())
+	}
+	if err != nil {
+		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
+	}
+}
+
 func (do *Domain) loadStatsWorker() {
 	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
 	lease := do.statsLease
@@ -2155,14 +2187,9 @@ func (do *Domain) loadStatsWorker() {
 		updStatsHealthyTicker.Stop()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
+	do.initStats()
 	statsHandle := do.StatsHandle()
-	t := time.Now()
-	err := statsHandle.InitStats(do.InfoSchema())
-	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Duration("take time", time.Since(t)), zap.Error(err))
-	} else {
-		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
-	}
+	var err error
 	for {
 		select {
 		case <-loadTicker.C:

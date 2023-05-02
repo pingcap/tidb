@@ -39,6 +39,9 @@ import (
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -49,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	rmutil "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -60,7 +62,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/gpool/spmc"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/syncutil"
@@ -84,9 +85,8 @@ const (
 
 	batchAddingJobs = 10
 
-	reorgWorkerCnt    = 10
-	generalWorkerCnt  = 1
-	backfillWorkerCnt = 32
+	reorgWorkerCnt   = 10
+	generalWorkerCnt = 1
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
@@ -241,6 +241,8 @@ type DDL interface {
 	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() syncer.SchemaSyncer
+	// StateSyncer gets the cluster state syncer.
+	StateSyncer() syncer.StateSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -277,8 +279,6 @@ type ddl struct {
 	// used in the concurrency ddl.
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
-	backfillCtxPool      *backfillCtxPool
-	backfillWorkerPool   *spmc.Pool[*reorgBackfillTask, *backfillResult, int, *backfillWorker, *backfillWorkerContext]
 	// get notification if any DDL coming.
 	ddlJobCh chan struct{}
 }
@@ -326,6 +326,7 @@ type ddlCtx struct {
 	store        kv.Storage
 	ownerManager owner.Manager
 	schemaSyncer syncer.SchemaSyncer
+	stateSyncer  syncer.StateSyncer
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
@@ -509,13 +510,6 @@ type reorgContexts struct {
 	reorgCtxMap map[int64]*reorgCtx
 }
 
-func getReorgCtx(reorgCtxs *reorgContexts, jobID int64) *reorgCtx {
-	reorgCtxs.RLock()
-	defer reorgCtxs.RUnlock()
-	return reorgCtxs.reorgCtxMap[jobID]
-}
-
-// TODO: Using getReorgCtx instead of dc.getReorgCtx.
 func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()
@@ -539,10 +533,6 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, rowCount int64) *reorgCtx {
 	rc.references.Add(1)
 	dc.reorgCtx.reorgCtxMap[jobID] = rc
 	return rc
-}
-
-func genBackfillJobReorgCtxID(jobID int64) int64 {
-	return -jobID
 }
 
 func (dc *ddlCtx) removeReorgCtx(jobID int64) {
@@ -630,6 +620,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	id := uuid.New().String()
 	var manager owner.Manager
 	var schemaSyncer syncer.SchemaSyncer
+	var stateSyncer syncer.StateSyncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
@@ -639,6 +630,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
+		stateSyncer = syncer.NewStateSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -658,6 +650,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobDoneCh:               make(chan struct{}, 1),
 		ownerManager:               manager,
 		schemaSyncer:               schemaSyncer,
+		stateSyncer:                stateSyncer,
 		binlogCli:                  binloginfo.GetPumpsClient(),
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
@@ -680,6 +673,18 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
 	}
+
+	scheduler.RegisterSchedulerConstructor("backfill",
+		func(taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(taskMeta, d)
+		})
+
+	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
+	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
+		return &BackFillSubtaskExecutor{
+			Task: minimalTask,
+		}, nil
+	})
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
@@ -738,24 +743,6 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	d.wg.Run(d.startDispatchLoop)
 }
 
-func (d *ddl) prepareBackfillWorkers() error {
-	workerFactory := func() (pools.Resource, error) {
-		bk := newBackfillWorker(context.Background(), nil)
-		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_backfill_worker", metrics.CreateDDL)).Inc()
-		return bk, nil
-	}
-	d.backfillCtxPool = newBackfillContextPool(pools.NewResourcePool(workerFactory, backfillWorkerCnt, backfillWorkerCnt, 0))
-	var err error
-	d.backfillWorkerPool, err = spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, int, *backfillWorker,
-		*backfillWorkerContext]("backfill", int32(backfillWorkerCnt), rmutil.DDL)
-	if err != nil {
-		return err
-	}
-	d.backfillJobCh = make(chan struct{}, 1)
-	d.wg.Run(d.startDispatchBackfillJobsLoop)
-	return nil
-}
-
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
@@ -783,11 +770,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Otherwise, we needn't do that.
 	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		if err := d.EnableDDL(); err != nil {
-			return err
-		}
-
-		// TODO: Currently, it is only processed during initialization and is expected to be added to EnableDDL later.
-		if err := d.prepareBackfillWorkers(); err != nil {
 			return err
 		}
 	}
@@ -862,12 +844,6 @@ func (d *ddl) close() {
 	if d.generalDDLWorkerPool != nil {
 		d.generalDDLWorkerPool.close()
 	}
-	if d.backfillCtxPool != nil {
-		d.backfillCtxPool.close()
-	}
-	if d.backfillWorkerPool != nil {
-		d.backfillWorkerPool.ReleaseAndWait()
-	}
 
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -934,6 +910,11 @@ func (d *ddl) genPlacementPolicyID() (int64, error) {
 // SchemaSyncer implements DDL.SchemaSyncer interface.
 func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
 	return d.schemaSyncer
+}
+
+// StateSyncer implements DDL.StateSyncer interface.
+func (d *ddl) StateSyncer() syncer.StateSyncer {
+	return d.stateSyncer
 }
 
 // OwnerManager implements DDL.OwnerManager interface.
@@ -1042,11 +1023,11 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
+			<-task.err
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
 			task1 := &limitJobTask{job, make(chan error)}
 			d.limitJobCh <- task1
-			<-task.err
 			// The second job result is used for test.
 			task = task1
 		}
@@ -1667,7 +1648,7 @@ func addHistoryDDLJob2Table(sess *sess.Session, job *model.Job, updateRawArgs bo
 	}
 	_, err = sess.Execute(context.Background(),
 		fmt.Sprintf("insert ignore into mysql.tidb_ddl_history(job_id, job_meta, db_name, table_name, schema_ids, table_ids, create_time) values (%d, %s, %s, %s, %s, %s, %v)",
-			job.ID, wrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName),
+			job.ID, util.WrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName),
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)),
 			strconv.Quote(strconv.FormatInt(job.TableID, 10)),
 			strconv.Quote(model.TSConvert2Time(job.StartTS).String())),

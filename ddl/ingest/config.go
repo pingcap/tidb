@@ -41,7 +41,7 @@ func genConfig(memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
 	cfg := lightning.NewConfig()
 	cfg.TikvImporter.Backend = lightning.BackendLocal
 	// Each backend will build a single dir in lightning dir.
-	cfg.TikvImporter.SortedKVDir = filepath.Join(LitSortPath, encodeBackendTag(jobID))
+	cfg.TikvImporter.SortedKVDir = filepath.Join(LitSortPath, EncodeBackendTag(jobID))
 	if ImporterRangeConcurrencyForTest != nil {
 		cfg.TikvImporter.RangeConcurrency = int(ImporterRangeConcurrencyForTest.Load())
 	}
@@ -92,6 +92,7 @@ func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineC
 			DB:   dbName,
 			Name: tbName,
 		},
+		KeepSortDir: true,
 	}
 }
 

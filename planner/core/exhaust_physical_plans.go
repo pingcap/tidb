@@ -1070,6 +1070,10 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		StatsVersion: ds.stats.StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
+	usedStats := p.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+	if usedStats != nil && usedStats[ts.physicalTableID] != nil {
+		ts.usedStatsInfo = usedStats[ts.physicalTableID]
+	}
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
@@ -1286,6 +1290,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
 		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
 		ts.stats = &property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion}
+		usedStats := p.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+		if usedStats != nil && usedStats[ts.physicalTableID] != nil {
+			ts.usedStatsInfo = usedStats[ts.physicalTableID]
+		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
 			var needExtraProj bool
@@ -1366,6 +1374,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tmpPath.CountAfterAccess = cnt
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess)
+	usedStats := ds.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+	if usedStats != nil && usedStats[is.physicalTableID] != nil {
+		is.usedStatsInfo = usedStats[is.physicalTableID]
+	}
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
 	t := cop.convertToRootTask(ds.ctx)
@@ -2129,13 +2141,18 @@ func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, fl
 	return row1 + row2, 0, false
 }
 
+// The size of `Build` hash table when using broadcast join is about `X`.
+// The size of `Build` hash table when using shuffle join is about `X / (mppStoreCnt)`.
+// It will cost more time to construct `Build` hash table and search `Probe` while using broadcast join.
+// Set a scale factor (`mppStoreCnt^*`) when estimating broadcast join in `isJoinFitMPPBCJ` and `isJoinChildFitMPPBCJ` (based on TPCH benchmark, it has been verified in Q9).
+
 func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
 	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	if hasSizeBC && hasSizeHash {
-		return szBC <= szHash
+		return szBC*float64(mppStoreCnt) <= szHash
 	}
-	return rowBC <= rowHash
+	return rowBC*float64(mppStoreCnt) <= rowHash
 }
 
 func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) bool {
@@ -2143,9 +2160,9 @@ func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) b
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 
 	if hasSizeBC && hasSizeHash {
-		return szBC <= szHash
+		return szBC*float64(mppStoreCnt) <= szHash
 	}
-	return rowBC <= rowHash
+	return rowBC*float64(mppStoreCnt) <= rowHash
 }
 
 // If we can use mpp broadcast join, that's our first choice.
@@ -2381,16 +2398,26 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			preferredBuildIndex = 1
 		}
 	} else if p.JoinType.IsSemiJoin() {
-		preferredBuildIndex = 1
-		fixedBuildSide = true
+		if !useBCJ && !p.isNAAJ() && len(p.EqualConditions) > 0 && (p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin) {
+			// TiFlash only supports Non-null_aware non-cross semi/anti_semi join to use both sides as build side
+			preferredBuildIndex = 1
+			// MPPOuterJoinFixedBuildSide default value is false
+			// use MPPOuterJoinFixedBuildSide here as a way to disable using left table as build side
+			if !p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide && p.children[1].statsInfo().Count() > p.children[0].statsInfo().Count() {
+				preferredBuildIndex = 0
+			}
+		} else {
+			preferredBuildIndex = 1
+			fixedBuildSide = true
+		}
 	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		// TiFlash does not require that the build side must be the inner table for outer join.
 		// so we can choose the build side based on the row count, except that:
 		// 1. it is a broadcast join(for broadcast join, it makes sense to use the broadcast side as the build side)
 		// 2. or session variable MPPOuterJoinFixedBuildSide is set to true
-		// 3. or there are otherConditions for this join
-		if useBCJ || p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide || len(p.OtherConditions) > 0 {
+		// 3. or nullAware/cross joins
+		if useBCJ || p.isNAAJ() || len(p.EqualConditions) == 0 || p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide {
 			if !p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide {
 				// The hint has higher priority than variable.
 				fixedBuildSide = true

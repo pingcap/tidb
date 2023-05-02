@@ -16,14 +16,12 @@ package importer
 
 import (
 	"context"
-	"io"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"go.uber.org/zap"
 )
 
@@ -32,19 +30,16 @@ import (
 type engineProcessor struct {
 	engineID      int32
 	fullTableName string
-	backend       backend.Backend
+	backend       *local.Backend
 	tableInfo     *checkpoints.TidbTableInfo
 	logger        *zap.Logger
-	tableImporter *tableImporter
-	kvSorted      bool
+	tableImporter *TableImporter
 	rowOrdered    bool
 	indexEngine   *backend.OpenedEngine
 	chunks        []*checkpoints.ChunkCheckpoint
-	kvStore       kv.Storage
 }
 
 func (ep *engineProcessor) process(ctx context.Context) (*backend.ClosedEngine, error) {
-	ep.logger.Info("encode kv data and write start")
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: ep.tableInfo,
 	}
@@ -53,7 +48,8 @@ func (ep *engineProcessor) process(ctx context.Context) (*backend.ClosedEngine, 
 		dataEngineCfg.Local.CompactConcurrency = 4
 		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
 	}
-	dataEngine, err := ep.backend.OpenEngine(ctx, dataEngineCfg, ep.fullTableName, ep.engineID)
+	mgr := backend.MakeEngineManager(ep.backend)
+	dataEngine, err := mgr.OpenEngine(ctx, dataEngineCfg, ep.fullTableName, ep.engineID)
 	if err != nil {
 		return nil, err
 	}
@@ -67,103 +63,100 @@ func (ep *engineProcessor) process(ctx context.Context) (*backend.ClosedEngine, 
 	}
 	closedDataEngine, err2 := dataEngine.Close(closeCtx)
 	if err2 != nil {
-		ep.logger.Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
+		ep.logger.Warn("close data engine failed", zap.Error(err2))
 	}
 	return closedDataEngine, err
 }
 
-// sort data in all chunks, then close the opened data engine
-func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.OpenedEngine) (err error) {
+// ProcessChunk processes a chunk, and write kv pairs to dataEngine and indexEngine.
+func ProcessChunk(
+	ctx context.Context,
+	chunk *checkpoints.ChunkCheckpoint,
+	tableImporter *TableImporter,
+	dataEngine,
+	indexEngine *backend.OpenedEngine,
+	logger *zap.Logger,
+) error {
+	// if the key are ordered, LocalWrite can optimize the writing.
+	// table has auto-incremented _tidb_rowid must satisfy following restrictions:
+	// - clustered index disable and primary key is not number
+	// - no auto random bits (auto random or shard row id)
+	// - no partition table
+	// - no explicit _tidb_rowid field (At this time we can't determine if the source file contains _tidb_rowid field,
+	//   so we will do this check in LocalWriter when the first row is received.)
+	hasAutoIncrementAutoID := common.TableHasAutoRowID(tableImporter.tableInfo.Core) &&
+		tableImporter.tableInfo.Core.AutoRandomBits == 0 && tableImporter.tableInfo.Core.ShardRowIDBits == 0 &&
+		tableImporter.tableInfo.Core.Partition == nil
 	dataWriterCfg := &backend.LocalWriterConfig{
-		IsKVSorted: ep.kvSorted,
+		IsKVSorted: hasAutoIncrementAutoID,
 	}
-	closer := multiCloser{
-		logger: ep.logger,
+	parser, err := tableImporter.getParser(ctx, chunk)
+	if err != nil {
+		return err
 	}
 	defer func() {
-		if err != nil {
-			closer.Close()
+		if err2 := parser.Close(); err2 != nil {
+			logger.Warn("close parser failed", zap.Error(err2))
 		}
 	}()
-	for _, chunk := range ep.chunks {
-		var (
-			parser                  mydump.Parser
-			encoder                 kvEncoder
-			dataWriter, indexWriter *backend.LocalEngineWriter
-		)
-		closer.reset()
-		parser, err = ep.tableImporter.getParser(ctx, chunk)
-		if err != nil {
-			return err
-		}
-		closer.add(parser)
-		encoder, err = ep.tableImporter.getKVEncoder(chunk)
-		if err != nil {
-			return err
-		}
-		closer.add(encoder)
-		// todo: on panic which will be recovered since we run in tidb, we need to make sure all opened fd is closed.
-		dataWriter, err = dataEngine.LocalWriter(ctx, dataWriterCfg)
-		if err != nil {
-			return err
-		}
-		closer.addFn(func() error {
-			_, err2 := dataWriter.Close(ctx)
-			return err2
-		})
-		indexWriter, err = ep.indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
-		if err != nil {
-			return err
-		}
-		closer.addFn(func() error {
-			_, err2 := indexWriter.Close(ctx)
-			return err2
-		})
-
-		cp := &chunkProcessor{
-			parser:      parser,
-			chunkInfo:   chunk,
-			logger:      ep.logger.With(zap.String("key", chunk.GetKey())),
-			kvsCh:       make(chan []deliveredRow, maxKVQueueSize),
-			dataWriter:  dataWriter,
-			indexWriter: indexWriter,
-			encoder:     encoder,
-			kvCodec:     ep.kvStore.GetCodec(),
-		}
-		// todo: process in parallel
-		err = cp.process(ctx)
-		if err != nil {
-			return err
-		}
-		// chunk process is responsible to close data/index writer
-		cp.close(ctx)
+	encoder, err := tableImporter.getKVEncoder(chunk)
+	if err != nil {
+		return err
 	}
+	defer func() {
+		if err2 := encoder.Close(); err2 != nil {
+			logger.Warn("close encoder failed", zap.Error(err2))
+		}
+	}()
+	dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if _, err2 := dataWriter.Close(ctx); err2 != nil {
+			logger.Warn("close data writer failed", zap.Error(err2))
+		}
+	}()
+	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if _, err2 := indexWriter.Close(ctx); err2 != nil {
+			logger.Warn("close index writer failed", zap.Error(err2))
+		}
+	}()
+
+	cp := &chunkProcessor{
+		parser:      parser,
+		chunkInfo:   chunk,
+		logger:      logger.With(zap.String("key", chunk.GetKey())),
+		kvsCh:       make(chan []deliveredRow, maxKVQueueSize),
+		dataWriter:  dataWriter,
+		indexWriter: indexWriter,
+		encoder:     encoder,
+		kvCodec:     tableImporter.kvStore.GetCodec(),
+		progress:    tableImporter.Progress,
+	}
+	// todo: process in parallel
+	err = cp.process(ctx)
+	if err != nil {
+		return err
+	}
+	tableImporter.setLastInsertID(encoder.GetLastInsertID())
 	return nil
 }
 
-type multiCloser struct {
-	closers []func() error
-	logger  *zap.Logger
-}
-
-func (m *multiCloser) add(c io.Closer) {
-	m.closers = append(m.closers, c.Close)
-}
-
-func (m *multiCloser) addFn(c func() error) {
-	m.closers = append(m.closers, c)
-}
-
-func (m *multiCloser) reset() {
-	m.closers = m.closers[:0]
-}
-
-func (m *multiCloser) Close() {
-	// close in reverse append order
-	for i := len(m.closers) - 1; i >= 0; i-- {
-		fn := m.closers[i]
-		if err := fn(); err != nil {
-			m.logger.Warn("failed to close", zap.Error(err))
+// sort data in all chunks, then close the opened data engine
+func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.OpenedEngine) (err error) {
+	task := log.BeginTask(ep.logger, "encode & sort engine")
+	defer func() {
+		task.End(zap.ErrorLevel, err)
+	}()
+	for _, chunk := range ep.chunks {
+		if err = ProcessChunk(ctx, chunk, ep.tableImporter, dataEngine, ep.indexEngine, ep.logger); err != nil {
+			return err
 		}
 	}
+	return nil
 }

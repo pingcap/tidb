@@ -258,8 +258,7 @@ func (txn *LazyTxn) GoString() string {
 // GetOption implements the GetOption
 func (txn *LazyTxn) GetOption(opt int) interface{} {
 	if txn.Transaction == nil {
-		switch opt {
-		case kv.TxnScope:
+		if opt == kv.TxnScope {
 			return ""
 		}
 		return nil
@@ -390,6 +389,7 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", txn.GoString()),
 			zap.Int("staging handler", int(txn.stagingHandle)),
+			zap.Int("mutations", txn.countHint()),
 			zap.Stack("something must be wrong"))
 		return errors.Trace(kv.ErrInvalidTxn)
 	}

@@ -114,7 +114,7 @@ func (b *SQLBuilder) WriteSelect() error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
-	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY ")
+	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY SQL_NO_CACHE ")
 	b.writeColNames(b.tbl.KeyColumns, false)
 	b.restoreCtx.WritePlain(" FROM ")
 	if err := b.writeTblName(); err != nil {
@@ -316,7 +316,8 @@ type ScanQueryGenerator struct {
 }
 
 // NewScanQueryGenerator creates a new ScanQueryGenerator
-func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time, rangeStart []types.Datum, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
+func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
+	rangeStart, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
 	if err := tbl.ValidateKeyPrefix(rangeStart); err != nil {
 		return nil, err
 	}

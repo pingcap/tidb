@@ -10,6 +10,7 @@ go_test(
     deps = [
         "//testkit",
         "//testkit/testsetup",
+        "//util/set",
         "//util/syncutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
