@@ -25,7 +25,7 @@ const (
 	alphabet       = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	yearFormat     = "2006"
 	dateFormat     = time.DateOnly
-	timeFormat     = "15:04:05"
+	timeFormat     = time.TimeOnly
 	dateTimeFormat = time.DateTime
 
 	// Used by randString

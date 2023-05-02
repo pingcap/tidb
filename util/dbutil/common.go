@@ -309,7 +309,7 @@ func GetTimeZoneOffset(ctx context.Context, db QueryExecutor) (time.Duration, er
 		}
 		timeStr = timeStr[1:]
 	}
-	t, err := time.Parse("15:04:05", timeStr)
+	t, err := time.Parse(time.TimeOnly, timeStr)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
