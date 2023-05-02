@@ -484,13 +484,13 @@ func TestIssue43459(t *testing.T) {
 		"1 200000 2022-12-29 12:00:00"))
 	tk.MustQuery(`select * from test1 partition (2023p2)`).Check(testkit.Rows("" +
 		"2 200000 2023-01-01 00:00:00"))
-	tk.MustQuery(`select * from test1`).Check(testkit.Rows(""+
+	tk.MustQuery(`select * from test1`).Sort().Check(testkit.Rows(""+
 		"1 200000 2022-12-29 12:00:00",
 		"2 200000 2023-01-01 00:00:00"))
-	tk.MustQuery(`select * from test1 where partition_no = 200000`).Check(testkit.Rows(""+
+	tk.MustQuery(`select * from test1 where partition_no = 200000`).Sort().Check(testkit.Rows(""+
 		"1 200000 2022-12-29 12:00:00",
 		"2 200000 2023-01-01 00:00:00"))
-	tk.MustQuery(`select * from test1 where partition_no >= 200000`).Check(testkit.Rows(""+
+	tk.MustQuery(`select * from test1 where partition_no >= 200000`).Sort().Check(testkit.Rows(""+
 		"1 200000 2022-12-29 12:00:00",
 		"2 200000 2023-01-01 00:00:00"))
 	tk.MustExec(`drop table test1`)
@@ -507,13 +507,13 @@ func TestIssue43459(t *testing.T) {
 		"1 200000 2022-12-29"))
 	tk.MustQuery(`select * from test1 partition (2023p2)`).Check(testkit.Rows("" +
 		"2 200000 2023-01-01"))
-	tk.MustQuery(`select * from test1`).Check(testkit.Rows(""+
+	tk.MustQuery(`select * from test1`).Sort().Check(testkit.Rows(""+
 		"1 200000 2022-12-29",
 		"2 200000 2023-01-01"))
-	tk.MustQuery(`select * from test1 where partition_no = 200000`).Check(testkit.Rows(""+
+	tk.MustQuery(`select * from test1 where partition_no = 200000`).Sort().Check(testkit.Rows(""+
 		"1 200000 2022-12-29",
 		"2 200000 2023-01-01"))
-	tk.MustQuery(`select * from test1 where partition_no >= 200000`).Check(testkit.Rows(""+
+	tk.MustQuery(`select * from test1 where partition_no >= 200000`).Sort().Check(testkit.Rows(""+
 		"1 200000 2022-12-29",
 		"2 200000 2023-01-01"))
 }
