@@ -622,7 +622,7 @@ func TestModifyColumnTime_TimestampToTime(t *testing.T) {
 func TestModifyColumnTime_TimestampToDate(t *testing.T) {
 	tests := []testModifyColumnTimeCase{
 		// timestamp to date
-		{"timestamp", `time.DateTime`, "date", time.DateOnly, 0},
+		{"timestamp", time.DateTime, "date", time.DateOnly, 0},
 		{"timestamp", `"06-01-02 15:04:05"`, "date", time.DateOnly, 0},
 		{"timestamp", `"20060102150405"`, "date", time.DateOnly, 0},
 		{"timestamp", `"060102150405"`, "date", time.DateOnly, 0},
