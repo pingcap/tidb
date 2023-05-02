@@ -359,8 +359,13 @@ func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDe
 			if !ok {
 				return nil, dbterror.ErrPartitionConstDomain
 			}
-			// Will also fold constant
-			tmp = expression.BuildCastFunction(ctx, tmp, schema.Columns[colOffsets[j]].RetType)
+			// TODO: Enable this for all types!
+			// Currently it will trigger changes for collation differences
+			switch schema.Columns[colOffsets[j]].RetType.GetType() {
+			case mysql.TypeDatetime, mysql.TypeDate:
+				// Will also fold constant
+				tmp = expression.BuildCastFunction(ctx, tmp, schema.Columns[colOffsets[j]].RetType)
+			}
 			lessThanCols = append(lessThanCols, &tmp)
 		}
 		res.LessThan = append(res.LessThan, lessThanCols)
