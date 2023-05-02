@@ -594,7 +594,7 @@ func TestModifyColumnTime_DateToTimestamp(t *testing.T) {
 func TestModifyColumnTime_TimestampToYear(t *testing.T) {
 	tests := []testModifyColumnTimeCase{
 		// timestamp to year
-		{"timestamp", `time.DateTime`, "year", "2006", 0},
+		{"timestamp", time.DateTime, "year", "2006", 0},
 		{"timestamp", `"06-01-02 15:04:05"`, "year", "2006", 0},
 		{"timestamp", `"20060102150405"`, "year", "2006", 0},
 		{"timestamp", `"060102150405"`, "year", "2006", 0},
@@ -608,7 +608,7 @@ func TestModifyColumnTime_TimestampToYear(t *testing.T) {
 func TestModifyColumnTime_TimestampToTime(t *testing.T) {
 	tests := []testModifyColumnTimeCase{
 		// timestamp to time
-		{"timestamp", `time.DateTime`, "time", "15:04:05", 0},
+		{"timestamp", time.DateTime, "time", "15:04:05", 0},
 		{"timestamp", `"06-01-02 15:04:05"`, "time", "15:04:05", 0},
 		{"timestamp", `"20060102150405"`, "time", "15:04:05", 0},
 		{"timestamp", `"060102150405"`, "time", "15:04:05", 0},
@@ -636,7 +636,7 @@ func TestModifyColumnTime_TimestampToDate(t *testing.T) {
 func TestModifyColumnTime_TimestampToDatetime(t *testing.T) {
 	tests := []testModifyColumnTimeCase{
 		// timestamp to datetime
-		{"timestamp", `time.DateTime`, "datetime", time.DateTime, 0},
+		{"timestamp", time.DateTime, "datetime", time.DateTime, 0},
 		{"timestamp", `"06-01-02 15:04:05"`, "datetime", time.DateTime, 0},
 		{"timestamp", `"20060102150405"`, "datetime", time.DateTime, 0},
 		{"timestamp", `"060102150405"`, "datetime", time.DateTime, 0},
@@ -650,7 +650,7 @@ func TestModifyColumnTime_TimestampToDatetime(t *testing.T) {
 func TestModifyColumnTime_DatetimeToYear(t *testing.T) {
 	tests := []testModifyColumnTimeCase{
 		// datetime to year
-		{"datetime", `time.DateTime`, "year", "2006", 0},
+		{"datetime", time.DateTime, "year", "2006", 0},
 		{"datetime", `"06-01-02 15:04:05"`, "year", "2006", 0},
 		{"datetime", `"20060102150405"`, "year", "2006", 0},
 		{"datetime", `"060102150405"`, "year", "2006", 0},
@@ -666,7 +666,7 @@ func TestModifyColumnTime_DatetimeToYear(t *testing.T) {
 func TestModifyColumnTime_DatetimeToTime(t *testing.T) {
 	tests := []testModifyColumnTimeCase{
 		// datetime to time
-		{"datetime", `time.DateTime`, "time", "15:04:05", 0},
+		{"datetime", time.DateTime, "time", "15:04:05", 0},
 		{"datetime", `"06-01-02 15:04:05"`, "time", "15:04:05", 0},
 		{"datetime", `"20060102150405"`, "time", "15:04:05", 0},
 		{"datetime", `"060102150405"`, "time", "15:04:05", 0},
@@ -682,7 +682,7 @@ func TestModifyColumnTime_DatetimeToTime(t *testing.T) {
 func TestModifyColumnTime_DatetimeToDate(t *testing.T) {
 	tests := []testModifyColumnTimeCase{
 		// datetime to date
-		{"datetime", `time.DateTime`, "date", time.DateOnly, 0},
+		{"datetime", time.DateTime, "date", time.DateOnly, 0},
 		{"datetime", `"06-01-02 15:04:05"`, "date", time.DateOnly, 0},
 		{"datetime", `"20060102150405"`, "date", time.DateOnly, 0},
 		{"datetime", `"060102150405"`, "date", time.DateOnly, 0},
@@ -698,7 +698,7 @@ func TestModifyColumnTime_DatetimeToDate(t *testing.T) {
 func TestModifyColumnTime_DatetimeToTimestamp(t *testing.T) {
 	tests := []testModifyColumnTimeCase{
 		// datetime to timestamp
-		{"datetime", `time.DateTime`, "timestamp", time.DateTime, 0},
+		{"datetime", time.DateTime, "timestamp", time.DateTime, 0},
 		{"datetime", `"06-01-02 15:04:05"`, "timestamp", time.DateTime, 0},
 		{"datetime", `"20060102150405"`, "timestamp", time.DateTime, 0},
 		{"datetime", `"060102150405"`, "timestamp", time.DateTime, 0},
