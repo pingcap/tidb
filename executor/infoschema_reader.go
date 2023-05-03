@@ -878,13 +878,13 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			}
 		}
 	}
-	i := 1
+	i := 0
 ForColumnsTag:
 	for _, col := range tbl.Columns {
 		if col.Hidden {
 			continue
 		}
-
+		i++
 		ft := &(col.FieldType)
 		if tbl.IsView() {
 			e.viewMu.RLock()
@@ -1018,7 +1018,6 @@ ForColumnsTag:
 			col.GeneratedExprString, // GENERATION_EXPRESSION
 		)
 		e.rows = append(e.rows, record)
-		i++
 	}
 }
 
