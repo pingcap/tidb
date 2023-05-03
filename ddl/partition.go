@@ -1088,6 +1088,8 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 		partitions, err = buildHashPartitionDefinitions(ctx, defs, tbInfo, numParts)
 	case model.PartitionTypeList:
 		partitions, err = buildListPartitionDefinitions(ctx, defs, tbInfo)
+	default:
+		err = dbterror.ErrUnsupportedPartitionType
 	}
 
 	if err != nil {
@@ -2581,9 +2583,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			tblInfo.ID = tblInfo.Partition.NewTableID
-			// If no global index this is not really needed?
-			physicalTableIDs = append(physicalTableIDs, oldTblID)
+			tblInfo.ID = partInfo.NewTableID
+			if partInfo.DDLType != model.PartitionTypeNone {
+				// if partitioned before, then also add the old table ID,
+				// otherwise it will be the already included first partition
+				physicalTableIDs = append(physicalTableIDs, oldTblID)
+			}
 			if job.Type == model.ActionRemovePartitioning {
 				tblInfo.Partition = nil
 			} else {
@@ -2613,7 +2618,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		// How to handle this?
 		// Seems to only trigger asynchronous update of statistics.

@@ -4080,8 +4080,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 	newPartInfo.NewTableID = newID[0]
-	// Used as a flag that it changes partitioning type!
-	newPartInfo.DDLType = newPartInfo.Type
+	newPartInfo.DDLType = piOld.Type
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
@@ -4193,6 +4192,11 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 	newSpec := spec
 	// skip if only one partition
+	// If there are only one partition, then we can do:
+	// change the table id to the partition id
+	// and keep the statistics for the partition id (which should be similar to the global statistics)
+	// and it let the GC clean up the old table metadata including possible global index.
+	// TODO: Add the support for this in onReorganizePartition!!!
 	if len(pi.Definitions) != 1 {
 		newSpec = &ast.AlterTableSpec{}
 		newSpec.Tp = spec.Tp
@@ -7407,6 +7411,7 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 	}
 
 	part.Definitions = defs
+	part.Num = uint64(len(defs))
 	return part, nil
 }
 
