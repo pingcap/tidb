@@ -225,9 +225,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
-	case model.ActionReorganizePartition, model.ActionRemovePartitioning:
-		return b.applyReorganizePartition(m, diff)
-	case model.ActionAlterTablePartitioning:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		return b.applyReorganizePartition(m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
@@ -303,6 +302,7 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 		if opt.TableID != 0 {
 			b.markTableBundleShouldUpdate(opt.TableID)
 		}
+		// TODO: Should we also check markPartitionBundleShouldUpdate?!?
 	}
 	return tblIDs, nil
 }
@@ -414,7 +414,8 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
 	case model.ActionTruncateTable, model.ActionCreateView,
-		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning:
+		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning,
+		model.ActionRemovePartitioning:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:

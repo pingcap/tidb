@@ -3988,11 +3988,12 @@ func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartId
 	return tmpDefs
 }
 
-func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int, int, map[int]struct{}, error) {
+func getReplacedPartitionIDs(names []string, pi *model.PartitionInfo) (int, int, map[int]struct{}, error) {
 	idMap := make(map[int]struct{})
 	var firstPartIdx, lastPartIdx = -1, -1
 	for _, name := range names {
-		partIdx := pi.FindPartitionDefinitionByName(name.L)
+		nameL := strings.ToLower(name)
+		partIdx := pi.FindPartitionDefinitionByName(nameL)
 		if partIdx == -1 {
 			return 0, 0, nil, errors.Trace(dbterror.ErrWrongPartitionName)
 		}
@@ -4048,16 +4049,16 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 
 	meta := t.Meta().Clone()
 	piOld := meta.GetPartitionInfo()
-	var partNames []model.CIStr
+	var partNames []string
 	if piOld != nil {
-		partNames = make([]model.CIStr, 0, len(piOld.Definitions))
+		partNames = make([]string, 0, len(piOld.Definitions))
 		for i := range piOld.Definitions {
-			partNames = append(partNames, piOld.Definitions[i].Name)
+			partNames = append(partNames, piOld.Definitions[i].Name.L)
 		}
 	} else {
 		piOld = getPartitionInfoTypeNone()
 		meta.Partition = piOld
-		partNames = append(partNames, piOld.Definitions[0].Name)
+		partNames = append(partNames, piOld.Definitions[0].Name.L)
 	}
 	newMeta := meta.Clone()
 	err = buildTablePartitionInfo(ctx, spec.Partition, newMeta)
@@ -4079,6 +4080,8 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 	newPartInfo.NewTableID = newID[0]
+	// Used as a flag that it changes partitioning type!
+	newPartInfo.DDLType = newPartInfo.Type
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
@@ -4128,7 +4131,11 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	default:
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 	}
-	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(spec.PartitionNames, pi)
+	partNames := make([]string, 0, len(spec.PartitionNames))
+	for _, name := range spec.PartitionNames {
+		partNames = append(partNames, name.L)
+	}
+	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(partNames, pi)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4154,7 +4161,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionReorganizePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{spec.PartitionNames, partInfo},
+		Args:       []interface{}{partNames, partInfo},
 		ReorgMeta: &model.DDLReorgMeta{
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
@@ -4218,9 +4225,9 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 			return errors.Trace(dbterror.ErrUnsupportedRemovePartition)
 		}
 	}
-	partNames := make([]model.CIStr, len(pi.Definitions))
+	partNames := make([]string, len(pi.Definitions))
 	for i := range pi.Definitions {
-		partNames[i] = pi.Definitions[i].Name
+		partNames[i] = pi.Definitions[i].Name.L
 	}
 	partInfo, err := BuildAddedPartitionInfo(ctx, meta, newSpec)
 	if err != nil {
@@ -4233,6 +4240,7 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
 		return errors.Trace(err)
 	}
+	partInfo.NewTableID = partInfo.Definitions[0].ID
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
@@ -4262,11 +4270,16 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 	// old partitions to check all partitions is strictly increasing.
 	pi := tblInfo.Partition
 	clonedMeta := tblInfo.Clone()
-	clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
-	clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
-	if action == model.ActionAlterTablePartitioning {
+	switch action {
+	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		clonedMeta.Partition = partInfo
 		clonedMeta.ID = partInfo.NewTableID
+	case model.ActionReorganizePartition:
+		clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
+		clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
+	default:
+		// TODO: FIXME!!!
+		panic("REMOVE ME TODO FIXME")
 	}
 	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
 		return errors.Trace(err)

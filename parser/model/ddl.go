@@ -795,7 +795,7 @@ func (job *Job) NotStarted() bool {
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
 	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition,
-		ActionRemovePartitioning:
+		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
 		if len(job.CtxVars) > 0 {

@@ -2181,7 +2181,8 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
 	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition,
-		model.ActionReorganizePartition, model.ActionRemovePartitioning:
+		model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}

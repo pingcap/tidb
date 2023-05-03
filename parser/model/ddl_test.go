@@ -77,6 +77,7 @@ func TestMayNeedReorg(t *testing.T) {
 	reorgJobTypes := []model.ActionType{
 		model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning,
 		model.ActionAddIndex,
 		model.ActionAddPrimaryKey,
 	}

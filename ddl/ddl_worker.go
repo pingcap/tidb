@@ -523,7 +523,8 @@ func jobNeedGC(job *model.Job) bool {
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn,
 			model.ActionAddIndex, model.ActionAddPrimaryKey,
-			model.ActionReorganizePartition, model.ActionRemovePartitioning:
+			model.ActionReorganizePartition, model.ActionRemovePartitioning,
+			model.ActionAlterTablePartitioning:
 			return true
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -1080,16 +1081,13 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onFlashbackCluster(d, t, job)
 	case model.ActionMultiSchemaChange:
 		ver, err = onMultiSchemaChange(w, d, t, job)
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		ver, err = w.onReorganizePartition(d, t, job)
-	case model.ActionRemovePartitioning:
-		ver, err = w.onRemovePartitioning(d, t, job)
 	case model.ActionAlterTTLInfo:
 		ver, err = onTTLInfoChange(d, t, job)
 	case model.ActionAlterTTLRemove:
 		ver, err = onTTLInfoRemove(d, t, job)
-	case model.ActionAlterTablePartitioning:
-		ver, err = w.onAlterTablePartitioning(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -1359,8 +1357,9 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
 			}
 		}
-	case model.ActionReorganizePartition, model.ActionRemovePartitioning:
+	case model.ActionReorganizePartition:
 		diff.TableID = job.TableID
+		// TODO: should this be for every state of Reorganize?
 		if len(job.CtxVars) > 0 {
 			if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
 				if addedIDs, ok := job.CtxVars[1].([]int64); ok {
@@ -1375,16 +1374,17 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 				}
 			}
 		}
-	case model.ActionAlterTablePartitioning:
+	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		diff.TableID = job.TableID
 		diff.OldTableID = job.TableID
 		if job.SchemaState == model.StateDeleteReorganization {
-			// Final part, new table id is assigned
 			partInfo := &model.PartitionInfo{}
-			var partNames []model.CIStr
+			var partNames []string
 			err = job.DecodeArgs(&partNames, &partInfo)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
+			// Final part, new table id is assigned
 			diff.TableID = partInfo.NewTableID
 			if len(job.CtxVars) > 0 {
 				if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
@@ -1400,8 +1400,6 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 					}
 				}
 			}
-		} else {
-			diff.TableID = job.TableID
 		}
 	case model.ActionCreateTable:
 		diff.TableID = job.TableID

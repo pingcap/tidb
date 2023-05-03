@@ -244,7 +244,7 @@ func TestReorganizePartitionRollback(t *testing.T) {
 	tk.MustExec("alter table t1 add index idx_kc (k, c)")
 }
 
-func TestAlterPartitionByRange(t *testing.T) {
+func TestAlterPartitionBy(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create schema AlterPartitionBy")

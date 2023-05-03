@@ -67,12 +67,21 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
 				return err
 			}
+			// Do not update global stats, since the data have not changed!
 		}
-	// Do not update global stats, since the data have not changed!
+	case model.ActionAlterTablePartitioning:
+		// Add partitioning
+		for _, def := range t.PartInfo.Definitions {
+			// TODO: Should we trigger analyze instead of adding 0s?
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+				return err
+			}
+		}
+		fallthrough
 	case model.ActionRemovePartitioning:
-		// For now, we do not have access to the old table id, so we cannot just update the id.
-		// We highjacked the first partition's physical table id for the previous Table ID
-		return h.changeGlobalStatsID(t.PartInfo.Definitions[0].ID, t.TableInfo.ID)
+		// We high-jacked the first partition's physical table id for the previous Table ID
+		// Change id for global stats, since the data has not changed!
+		return h.changeGlobalStatsID(t.PartInfo.NewTableID, t.TableInfo.ID)
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
 	}
