@@ -368,6 +368,9 @@ func (cw *compressedWriter) Flush() error {
 		return errors.Trace(err)
 	}
 	w.Close()
-	cw.w.Write(compressedPacket.Bytes())
+	_, err = cw.w.Write(compressedPacket.Bytes())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
