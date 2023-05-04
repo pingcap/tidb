@@ -494,10 +494,10 @@ func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (ty
 	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), nil)
 }
 
-// GetColOriginDefaultValueWithStrictSQLMode gets default value of the column from original default value with Strict SQL mode.
-func GetColOriginDefaultValueWithStrictSQLMode(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
+// GetColOriginDefaultValueWithoutStrictSQLMode gets default value of the column from original default value with Strict SQL mode.
+func GetColOriginDefaultValueWithoutStrictSQLMode(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
 	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), &getColOriginDefaultValue{
-		StrictSQLMode: true,
+		StrictSQLMode: false,
 	})
 }
 
