@@ -1089,6 +1089,7 @@ func (local *local) generateJobInRanges(
 
 		startKey := codec.EncodeBytes([]byte{}, pairStart)
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
+		// here
 		regions, err := split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 		if err != nil {
 			log.FromContext(ctx).Error("scan region failed",

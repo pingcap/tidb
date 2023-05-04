@@ -132,6 +132,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			}
 		}
 		var regions []*split.RegionInfo
+		// TODO: use Check after scatter?
 		regions, err = split.PaginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
 		log.FromContext(ctx).Info("paginate scan regions", zap.Int("count", len(regions)),
 			logutil.Key("start", minKey), logutil.Key("end", maxKey))
@@ -212,7 +213,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 		}
 
 		var syncLock sync.Mutex
-		// TODO, make this size configurable
+		// TODO!!! make this size configurable
 		size := mathutil.Min(len(splitKeyMap), runtime.GOMAXPROCS(0))
 		ch := make(chan *splitInfo, size)
 		eg, splitCtx := errgroup.WithContext(ctx)

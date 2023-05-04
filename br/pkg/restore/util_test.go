@@ -14,6 +14,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
@@ -292,11 +293,49 @@ func TestPaginateScanRegion(t *testing.T) {
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 
 	// make the regionMap losing some region, this will cause scan region check fails
+	// region ID is key+1, so region 4 is deleted
+	missingRegion := regions[3]
 	delete(regionMap, uint64(3))
+	missingRegion2 := regions[4]
+	delete(regionMap, uint64(4))
 	_, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
 	require.Error(t, err)
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
-	require.Regexp(t, ".*region endKey not equal to next region startKey.*", err.Error())
+	require.Regexp(t, ".*region 3's endKey not equal to next region 6's startKey.*", err.Error())
+
+	// test should not increase retry counter when region becomes more
+	tc = NewTestClient(stores, regionMap, 0)
+	mockClient := &regionOnlineSlowClient{
+		TestClient:     tc,
+		missingRegion:  missingRegion,
+		missingRegion2: missingRegion2,
+	}
+	_, err = split.PaginateScanRegion(ctx, mockClient, regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	require.NoError(t, err)
+}
+
+type regionOnlineSlowClient struct {
+	*TestClient
+	scanRegionCnt  int
+	missingRegion  *split.RegionInfo
+	missingRegion2 *split.RegionInfo
+}
+
+func (c *regionOnlineSlowClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
+	c.scanRegionCnt++
+	var toAddRegion *split.RegionInfo
+	switch c.scanRegionCnt {
+	case 2:
+		toAddRegion = c.missingRegion
+	case 4:
+		toAddRegion = c.missingRegion2
+	}
+	if toAddRegion != nil {
+		mapKey := toAddRegion.Region.Id - 1
+		c.TestClient.regions[mapKey] = toAddRegion
+		c.TestClient.regionsInfo.SetRegion(pdtypes.NewRegionInfo(toAddRegion.Region, toAddRegion.Leader))
+	}
+	return c.TestClient.ScanRegions(ctx, key, endKey, limit)
 }
 
 func TestRewriteFileKeys(t *testing.T) {

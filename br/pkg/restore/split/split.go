@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/zap"
 )
 
 var (
@@ -51,17 +52,23 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 	}
 
 	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"first region %d's startKey > startKey, startKey: %s, regionStartKey: %s",
+			regions[0].Region.Id,
 			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
 	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < endKey, endKey: %s, regionEndKey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"last region %d's endKey < endKey, endKey: %s, regionEndKey: %s",
+			regions[len(regions)-1].Region.Id,
 			redact.Key(endKey), redact.Key(regions[len(regions)-1].Region.EndKey))
 	}
 
 	cur := regions[0]
 	for _, r := range regions[1:] {
 		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
-			return errors.Annotatef(berrors.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
+			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+				"region %d's endKey not equal to next region %d's startKey, endKey: %s, startKey: %s",
+				cur.Region.Id, r.Region.Id,
 				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
 		}
 		cur = r
@@ -81,15 +88,13 @@ func PaginateScanRegion(
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
-	var regions []*RegionInfo
-	var err error
-	// we don't need to return multierr. since there only 3 times retry.
-	// in most case 3 times retry have the same error. so we just return the last error.
-	// actually we'd better remove all multierr in br/lightning.
-	// because it's not easy to check multierr equals normal error.
-	// see https://github.com/pingcap/tidb/issues/33419.
+	var (
+		lastRegions []*RegionInfo
+		err         error
+		backoffer   = NewScanRegionBackoffer().(*scanRegionBackoffer)
+	)
 	_ = utils.WithRetry(ctx, func() error {
-		regions = []*RegionInfo{}
+		regions := make([]*RegionInfo, 0, 16)
 		scanStartKey := startKey
 		for {
 			var batch []*RegionInfo
@@ -111,14 +116,23 @@ func PaginateScanRegion(
 				break
 			}
 		}
+		// if the number of regions becomes larger, we can infer TiKV side really
+		// made some progress so don't increase the retry times.
+		if len(regions) > len(lastRegions) {
+			backoffer.stat.ReduceRetry()
+		}
+		lastRegions = regions
+
 		if err = CheckRegionConsistency(startKey, endKey, regions); err != nil {
-			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
+			log.Warn("failed to scan region, retrying",
+				logutil.ShortError(err),
+				zap.Int("regionLength", len(regions)))
 			return err
 		}
 		return nil
-	}, NewScanRegionBackoffer())
+	}, backoffer)
 
-	return regions, err
+	return lastRegions, err
 }
 
 // CheckPartRegionConsistency only checks the continuity of regions and the first region consistency.
