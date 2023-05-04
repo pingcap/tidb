@@ -231,10 +231,10 @@ func TestPaginateScanRegion(t *testing.T) {
 	regionMap := make(map[uint64]*split.RegionInfo)
 	var regions []*split.RegionInfo
 	var batch []*split.RegionInfo
-	backup := split.ScanRegionAttemptTimes
-	split.ScanRegionAttemptTimes = 3
+	backup := split.WaitRegionOnlineAttemptTimes
+	split.WaitRegionOnlineAttemptTimes = 3
 	defer func() {
-		split.ScanRegionAttemptTimes = backup
+		split.WaitRegionOnlineAttemptTimes = backup
 	}()
 	_, err := split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	require.Error(t, err)

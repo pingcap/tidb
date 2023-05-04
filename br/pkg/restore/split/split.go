@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	ScanRegionAttemptTimes = 150
+	WaitRegionOnlineAttemptTimes = 150
 )
 
 // Constants for split retry machinery.
@@ -91,7 +91,7 @@ func PaginateScanRegion(
 	var (
 		lastRegions []*RegionInfo
 		err         error
-		backoffer   = NewScanRegionBackoffer().(*scanRegionBackoffer)
+		backoffer   = NewWaitRegionOnlineBackoffer().(*WaitRegionOnlineBackoffer)
 	)
 	_ = utils.WithRetry(ctx, func() error {
 		regions := make([]*RegionInfo, 0, 16)
@@ -119,7 +119,7 @@ func PaginateScanRegion(
 		// if the number of regions becomes larger, we can infer TiKV side really
 		// made some progress so don't increase the retry times.
 		if len(regions) > len(lastRegions) {
-			backoffer.stat.ReduceRetry()
+			backoffer.Stat.ReduceRetry()
 		}
 		lastRegions = regions
 
@@ -189,32 +189,46 @@ func ScanRegionsWithRetry(
 		}
 
 		return nil
-	}, NewScanRegionBackoffer())
+	}, NewWaitRegionOnlineBackoffer())
 
 	return regions, err
 }
 
-type scanRegionBackoffer struct {
-	stat utils.RetryState
+type WaitRegionOnlineBackoffer struct {
+	Stat utils.RetryState
 }
 
-// NewScanRegionBackoffer create a backoff to retry to scan regions.
-func NewScanRegionBackoffer() utils.Backoffer {
-	return &scanRegionBackoffer{
-		stat: utils.InitialRetryState(
-			ScanRegionAttemptTimes,
+// NewWaitRegionOnlineBackoffer create a backoff to retry to wait region online.
+func NewWaitRegionOnlineBackoffer() utils.Backoffer {
+	return &WaitRegionOnlineBackoffer{
+		Stat: utils.InitialRetryState(
+			WaitRegionOnlineAttemptTimes,
 			time.Millisecond*10,
 			time.Second*2,
 		),
 	}
 }
 
+// NewWaitRegionOnlineBackofferWithVars create a backoff to retry to wait region online.
+func NewWaitRegionOnlineBackofferWithVars(
+	maxAttemptTimes int,
+	initBackoff, maxBackoff time.Duration,
+) utils.Backoffer {
+	return &WaitRegionOnlineBackoffer{
+		Stat: utils.InitialRetryState(
+			maxAttemptTimes,
+			initBackoff,
+			maxBackoff,
+		),
+	}
+}
+
 // NextBackoff returns a duration to wait before retrying again
-func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
+func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
 		// it needs more time to wait splitting the regions that contains data in PITR.
 		// 2s * 150
-		delayTime := b.stat.ExponentialBackoff()
+		delayTime := b.Stat.ExponentialBackoff()
 		failpoint.Inject("hint-scan-region-backoff", func(val failpoint.Value) {
 			if val.(bool) {
 				delayTime = time.Microsecond
@@ -222,11 +236,11 @@ func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
 		})
 		return delayTime
 	}
-	b.stat.StopRetry()
+	b.Stat.StopRetry()
 	return 0
 }
 
 // Attempt returns the remain attempt times
-func (b *scanRegionBackoffer) Attempt() int {
-	return b.stat.Attempt()
+func (b *WaitRegionOnlineBackoffer) Attempt() int {
+	return b.Stat.Attempt()
 }
