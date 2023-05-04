@@ -395,10 +395,11 @@ type local struct {
 
 	localStoreDir string
 
-	workerConcurrency    int
-	kvWriteBatchSize     int
-	checkpointEnabled    bool
-	splitRegionBatchSize int
+	workerConcurrency      int
+	kvWriteBatchSize       int
+	checkpointEnabled      bool
+	splitRegionBatchSize   int
+	splitRegionConcurrency int
 
 	dupeConcurrency int
 	maxOpenFiles    int
@@ -542,13 +543,14 @@ func NewLocalBackend(
 		g:         g,
 		tikvCodec: tikvCodec,
 
-		localStoreDir:        localFile,
-		workerConcurrency:    rangeConcurrency * 2,
-		dupeConcurrency:      rangeConcurrency * 2,
-		kvWriteBatchSize:     cfg.TikvImporter.SendKVPairs,
-		checkpointEnabled:    cfg.Checkpoint.Enable,
-		maxOpenFiles:         mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
-		splitRegionBatchSize: cfg.TikvImporter.SplitRegionBatchSize,
+		localStoreDir:          localFile,
+		workerConcurrency:      rangeConcurrency * 2,
+		dupeConcurrency:        rangeConcurrency * 2,
+		kvWriteBatchSize:       cfg.TikvImporter.SendKVPairs,
+		checkpointEnabled:      cfg.Checkpoint.Enable,
+		maxOpenFiles:           mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
+		splitRegionBatchSize:   cfg.TikvImporter.SplitRegionBatchSize,
+		splitRegionConcurrency: cfg.TikvImporter.SplitRegionConcurrency,
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
@@ -1091,7 +1093,6 @@ func (local *local) generateJobInRanges(
 
 		startKey := codec.EncodeBytes([]byte{}, pairStart)
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
-		// here
 		regions, err := split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 		if err != nil {
 			log.FromContext(ctx).Error("scan region failed",

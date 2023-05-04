@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"math"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -210,8 +209,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 		}
 
 		var syncLock sync.Mutex
-		// TODO!!! make this size configurable
-		size := mathutil.Min(len(splitKeyMap), runtime.GOMAXPROCS(0))
+		size := mathutil.Min(len(splitKeyMap), local.splitRegionConcurrency)
 		ch := make(chan *splitInfo, size)
 		eg, splitCtx := errgroup.WithContext(ctx)
 
