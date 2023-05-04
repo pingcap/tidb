@@ -424,12 +424,9 @@ type batchSplitHook interface {
 type defaultHook struct{}
 
 func (d defaultHook) setup(t *testing.T) func() {
-	oldLimit := maxBatchSplitKeys
 	oldSplitBackoffTime := splitRegionBaseBackOffTime
-	maxBatchSplitKeys = 4
 	splitRegionBaseBackOffTime = time.Millisecond
 	return func() {
-		maxBatchSplitKeys = oldLimit
 		splitRegionBaseBackOffTime = oldSplitBackoffTime
 	}
 }
@@ -458,9 +455,10 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	client := initTestSplitClient(keys, hook)
 	local := &local{
-		splitCli: client,
-		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
-		logger:   log.L(),
+		splitCli:             client,
+		g:                    glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:               log.L(),
+		splitRegionBatchSize: 4,
 	}
 
 	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
@@ -632,9 +630,10 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
 	client := initTestSplitClient(keys, nil)
 	local := &local{
-		splitCli: client,
-		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
-		logger:   log.L(),
+		splitCli:             client,
+		g:                    glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:               log.L(),
+		splitRegionBatchSize: 4,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -692,12 +691,9 @@ func TestBatchSplitByRangeCtxCanceled(t *testing.T) {
 }
 
 func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
-	oldLimit := maxBatchSplitKeys
 	oldSplitBackoffTime := splitRegionBaseBackOffTime
-	maxBatchSplitKeys = 10
 	splitRegionBaseBackOffTime = time.Millisecond
 	defer func() {
-		maxBatchSplitKeys = oldLimit
 		splitRegionBaseBackOffTime = oldSplitBackoffTime
 	}()
 
@@ -719,9 +715,10 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	keys = append(keys, tableEndKey, []byte(""))
 	client := initTestSplitClient(keys, hook)
 	local := &local{
-		splitCli: client,
-		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
-		logger:   log.L(),
+		splitCli:             client,
+		g:                    glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:               log.L(),
+		splitRegionBatchSize: 10,
 	}
 	ctx := context.Background()
 
