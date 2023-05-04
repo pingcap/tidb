@@ -17,10 +17,13 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"compress/zlib"
+	"io"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -129,4 +132,89 @@ func (c *bytesConn) SetReadDeadline(t time.Time) error {
 
 func (c *bytesConn) SetWriteDeadline(t time.Time) error {
 	return nil
+}
+
+// Small payloads of less than minCompressLength (50 bytes) don't get actually
+// compressed, but have the same header as a compressed packet.
+//
+// Header:
+// 0a 00 00   Compressed length: 10
+// 00         Packetnr: 0
+// 00 00 00   Uncompressed length: 0 (meaning not compressed)
+//
+// Payload:
+// 74 65 73 74 5f 73 68 6f 72 74  test_short
+func TestCompressedWriterShort(t *testing.T) {
+	var testdata bytes.Buffer
+	payload := []byte("test_short")
+
+	cw := newCompressedWriter(&testdata, mysql.CompressionZlib)
+	cw.Write(payload)
+	cw.Flush()
+
+	// Test Header
+	compressedLength := []byte{0xa, 0x0, 0x0}
+	packetNr := []byte{0x0}
+	uncompressedLength := []byte{0x0, 0x0, 0x0}
+	require.Equal(t, compressedLength, testdata.Bytes()[:3])
+	require.Equal(t, packetNr, testdata.Bytes()[3:4])
+	require.Equal(t, uncompressedLength, testdata.Bytes()[4:7])
+
+	// Payload, making sure it isn't compressed.
+	require.Equal(t, payload, testdata.Bytes()[7:])
+}
+
+func TestCompressedWriterLong(t *testing.T) {
+	t.Run("zlib", func(t *testing.T) {
+		var testdata, decoded bytes.Buffer
+		payload := []byte("test_zlib test_zlib test_zlib test_zlib test_zlib test_zlib test_zlib")
+
+		cw := newCompressedWriter(&testdata, mysql.CompressionZlib)
+		cw.Write(payload)
+		cw.Flush()
+
+		// Header:
+		// 3c 00 00   Compressed length: 60
+		// 00         Packetnr: 0
+		// 45 00 00   Uncompressed length: 69
+		compressedLength := []byte{0x3c, 0x0, 0x0}
+		packetNr := []byte{0x0}
+		uncompressedLength := []byte{0x45, 0x0, 0x0}
+		require.Equal(t, compressedLength, testdata.Bytes()[:3])
+		require.Equal(t, packetNr, testdata.Bytes()[3:4])
+		require.Equal(t, uncompressedLength, testdata.Bytes()[4:7])
+
+		// Payload:
+		r, err := zlib.NewReader(bytes.NewReader(testdata.Bytes()[7:]))
+		require.NoError(t, err)
+		io.Copy(&decoded, r)
+		require.Equal(t, payload, decoded.Bytes())
+	})
+
+	t.Run("zstd", func(t *testing.T) {
+		var testdata bytes.Buffer
+		payload := []byte("test_zstd test_zstd test_zstd test_zstd test_zstd test_zstd test_zstd")
+
+		cw := newCompressedWriter(&testdata, mysql.CompressionZstd)
+		cw.Write(payload)
+		cw.Flush()
+
+		// Header:
+		// 1e 00 00   Compressed length: 30
+		// 00         Packetnr: 0
+		// 45 00 00   Uncompressed length: 69
+		compressedLength := []byte{0x1e, 0x0, 0x0}
+		packetNr := []byte{0x0}
+		uncompressedLength := []byte{0x45, 0x0, 0x0}
+		require.Equal(t, compressedLength, testdata.Bytes()[:3])
+		require.Equal(t, packetNr, testdata.Bytes()[3:4])
+		require.Equal(t, uncompressedLength, testdata.Bytes()[4:7])
+
+		// Payload:
+		d, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+		require.NoError(t, err)
+		decoded, err := d.DecodeAll(testdata.Bytes()[7:], nil)
+		require.NoError(t, err)
+		require.Equal(t, payload, decoded)
+	})
 }
