@@ -555,10 +555,11 @@ func TestRegionConsistency(t *testing.T) {
 		{
 			codec.EncodeBytes([]byte{}, []byte("a")),
 			codec.EncodeBytes([]byte{}, []byte("a")),
-			"first region's startKey > startKey, startKey: (.*?), regionStartKey: (.*?)",
+			"first region 1's startKey > startKey, startKey: (.*?), regionStartKey: (.*?)",
 			[]*split.RegionInfo{
 				{
 					Region: &metapb.Region{
+						Id:       1,
 						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
 						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
 					},
@@ -568,10 +569,11 @@ func TestRegionConsistency(t *testing.T) {
 		{
 			codec.EncodeBytes([]byte{}, []byte("b")),
 			codec.EncodeBytes([]byte{}, []byte("e")),
-			"last region's endKey < endKey, endKey: (.*?), regionEndKey: (.*?)",
+			"last region 100's endKey < endKey, endKey: (.*?), regionEndKey: (.*?)",
 			[]*split.RegionInfo{
 				{
 					Region: &metapb.Region{
+						Id:       100,
 						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
 						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
 					},
@@ -581,16 +583,18 @@ func TestRegionConsistency(t *testing.T) {
 		{
 			codec.EncodeBytes([]byte{}, []byte("c")),
 			codec.EncodeBytes([]byte{}, []byte("e")),
-			"region endKey not equal to next region startKey(.*?)",
+			"region 6's endKey not equal to next region 8's startKey(.*?)",
 			[]*split.RegionInfo{
 				{
 					Region: &metapb.Region{
+						Id:       6,
 						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
 						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
 					},
 				},
 				{
 					Region: &metapb.Region{
+						Id:       8,
 						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
 						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
 					},
