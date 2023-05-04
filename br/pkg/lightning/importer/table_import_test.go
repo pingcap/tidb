@@ -2435,7 +2435,7 @@ func TestGetDDLStatus(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "DB_NAME", "TABLE_NAME", "JOB_TYPE", "SCHEMA_STATE", "SCHEMA_ID", "TABLE_ID", "ROW_COUNT", "CREATE_TIME", "START_TIME", "END_TIME", "STATE"}).
 			AddRow(59, "many_tables_test", "t4", "alter table", "public", 1, 59, 0, "2022-08-02 2:50:37", "2022-08-02 2:50:37", nil, "none"))
 
-	createTime, err = time.Parse("2006-01-02 15:04:05", "2022-08-02 2:50:38")
+	createTime, err = time.Parse(time.DateTime, "2022-08-02 2:50:38")
 	require.NoError(t, err)
 	status, err = getDDLStatus(context.Background(), db, "ALTER TABLE many_tables_test.t4 ADD x timestamp DEFAULT current_timestamp", createTime)
 	require.NoError(t, err)
@@ -2455,7 +2455,7 @@ func TestGetDDLStatus(t *testing.T) {
 		AddRow(53, "CREATE TABLE IF NOT EXISTS many_tables_test.t4(i TINYINT, j INT UNIQUE KEY)").
 		AddRow(52, "CREATE TABLE IF NOT EXISTS many_tables_test.t3(i TINYINT, j INT UNIQUE KEY)"))
 
-	createTime, err = time.Parse("2006-01-02 15:04:05", "2022-08-03 12:35:00")
+	createTime, err = time.Parse(time.DateTime, "2022-08-03 12:35:00")
 	require.NoError(t, err)
 	status, err = getDDLStatus(context.Background(), db, "CREATE TABLE IF NOT EXISTS many_tables_test.t7(i TINYINT, j INT UNIQUE KEY)", createTime)
 	require.NoError(t, err)

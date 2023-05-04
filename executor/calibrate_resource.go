@@ -201,8 +201,8 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	if err != nil {
 		return err
 	}
-	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
-	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
+	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format(time.DateTime)
+	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format(time.DateTime)
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {

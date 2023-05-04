@@ -543,7 +543,7 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
 		dotIndex := len(val) - int(*meta.Scale)
 		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "utf8mb4_bin")
 	case logicalType.DATE != nil:
-		dateStr := time.Unix(v*86400, 0).Format("2006-01-02")
+		dateStr := time.Unix(v*86400, 0).Format(time.DateOnly)
 		d.SetString(dateStr, "utf8mb4_bin")
 	case logicalType.TIMESTAMP != nil:
 		// convert all timestamp types (datetime/timestamp) to string

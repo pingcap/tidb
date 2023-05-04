@@ -1329,8 +1329,8 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustQuery("select * from `information_schema`.`STATEMENTS_SUMMARY_EVICTED`;").
 		Check(testkit.Rows(
 			fmt.Sprintf("%s %s %v",
-				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05"),
-				time.Unix(beginTimeForCurInterval+interval, 0).Format("2006-01-02 15:04:05"),
+				time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime),
+				time.Unix(beginTimeForCurInterval+interval, 0).Format(time.DateTime),
 				int64(2)),
 		))
 
@@ -1372,8 +1372,8 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").Check(testkit.Rows("2"))
 	tk.MustQuery("select BEGIN_TIME from information_schema.statements_summary_evicted;").
 		Check(testkit.
-			Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format("2006-01-02 15:04:05"),
-				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05")))
+			Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format(time.DateTime),
+				time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime)))
 	require.NoError(t, failpoint.Disable(fpPath))
 	// TODO: Add more tests.
 }

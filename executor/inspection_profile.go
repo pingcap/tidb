@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	dateTimeFormat = "2006-01-02 15:04:05"
+	dateTimeFormat = time.DateTime
 )
 
 type profileBuilder struct {

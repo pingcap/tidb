@@ -383,7 +383,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	checkTime := func(val interface{}) {
 		str, ok := val.(string)
 		require.True(t, ok)
-		_, err := time.Parse("2006-01-02 15:04:05", str)
+		_, err := time.Parse(time.DateTime, str)
 		require.NoError(t, err)
 	}
 	checkTime(rows[0][5])

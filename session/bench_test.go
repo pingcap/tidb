@@ -1660,7 +1660,7 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	start := time.Date(2020, 5, 15, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 1023; i++ {
 		start = start.Add(24 * time.Hour)
-		fmt.Fprintf(&build, "partition p%d values less than ('%s'),\n", i, start.Format("2006-01-02"))
+		fmt.Fprintf(&build, "partition p%d values less than ('%s'),\n", i, start.Format(time.DateOnly))
 	}
 	build.WriteString("partition p1023 values less than maxvalue)")
 	mustExecute(se, build.String())
