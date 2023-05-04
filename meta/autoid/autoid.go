@@ -490,6 +490,56 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	return res
 }
 
+<<<<<<< HEAD
+=======
+// MockForTest is exported for testing.
+// The actual implementation is in github.com/pingcap/tidb/autoid_service because of the
+// package circle depending issue.
+var MockForTest func(kv.Storage) autoid.AutoIDAllocClient
+
+func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *singlePointAlloc {
+	ebd, ok := store.(kv.EtcdBackend)
+	if !ok {
+		// newSinglePointAlloc fail because not etcd background
+		// This could happen in the server package unit test
+		return nil
+	}
+
+	addrs, err := ebd.EtcdAddrs()
+	if err != nil {
+		panic(err)
+	}
+	spa := &singlePointAlloc{
+		dbID:       dbID,
+		tblID:      tblID,
+		isUnsigned: isUnsigned,
+	}
+	if len(addrs) > 0 {
+		etcdCli, err := clientv3.New(clientv3.Config{
+			Endpoints:        addrs,
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              ebd.TLSConfig(),
+		})
+		if err != nil {
+			logutil.BgLogger().Error("[autoid client] fail to connect etcd, fallback to default", zap.Error(err))
+			return nil
+		}
+		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
+	} else {
+		spa.clientDiscover = clientDiscover{}
+		spa.mu.AutoIDAllocClient = MockForTest(store)
+	}
+
+	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.
+	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
+		if val.(bool) {
+			spa = nil
+		}
+	})
+	return spa
+}
+
+>>>>>>> 887331d3cf2 (meta/autoid: enable etcd client auto sync for autoid service (#43529))
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	allocType AllocatorType, opts ...AllocOption) Allocator {
