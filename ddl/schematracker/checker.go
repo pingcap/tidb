@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -57,8 +58,7 @@ func init() {
 type Checker struct {
 	realDDL ddl.DDL
 	tracker SchemaTracker
-
-	closed bool
+	closed  atomic.Bool
 }
 
 // NewChecker creates a Checker.
@@ -71,12 +71,12 @@ func NewChecker(realDDL ddl.DDL) *Checker {
 
 // Disable turns off check.
 func (d *Checker) Disable() {
-	d.closed = true
+	d.closed.Store(true)
 }
 
 // Enable turns on check.
 func (d *Checker) Enable() {
-	d.closed = false
+	d.closed.Store(false)
 }
 
 // CreateTestDB creates a `test` database like the default behaviour of TiDB.
@@ -85,7 +85,7 @@ func (d Checker) CreateTestDB() {
 }
 
 func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
-	if d.closed {
+	if d.closed.Load() {
 		return
 	}
 	dbInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).SchemaByName(dbName)
@@ -118,7 +118,7 @@ func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 }
 
 func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.CIStr) {
-	if d.closed {
+	if d.closed.Load() {
 		return
 	}
 
