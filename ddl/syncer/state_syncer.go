@@ -38,7 +38,9 @@ const (
 	// StateUpgrading represents the cluster global state is upgrading. It is exports for testing.
 	StateUpgrading = "upgrading"
 	// StateNormalRunning represents the cluster global state is normal running. It is exports for testing.
-	StateNormalRunning = ""
+	StateNormalRunning       = ""
+	StateUpgradingRetryTimes = 10
+	StateUpgradingInterval   = 200 * time.Millisecond
 )
 
 // StateSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
@@ -60,6 +62,11 @@ type StateSyncer interface {
 // It will not be updated when the tidb cluster upgrading.
 type StateInfo struct {
 	State string `json:"state"`
+}
+
+// NewStateInfo is new a StateInfo.
+func NewStateInfo(state string) *StateInfo {
+	return &StateInfo{State: state}
 }
 
 // Marshal `StateInfo` into bytes.

@@ -103,16 +103,75 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 	mustExecute(s, "create placement policy alter_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";")
 	mustExecute(s, "create database mock_sys_db_placement")
 	for _, sql := range allDDLs {
+		TestHook.OnBootstrap(s)
 		mustExecute(s, sql)
 		logutil.BgLogger().Info("mock upgrade exec", zap.String("sql", sql))
 		time.Sleep(20 * time.Millisecond)
 	}
+	TestHook.OnBootstrapAfter(s)
 }
 
-func addMockBootstrapVersionForTest() {
+var TestHook = TestCallback{}
+
+func addMockBootstrapVersionForTest(s Session) {
 	if !*WithMockUpgrade {
 		return
 	}
+
+	TestHook.OnBootstrapBefore(s)
 	bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
 	currentBootstrapVersion++
+}
+
+// Callback is used for Test.
+type Callback interface {
+	// OnBootstrapBefore is called before doing bootstrap.
+	OnBootstrapBefore(s Session)
+	// OnBootstrap is called doing bootstrap.
+	OnBootstrap(s Session)
+	// OnBootstrapAfter is called after doing bootstrap.
+	OnBootstrapAfter(s Session)
+}
+
+// BaseCallback implements Callback interfaces.
+type BaseCallback struct{}
+
+// OnBootstrapBefore implements Callback interface.
+func (bc *BaseCallback) OnBootstrapBefore(Session) {}
+
+// OnBootstrap implements Callback interface.
+func (bc *BaseCallback) OnBootstrap(Session) {}
+
+// OnBootstrapAfter implements Callback interface.
+func (bc *BaseCallback) OnBootstrapAfter(Session) {}
+
+// TestCallback is used to customize user callback themselves.
+type TestCallback struct {
+	*BaseCallback
+
+	Cnt                       int64
+	OnBootstrapBeforeExported func(s Session)
+	OnBootstrapExported       func(s Session)
+	OnBootstrapAfterExported  func(s Session)
+}
+
+// OnBootstrapBefore mocks the same behavior with the main bootstrap hook.
+func (tc *TestCallback) OnBootstrapBefore(s Session) {
+	if tc.OnBootstrapBeforeExported != nil {
+		tc.OnBootstrapBeforeExported(s)
+	}
+}
+
+// OnBootstrap mocks the same behavior with the main bootstrap hook.
+func (tc *TestCallback) OnBootstrap(s Session) {
+	if tc.OnBootstrapExported != nil {
+		tc.OnBootstrapExported(s)
+	}
+}
+
+// OnBootstrapAfter mocks the same behavior with the main bootstrap hook.
+func (tc *TestCallback) OnBootstrapAfter(s Session) {
+	if tc.OnBootstrapAfterExported != nil {
+		tc.OnBootstrapAfterExported(s)
+	}
 }

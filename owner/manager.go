@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
 	util2 "github.com/pingcap/tidb/util"
@@ -309,10 +310,21 @@ func (m *ownerManager) GetOwnerID(ctx context.Context) (string, error) {
 
 func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPath string) (string, []byte, OpType, int64, error) {
 	var op OpType
-	resp, err := etcdCli.Get(ctx, ownerPath, clientv3.WithFirstCreate()...)
-	if err != nil {
-		logutil.Logger(logCtx).Info("failed to get leader", zap.Error(err))
-		return "", nil, op, 0, errors.Trace(err)
+	var resp *clientv3.GetResponse
+	var err error
+	for i := 0; i < 3; i++ {
+		if util.IsContextDone(ctx) {
+			return "", nil, op, 0, errors.Trace(ctx.Err())
+		}
+
+		childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)
+		resp, err = etcdCli.Get(childCtx, ownerPath, clientv3.WithFirstCreate()...)
+		cancel()
+		if err == nil {
+			break
+		}
+		logutil.BgLogger().Warn("[ddl] etcd-cli get leader failed", zap.String("key", ownerPath), zap.Error(err), zap.Int("retryCnt", i))
+		time.Sleep(util.KeyOpRetryInterval)
 	}
 	if len(resp.Kvs) == 0 {
 		return "", nil, op, 0, concurrency.ErrElectionNoLeader

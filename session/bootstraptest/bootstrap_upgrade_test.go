@@ -19,11 +19,21 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
+	tidb_util "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -250,6 +260,150 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	ver, err = session.GetBootstrapVersion(seLatestV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show create table mysql.mock_sys_t").Check(testkit.Rows(
+		"mock_sys_t CREATE TABLE `mock_sys_t` (\n" +
+			"  `c1` int(11) DEFAULT NULL,\n" +
+			"  `c2` int(11) NOT NULL,\n" +
+			"  `c11` char(10) DEFAULT NULL,\n" +
+			"  `c4` bigint(20) DEFAULT NULL,\n" +
+			"  `mayNullCol` bigint(20) NOT NULL DEFAULT '1',\n" +
+			"  KEY `fk_c1` (`c1`),\n" +
+			"  UNIQUE KEY `idx_uc2` (`c2`),\n" +
+			"  KEY `idx_c2` (`c2`),\n" +
+			"  KEY `idx_v` (`c1`) /*!80000 INVISIBLE */,\n" +
+			"  KEY `rename_idx2` (`c1`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table mysql.mock_sys_partition").Check(testkit.Rows(
+		"mock_sys_partition CREATE TABLE `mock_sys_partition` (\n" +
+			"  `c1` int(11) NOT NULL,\n" +
+			"  `c2` int(11) DEFAULT NULL,\n" +
+			"  `c3` int(11) DEFAULT NULL,\n" +
+			"  UNIQUE KEY `c3_index` (`c1`),\n" +
+			"  PRIMARY KEY (`c1`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`c1`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (1024),\n" +
+			" PARTITION `p1` VALUES LESS THAN (2048),\n" +
+			" PARTITION `p2` VALUES LESS THAN (3072),\n" +
+			" PARTITION `p3` VALUES LESS THAN (4096),\n" +
+			" PARTITION `p4` VALUES LESS THAN (7096))"))
+}
+
+func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.Row, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	rs, err := s.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if rs == nil {
+		return nil, nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return rows, nil
+}
+
+func TestUpgradeWithPauseDDL(t *testing.T) {
+	*session.WithMockUpgrade = true
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	tc := session.TestCallback{}
+	tk1 := testkit.NewTestKit(t, store)
+
+	sql := "select job_meta, processing from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing) order by processing desc, job_id"
+	tc.OnBootstrapBeforeExported = func(s session.Session) {
+		rows, err := execute(context.Background(), s, sql)
+		require.NoError(t, err)
+		require.Len(t, rows, 0)
+	}
+
+	wg := sync.WaitGroup{}
+	query := "create table test.pause_user_ddl_t(a int, b int)"
+	tk1.MustExec(query)
+	tc.OnBootstrapExported = func(s session.Session) {
+		query1 := "alter table test.pause_user_ddl_t add index idx(a)"
+		query2 := "alter table test.pause_user_ddl_t add column c int"
+		tc.Cnt++
+
+		ch := make(chan struct{})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 000"))
+			ch <- struct{}{}
+			logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 111"))
+			switch tc.Cnt % 2 {
+			case 0:
+				tk1.MustExec(query1)
+			case 1:
+				tk1.MustExec(query2)
+			}
+		}()
+		logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 222"))
+		<-ch
+		logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 333"))
+
+		rows, err := execute(context.Background(), s, sql)
+		require.NoError(t, err)
+		for _, row := range rows {
+			jobBinary := row.GetBytes(0)
+			runJob := model.Job{}
+			err := runJob.Decode(jobBinary)
+			require.NoError(t, err)
+			if !tidb_util.IsSysDB(runJob.SchemaName) {
+				require.True(t, runJob.IsPausedBySystem())
+			}
+		}
+	}
+	tc.OnBootstrapAfterExported = func(s session.Session) {
+		rows, err := execute(context.Background(), s, sql)
+		require.NoError(t, err)
+
+		for _, row := range rows {
+			jobBinary := row.GetBytes(0)
+			runJob := model.Job{}
+			err := runJob.Decode(jobBinary)
+			require.NoError(t, err)
+			require.True(t, tidb_util.IsSysDB(runJob.SchemaName))
+			require.True(t, runJob.IsPausedBySystem())
+		}
+	}
+	session.TestHook = tc
+
+	seV := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.MustExec(t, seV, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", session.CurrentBootstrapVersion-1))
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
+	dom.Close()
+	domLatestV, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domLatestV.Close()
+
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
+
+	logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- xxxx"))
+	wg.Wait()
+	logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- zzzz"))
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("show create table mysql.mock_sys_t").Check(testkit.Rows(

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -214,6 +215,7 @@ func (d *ddl) limitDDLJobs() {
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
+
 	var err error
 	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
 	toTable := !variable.DDLForce2Queue.Load()
@@ -353,6 +355,25 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 	}
 	if len(job) != 0 {
 		return errors.Errorf("Can't add ddl job, have flashback cluster job")
+	}
+
+	jobIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		jobIDs = append(jobIDs, task.job.ID)
+	}
+	for i := 0; i < syncer.StateUpgradingRetryTimes; i++ {
+		if d.stateSyncer.IsUpgradingState() {
+			_, err = PauseJobsBySystem(se, jobIDs)
+			if err == nil {
+				logutil.BgLogger().Info("[ddl] pause user DDL by system", zap.Int64s("job IDs", jobIDs))
+				break
+			}
+			logutil.BgLogger().Warn("[ddl] pause user DDL by system failed", zap.Int64s("job IDs", jobIDs), zap.Error(err))
+			time.Sleep(syncer.StateUpgradingInterval)
+		}
+	}
+	if err != nil {
+		return errors.Errorf("upgrading state pause jobs failed, original err: %v", err)
 	}
 
 	startTS := uint64(0)

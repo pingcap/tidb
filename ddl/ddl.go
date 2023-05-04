@@ -627,6 +627,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(ctx, id)
 		schemaSyncer = NewMockSchemaSyncer()
+		stateSyncer = NewMockStateSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
@@ -758,6 +759,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+
+	if err := d.stateSyncer.Init(d.ctx); err != nil {
+		logutil.BgLogger().Warn("[ddl] start DDL init state syncer failed", zap.Error(err))
+		return errors.Trace(err)
+	}
 
 	d.prepareWorkers4ConcurrencyDDL()
 
