@@ -434,13 +434,7 @@ func (local *local) BatchSplitRegions(
 		return failedErr
 	}, backoffer)
 
-	select {
-	case <-ctx.Done():
-		return nil, nil, ctx.Err()
-	default:
-	}
-
-	return region, newRegions, nil
+	return region, newRegions, ctx.Err()
 }
 
 func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
