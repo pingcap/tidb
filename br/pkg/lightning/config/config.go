@@ -675,8 +675,8 @@ type TikvImporter struct {
 	CompressKVPairs        CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
 	RegionSplitSize        ByteSize                     `toml:"region-split-size" json:"region-split-size"`
 	RegionSplitKeys        int                          `toml:"region-split-keys" json:"region-split-keys"`
-	SplitRegionBatchSize   int                          `toml:"split-region-batch-size" json:"split-region-batch-size"`
-	SplitRegionConcurrency int                          `toml:"split-region-concurrency" json:"split-region-concurrency"`
+	RegionSplitBatchSize   int                          `toml:"region-split-batch-size" json:"split-region-batch-size"`
+	RegionSplitConcurrency int                          `toml:"region-split-concurrency" json:"split-region-concurrency"`
 	SortedKVDir            string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
 	DiskQuota              ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency       int                          `toml:"range-concurrency" json:"range-concurrency"`
@@ -860,8 +860,8 @@ func NewConfig() *Config {
 			MaxKVPairs:             4096,
 			SendKVPairs:            32768,
 			RegionSplitSize:        0,
-			SplitRegionBatchSize:   4096,
-			SplitRegionConcurrency: runtime.GOMAXPROCS(0),
+			RegionSplitBatchSize:   4096,
+			RegionSplitConcurrency: runtime.GOMAXPROCS(0),
 			DiskQuota:              ByteSize(math.MaxInt64),
 			DuplicateResolution:    DupeResAlgNone,
 		},

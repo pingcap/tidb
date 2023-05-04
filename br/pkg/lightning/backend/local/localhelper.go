@@ -209,7 +209,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 		}
 
 		var syncLock sync.Mutex
-		size := mathutil.Min(len(splitKeyMap), local.splitRegionConcurrency)
+		size := mathutil.Min(len(splitKeyMap), local.regionSplitConcurrency)
 		ch := make(chan *splitInfo, size)
 		eg, splitCtx := errgroup.WithContext(ctx)
 
@@ -230,7 +230,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 					for endIdx <= len(keys) {
 						if endIdx == len(keys) ||
 							batchKeySize+len(keys[endIdx]) > maxBatchSplitSize ||
-							endIdx-startIdx >= local.splitRegionBatchSize {
+							endIdx-startIdx >= local.regionSplitBatchSize {
 							splitRegionStart := codec.EncodeBytes([]byte{}, keys[startIdx])
 							splitRegionEnd := codec.EncodeBytes([]byte{}, keys[endIdx-1])
 							if bytes.Compare(splitRegionStart, splitRegion.Region.StartKey) < 0 || !beforeEnd(splitRegionEnd, splitRegion.Region.EndKey) {

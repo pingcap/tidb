@@ -53,14 +53,14 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 
 	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"first region %d's startKey > startKey, startKey: %s, regionStartKey: %s",
+			"first region %d's startKey(%s) > startKey(%s)",
 			regions[0].Region.Id,
-			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
+			redact.Key(regions[0].Region.StartKey), redact.Key(startKey))
 	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"last region %d's endKey < endKey, endKey: %s, regionEndKey: %s",
+			"last region %d's endKey(%s) < endKey(%s)",
 			regions[len(regions)-1].Region.Id,
-			redact.Key(endKey), redact.Key(regions[len(regions)-1].Region.EndKey))
+			redact.Key(regions[len(regions)-1].Region.EndKey), redact.Key(endKey))
 	}
 
 	cur := regions[0]
@@ -116,9 +116,9 @@ func PaginateScanRegion(
 				break
 			}
 		}
-		// if the number of regions becomes larger, we can infer TiKV side really
+		// if the number of regions changed, we can infer TiKV side really
 		// made some progress so don't increase the retry times.
-		if len(regions) > len(lastRegions) {
+		if len(regions) != len(lastRegions) {
 			backoffer.Stat.ReduceRetry()
 		}
 		lastRegions = regions

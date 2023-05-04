@@ -398,8 +398,8 @@ type local struct {
 	workerConcurrency      int
 	kvWriteBatchSize       int
 	checkpointEnabled      bool
-	splitRegionBatchSize   int
-	splitRegionConcurrency int
+	regionSplitBatchSize   int
+	regionSplitConcurrency int
 
 	dupeConcurrency int
 	maxOpenFiles    int
@@ -549,8 +549,8 @@ func NewLocalBackend(
 		kvWriteBatchSize:       cfg.TikvImporter.SendKVPairs,
 		checkpointEnabled:      cfg.Checkpoint.Enable,
 		maxOpenFiles:           mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
-		splitRegionBatchSize:   cfg.TikvImporter.SplitRegionBatchSize,
-		splitRegionConcurrency: cfg.TikvImporter.SplitRegionConcurrency,
+		regionSplitBatchSize:   cfg.TikvImporter.RegionSplitBatchSize,
+		regionSplitConcurrency: cfg.TikvImporter.RegionSplitConcurrency,
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
