@@ -142,6 +142,12 @@ func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported boo
 		return false, false, nil
 	}
 
+	release := ei.acquireFlushLock()
+	if release == nil {
+		return false, false, nil
+	}
+	defer release()
+
 	bc.timeOfLastFlush.Store(time.Now())
 	err = ei.Flush()
 	if err != nil {
@@ -149,11 +155,6 @@ func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported boo
 	}
 
 	if force || shouldImport {
-		release := ei.acquireFlushLock()
-		if release == nil {
-			return true, false, nil
-		}
-		defer release()
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))

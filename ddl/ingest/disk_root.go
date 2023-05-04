@@ -76,7 +76,7 @@ func (d *diskRootImpl) ShouldImport() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	if d.bcUsed > variable.DDLDiskQuota.Load() {
-		logutil.BgLogger().Info("[ddl-ingest] disk usage is over quota, start importing",
+		logutil.BgLogger().Info("[ddl-ingest] disk usage is over quota",
 			zap.Uint64("quota", variable.DDLDiskQuota.Load()),
 			zap.String("usage", d.UsageInfo()))
 		return true
@@ -85,7 +85,9 @@ func (d *diskRootImpl) ShouldImport() bool {
 		return false
 	}
 	if float64(d.used) >= float64(d.capacity)*capacityThreshold {
-		logutil.BgLogger().Warn("[ddl-ingest] available disk space is less than 10%, start importing, this may degrade the performance",
+		logutil.BgLogger().Warn("[ddl-ingest] available disk space is less than 10%, "+
+			"this may degrade the performance, "+
+			"please make sure the disk available space is larger than @@tidb_ddl_disk_quota before adding index",
 			zap.String("usage", d.UsageInfo()))
 		return true
 	}
