@@ -1964,22 +1964,28 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 		return err
 	}
 	for _, table := range tables {
-		if recorder != nil ||
-			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > tiFlashStoreCount) {
-			if recorder != nil && table.Info.TiFlashReplica != nil {
+		if table.Info.TiFlashReplica != nil {
+			if recorder != nil {
 				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
+				log.Info("record tiflash replica for table, to reset it by ddl later",
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name),
+				)
+				table.Info.TiFlashReplica = nil
 			}
-			// we cannot satisfy TiFlash replica in restore cluster. so we should
-			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
-			// see details at https://github.com/pingcap/br/issues/931
-			// TODO maybe set table.Info.TiFlashReplica.Count to tiFlashStoreCount, but we need more test about it.
-			log.Warn("Table does not satisfy tiflash replica requirements, set tiflash replcia to unavaiable",
-				zap.Stringer("db", table.DB.Name),
-				zap.Stringer("table", table.Info.Name),
-				zap.Uint64("expect tiflash replica", table.Info.TiFlashReplica.Count),
-				zap.Uint64("actual tiflash store", tiFlashStoreCount),
-			)
-			table.Info.TiFlashReplica = nil
+			if table.Info.TiFlashReplica.Count > tiFlashStoreCount {
+				// we cannot satisfy TiFlash replica in restore cluster. so we should
+				// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
+				// see details at https://github.com/pingcap/br/issues/931
+				// TODO maybe set table.Info.TiFlashReplica.Count to tiFlashStoreCount, but we need more tests about it.
+				log.Warn("table does not satisfy tiflash replica requirements, set tiflash replcia to unavaiable",
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name),
+					zap.Uint64("expect tiflash replica", table.Info.TiFlashReplica.Count),
+					zap.Uint64("actual tiflash store", tiFlashStoreCount),
+				)
+				table.Info.TiFlashReplica = nil
+			}
 		}
 	}
 	return nil
