@@ -102,11 +102,11 @@ func (local *local) SplitAndScatterRegionByRanges(
 		return nil
 	}
 
-<<<<<<< HEAD
 	db, err := local.g.GetDB()
 	if err != nil {
 		return errors.Trace(err)
-=======
+	}
+
 	if m, ok := metric.FromContext(ctx); ok {
 		begin := time.Now()
 		defer func() {
@@ -114,7 +114,6 @@ func (local *local) SplitAndScatterRegionByRanges(
 				m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessSplit).Observe(time.Since(begin).Seconds())
 			}
 		}()
->>>>>>> 252bc7383ac (lightning: fix some grafana panel json (#43356))
 	}
 
 	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)

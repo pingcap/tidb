@@ -340,20 +340,15 @@ func (j *regionJob) writeToTiKV(
 // set job to a proper stage with nil error returned.
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
-<<<<<<< HEAD
 func (j *regionJob) ingest(
 	ctx context.Context,
 	clientFactory ImportClientFactory,
 	splitCli split.SplitClient,
 	supportMultiIngest bool,
 	shouldCheckWriteStall bool,
-) error {
+) (err error) {
 	switch j.stage {
 	case regionScanned, ingested:
-=======
-func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
-	if j.stage != wrote {
->>>>>>> 252bc7383ac (lightning: fix some grafana panel json (#43356))
 		return nil
 	case wrote:
 	}
