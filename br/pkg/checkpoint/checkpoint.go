@@ -158,6 +158,7 @@ type CheckpointRunner[K KeyType, V ValueType] struct {
 
 	appendCh       chan *CheckpointMessage[K, V]
 	checksumCh     chan *ChecksumItem
+	doneCh         chan struct{}
 	metaCh         chan map[K]*RangeGroup[K, V]
 	checksumMetaCh chan ChecksumItems
 	lockCh         chan struct{}
@@ -185,6 +186,7 @@ func newCheckpointRunner[K KeyType, V ValueType](
 
 		appendCh:       make(chan *CheckpointMessage[K, V]),
 		checksumCh:     make(chan *ChecksumItem),
+		doneCh:         make(chan struct{}, 1),
 		metaCh:         make(chan map[K]*RangeGroup[K, V]),
 		checksumMetaCh: make(chan ChecksumItems),
 		lockCh:         make(chan struct{}),
@@ -214,8 +216,11 @@ func (r *CheckpointRunner[K, V]) FlushChecksumItem(
 ) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-r.errCh:
+		return errors.Annotatef(ctx.Err(), "failed to append checkpoint checksum item")
+	case err, ok := <-r.errCh:
+		if !ok {
+			return errors.Errorf("[checkpoint] Checksum: there is another goroutine has get the checkpoint error")
+		}
 		return err
 	case r.checksumCh <- checksumItem:
 		return nil
@@ -228,8 +233,11 @@ func (r *CheckpointRunner[K, V]) Append(
 ) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-r.errCh:
+		return errors.Annotatef(ctx.Err(), "failed to append checkpoint message")
+	case err, ok := <-r.errCh:
+		if !ok {
+			return errors.Errorf("[checkpoint] Checksum: there is another goroutine has get the checkpoint error")
+		}
 		return err
 	case r.appendCh <- message:
 		return nil
@@ -238,9 +246,10 @@ func (r *CheckpointRunner[K, V]) Append(
 
 // Note: Cannot be parallel with `Append` function
 func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context) {
-	// can not append anymore
-	close(r.appendCh)
-	close(r.checksumCh)
+	if r.doneCh != nil {
+		r.doneCh <- struct{}{}
+		r.doneCh = nil
+	}
 	// wait the range flusher exit
 	r.wg.Wait()
 	// remove the checkpoint lock
@@ -378,6 +387,7 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 func (r *CheckpointRunner[K, V]) sendError(err error) {
 	select {
 	case r.errCh <- err:
+		close(r.errCh)
 	default:
 		log.Error("errCh is blocked", logutil.ShortError(err))
 	}
@@ -437,23 +447,7 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 					r.sendError(err)
 					return
 				}
-			case msg, ok := <-r.appendCh:
-				if !ok {
-					log.Info("stop checkpoint runner")
-					if err := r.flushMeta(ctx, errCh); err != nil {
-						r.sendError(err)
-					}
-					if err := r.flushChecksum(ctx, errCh); err != nil {
-						r.sendError(err)
-					}
-					// close the channel to flush worker
-					// and wait it to consumes all the metas
-					close(r.metaCh)
-					close(r.checksumMetaCh)
-					close(r.lockCh)
-					wg.Wait()
-					return
-				}
+			case msg := <-r.appendCh:
 				groups, exist := r.meta[msg.GroupKey]
 				if !exist {
 					groups = &RangeGroup[K, V]{
@@ -463,24 +457,23 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 					r.meta[msg.GroupKey] = groups
 				}
 				groups.Group = append(groups.Group, msg.Group...)
-			case msg, ok := <-r.checksumCh:
-				if !ok {
-					log.Info("stop checkpoint runner")
-					if err := r.flushMeta(ctx, errCh); err != nil {
-						r.sendError(err)
-					}
-					if err := r.flushChecksum(ctx, errCh); err != nil {
-						r.sendError(err)
-					}
-					// close the channel to flush worker
-					// and wait it to consumes all the metas
-					close(r.metaCh)
-					close(r.checksumMetaCh)
-					close(r.lockCh)
-					wg.Wait()
-					return
-				}
+			case msg := <-r.checksumCh:
 				r.checksum.Items = append(r.checksum.Items, msg)
+			case <-r.doneCh:
+				log.Info("stop checkpoint runner")
+				// NOTE: the exit step, don't send error any more.
+				if err := r.flushMeta(ctx, errCh); err != nil {
+					log.Error("failed to flush checkpoint", zap.Error(err))
+				} else if err := r.flushChecksum(ctx, errCh); err != nil {
+					log.Error("failed to flush checkpoint", zap.Error(err))
+				}
+				// close the channel to flush worker
+				// and wait it to consumes all the metas
+				close(r.metaCh)
+				close(r.checksumMetaCh)
+				close(r.lockCh)
+				wg.Wait()
+				return
 			case err := <-errCh:
 				// pass flush worker's error back
 				r.sendError(err)
