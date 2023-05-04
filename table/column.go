@@ -616,7 +616,7 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo, ar
 	} else {
 		strictSQLMode = vars.StrictSQLMode
 	}
-	if strictSQLMode {
+	if !strictSQLMode {
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
 		if mysql.HasNotNullFlag(col.GetFlag()) {
 			return GetZeroValue(col), nil
