@@ -631,10 +631,11 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
 	client := initTestSplitClient(keys, nil)
 	local := &local{
-		splitCli:             client,
-		g:                    glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
-		logger:               log.L(),
-		splitRegionBatchSize: 4,
+		splitCli:               client,
+		g:                      glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:                 log.L(),
+		splitRegionBatchSize:   4,
+		splitRegionConcurrency: 4,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
