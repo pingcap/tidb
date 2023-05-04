@@ -52,8 +52,6 @@ const (
 )
 
 var (
-	// the max keys count in a batch to split one region
-	maxBatchSplitKeys = 4096
 	// the max total key size in a split region batch.
 	// our threshold should be smaller than TiKV's raft max entry size(default is 8MB).
 	maxBatchSplitSize = 6 * units.MiB
@@ -232,7 +230,9 @@ func (local *local) SplitAndScatterRegionByRanges(
 					endIdx := 0
 					batchKeySize := 0
 					for endIdx <= len(keys) {
-						if endIdx == len(keys) || batchKeySize+len(keys[endIdx]) > maxBatchSplitSize || endIdx-startIdx >= maxBatchSplitKeys {
+						if endIdx == len(keys) ||
+							batchKeySize+len(keys[endIdx]) > maxBatchSplitSize ||
+							endIdx-startIdx >= local.splitRegionBatchSize {
 							splitRegionStart := codec.EncodeBytes([]byte{}, keys[startIdx])
 							splitRegionEnd := codec.EncodeBytes([]byte{}, keys[endIdx-1])
 							if bytes.Compare(splitRegionStart, splitRegion.Region.StartKey) < 0 || !beforeEnd(splitRegionEnd, splitRegion.Region.EndKey) {

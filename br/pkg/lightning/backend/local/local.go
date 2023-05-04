@@ -395,9 +395,10 @@ type local struct {
 
 	localStoreDir string
 
-	workerConcurrency int
-	kvWriteBatchSize  int
-	checkpointEnabled bool
+	workerConcurrency    int
+	kvWriteBatchSize     int
+	checkpointEnabled    bool
+	splitRegionBatchSize int
 
 	dupeConcurrency int
 	maxOpenFiles    int
@@ -541,12 +542,13 @@ func NewLocalBackend(
 		g:         g,
 		tikvCodec: tikvCodec,
 
-		localStoreDir:     localFile,
-		workerConcurrency: rangeConcurrency * 2,
-		dupeConcurrency:   rangeConcurrency * 2,
-		kvWriteBatchSize:  cfg.TikvImporter.SendKVPairs,
-		checkpointEnabled: cfg.Checkpoint.Enable,
-		maxOpenFiles:      mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
+		localStoreDir:        localFile,
+		workerConcurrency:    rangeConcurrency * 2,
+		dupeConcurrency:      rangeConcurrency * 2,
+		kvWriteBatchSize:     cfg.TikvImporter.SendKVPairs,
+		checkpointEnabled:    cfg.Checkpoint.Enable,
+		maxOpenFiles:         mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
+		splitRegionBatchSize: cfg.TikvImporter.SplitRegionBatchSize,
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
