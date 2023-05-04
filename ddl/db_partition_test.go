@@ -5345,3 +5345,141 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
 		{"RemovePartitioning", "t", "", "0", "95"}})
 }
+
+func TestRemoveListPartitioning(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("create database RemoveListPartitioning")
+	tk.MustExec("use RemoveListPartitioning")
+	tk.MustExec(`create table t (a int, b varchar(255), key (a,b), key (b)) partition by list (a) (partition p0 values in (0), partition p1 values in (1), partition p2 values in (2), partition p3 values in (3), partition p4 values in (4))`)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// Fill the data with ascii strings
+	for i := 32; i <= 126; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d,char(%d,%d,%d,%d))`, i%5, i, i, i, i))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemoveListPartitioning", "t", "global", "0", "95"},
+		{"RemoveListPartitioning", "t", "p0", "0", "19"},
+		{"RemoveListPartitioning", "t", "p1", "0", "19"},
+		{"RemoveListPartitioning", "t", "p2", "0", "19"},
+		{"RemoveListPartitioning", "t", "p3", "0", "19"},
+		{"RemoveListPartitioning", "t", "p4", "0", "19"}})
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemoveListPartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 19",
+		"p1 19",
+		"p2 19",
+		"p3 19",
+		"p4 19"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Statistics are updated asynchronously
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// And also cached and lazy loaded
+	h.Clear()
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+}
+
+func TestRemoveListColumnPartitioning(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("create database RemoveListPartitioning")
+	tk.MustExec("use RemoveListPartitioning")
+	tk.MustExec(`create table t (a varchar(255), b varchar(255), key (a,b), key (b)) partition by list columns (a) (partition p0 values in ("0"), partition p1 values in ("1"), partition p2 values in ("2"), partition p3 values in ("3"), partition p4 values in ("4"))`)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// Fill the data with ascii strings
+	for i := 32; i <= 126; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values ("%d",char(%d,%d,%d,%d))`, i%5, i, i, i, i))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemoveListPartitioning", "t", "global", "0", "95"},
+		{"RemoveListPartitioning", "t", "p0", "0", "19"},
+		{"RemoveListPartitioning", "t", "p1", "0", "19"},
+		{"RemoveListPartitioning", "t", "p2", "0", "19"},
+		{"RemoveListPartitioning", "t", "p3", "0", "19"},
+		{"RemoveListPartitioning", "t", "p4", "0", "19"}})
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemoveListPartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 19",
+		"p1 19",
+		"p2 19",
+		"p3 19",
+		"p4 19"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` varchar(255) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Statistics are updated asynchronously
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// And also cached and lazy loaded
+	h.Clear()
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+}
+
+func TestRemoveListColumnsPartitioning(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("create database RemoveListPartitioning")
+	tk.MustExec("use RemoveListPartitioning")
+	tk.MustExec(`create table t (a int, b varchar(255), key (a,b), key (b)) partition by list columns (a,b) (partition p0 values in ((0,"0")), partition p1 values in ((1,"1")), partition p2 values in ((2,"2")), partition p3 values in ((3,"3")), partition p4 values in ((4,"4")))`)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// Fill the data
+	for i := 32; i <= 126; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d,"%d")`, i%5, i%5))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemoveListPartitioning", "t", "global", "0", "95"},
+		{"RemoveListPartitioning", "t", "p0", "0", "19"},
+		{"RemoveListPartitioning", "t", "p1", "0", "19"},
+		{"RemoveListPartitioning", "t", "p2", "0", "19"},
+		{"RemoveListPartitioning", "t", "p3", "0", "19"},
+		{"RemoveListPartitioning", "t", "p4", "0", "19"}})
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemoveListPartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 19",
+		"p1 19",
+		"p2 19",
+		"p3 19",
+		"p4 19"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Statistics are updated asynchronously
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// And also cached and lazy loaded
+	h.Clear()
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+}

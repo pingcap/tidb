@@ -4185,7 +4185,7 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
 	}
 
-	meta := t.Meta()
+	meta := t.Meta().Clone()
 	pi := meta.GetPartitionInfo()
 	if pi == nil {
 		return dbterror.ErrPartitionMgmtOnNonpartitioned
@@ -4197,42 +4197,20 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	// and keep the statistics for the partition id (which should be similar to the global statistics)
 	// and it let the GC clean up the old table metadata including possible global index.
 	// TODO: Add the support for this in onReorganizePartition!!!
-	if len(pi.Definitions) != 1 {
-		newSpec = &ast.AlterTableSpec{}
-		newSpec.Tp = spec.Tp
-		switch pi.Type {
-		case model.PartitionTypeRange:
-			defs := make([]*ast.PartitionDefinition, 1)
-			cols := int(1)
-			if len(pi.Columns) > 1 {
-				cols = len(pi.Columns)
-			}
-			defs[0] = &ast.PartitionDefinition{}
-			defs[0].Name = model.NewCIStr("CollapsedPartitions")
-			exprs := make([]ast.ExprNode, cols)
-			for i := 0; i < cols; i++ {
-				exprs[i] = &ast.MaxValueExpr{}
-			}
-			clause := &ast.PartitionDefinitionClauseLessThan{Exprs: exprs}
-			defs[0].Clause = clause
-			newSpec.PartDefinitions = defs
-		case model.PartitionTypeHash, model.PartitionTypeKey:
-			// Just decrease the number of partitions to 1,
-			// without preserving any comments or placement per partition
-			newSpec.Num = 1
-
-		// TODO:
-		//case model.PartitionTypeList:
-		default:
-			// Add support for LIST partitioning when DEFAULT List partition
-			// is supported
-			return errors.Trace(dbterror.ErrUnsupportedRemovePartition)
-		}
+	if len(pi.Definitions) == 1 {
+		// What to set if already 1 and verify it is the same after the queue?
 	}
+	newSpec = &ast.AlterTableSpec{}
+	newSpec.Tp = spec.Tp
+	defs := make([]*ast.PartitionDefinition, 1)
+	defs[0] = &ast.PartitionDefinition{}
+	defs[0].Name = model.NewCIStr("CollapsedPartitions")
+	newSpec.PartDefinitions = defs
 	partNames := make([]string, len(pi.Definitions))
 	for i := range pi.Definitions {
 		partNames[i] = pi.Definitions[i].Name.L
 	}
+	meta.Partition.Type = model.PartitionTypeNone
 	partInfo, err := BuildAddedPartitionInfo(ctx, meta, newSpec)
 	if err != nil {
 		return errors.Trace(err)
@@ -4251,7 +4229,7 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
 		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
+		TableName:  meta.Name.L,
 		Type:       model.ActionRemovePartitioning,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partNames, partInfo},

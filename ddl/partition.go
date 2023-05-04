@@ -1082,6 +1082,14 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
 func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, numParts uint64) (partitions []model.PartitionDefinition, err error) {
 	switch tbInfo.Partition.Type {
+	case model.PartitionTypeNone:
+		if len(defs) != 1 {
+			return nil, dbterror.ErrUnsupportedPartitionType
+		}
+		partitions = []model.PartitionDefinition{{Name: defs[0].Name}}
+		if comment, set := defs[0].Comment(); set {
+			partitions[0].Comment = comment
+		}
 	case model.PartitionTypeRange:
 		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo)
 	case model.PartitionTypeHash, model.PartitionTypeKey:

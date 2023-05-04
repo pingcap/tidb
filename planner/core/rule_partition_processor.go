@@ -263,7 +263,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 
 			colVals := make([]types.Datum, 0, len(r.HighVal))
 			colVals = append(colVals, r.HighVal...)
-			idx, err := partExpr.LocateKeyPartition(pi, partCols, colVals)
+			idx, err := partExpr.LocateKeyPartition(pi.Num, colVals)
 			if err != nil {
 				// If we failed to get the point position, we can just skip and ignore it.
 				continue
@@ -305,7 +305,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 				if rangeScalar < float64(pi.Num) && !highIsNull && !lowIsNull {
 					for i := posLow; i <= posHigh; i++ {
 						d := types.NewIntDatum(i)
-						idx, err := partExpr.LocateKeyPartition(pi, partCols, []types.Datum{d})
+						idx, err := partExpr.LocateKeyPartition(pi.Num, []types.Datum{d})
 						if err != nil {
 							// If we failed to get the point position, we can just skip and ignore it.
 							continue
