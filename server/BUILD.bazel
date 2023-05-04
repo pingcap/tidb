@@ -220,6 +220,7 @@ go_test(
         "@com_github_docker_go_units//:go-units",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_gorilla_mux//:mux",
+        "@com_github_klauspost_compress//zstd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
