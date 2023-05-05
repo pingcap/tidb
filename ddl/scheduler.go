@@ -118,7 +118,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 }
 
 // SplitSubtask implements the Scheduler interface.
-func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
 	d := b.d
@@ -148,7 +148,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 	mockReorgInfo.elements = elements
 	mockReorgInfo.currElement = mockReorgInfo.elements[0]
 
-	ingestScheduler := newIngestBackfillScheduler(d.ctx, mockReorgInfo, d.sessPool, parTbl.GetPartition(pid), true)
+	ingestScheduler := newIngestBackfillScheduler(ctx, mockReorgInfo, d.sessPool, parTbl.GetPartition(pid), true)
 	defer ingestScheduler.close(true)
 
 	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
