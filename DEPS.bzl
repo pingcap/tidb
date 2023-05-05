@@ -111,6 +111,13 @@ def go_deps():
         sum = "h1:4QctJBgXEkbzeKz6PJy6bt3JSPNSN4I2mITYW+eKUoQ=",
         version = "v1.0.0",
     )
+    go_repository(
+        name = "com_github_alexbrainman_sspi",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/alexbrainman/sspi",
+        sum = "h1:Kk6a4nehpJ3UuJRqlA3JxYxBZEqCeOmATOvrbT4p9RA=",
+        version = "v0.0.0-20210105120005-909beea2cc74",
+    )
 
     go_repository(
         name = "com_github_alexkohler_prealloc",
@@ -294,6 +301,14 @@ def go_deps():
         sum = "h1:Q2feRPMlcfVcqz3pF87PJzkm5lZrL+x6BDtzhODzNJM=",
         version = "v11.2.8+incompatible",
     )
+    go_repository(
+        name = "com_github_azure_go_ntlmssp",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/Azure/go-ntlmssp",
+        sum = "h1:mFRzDkZVAjdal+s7s0MwaRv9igoPqLRdzOLzw/8Xvq8=",
+        version = "v0.0.0-20221128193559-754e69321358",
+    )
+
     go_repository(
         name = "com_github_bazelbuild_buildtools",
         build_file_proto_mode = "disable",
@@ -1218,6 +1233,14 @@ def go_deps():
         version = "v1.4.0",
     )
     go_repository(
+        name = "com_github_go_asn1_ber_asn1_ber",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/go-asn1-ber/asn1-ber",
+        sum = "h1:vXT6d/FNDiELJnLb6hGNa309LMsrCoYFvpwHDF0+Y1A=",
+        version = "v1.5.4",
+    )
+
+    go_repository(
         name = "com_github_go_check_check",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-check/check",
@@ -1282,6 +1305,15 @@ def go_deps():
         sum = "h1:MRVx0/zhvdseW+Gza6N9rVzU/IVzaeE1SFI4raAhmBU=",
         version = "v0.2.1",
     )
+    go_repository(
+        name = "com_github_go_ldap_ldap_v3",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/go-ldap/ldap/v3",
+        replace = "github.com/YangKeao/ldap/v3",
+        sum = "h1:+OqGGFc2YHFd82aSHmjlILVt1t4JWJjrNIfV8cVEPow=",
+        version = "v3.4.5-0.20230421065457-369a3bab1117",
+    )
+
     go_repository(
         name = "com_github_go_logfmt_logfmt",
         build_file_proto_mode = "disable_global",

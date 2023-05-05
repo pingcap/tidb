@@ -183,6 +183,8 @@ const (
 	AuthSocket              = "auth_socket"
 	AuthTiDBSessionToken    = "tidb_session_token"
 	AuthTiDBAuthToken       = "tidb_auth_token"
+	AuthLDAPSimple          = "authentication_ldap_simple"
+	AuthLDAPSASL            = "authentication_ldap_sasl"
 )
 
 // MySQL database and tables.
