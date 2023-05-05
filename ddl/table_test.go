@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -477,7 +476,7 @@ func TestRenameTableIntermediateState(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		hook := &callback.TestDDLCallback{Do: dom}
+		hook := &ddl.TestDDLCallback{Do: dom}
 		runInsert := false
 		fn := func(job *model.Job) {
 			if job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
