@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -118,4 +119,54 @@ func TestDDLStatementsBackFill(t *testing.T) {
 		tk.MustExec(tc.ddlSQL)
 		require.Equal(t, tc.expectedNeedReorg, needReorg, tc)
 	}
+}
+
+func TestRenameTableIntermediateState(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	originHook := dom.DDL().GetHook()
+	tk.MustExec("create database db1;")
+	tk.MustExec("create database db2;")
+	tk.MustExec("create table db1.t(a int);")
+
+	testCases := []struct {
+		renameSQL string
+		insertSQL string
+		errMsg    string
+		finalDB   string
+	}{
+		{"rename table db1.t to db1.t1;", "insert into db1.t values(1);", "[schema:1146]Table 'db1.t' doesn't exist", "db1.t1"},
+		{"rename table db1.t1 to db1.t;", "insert into db1.t values(1);", "", "db1.t"},
+		{"rename table db1.t to db2.t;", "insert into db1.t values(1);", "[schema:1146]Table 'db1.t' doesn't exist", "db2.t"},
+		{"rename table db2.t to db1.t;", "insert into db1.t values(1);", "", "db1.t"},
+	}
+
+	for _, tc := range testCases {
+		hook := &ddl.TestDDLCallback{Do: dom}
+		runInsert := false
+		fn := func(job *model.Job) {
+			if job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
+				_, err := tk2.Exec(tc.insertSQL)
+				if len(tc.errMsg) > 0 {
+					assert.Equal(t, tc.errMsg, err.Error())
+				} else {
+					assert.NoError(t, err)
+				}
+				runInsert = true
+			}
+		}
+		hook.OnJobUpdatedExported = fn
+		dom.DDL().SetHook(hook)
+		tk.MustExec(tc.renameSQL)
+		result := tk.MustQuery(fmt.Sprintf("select * from %s;", tc.finalDB))
+		if len(tc.errMsg) > 0 {
+			result.Check(testkit.Rows())
+		} else {
+			result.Check(testkit.Rows("1"))
+		}
+		tk.MustExec(fmt.Sprintf("delete from %s;", tc.finalDB))
+	}
+	dom.DDL().SetHook(originHook)
 }
