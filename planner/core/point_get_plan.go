@@ -1264,6 +1264,11 @@ func buildSchemaFromFields(
 				}
 				continue
 			}
+			if name, column, ok := tryExtractRowChecksumColumn(field, len(columns)); ok {
+				names = append(names, name)
+				columns = append(columns, column)
+				continue
+			}
 			colNameExpr, ok := field.Expr.(*ast.ColumnNameExpr)
 			if !ok {
 				return nil, nil
@@ -1303,6 +1308,38 @@ func buildSchemaFromFields(
 	}
 	schema := expression.NewSchema(columns...)
 	return schema, names
+}
+
+func tryExtractRowChecksumColumn(field *ast.SelectField, idx int) (*types.FieldName, *expression.Column, bool) {
+	f, ok := field.Expr.(*ast.FuncCallExpr)
+	if !ok || f.FnName.L != ast.TiDBRowChecksum || len(f.Args) != 0 {
+		return nil, nil, false
+	}
+	origName := f.FnName
+	origName.L += "()"
+	origName.O += "()"
+	asName := origName
+	if field.AsName.L != "" {
+		asName = field.AsName
+	}
+	cs, cl := types.DefaultCharsetForType(mysql.TypeString)
+	ftype := ptypes.NewFieldType(mysql.TypeString)
+	ftype.SetCharset(cs)
+	ftype.SetCollate(cl)
+	ftype.SetFlen(mysql.MaxBlobWidth)
+	ftype.SetDecimal(0)
+	name := &types.FieldName{
+		OrigColName: origName,
+		ColName:     asName,
+	}
+	column := &expression.Column{
+		RetType:  ftype,
+		ID:       model.ExtraRowChecksumID,
+		UniqueID: model.ExtraRowChecksumID,
+		Index:    idx,
+		OrigName: origName.L,
+	}
+	return name, column, true
 }
 
 // getSingleTableNameAndAlias return the ast node of queried table name and the alias string.

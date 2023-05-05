@@ -1467,3 +1467,11 @@ func (b *builtinTidbShardSig) evalInt(row chunk.Row) (int64, bool, error) {
 	hashed = hashed % tidbShardBucketCount
 	return int64(hashed), false, nil
 }
+
+type tidbRowChecksumFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbRowChecksumFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, ErrNotSupportedYet.GenWithStack("FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan")
+}
