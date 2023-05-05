@@ -16,7 +16,6 @@ package autoid
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"net"
 	"testing"
@@ -156,16 +155,8 @@ func TestGRPC(t *testing.T) {
 	etcdCli := cluster.RandClient()
 
 	var addr string
-	var listener net.Listener
-	port := 10080
-	for ; ; port++ {
-		var err error
-		addr = fmt.Sprintf("127.0.0.1:%d", port)
-		listener, err = net.Listen("tcp", addr)
-		if err == nil {
-			break
-		}
-	}
+	listener, err := net.Listen("tcp", addr)
+	require.NoError(t, err)
 	defer listener.Close()
 
 	service := newWithCli(addr, etcdCli, store)
@@ -188,7 +179,7 @@ func TestGRPC(t *testing.T) {
 	}()
 	defer grpcServer.Stop()
 
-	grpcConn, err := grpc.Dial(fmt.Sprintf("127.0.0.1:%d", port), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	grpcConn, err := grpc.Dial(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	cli := autoid.NewAutoIDAllocClient(grpcConn)
 	_, err = cli.AllocAutoID(context.Background(), &autoid.AutoIDRequest{
