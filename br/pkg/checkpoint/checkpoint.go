@@ -247,8 +247,12 @@ func (r *CheckpointRunner[K, V]) Append(
 // Note: Cannot be parallel with `Append` function
 func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context) {
 	if r.doneCh != nil {
-		r.doneCh <- struct{}{}
-		r.doneCh = nil
+		select {
+		case r.doneCh <- struct{}{}:
+
+		default:
+			log.Warn("[checkpoint] not the first close the checkpoint runner")
+		}
 	}
 	// wait the range flusher exit
 	r.wg.Wait()
