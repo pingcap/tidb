@@ -709,7 +709,8 @@ func walkCheckpointFile[K KeyType, V ValueType](
 
 			checkpointData := &CheckpointData{}
 			if err = json.Unmarshal(content, checkpointData); err != nil {
-				return errors.Trace(err)
+				log.Error("failed to unmarshal the checkpoint data info, skip it", zap.Error(err))
+				return nil
 			}
 
 			if checkpointData.DureTime > pastDureTime {
@@ -773,7 +774,8 @@ func loadCheckpointChecksum(
 		info := &ChecksumInfo{}
 		err = json.Unmarshal(data, info)
 		if err != nil {
-			return errors.Trace(err)
+			log.Error("failed to unmarshal the checkpoint checksum info, skip it", zap.Error(err))
+			return nil
 		}
 
 		checksum := sha256.Sum256(info.Content)
