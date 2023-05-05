@@ -450,11 +450,12 @@ func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 	return sf.hashcode
 }
 
+// ExpressionsSemanticEqual is used to judge whether two expression tree is semantic equivalent.
 func ExpressionsSemanticEqual(ctx sessionctx.Context, expr1, expr2 Expression) bool {
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.CanonicalHashCode.Store(true)
 	defer sc.CanonicalHashCode.Store(false)
-	return string(expr1.HashCode(sc)) == string(expr2.HashCode(sc))
+	return bytes.Equal(expr1.HashCode(sc), expr2.HashCode(sc))
 }
 
 // canonicalizedHashCode is used to judge whether two expression is semantically equal.
