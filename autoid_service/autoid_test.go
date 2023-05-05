@@ -157,7 +157,8 @@ func TestGRPC(t *testing.T) {
 
 	var addr string
 	var listener net.Listener
-	for port := 10080; ; port++ {
+	port := 10080
+	for ; ; port++ {
 		var err error
 		addr = fmt.Sprintf("127.0.0.1:%d", port)
 		listener, err = net.Listen("tcp", addr)
@@ -187,7 +188,7 @@ func TestGRPC(t *testing.T) {
 	}()
 	defer grpcServer.Stop()
 
-	grpcConn, err := grpc.Dial("127.0.0.1:10080", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	grpcConn, err := grpc.Dial(fmt.Sprintf("127.0.0.1:%d", port), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	cli := autoid.NewAutoIDAllocClient(grpcConn)
 	_, err = cli.AllocAutoID(context.Background(), &autoid.AutoIDRequest{
