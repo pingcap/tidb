@@ -15,8 +15,10 @@
 package executor
 
 import (
+	"bufio"
 	"context"
 	"math"
+	"os"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -53,6 +55,7 @@ import (
 // AnalyzeColumnsExecV2 is used to maintain v2 analyze process
 type AnalyzeColumnsExecV2 struct {
 	*AnalyzeColumnsExec
+	rootCollector statistics.RowSampleCollector
 }
 
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.AnalyzeResults {
@@ -871,13 +874,14 @@ func compareExtRowSample(a, b extsort.SortType) bool {
 	return a.(*ExtRowSample).Handle < b.(*ExtRowSample).Handle
 }
 
-func (e *AnalyzeColumnsExecV2) pullSamplesFromStorage(unsortedSampleCh chan extsort.SortType) (statistics.RowSampleCollector, error) {
+func (e *AnalyzeColumnsExecV2) pullSamplesFromStorage(unsortedSampleCh chan extsort.SortType) {
 	defer close(unsortedSampleCh)
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
 	rootCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
 		rootCollector.Base().FMSketches = append(rootCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC, AllowInvalidDate: true, IgnoreZeroInDate: true}
 	for {
 		data, err := e.resultHandler.nextRaw(context.TODO())
 		if err != nil {
@@ -895,6 +899,12 @@ func (e *AnalyzeColumnsExecV2) pullSamplesFromStorage(unsortedSampleCh chan exts
 		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
 		rootCollector.Base().MergeScalars(subCollector.Base())
 		for _, sample := range subCollector.Base().Samples {
+			for i := range sample.Columns {
+				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
+				if err != nil {
+					panic(err)
+				}
+			}
 			handle, err := e.handleCols.BuildHandleByDatums(sample.Columns)
 			if err != nil {
 				panic(err)
@@ -905,7 +915,46 @@ func (e *AnalyzeColumnsExecV2) pullSamplesFromStorage(unsortedSampleCh chan exts
 			unsortedSampleCh <- &ExtRowSample{Handle: handle.IntValue(), Columns: sample.Columns}
 		}
 	}
-	return rootCollector, nil
+	e.rootCollector = rootCollector
+	close(unsortedSampleCh)
+}
+
+func (e *AnalyzeColumnsExecV2) cutSampleByColumnAndDumpToDisk(sortedSampleCh chan extsort.SortType, errCh chan error) []string {
+	fileNames := make([]string, 0, len(e.colsInfo))
+	writers := make([]*bufio.Writer, 0, len(e.colsInfo))
+	for _, colInfo := range e.colsInfo {
+		fileName := colInfo.Name.L + ".samples"
+		file, err := os.Create(fileName)
+		if err != nil {
+			panic(err)
+		}
+		fileNames = append(fileNames, fileName)
+		writers = append(writers, bufio.NewWriter(file))
+	}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC, AllowInvalidDate: true, IgnoreZeroInDate: true}
+	for data := range sortedSampleCh {
+		rowSample := data.(*ExtRowSample)
+		for i, col := range rowSample.Columns {
+			b, err := codec.EncodeKey(sc, nil, col)
+			if err != nil {
+				panic(err)
+			}
+			_, err = writers[i].Write(b)
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+	for _, writer := range writers {
+		err := writer.Flush()
+		if err != nil {
+			panic(err)
+		}
+	}
+	if err := <-errCh; err != nil {
+		panic(err)
+	}
+	return fileNames
 }
 
 func (e *AnalyzeColumnsExecV2) buildSamplingStatsWithSpillDisk(ranges []*ranger.Range) (
@@ -924,73 +973,10 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStatsWithSpillDisk(ranges []*ranger.
 		}
 	}()
 	unsortedSampleCh := make(chan extsort.SortType, 1)
-	go e.
-	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
-	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-	for i := 0; i < l; i++ {
-		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
-	}
-	sc := e.ctx.GetSessionVars().StmtCtx
-	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
-	if err != nil {
-		return 0, nil, nil, nil, err
-	}
-	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
-	mergeTaskCh := make(chan []byte, statsConcurrency)
-	e.samplingMergeWg = &util.WaitGroupWrapper{}
-	e.samplingMergeWg.Add(statsConcurrency)
-	for i := 0; i < statsConcurrency; i++ {
-		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i)
-	}
-	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker); err != nil {
-		return 0, nil, nil, nil, getAnalyzePanicErr(err)
-	}
-
-	mergeWorkerPanicCnt := 0
-	for mergeWorkerPanicCnt < statsConcurrency {
-		mergeResult, ok := <-mergeResultCh
-		if !ok {
-			break
-		}
-		if mergeResult.err != nil {
-			err = mergeResult.err
-			if isAnalyzeWorkerPanic(mergeResult.err) {
-				mergeWorkerPanicCnt++
-			}
-			continue
-		}
-		oldRootCollectorSize := rootRowCollector.Base().MemSize
-		rootRowCollector.MergeCollector(mergeResult.collector)
-		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
-	}
-	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
-	if err != nil {
-		return 0, nil, nil, nil, err
-	}
-
-	// If there's no virtual column or we meet error during eval virtual column, we fallback to normal decode otherwise.
-	for _, sample := range rootRowCollector.Base().Samples {
-		for i := range sample.Columns {
-			sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
-			if err != nil {
-				return 0, nil, nil, nil, err
-			}
-		}
-	}
-
-	for _, sample := range rootRowCollector.Base().Samples {
-		// Calculate handle from the row data for each row. It will be used to sort the samples.
-		sample.Handle, err = e.handleCols.BuildHandleByDatums(sample.Columns)
-		if err != nil {
-			return 0, nil, nil, nil, err
-		}
-	}
-
-	// The order of the samples are broken when merging samples from sub-collectors.
-	// So now we need to sort the samples according to the handle in order to calculate correlation.
-	sort.Slice(rootRowCollector.Base().Samples, func(i, j int) bool {
-		return rootRowCollector.Base().Samples[i].Handle.Compare(rootRowCollector.Base().Samples[j].Handle) < 0
-	})
+	go e.pullSamplesFromStorage(unsortedSampleCh)
+	sorter, sortedSampleCh, errCh := extsort.New(unsortedSampleCh, extRowSampleFromBytes, compareExtRowSample, nil)
+	sorter.Sort(context.Background())
+	fileNames := e.cutSampleByColumnAndDumpToDisk(sortedSampleCh, errCh)
 
 	totalLen := len(e.colsInfo) + len(e.indexes)
 	hists = make([]*statistics.Histogram, totalLen)
