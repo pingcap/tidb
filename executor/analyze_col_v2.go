@@ -799,6 +799,86 @@ workLoop:
 	}
 }
 
+func (e *AnalyzeColumnsExecV2) buildColumnStats(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, exitCh chan struct{}) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultCh <- getAnalyzePanicErr(r)
+		}
+	}()
+workLoop:
+	for {
+		select {
+		case task, ok := <-taskCh:
+			if !ok {
+				break workLoop
+			}
+			var collector *statistics.SampleCollector
+			if !task.isColumn {
+				panic("building index stats is not supported")
+			}
+			if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
+				hists[task.slicePos] = nil
+				topns[task.slicePos] = nil
+				continue
+			}
+			var collator collate.Collator
+			ft := e.colsInfo[task.slicePos].FieldType
+			// When it's new collation data, we need to use its collate key instead of original value because only
+			// the collate key can ensure the correct ordering.
+			// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
+			if ft.EvalType() == types.ETString && ft.GetType() != mysql.TypeEnum && ft.GetType() != mysql.TypeSet {
+				collator = collate.GetCollator(ft.GetCollate())
+			}
+			b, err := os.ReadFile(task.sampleFileName)
+			if err != nil {
+				panic(err)
+			}
+			columnValues, err := codec.Decode(b, config.DefRowsForSampleRate)
+			if err != nil {
+				panic(err)
+			}
+			sampleNum := len(columnValues)
+			sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
+			for j, val := range columnValues {
+				if val.IsNull() {
+					continue
+				}
+				// If this value is very big, we think that it is not a value that can occur many times. So we don't record it.
+				if len(val.GetBytes()) > statistics.MaxSampleValueLength {
+					continue
+				}
+				if collator != nil {
+					val.SetBytes(collator.Key(val.GetString()))
+				}
+				sampleItems = append(sampleItems, &statistics.SampleItem{
+					Value:   val,
+					Ordinal: j,
+				})
+			}
+			collector = &statistics.SampleCollector{
+				Samples:   sampleItems,
+				NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+				Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+				FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+				TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
+			}
+
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker)
+			if err != nil {
+				resultCh <- err
+				continue
+			}
+			hists[task.slicePos] = hist
+			topns[task.slicePos] = topn
+			resultCh <- nil
+		case <-exitCh:
+			return
+		}
+	}
+}
+
 type analyzeIndexNDVTotalResult struct {
 	results map[int64]*statistics.AnalyzeResults
 	err     error
@@ -815,6 +895,7 @@ type samplingBuildTask struct {
 	tp               *types.FieldType
 	isColumn         bool
 	slicePos         int
+	sampleFileName   string
 }
 
 func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {
@@ -978,7 +1059,12 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStatsWithSpillDisk(ranges []*ranger.
 	sorter.Sort(context.Background())
 	fileNames := e.cutSampleByColumnAndDumpToDisk(sortedSampleCh, errCh)
 
-	totalLen := len(e.colsInfo) + len(e.indexes)
+	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
+	if err != nil {
+		return 0, nil, nil, nil, err
+	}
+
+	totalLen := len(e.colsInfo)
 	hists = make([]*statistics.Histogram, totalLen)
 	topns = make([]*statistics.TopN, totalLen)
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
@@ -988,23 +1074,23 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStatsWithSpillDisk(ranges []*ranger.
 		statsConcurrency = totalLen
 	}
 	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(buildResultChan)
-	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
 	e.samplingBuilderWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
 		e.samplingBuilderWg.Run(func() {
-			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
+			e.buildColumnStats(buildResultChan, buildTaskChan, hists, topns, exitCh)
 		})
 	}
 	for i, col := range e.colsInfo {
 		buildTaskChan <- &samplingBuildTask{
 			id:               col.ID,
-			rootRowCollector: rootRowCollector,
+			rootRowCollector: e.rootCollector,
 			tp:               &col.FieldType,
 			isColumn:         true,
 			slicePos:         i,
+			sampleFileName:   fileNames[i],
 		}
-		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[i])
+		fmSketches = append(fmSketches, e.rootCollector.Base().FMSketches[i])
 	}
 
 	close(buildTaskChan)
@@ -1022,18 +1108,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStatsWithSpillDisk(ranges []*ranger.
 			continue
 		}
 	}
-	defer func() {
-		totalSampleCollectorSize := int64(0)
-		for _, sampleCollector := range sampleCollectors {
-			if sampleCollector != nil {
-				totalSampleCollectorSize += sampleCollector.MemSize
-			}
-		}
-		e.memTracker.Release(totalSampleCollectorSize)
-	}()
 	if err != nil {
 		return 0, nil, nil, nil, err
 	}
-	count = rootRowCollector.Base().Count
+	count = e.rootCollector.Base().Count
 	return
 }
