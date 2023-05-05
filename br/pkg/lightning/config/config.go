@@ -675,8 +675,8 @@ type TikvImporter struct {
 	CompressKVPairs        CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
 	RegionSplitSize        ByteSize                     `toml:"region-split-size" json:"region-split-size"`
 	RegionSplitKeys        int                          `toml:"region-split-keys" json:"region-split-keys"`
-	RegionSplitBatchSize   int                          `toml:"region-split-batch-size" json:"split-region-batch-size"`
-	RegionSplitConcurrency int                          `toml:"region-split-concurrency" json:"split-region-concurrency"`
+	RegionSplitBatchSize   int                          `toml:"region-split-batch-size" json:"region-split-batch-size"`
+	RegionSplitConcurrency int                          `toml:"region-split-concurrency" json:"region-split-concurrency"`
 	SortedKVDir            string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
 	DiskQuota              ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency       int                          `toml:"range-concurrency" json:"range-concurrency"`
