@@ -593,7 +593,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 		if len(cfg.checkpointSnapshotRestoreTaskName) > 0 {
 			log.Info("start to remove checkpoint data for snapshot restore.")
-			err = removeCheckpointDataForSnapshotRestore(c, cfg.FullBackupStorage, cfg.checkpointSnapshotRestoreTaskName, &cfg.Config)
+			var storage string
+			if IsStreamRestore(cmdName) {
+				storage = cfg.FullBackupStorage
+			} else {
+				storage = cfg.Config.Storage
+			}
+			err = removeCheckpointDataForSnapshotRestore(c, storage, cfg.checkpointSnapshotRestoreTaskName, &cfg.Config)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 			}
