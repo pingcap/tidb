@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -1595,6 +1596,7 @@ type addIndexIngestWorker struct {
 	writer           ingest.Writer
 	copReqSenderPool *copReqSenderPool
 	checkpointMgr    *ingest.CheckpointManager
+	flushLock        *sync.RWMutex
 
 	resultCh   chan *backfillResult
 	jobID      int64
@@ -1675,6 +1677,8 @@ func writeOneKVToLocal(writer ingest.Writer,
 	index table.Index, sCtx *stmtctx.StatementContext, writeBufs *variable.WriteStmtBufs,
 	idxDt, rsData []types.Datum, handle kv.Handle) error {
 	iter := index.GenIndexKVIter(sCtx, idxDt, handle, rsData)
+	unlock := writer.LockForWrite()
+	defer unlock()
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf)
 		if err != nil {

@@ -133,20 +133,17 @@ func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported boo
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	bc.diskRoot.UpdateUsage()
-	shouldImport := bc.diskRoot.ShouldImport()
-	shouldFlush := force ||
-		shouldImport ||
-		time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+	shouldFlush, _ := bc.ShouldSync(force)
 	if !shouldFlush {
 		return false, false, nil
 	}
-
-	release := ei.acquireFlushLock()
-	if release == nil {
+	ei.flushLock.Lock()
+	defer ei.flushLock.Unlock()
+	// Check for the second time to prevent concurrent unsafe import.
+	shouldFlush, shouldImport := bc.ShouldSync(force)
+	if !shouldFlush {
 		return false, false, nil
 	}
-	defer release()
 
 	bc.timeOfLastFlush.Store(time.Now())
 	err = ei.Flush()
@@ -154,7 +151,7 @@ func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported boo
 		return false, false, err
 	}
 
-	if force || shouldImport {
+	if shouldImport {
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
@@ -166,6 +163,18 @@ func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported boo
 		return true, true, nil
 	}
 	return true, false, nil
+}
+
+func (bc *litBackendCtx) ShouldSync(force bool) (shouldFlush bool, shouldImport bool) {
+	if force {
+		return true, true
+	}
+	bc.diskRoot.UpdateUsage()
+	shouldImport = bc.diskRoot.ShouldImport()
+	shouldFlush = force ||
+		shouldImport ||
+		time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+	return shouldFlush, shouldImport
 }
 
 // Done returns true if the lightning backfill is done.

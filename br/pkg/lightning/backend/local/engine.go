@@ -1222,7 +1222,6 @@ func (w *Writer) createSSTWriter() (*sstWriter, error) {
 		return nil, err
 	}
 	sw := &sstWriter{sstMeta: &sstMeta{path: path}, writer: writer, logger: w.engine.logger}
-	sw.logger.Info("create sst writer", zap.String("path", path))
 	return sw, nil
 }
 
@@ -1399,7 +1398,6 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	for _, p := range metas {
 		f, err := os.Open(p.path)
 		if err != nil {
-			i.e.logger.Error("open sst file failed", zap.String("path", p.path), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		reader, err := sstable.NewReader(f, sstable.ReaderOptions{})
@@ -1494,8 +1492,6 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 			totalSize += m.fileSize
 			if err := os.Remove(m.path); err != nil {
 				i.e.logger.Warn("async cleanup sst file failed", zap.Error(err))
-			} else {
-				i.e.logger.Warn("async cleanup sst file", zap.String("path", m.path))
 			}
 		}
 		// decrease the pending size after clean up
