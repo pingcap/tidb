@@ -13,6 +13,7 @@ go_test(
     race = "on",
     deps = [
         "//config",
+        "//executor",
         "//parser/mysql",
         "//sessionctx/binloginfo",
         "//store/mockstore/mockcopr",
