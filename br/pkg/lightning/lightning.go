@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
@@ -449,6 +450,12 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
 
 	utils.LogEnvVariables()
+	
+	if split.WaitRegionOnlineAttemptTimes != taskCfg.TikvImporter.RegionCheckBackoffLimit {
+		// it will cause data race if lightning is used as a library, but this is a
+		// hidden config so we ignore that case
+		split.WaitRegionOnlineAttemptTimes = taskCfg.TikvImporter.RegionCheckBackoffLimit
+	}
 
 	metrics := metric.NewMetrics(o.promFactory)
 	metrics.RegisterTo(o.promRegistry)

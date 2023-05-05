@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	WaitRegionOnlineAttemptTimes = 150
+	WaitRegionOnlineAttemptTimes = 1800
 )
 
 // Constants for split retry machinery.
@@ -205,20 +205,6 @@ func NewWaitRegionOnlineBackoffer() utils.Backoffer {
 			WaitRegionOnlineAttemptTimes,
 			time.Millisecond*10,
 			time.Second*2,
-		),
-	}
-}
-
-// NewWaitRegionOnlineBackofferWithVars create a backoff to retry to wait region online.
-func NewWaitRegionOnlineBackofferWithVars(
-	maxAttemptTimes int,
-	initBackoff, maxBackoff time.Duration,
-) utils.Backoffer {
-	return &WaitRegionOnlineBackoffer{
-		Stat: utils.InitialRetryState(
-			maxAttemptTimes,
-			initBackoff,
-			maxBackoff,
 		),
 	}
 }

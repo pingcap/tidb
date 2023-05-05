@@ -398,8 +398,7 @@ func (local *local) BatchSplitRegions(
 	var failedErr error
 	retryRegions := make([]*split.RegionInfo, 0)
 	scatterRegions := newRegions
-	backoffer := split.NewWaitRegionOnlineBackofferWithVars(
-		30, time.Second, 10*time.Second).(*split.WaitRegionOnlineBackoffer)
+	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
 	_ = utils.WithRetry(ctx, func() error {
 		retryRegions = make([]*split.RegionInfo, 0, 16)
 		for _, region := range scatterRegions {
