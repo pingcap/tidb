@@ -37,7 +37,9 @@ func newPauseGcCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := operator.PauseGcConfig{}
-			cfg.ParseFromFlags(cmd.Flags())
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
 			ctx := GetDefaultContext()
 			return operator.PauseGC(ctx, &cfg)
 		},

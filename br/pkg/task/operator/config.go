@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/task"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/spf13/pflag"
 )
 
@@ -22,9 +21,21 @@ func DefineFlagsForPauseGcConfig(f *pflag.FlagSet) {
 	_ = f.Uint64P("safepoint", "t", 0, "The GC safepoint to be kept.")
 }
 
-func (cfg *PauseGcConfig) ParseFromFlags(flags *pflag.FlagSet) {
-	cfg.Config.ParseFromFlags(flags)
+// ParseFromFlags fills the config via the flags.
+func (cfg *PauseGcConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	if err := cfg.Config.ParseFromFlags(flags); err != nil {
+		return err
+	}
 
-	cfg.SafePoint = utils.Must(flags.GetUint64("safepoint"))
-	cfg.TTL = utils.Must(flags.GetDuration("ttl"))
+	var err error
+	cfg.SafePoint, err = flags.GetUint64("safepoint")
+	if err != nil {
+		return err
+	}
+	cfg.TTL, err = flags.GetDuration("ttl")
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

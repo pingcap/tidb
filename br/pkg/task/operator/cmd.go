@@ -29,6 +29,7 @@ func dialPD(ctx context.Context, cfg *task.Config) (*pdutil.PdController, error)
 	return mgr, nil
 }
 
+// PauseGC blocks the current goroutine and pause the GC safepoint by the config.
 func PauseGC(ctx context.Context, cfg *PauseGcConfig) error {
 	mgr, err := dialPD(ctx, &cfg.Config)
 	if err != nil {
