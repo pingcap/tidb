@@ -46,6 +46,11 @@ func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle
 	return nil, nil
 }
 
+// ProcessFinishFlow processes the finish flow.
+func (*testFlowHandle) ProcessFinishFlow(context.Context, dispatcher.TaskHandle, *proto.Task, [][]byte) (err error) {
+	return nil
+}
+
 type testMiniTask struct{}
 
 func (testMiniTask) IsMinimalTask() {}

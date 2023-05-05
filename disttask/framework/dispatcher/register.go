@@ -25,6 +25,7 @@ import (
 // TaskFlowHandle is used to control the process operations for each global task.
 type TaskFlowHandle interface {
 	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (metas [][]byte, err error)
+	ProcessFinishFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, subtaskMeta [][]byte) (err error)
 	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr [][]byte) (meta []byte, err error)
 }
 

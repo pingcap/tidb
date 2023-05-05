@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
@@ -35,8 +36,8 @@ import (
 type ImportScheduler struct {
 	taskMeta      *TaskMeta
 	indexEngine   *backend.OpenedEngine
-	dataEngines   sync.Map
 	tableImporter *importer.TableImporter
+	sharedVars    sync.Map
 }
 
 // InitSubtaskExecEnv implements the Scheduler.InitSubtaskExecEnv interface.
@@ -93,16 +94,20 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 	if err != nil {
 		return nil, err
 	}
-	s.dataEngines.Store(subtaskMeta.ID, dataEngine)
+	sharedVars := &SharedVars{
+		TableImporter: s.tableImporter,
+		DataEngine:    dataEngine,
+		IndexEngine:   s.indexEngine,
+		Checksum:      &verification.KVChecksum{},
+	}
+	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
 	miniTask := make([]proto.MinimalTask, 0, len(subtaskMeta.Chunks))
 	for _, chunk := range subtaskMeta.Chunks {
 		miniTask = append(miniTask, MinimalTaskMeta{
-			Plan:          s.taskMeta.Plan,
-			Chunk:         chunk,
-			DataEngine:    dataEngine,
-			IndexEngine:   s.indexEngine,
-			TableImporter: s.tableImporter,
+			Plan:       s.taskMeta.Plan,
+			Chunk:      chunk,
+			SharedVars: sharedVars,
 		})
 	}
 	return miniTask, nil
@@ -116,22 +121,27 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 		return nil, err
 	}
 
-	dataEngine, ok := s.dataEngines.Load(subtaskMeta.ID)
+	val, ok := s.sharedVars.Load(subtaskMeta.ID)
 	if !ok {
-		return nil, errors.Errorf("data engine %d not found", subtaskMeta.ID)
+		return nil, errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
-	engine, ok := dataEngine.(*backend.OpenedEngine)
+	sharedVars, ok := val.(*SharedVars)
 	if !ok {
-		return nil, errors.Errorf("data engine %d not found", subtaskMeta.ID)
+		return nil, errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
-	closedEngine, err := engine.Close(ctx)
+
+	closedEngine, err := sharedVars.DataEngine.Close(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
 		return nil, err
 	}
-	return subtaskMetaBytes, nil
+
+	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
+	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
+	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
+	return json.Marshal(subtaskMeta)
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.

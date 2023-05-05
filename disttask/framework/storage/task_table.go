@@ -287,6 +287,22 @@ func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, states .
 	return row2SubTask(rs[0]), nil
 }
 
+// GetSucceedSubtasks gets the subtask in the success state.
+func (stm *TaskManager) GetSucceedSubtasks(taskID int64) ([]*proto.Subtask, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select * from mysql.tidb_background_subtask where task_key = %? and state = %?", taskID, proto.TaskStateSucceed)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	subtasks := make([]*proto.Subtask, 0, len(rs))
+	for _, r := range rs {
+		subtasks = append(subtasks, row2SubTask(r))
+	}
+	return subtasks, nil
+}
+
 // GetSubtaskInStatesCnt gets the subtask count in the states.
 func (stm *TaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error) {
 	args := []interface{}{taskID}

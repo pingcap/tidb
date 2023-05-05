@@ -268,6 +268,14 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 				break
 			}
 
+			if stepIsFinished && len(errStr) == 0 {
+				logutil.BgLogger().Info("detect task, subtasks are finished",
+					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
+				if err := d.processFinishFlow(gTask); err != nil {
+					errStr = [][]byte{[]byte(err.Error())}
+				}
+			}
+
 			if isFinished := d.processFlow(gTask, errStr); isFinished {
 				logutil.BgLogger().Info("detect task, this task is finished",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
@@ -354,6 +362,23 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) erro
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, id, meta))
 	}
 	return d.updateTask(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
+}
+
+func (d *dispatcher) processFinishFlow(gTask *proto.Task) (err error) {
+	// Generate the needed global task meta and subTask meta.
+	handle := GetTaskFlowHandle(gTask.Type)
+	if handle == nil {
+		return errors.Errorf("gen gTask flow handle failed, this type %s handle doesn't register", gTask.Type)
+	}
+	subtasks, err := d.taskMgr.GetSucceedSubtasks(gTask.ID)
+	if err != nil {
+		return err
+	}
+	subtaskMetas := make([][]byte, 0, len(subtasks))
+	for _, subtask := range subtasks {
+		subtaskMetas = append(subtaskMetas, subtask.Meta)
+	}
+	return handle.ProcessFinishFlow(d.ctx, d, gTask, subtaskMetas)
 }
 
 func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {

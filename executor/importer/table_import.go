@@ -295,7 +295,7 @@ func (ti *TableImporter) postProcess(ctx context.Context) error {
 	return nil
 }
 
-func (ti *TableImporter) checksumTable(ctx context.Context) error {
+func (ti *TableImporter) localChecksum() verify.KVChecksum {
 	var localChecksum verify.KVChecksum
 	for _, engine := range ti.tableCp.Engines {
 		for _, chunk := range engine.Chunks {
@@ -303,6 +303,10 @@ func (ti *TableImporter) checksumTable(ctx context.Context) error {
 		}
 	}
 	ti.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+	return localChecksum
+}
+
+func (ti *TableImporter) VerifyChecksum(ctx context.Context, localChecksum verify.KVChecksum) error {
 	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.DistSQLScanConcurrency))
 	remoteChecksum, err := manager.Checksum(ctx, ti.tableInfo)
 	if err != nil {
@@ -323,6 +327,11 @@ func (ti *TableImporter) checksumTable(ctx context.Context) error {
 		return err2
 	}
 	return nil
+}
+
+func (ti *TableImporter) checksumTable(ctx context.Context) error {
+	localChecksum := ti.localChecksum()
+	return ti.VerifyChecksum(ctx, localChecksum)
 }
 
 // PopulateChunks populates chunks from table regions.

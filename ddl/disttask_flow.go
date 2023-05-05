@@ -96,3 +96,8 @@ func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Tas
 
 	return nil, nil
 }
+
+// ProcessFinishFlow processes the finish flow.
+func (*litBackfillFlowHandle) ProcessFinishFlow(context.Context, dispatcher.TaskHandle, *proto.Task, [][]byte) (err error) {
+	return nil
+}
