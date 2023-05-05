@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,8 @@ func TestGlueGetVersion(t *testing.T) {
 }
 
 func brieTaskInfoToResult(info *brieTaskInfo) string {
-	arr := make([]string, 0, 8)
+	arr := make([]string, 0, 9)
+	arr = append(arr, strconv.Itoa(int(info.id)))
 	arr = append(arr, info.storage)
 	arr = append(arr, "Wait")
 	arr = append(arr, "0")
@@ -67,6 +69,7 @@ func fetchShowBRIEResult(t *testing.T, e *ShowExec, brieColTypes []*types.FieldT
 func TestFetchShowBRIE(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
+	ResetGlobalBRIEQueueForTest()
 
 	ctx := context.Background()
 	// Compose schema.
@@ -102,9 +105,9 @@ func TestFetchShowBRIE(t *testing.T) {
 		storage:    "noop://test/backup1",
 		message:    "killed",
 	}
-	info1Res := brieTaskInfoToResult(info1)
 
 	globalBRIEQueue.registerTask(ctx, info1)
+	info1Res := brieTaskInfoToResult(info1)
 	require.Equal(t, info1Res, fetchShowBRIEResult(t, e, brieColTypes))
 
 	// Query again, this info should already have been cleaned
@@ -112,6 +115,7 @@ func TestFetchShowBRIE(t *testing.T) {
 
 	// Register this task again, we should be able to fetch this info
 	globalBRIEQueue.registerTask(ctx, info1)
+	info1Res = brieTaskInfoToResult(info1)
 	require.Equal(t, info1Res, fetchShowBRIEResult(t, e, brieColTypes))
 
 	// Query again, we should be able to fetch this info again, because we have cleared in last clearInterval
@@ -121,6 +125,7 @@ func TestFetchShowBRIE(t *testing.T) {
 	globalBRIEQueue.lastClearTime = time.Now().Add(-clearInterval - time.Second)
 	currTime := types.CurrentTime(tp)
 	info2 := &brieTaskInfo{
+		id:         2,
 		kind:       ast.BRIEKindBackup,
 		connID:     e.ctx.GetSessionVars().ConnectionID,
 		queueTime:  currTime,
@@ -129,8 +134,8 @@ func TestFetchShowBRIE(t *testing.T) {
 		storage:    "noop://test/backup2",
 		message:    "",
 	}
-	info2Res := brieTaskInfoToResult(info2)
 	globalBRIEQueue.registerTask(ctx, info2)
+	info2Res := brieTaskInfoToResult(info2)
 	globalBRIEQueue.clearTask(e.ctx.GetSessionVars().StmtCtx)
 	require.Equal(t, info2Res, fetchShowBRIEResult(t, e, brieColTypes))
 }
