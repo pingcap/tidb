@@ -59,7 +59,6 @@ type engineInfo struct {
 	memRoot      MemRoot
 	diskRoot     DiskRoot
 	rowSeq       atomic.Int64
-	flushing     atomic.Bool
 	flushLock    *sync.RWMutex
 }
 
@@ -90,17 +89,6 @@ func (ei *engineInfo) Flush() error {
 		return err
 	}
 	return nil
-}
-
-// acquireFlushLock acquires the flush lock of the engine.
-func (ei *engineInfo) acquireFlushLock() (release func()) {
-	ok := ei.flushing.CompareAndSwap(false, true)
-	if !ok {
-		return nil
-	}
-	return func() {
-		ei.flushing.Store(false)
-	}
 }
 
 // Clean closes the engine and removes the local intermediate files.
