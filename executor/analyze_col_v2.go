@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lanrat/extsort"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -836,4 +838,216 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 		mergeTaskCh <- data
 	}
 	return nil
+}
+
+type ExtRowSample struct {
+	Handle  int64
+	Columns []types.Datum
+}
+
+func (sample *ExtRowSample) ToBytes() []byte {
+	b := codec.EncodeInt(nil, sample.Handle)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC, AllowInvalidDate: true, IgnoreZeroInDate: true}
+	res, err := codec.EncodeKey(sc, b, sample.Columns...)
+	if err != nil {
+		panic(err)
+	}
+	return res
+}
+
+func extRowSampleFromBytes(b []byte) extsort.SortType {
+	remain, handle, err := codec.DecodeInt(b)
+	if err != nil {
+		panic(err)
+	}
+	columns, err := codec.Decode(remain, 8)
+	if err != nil {
+		panic(err)
+	}
+	return &ExtRowSample{Handle: handle, Columns: columns}
+}
+
+func compareExtRowSample(a, b extsort.SortType) bool {
+	return a.(*ExtRowSample).Handle < b.(*ExtRowSample).Handle
+}
+
+func (e *AnalyzeColumnsExecV2) pullSamplesFromStorage(unsortedSampleCh chan extsort.SortType) (statistics.RowSampleCollector, error) {
+	defer close(unsortedSampleCh)
+	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
+	rootCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+	for i := 0; i < l; i++ {
+		rootCollector.Base().FMSketches = append(rootCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
+	}
+	for {
+		data, err := e.resultHandler.nextRaw(context.TODO())
+		if err != nil {
+			panic(err)
+		}
+		if data == nil {
+			break
+		}
+		colResp := &tipb.AnalyzeColumnsResp{}
+		err = colResp.Unmarshal(data)
+		if err != nil {
+			panic(err)
+		}
+		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+		rootCollector.Base().MergeScalars(subCollector.Base())
+		for _, sample := range subCollector.Base().Samples {
+			handle, err := e.handleCols.BuildHandleByDatums(sample.Columns)
+			if err != nil {
+				panic(err)
+			}
+			if !handle.IsInt() {
+				panic("unsupported for other types of handle other than int handle")
+			}
+			unsortedSampleCh <- &ExtRowSample{Handle: handle.IntValue(), Columns: sample.Columns}
+		}
+	}
+	return rootCollector, nil
+}
+
+func (e *AnalyzeColumnsExecV2) buildSamplingStatsWithSpillDisk(ranges []*ranger.Range) (
+	count int64,
+	hists []*statistics.Histogram,
+	topns []*statistics.TopN,
+	fmSketches []*statistics.FMSketch,
+	err error,
+) {
+	if err = e.open(ranges); err != nil {
+		return 0, nil, nil, nil, err
+	}
+	defer func() {
+		if err1 := e.resultHandler.Close(); err1 != nil {
+			err = err1
+		}
+	}()
+	unsortedSampleCh := make(chan extsort.SortType, 1)
+	go e.
+	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
+	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+	for i := 0; i < l; i++ {
+		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
+	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
+	if err != nil {
+		return 0, nil, nil, nil, err
+	}
+	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
+	mergeTaskCh := make(chan []byte, statsConcurrency)
+	e.samplingMergeWg = &util.WaitGroupWrapper{}
+	e.samplingMergeWg.Add(statsConcurrency)
+	for i := 0; i < statsConcurrency; i++ {
+		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i)
+	}
+	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker); err != nil {
+		return 0, nil, nil, nil, getAnalyzePanicErr(err)
+	}
+
+	mergeWorkerPanicCnt := 0
+	for mergeWorkerPanicCnt < statsConcurrency {
+		mergeResult, ok := <-mergeResultCh
+		if !ok {
+			break
+		}
+		if mergeResult.err != nil {
+			err = mergeResult.err
+			if isAnalyzeWorkerPanic(mergeResult.err) {
+				mergeWorkerPanicCnt++
+			}
+			continue
+		}
+		oldRootCollectorSize := rootRowCollector.Base().MemSize
+		rootRowCollector.MergeCollector(mergeResult.collector)
+		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
+	}
+	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
+	if err != nil {
+		return 0, nil, nil, nil, err
+	}
+
+	// If there's no virtual column or we meet error during eval virtual column, we fallback to normal decode otherwise.
+	for _, sample := range rootRowCollector.Base().Samples {
+		for i := range sample.Columns {
+			sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
+			if err != nil {
+				return 0, nil, nil, nil, err
+			}
+		}
+	}
+
+	for _, sample := range rootRowCollector.Base().Samples {
+		// Calculate handle from the row data for each row. It will be used to sort the samples.
+		sample.Handle, err = e.handleCols.BuildHandleByDatums(sample.Columns)
+		if err != nil {
+			return 0, nil, nil, nil, err
+		}
+	}
+
+	// The order of the samples are broken when merging samples from sub-collectors.
+	// So now we need to sort the samples according to the handle in order to calculate correlation.
+	sort.Slice(rootRowCollector.Base().Samples, func(i, j int) bool {
+		return rootRowCollector.Base().Samples[i].Handle.Compare(rootRowCollector.Base().Samples[j].Handle) < 0
+	})
+
+	totalLen := len(e.colsInfo) + len(e.indexes)
+	hists = make([]*statistics.Histogram, totalLen)
+	topns = make([]*statistics.TopN, totalLen)
+	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
+	buildResultChan := make(chan error, totalLen)
+	buildTaskChan := make(chan *samplingBuildTask, totalLen)
+	if totalLen < statsConcurrency {
+		statsConcurrency = totalLen
+	}
+	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(buildResultChan)
+	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
+	exitCh := make(chan struct{})
+	e.samplingBuilderWg.Add(statsConcurrency)
+	for i := 0; i < statsConcurrency; i++ {
+		e.samplingBuilderWg.Run(func() {
+			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
+		})
+	}
+	for i, col := range e.colsInfo {
+		buildTaskChan <- &samplingBuildTask{
+			id:               col.ID,
+			rootRowCollector: rootRowCollector,
+			tp:               &col.FieldType,
+			isColumn:         true,
+			slicePos:         i,
+		}
+		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[i])
+	}
+
+	close(buildTaskChan)
+	panicCnt := 0
+	for panicCnt < statsConcurrency {
+		err1, ok := <-buildResultChan
+		if !ok {
+			break
+		}
+		if err1 != nil {
+			err = err1
+			if isAnalyzeWorkerPanic(err1) {
+				panicCnt++
+			}
+			continue
+		}
+	}
+	defer func() {
+		totalSampleCollectorSize := int64(0)
+		for _, sampleCollector := range sampleCollectors {
+			if sampleCollector != nil {
+				totalSampleCollectorSize += sampleCollector.MemSize
+			}
+		}
+		e.memTracker.Release(totalSampleCollectorSize)
+	}()
+	if err != nil {
+		return 0, nil, nil, nil, err
+	}
+	count = rootRowCollector.Base().Count
+	return
 }
