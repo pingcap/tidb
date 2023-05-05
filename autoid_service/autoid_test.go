@@ -154,10 +154,10 @@ func TestGRPC(t *testing.T) {
 	defer cluster.Terminate(t)
 	etcdCli := cluster.RandClient()
 
-	var addr string
-	listener, err := net.Listen("tcp", addr)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer listener.Close()
+	addr := listener.Addr().String()
 
 	service := newWithCli(addr, etcdCli, store)
 	defer service.Close()
@@ -179,7 +179,7 @@ func TestGRPC(t *testing.T) {
 	}()
 	defer grpcServer.Stop()
 
-	grpcConn, err := grpc.Dial(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	grpcConn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	cli := autoid.NewAutoIDAllocClient(grpcConn)
 	_, err = cli.AllocAutoID(context.Background(), &autoid.AutoIDRequest{
