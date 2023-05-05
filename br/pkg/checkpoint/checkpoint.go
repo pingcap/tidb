@@ -387,6 +387,7 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 func (r *CheckpointRunner[K, V]) sendError(err error) {
 	select {
 	case r.errCh <- err:
+		log.Error("[checkpoint] send the error", zap.Error(err))
 		close(r.errCh)
 	default:
 		log.Error("errCh is blocked", logutil.ShortError(err))
@@ -463,9 +464,9 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 				log.Info("stop checkpoint runner")
 				// NOTE: the exit step, don't send error any more.
 				if err := r.flushMeta(ctx, errCh); err != nil {
-					log.Error("failed to flush checkpoint", zap.Error(err))
+					log.Error("failed to flush checkpoint meta", zap.Error(err))
 				} else if err := r.flushChecksum(ctx, errCh); err != nil {
-					log.Error("failed to flush checkpoint", zap.Error(err))
+					log.Error("failed to flush checkpoint checksum", zap.Error(err))
 				}
 				// close the channel to flush worker
 				// and wait it to consumes all the metas

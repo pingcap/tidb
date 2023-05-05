@@ -274,9 +274,9 @@ func (b *Batcher) filterOutRanges(tree rtree.RangeTree, drained []rtree.Range) [
 		// split/scatter + download/ingest
 		b.updateCh.IncBy(int64(progress) * 2)
 		summary.CollectSuccessUnit(summary.TotalKV, progress, totalKVs)
-		summary.CollectSuccessUnit(summary.CheckpointSkipTotalKV, progress, totalKVs)
+		summary.CollectSuccessUnit(summary.SkippedKVCountByCheckpoint, progress, totalKVs)
 		summary.CollectSuccessUnit(summary.TotalBytes, progress, totalBytes)
-		summary.CollectSuccessUnit(summary.CheckpointSkipTotalBytes, progress, totalBytes)
+		summary.CollectSuccessUnit(summary.SkippedBytesByCheckpoint, progress, totalBytes)
 	}
 	return newRanges
 }

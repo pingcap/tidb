@@ -168,7 +168,17 @@ func ExistsCheckpointTaskInfo(
 }
 
 func removeCheckpointTaskInfoForLogRestore(ctx context.Context, s storage.ExternalStorage, clusterID uint64) error {
-	return s.DeleteFile(ctx, getCheckpointTaskInfoPathByID(clusterID))
+	fileName := getCheckpointTaskInfoPathByID(clusterID)
+	exists, err := s.FileExists(ctx, fileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !exists {
+		return nil
+	}
+
+	return s.DeleteFile(ctx, fileName)
 }
 
 func RemoveCheckpointDataForLogRestore(
@@ -178,7 +188,11 @@ func RemoveCheckpointDataForLogRestore(
 	clusterID uint64,
 ) error {
 	if err := removeCheckpointTaskInfoForLogRestore(ctx, s, clusterID); err != nil {
-		return errors.Annotatef(err, "failed to remove the task info file: cluster-id is %d", clusterID)
+		return errors.Annotatef(err,
+			"failed to remove the task info file: cluster-id is %d, taskName is %s",
+			clusterID,
+			taskName,
+		)
 	}
 	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
 	return removeCheckpointData(ctx, s, prefix)
