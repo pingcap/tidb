@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/executor"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 )
@@ -38,6 +39,7 @@ func makeTempDirForBackup(t *testing.T) string {
 
 func TestShowBackupQuery(t *testing.T) {
 	tk := initTestKit(t)
+    executor.ResetGlobalBRIEQueueForTest()
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 
@@ -45,15 +47,16 @@ func TestShowBackupQuery(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("create table foo(pk int primary key auto_increment, v varchar(255));")
 	tk.MustExec("insert into foo(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
-	backupQuery := fmt.Sprintf("backup database * to 'local://%s';", sqlTmp)
+	backupQuery := fmt.Sprintf("BACKUP DATABASE * TO 'local://%s'", sqlTmp)
 	_ = tk.MustQuery(backupQuery)
 	// NOTE: we assume a auto-increamental ID here.
 	// once we implement other ID allocation, we may have to change this case.
 	res := tk.MustQuery("show br job query 1;")
+    fmt.Println(res.Rows());
 	res.CheckContain(backupQuery)
 
 	tk.MustExec("drop table foo;")
-	restoreQuery := fmt.Sprintf("restore table test.foo from 'local://%s';", sqlTmp)
+	restoreQuery := fmt.Sprintf("RESTORE TABLE `test`.`foo` FROM 'local://%s'", sqlTmp)
 	tk.MustQuery(restoreQuery)
 	res = tk.MustQuery("show br job query 2;")
 	res.CheckContain(restoreQuery)
@@ -62,6 +65,7 @@ func TestShowBackupQuery(t *testing.T) {
 func TestShowBackupQueryRedact(t *testing.T) {
 	tk := initTestKit(t)
 
+    executor.ResetGlobalBRIEQueueForTest()
 	failpoint.Enable("github.com/pingcap/tidb/executor/block-on-brie", "return")
 	ch := make(chan any)
 	go func() {
@@ -93,6 +97,7 @@ func TestShowBackupQueryRedact(t *testing.T) {
 
 func TestCancel(t *testing.T) {
 	tk := initTestKit(t)
+    executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
 	failpoint.Enable("github.com/pingcap/tidb/executor/block-on-brie", "return")
 

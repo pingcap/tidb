@@ -142,6 +142,15 @@ var globalBRIEQueue = &brieQueue{
 	workerCh: make(chan struct{}, 1),
 }
 
+// ResetGlobalBRIEQueueForTest resets the ID allocation for the global BRIE queue.
+// In some of our test cases, we rely on the ID is allocated from 1.
+// When batch executing test cases, the assumation may be broken and make the cases fail.
+func ResetGlobalBRIEQueueForTest() {
+    globalBRIEQueue = &brieQueue {
+        workerCh: make(chan struct{}, 1),
+    }
+}
+
 // registerTask registers a BRIE task in the queue.
 func (bq *brieQueue) registerTask(
 	ctx context.Context,
