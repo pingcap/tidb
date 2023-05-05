@@ -39,7 +39,7 @@ func makeTempDirForBackup(t *testing.T) string {
 
 func TestShowBackupQuery(t *testing.T) {
 	tk := initTestKit(t)
-    executor.ResetGlobalBRIEQueueForTest()
+	executor.ResetGlobalBRIEQueueForTest()
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 
@@ -52,7 +52,7 @@ func TestShowBackupQuery(t *testing.T) {
 	// NOTE: we assume a auto-increamental ID here.
 	// once we implement other ID allocation, we may have to change this case.
 	res := tk.MustQuery("show br job query 1;")
-    fmt.Println(res.Rows());
+	fmt.Println(res.Rows())
 	res.CheckContain(backupQuery)
 
 	tk.MustExec("drop table foo;")
@@ -65,7 +65,7 @@ func TestShowBackupQuery(t *testing.T) {
 func TestShowBackupQueryRedact(t *testing.T) {
 	tk := initTestKit(t)
 
-    executor.ResetGlobalBRIEQueueForTest()
+	executor.ResetGlobalBRIEQueueForTest()
 	failpoint.Enable("github.com/pingcap/tidb/executor/block-on-brie", "return")
 	ch := make(chan any)
 	go func() {
@@ -97,7 +97,7 @@ func TestShowBackupQueryRedact(t *testing.T) {
 
 func TestCancel(t *testing.T) {
 	tk := initTestKit(t)
-    executor.ResetGlobalBRIEQueueForTest()
+	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
 	failpoint.Enable("github.com/pingcap/tidb/executor/block-on-brie", "return")
 
