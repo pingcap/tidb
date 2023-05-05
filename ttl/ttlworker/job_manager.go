@@ -18,7 +18,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -32,7 +34,7 @@ import (
 
 const insertNewTableIntoStatusTemplate = "INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (%?, %?)"
 const setTableStatusOwnerTemplate = `UPDATE mysql.tidb_ttl_table_status
-	SET current_job_id = UUID(),
+	SET current_job_id = %?,
 		current_job_owner_id = %?,
 		current_job_start_time = %?,
 		current_job_status = 'waiting',
@@ -48,8 +50,8 @@ func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []
 	return insertNewTableIntoStatusTemplate, []interface{}{tableID, parentTableID}
 }
 
-func setTableStatusOwnerSQL(tableID int64, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
-	return setTableStatusOwnerTemplate, []interface{}{id, now.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
+func setTableStatusOwnerSQL(jobID string, tableID int64, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
+	return setTableStatusOwnerTemplate, []interface{}{jobID, id, now.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
 }
 
 func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []interface{}) {
@@ -125,25 +127,7 @@ func (m *JobManager) jobLoop() error {
 	updateScanTaskStateTicker := time.Tick(jobManagerLoopTickerInterval)
 	infoSchemaCacheUpdateTicker := time.Tick(m.infoSchemaCache.GetInterval())
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
-<<<<<<< HEAD
 	resizeWorkersTicker := time.Tick(resizeWorkersInterval)
-=======
-	resizeWorkersTicker := time.Tick(getResizeWorkersInterval())
-	gcTicker := time.Tick(ttlGCInterval)
-
-	scheduleJobTicker := time.Tick(jobManagerLoopTickerInterval)
-	jobCheckTicker := time.Tick(jobManagerLoopTickerInterval)
-	updateJobHeartBeatTicker := time.Tick(jobManagerLoopTickerInterval)
-
-	scheduleTaskTicker := time.Tick(getTaskManagerLoopTickerInterval())
-	updateTaskHeartBeatTicker := time.Tick(ttlTaskHeartBeatTickerInterval)
-	taskCheckTicker := time.Tick(time.Second * 5)
-	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
-
-	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
-	scanTaskNotificationWatcher := m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
-	m.taskManager.resizeWorkersWithSysVar()
->>>>>>> e245a931af9 (ttl: fix ttl job manager will panic if the status cache doesn't contain table (#41069))
 	for {
 		m.reportMetrics()
 		now := se.Now()
@@ -563,24 +547,12 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return err
 		}
 
-<<<<<<< HEAD
-		sql, args = setTableStatusOwnerSQL(table.ID, now, expireTime, m.id)
-=======
 		jobID = uuid.New().String()
-		jobExist := false
-		if len(tableStatus.CurrentJobID) > 0 {
-			// don't create new job if there is already one running
-			// so the running tasks don't need to be cancelled
-			jobID = tableStatus.CurrentJobID
-			expireTime = tableStatus.CurrentJobTTLExpire
-			jobExist = true
-		}
 		failpoint.Inject("set-job-uuid", func(val failpoint.Value) {
 			jobID = val.(string)
 		})
 
 		sql, args = setTableStatusOwnerSQL(jobID, table.ID, now, expireTime, m.id)
->>>>>>> e245a931af9 (ttl: fix ttl job manager will panic if the status cache doesn't contain table (#41069))
 		_, err = se.ExecuteSQL(ctx, sql, args...)
 		return errors.Wrapf(err, "execute sql: %s", sql)
 	})
@@ -597,13 +569,10 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 	if err != nil {
 		return nil, err
 	}
-<<<<<<< HEAD
-	return m.createNewJob(expireTime, now, table)
+	return m.createNewJob(jobID, expireTime, now, table)
 }
 
-func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *cache.PhysicalTable) (*ttlJob, error) {
-	id := m.tableStatusCache.Tables[table.ID].CurrentJobID
-
+func (m *JobManager) createNewJob(id string, expireTime time.Time, now time.Time, table *cache.PhysicalTable) (*ttlJob, error) {
 	statistics := &ttlStatistics{}
 
 	ranges, err := table.SplitScanRanges(m.ctx, m.store, splitScanCount)
@@ -624,20 +593,6 @@ func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *ca
 		})
 	}
 
-=======
-
-	job := m.createNewJob(jobID, expireTime, now, table)
-
-	// job is created, notify every scan managers to fetch new tasks
-	err = m.notificationCli.Notify(m.ctx, scanTaskNotificationType, job.id)
-	if err != nil {
-		logutil.Logger(m.ctx).Warn("fail to trigger scan tasks", zap.Error(err))
-	}
-	return job, nil
-}
-
-func (m *JobManager) createNewJob(id string, expireTime time.Time, now time.Time, table *cache.PhysicalTable) *ttlJob {
->>>>>>> e245a931af9 (ttl: fix ttl job manager will panic if the status cache doesn't contain table (#41069))
 	return &ttlJob{
 		id:      id,
 		ownerID: m.id,
