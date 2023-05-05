@@ -103,12 +103,3 @@ func GRPCConn(ctx context.Context, storeAddr string, tlsConf *tls.Config, opts .
 	}
 	return connection, nil
 }
-
-// Must checks whether a two-value returned function returns a success result.
-// If it was successed, return the success value, otherwise panic.
-func Must[T any](t T, err error) T {
-	if err != nil {
-		panic(errors.Annotate(err, "must assertion failed"))
-	}
-	return t
-}
