@@ -137,13 +137,18 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 	var startKey, endKey kv.Key
 	var tbl table.PhysicalTable
 
+	currentVer, err1 := getValidCurrentVersion(d.store)
+	if err1 != nil {
+		return nil, errors.Trace(err1)
+	}
+
 	if !b.isPartition {
 		startKey, endKey = sm.StartKey, sm.EndKey
 		tbl = b.ptbl
 	} else {
 		pid := sm.PhysicalTableID
 		parTbl := b.ptbl.(table.PartitionedTable)
-		startKey, endKey, err = getTableRange(b.jc, d.ddlCtx, parTbl.GetPartition(pid), b.job.SnapshotVer, b.job.Priority)
+		startKey, endKey, err = getTableRange(b.jc, d.ddlCtx, parTbl.GetPartition(pid), currentVer.Ver, b.job.Priority)
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get table range error", zap.Error(err))
 			return nil, err

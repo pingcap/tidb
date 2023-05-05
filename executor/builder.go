@@ -3858,7 +3858,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	} else {
 		handleLen = 1
 	}
-	if is.Index.Global {
+	if is.Index.Global || len(is.ByItems) != 0 {
 		// Should output pid col.
 		handleLen++
 	}
@@ -4034,7 +4034,11 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
+			handleLen := ts.HandleCols.NumCols()
+			if len(is.ByItems) != 0 && is.Table.Partition != nil {
+				handleLen += 1
+			}
+			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 		} else {
