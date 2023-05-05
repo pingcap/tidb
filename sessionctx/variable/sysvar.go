@@ -2505,6 +2505,24 @@ var defaultSysVars = []*SysVar{
 			s.OptimizerFixControl = newMap
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAnalyzeSpillDisk, Value: BoolToOnOff(DefTiDBEnableAnalyzeSpillDisk), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableAnalyzeSpillDisk = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(s.EnableAnalyzeSpillDisk), nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeSpillDiskPath, Value: DefTiDBAnalyzeSpillDiskPath, Type: TypeStr,
+		SetSession: func(s *SessionVars, val string) error {
+			s.AnalyzeSpillDiskPath = val
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return s.AnalyzeSpillDiskPath, nil
+		},
+	},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

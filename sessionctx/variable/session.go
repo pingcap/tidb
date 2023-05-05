@@ -1429,6 +1429,12 @@ type SessionVars struct {
 
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
+
+	// EnableAnalyzeSpillDisk indicates whether to spill to disk when building statistics.
+	EnableAnalyzeSpillDisk bool
+
+	// AnalyzeSpillDiskPath indicates the path to store samples when building statistics.
+	AnalyzeSpillDiskPath string
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session

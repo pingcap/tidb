@@ -860,6 +860,12 @@ const (
 
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
+
+	// TiDBEnableAnalyzeSpillDisk indicates whether to spill to disk when building statistics.
+	TiDBEnableAnalyzeSpillDisk = "tidb_enable_analyze_spill_disk"
+
+	// TiDBAnalyzeSpillDiskPath indicates the path to store samples when building statistics.
+	TiDBAnalyzeSpillDiskPath = "tidb_analyze_spill_disk_path"
 )
 
 // TiDB vars that have only global scope
@@ -1260,6 +1266,8 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold             = time.Second
 	DefTiDBOptEnableLateMaterialization              = true
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
+	DefTiDBEnableAnalyzeSpillDisk                    = false
+	DefTiDBAnalyzeSpillDiskPath                      = "/tmp"
 )
 
 // Process global variables.

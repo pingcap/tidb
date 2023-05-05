@@ -19,6 +19,7 @@ import (
 	"context"
 	"math"
 	"os"
+	"path"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -131,7 +132,18 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 		e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
 	})
 	defer wg.Wait()
-	count, hists, topns, fmSketches, extStats, err := e.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
+	var count int64
+	var hists []*statistics.Histogram
+	var topns []*statistics.TopN
+	var fmSketches []*statistics.FMSketch
+	var extStats *statistics.ExtendedStatsColl
+	var err error
+	if e.ctx.GetSessionVars().EnableAnalyzeSpillDisk {
+		logutil.BgLogger().Info("analyze use spill disk ")
+		count, hists, topns, fmSketches, err = e.buildSamplingStatsWithSpillDisk(ranges)
+	} else {
+		count, hists, topns, fmSketches, extStats, err = e.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
+	}
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
@@ -997,14 +1009,13 @@ func (e *AnalyzeColumnsExecV2) pullSamplesFromStorage(unsortedSampleCh chan exts
 		}
 	}
 	e.rootCollector = rootCollector
-	close(unsortedSampleCh)
 }
 
 func (e *AnalyzeColumnsExecV2) cutSampleByColumnAndDumpToDisk(sortedSampleCh chan extsort.SortType, errCh chan error) []string {
 	fileNames := make([]string, 0, len(e.colsInfo))
 	writers := make([]*bufio.Writer, 0, len(e.colsInfo))
 	for _, colInfo := range e.colsInfo {
-		fileName := colInfo.Name.L + ".samples"
+		fileName := path.Join(e.ctx.GetSessionVars().AnalyzeSpillDiskPath, colInfo.Name.L+".samples")
 		file, err := os.Create(fileName)
 		if err != nil {
 			panic(err)
@@ -1055,9 +1066,17 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStatsWithSpillDisk(ranges []*ranger.
 	}()
 	unsortedSampleCh := make(chan extsort.SortType, 1)
 	go e.pullSamplesFromStorage(unsortedSampleCh)
-	sorter, sortedSampleCh, errCh := extsort.New(unsortedSampleCh, extRowSampleFromBytes, compareExtRowSample, nil)
+	cfg := extsort.DefaultConfig()
+	cfg.ChunkSize = 20000
+	cfg.TempFilesDir = e.ctx.GetSessionVars().AnalyzeSpillDiskPath
+	sorter, sortedSampleCh, errCh := extsort.New(unsortedSampleCh, extRowSampleFromBytes, compareExtRowSample, cfg)
 	sorter.Sort(context.Background())
 	fileNames := e.cutSampleByColumnAndDumpToDisk(sortedSampleCh, errCh)
+	defer func() {
+		for _, fileName := range fileNames {
+			os.Remove(fileName)
+		}
+	}()
 
 	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
