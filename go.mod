@@ -61,6 +61,7 @@ require (
 	github.com/kisielk/errcheck v1.6.3
 	github.com/klauspost/compress v1.15.13
 	github.com/kyoh86/exportloopref v0.1.11
+	github.com/lanrat/extsort v1.0.0
 	github.com/lestrrat-go/jwx/v2 v2.0.6
 	github.com/mgechev/revive v1.3.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7

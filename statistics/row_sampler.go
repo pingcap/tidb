@@ -48,6 +48,19 @@ type baseCollector struct {
 	MemSize    int64
 }
 
+func (s *baseCollector) MergeScalars(other *baseCollector) {
+	s.Count += other.Count
+	for i := range other.FMSketches {
+		s.FMSketches[i].MergeFMSketch(other.FMSketches[i])
+	}
+	for i := range other.NullCount {
+		s.NullCount[i] += other.NullCount[i]
+	}
+	for i := range other.TotalSizes {
+		s.TotalSizes[i] += other.TotalSizes[i]
+	}
+}
+
 // ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
 // It will maintain the following things:
 //
