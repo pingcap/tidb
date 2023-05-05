@@ -76,7 +76,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 		}
 
 		subTaskMetas = make([][]byte, 0, 100)
-		regionBatch := 100
+		regionBatch := len(recordRegionMetas) / 20
 		sort.Slice(recordRegionMetas, func(i, j int) bool {
 			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 		})
