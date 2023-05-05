@@ -139,30 +139,30 @@ func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported boo
 	}
 	ei.flushLock.Lock()
 	defer ei.flushLock.Unlock()
-	// Check for the second time to prevent concurrent unsafe import.
+	// Check for the second time to avoid duplicate import.
 	shouldFlush, shouldImport := bc.ShouldSync(force)
 	if !shouldFlush {
 		return false, false, nil
 	}
 
-	bc.timeOfLastFlush.Store(time.Now())
 	err = ei.Flush()
 	if err != nil {
 		return false, false, err
 	}
+	bc.timeOfLastFlush.Store(time.Now())
 
-	if shouldImport {
-		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
-			zap.String("usage info", bc.diskRoot.UsageInfo()))
-		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
-		if err != nil {
-			logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
-				zap.String("usage info", bc.diskRoot.UsageInfo()))
-			return true, false, err
-		}
-		return true, true, nil
+	if !shouldImport {
+		return true, false, nil
 	}
-	return true, false, nil
+	logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
+		zap.String("usage info", bc.diskRoot.UsageInfo()))
+	err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
+	if err != nil {
+		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
+			zap.String("usage info", bc.diskRoot.UsageInfo()))
+		return true, false, err
+	}
+	return true, true, nil
 }
 
 func (bc *litBackendCtx) ShouldSync(force bool) (shouldFlush bool, shouldImport bool) {
@@ -171,8 +171,7 @@ func (bc *litBackendCtx) ShouldSync(force bool) (shouldFlush bool, shouldImport 
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
-	shouldFlush = force ||
-		shouldImport ||
+	shouldFlush = shouldImport ||
 		time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
 	return shouldFlush, shouldImport
 }
