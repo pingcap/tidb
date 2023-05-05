@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
-	"golang.org/x/exp/slices"
 )
 
 // ScalarFunction is the function that returns a value.
@@ -454,9 +454,7 @@ func ExpressionsSemanticEqual(ctx sessionctx.Context, expr1, expr2 Expression) b
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.CanonicalHashCode.Store(true)
 	defer sc.CanonicalHashCode.Store(false)
-	res1 := expr1.HashCode(sc)
-	res2 := expr2.HashCode(sc)
-	return string(res1) == string(res2)
+	return string(expr1.HashCode(sc)) == string(expr2.HashCode(sc))
 }
 
 // canonicalizedHashCode is used to judge whether two expression is semantically equal.
@@ -473,8 +471,8 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContex
 		// encode original function name.
 		sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 		// reorder parameters hashcode, eg: a+b and b+a should has the same hashcode here.
-		slices.SortFunc(argsHashCode, func(iBytes, jBytes []byte) bool {
-			return bytes.Compare(iBytes, jBytes) <= 0
+		sort.Slice(argsHashCode, func(i, j int) bool {
+			return bytes.Compare(argsHashCode[i], argsHashCode[j]) <= 0
 		})
 		for _, argCode := range argsHashCode {
 			sf.hashcode = append(sf.hashcode, argCode...)
