@@ -450,7 +450,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
 
 	utils.LogEnvVariables()
-	
+
 	if split.WaitRegionOnlineAttemptTimes != taskCfg.TikvImporter.RegionCheckBackoffLimit {
 		// it will cause data race if lightning is used as a library, but this is a
 		// hidden config so we ignore that case
