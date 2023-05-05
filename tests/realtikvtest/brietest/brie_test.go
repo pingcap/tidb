@@ -70,7 +70,7 @@ func TestShowBackupQueryRedact(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/executor/block-on-brie", "return")
 	ch := make(chan any)
 	go func() {
-	    tk := testkit.NewTestKit(t, tk.Session().GetStore())
+		tk := testkit.NewTestKit(t, tk.Session().GetStore())
 		err := tk.QueryToErr("backup database * to 's3://nonexist/real?endpoint=http://127.0.0.1&access-key=notleaked&secret-access-key=notleaked'")
 		require.Error(t, err)
 		close(ch)
@@ -106,7 +106,7 @@ func TestCancel(t *testing.T) {
 	req := require.New(t)
 	ch := make(chan struct{})
 	go func() {
-	    tk := testkit.NewTestKit(t, tk.Session().GetStore())
+		tk := testkit.NewTestKit(t, tk.Session().GetStore())
 		err := tk.QueryToErr("backup database * to 'noop://'")
 		req.Error(err)
 		close(ch)
