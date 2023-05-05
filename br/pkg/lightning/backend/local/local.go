@@ -1042,6 +1042,7 @@ func (local *local) prepareAndGenerateUnfinishedJob(
 		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 			needSplit = true
 		})
+		now := time.Now()
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
@@ -1051,6 +1052,7 @@ func (local *local) prepareAndGenerateUnfinishedJob(
 			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
 				log.ShortError(err), zap.Int("retry", i))
 		}
+		log.FromContext(ctx).Info("finish to split and scatter ranges", zap.Duration("takeTime", time.Since(now)))
 		if err != nil {
 			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
 			return nil, err

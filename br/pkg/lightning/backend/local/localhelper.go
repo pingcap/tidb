@@ -470,6 +470,10 @@ func (local *local) waitForScatterRegions(ctx context.Context, regions []*split.
 		select {
 		case <-time.After(time.Second):
 		case <-subCtx.Done():
+			if len(regions) > 0 {
+				log.FromContext(ctx).Warn("wait for scatter region timeout, print the first region",
+					logutil.Region(regions[0].Region))
+			}
 			return
 		}
 	}
