@@ -535,8 +535,7 @@ func removeCheckpointDataForSnapshotRestore(ctx context.Context, storageName str
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = checkpoint.RemoveCheckpointDataForRestore(ctx, s, taskName)
-	return errors.Trace(err)
+	return errors.Trace(checkpoint.RemoveCheckpointDataForRestore(ctx, s, taskName))
 }
 
 func removeCheckpointDataForLogRestore(ctx context.Context, storageName string, taskName string, clusterID uint64, config *Config) error {

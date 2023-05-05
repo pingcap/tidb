@@ -74,7 +74,12 @@ func StartCheckpointRunnerForBackup(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, defaultTickDurationForLock)
+	runner.startCheckpointMainLoop(
+		ctx,
+		defaultTickDurationForFlush,
+		defaultTckDurationForChecksum,
+		defaultTickDurationForLock,
+	)
 	return runner, nil
 }
 
