@@ -587,9 +587,10 @@ func TestRegionConsistency(t *testing.T) {
 			[]*split.RegionInfo{
 				{
 					Region: &metapb.Region{
-						Id:       6,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+						Id:          6,
+						StartKey:    codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
+						RegionEpoch: nil,
 					},
 				},
 				{

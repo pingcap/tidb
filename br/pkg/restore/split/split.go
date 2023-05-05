@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -19,7 +20,7 @@ import (
 )
 
 var (
-	WaitRegionOnlineAttemptTimes = 1800
+	WaitRegionOnlineAttemptTimes = config.DefaultRegionCheckBackoffLimit
 )
 
 // Constants for split retry machinery.
@@ -53,23 +54,26 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 
 	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"first region %d's startKey(%s) > startKey(%s)",
+			"first region %d's startKey(%s) > startKey(%s), region epoch: %s",
 			regions[0].Region.Id,
-			redact.Key(regions[0].Region.StartKey), redact.Key(startKey))
+			redact.Key(regions[0].Region.StartKey), redact.Key(startKey),
+			regions[0].Region.RegionEpoch.String())
 	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"last region %d's endKey(%s) < endKey(%s)",
+			"last region %d's endKey(%s) < endKey(%s), region epoch: %s",
 			regions[len(regions)-1].Region.Id,
-			redact.Key(regions[len(regions)-1].Region.EndKey), redact.Key(endKey))
+			redact.Key(regions[len(regions)-1].Region.EndKey), redact.Key(endKey),
+			regions[len(regions)-1].Region.RegionEpoch.String())
 	}
 
 	cur := regions[0]
 	for _, r := range regions[1:] {
 		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
 			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-				"region %d's endKey not equal to next region %d's startKey, endKey: %s, startKey: %s",
+				"region %d's endKey not equal to next region %d's startKey, endKey: %s, startKey: %s, region epoch: %s %s",
 				cur.Region.Id, r.Region.Id,
-				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
+				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey),
+				cur.Region.RegionEpoch.String(), r.Region.RegionEpoch.String())
 		}
 		cur = r
 	}

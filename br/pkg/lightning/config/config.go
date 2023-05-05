@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/restore/split"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util"
@@ -76,6 +75,7 @@ const (
 	defaultChecksumTableConcurrency   = 2
 	defaultTableConcurrency           = 6
 	defaultIndexConcurrency           = 2
+	DefaultRegionCheckBackoffLimit    = 1800
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName     = "lightning_metadata"
@@ -864,7 +864,7 @@ func NewConfig() *Config {
 			RegionSplitSize:         0,
 			RegionSplitBatchSize:    4096,
 			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
-			RegionCheckBackoffLimit: split.WaitRegionOnlineAttemptTimes,
+			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
 			DiskQuota:               ByteSize(math.MaxInt64),
 			DuplicateResolution:     DupeResAlgNone,
 		},
