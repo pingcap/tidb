@@ -173,6 +173,6 @@ func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
 }
 
 // LockForWrite implements Writer.LockForWrite interface.
-func (m *MockWriter) LockForWrite() func() {
+func (*MockWriter) LockForWrite() func() {
 	return func() {}
 }
