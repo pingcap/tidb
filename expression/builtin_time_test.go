@@ -1321,7 +1321,7 @@ func TestCurrentDate(t *testing.T) {
 
 func TestCurrentTime(t *testing.T) {
 	ctx := createContext(t)
-	tfStr := "15:04:05"
+	tfStr := time.TimeOnly
 
 	last := time.Now()
 	fc := funcs[ast.CurrentTime]

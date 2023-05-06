@@ -51,7 +51,7 @@ func getAnalyzePanicErr(r interface{}) error {
 		if msg == globalPanicAnalyzeMemoryExceed {
 			return errAnalyzeOOM
 		}
-		if strings.Contains(msg, memory.PanicMemoryExceed) {
+		if strings.Contains(msg, memory.PanicMemoryExceedWarnMsg) {
 			return errors.Errorf(msg, errAnalyzeOOM)
 		}
 	}

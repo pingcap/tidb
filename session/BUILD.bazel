@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "advisory_locks.go",
         "bootstrap.go",
+        "mock_bootstrap.go",
         "nontransactional.go",
         "session.go",
         "testutil.go",  #keep
@@ -67,6 +68,7 @@ go_library(
         "//table/temptable",
         "//tablecodec",
         "//telemetry",
+        "//testkit/testenv",
         "//ttl/ttlworker",
         "//types",
         "//types/parser_driver",

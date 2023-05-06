@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -70,6 +71,25 @@ func TestCheckpointMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, checkpointMetaForRestore.SchedulersConfig, checkpointMetaForRestore2.SchedulersConfig)
 	require.Equal(t, checkpointMetaForRestore.GcRatio, checkpointMetaForRestore2.GcRatio)
+
+	exists, err := checkpoint.ExistsCheckpointTaskInfo(ctx, s, 123)
+	require.NoError(t, err)
+	require.False(t, exists)
+	err = checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, s, &checkpoint.CheckpointTaskInfoForLogRestore{
+		Progress:     checkpoint.InLogRestoreAndIdMapPersist,
+		StartTS:      1,
+		RestoreTS:    2,
+		RewriteTS:    3,
+		TiFlashItems: map[int64]model.TiFlashReplicaInfo{1: {Count: 1}},
+	}, 123)
+	require.NoError(t, err)
+	taskInfo, err := checkpoint.LoadCheckpointTaskInfoForLogRestore(ctx, s, 123)
+	require.NoError(t, err)
+	require.Equal(t, taskInfo.Progress, checkpoint.InLogRestoreAndIdMapPersist)
+	require.Equal(t, taskInfo.StartTS, uint64(1))
+	require.Equal(t, taskInfo.RestoreTS, uint64(2))
+	require.Equal(t, taskInfo.RewriteTS, uint64(3))
+	require.Equal(t, taskInfo.TiFlashItems[1].Count, uint64(1))
 }
 
 type mockTimer struct {

@@ -87,6 +87,7 @@ const (
 	TableRestoreCmd = "Table Restore"
 	PointRestoreCmd = "Point Restore"
 	RawRestoreCmd   = "Raw Restore"
+	TxnRestoreCmd   = "Txn Restore"
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
@@ -887,7 +888,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			break
 		}
 		if resetErr != nil {
-			log.Error("failed to reset speed limit", zap.Error(resetErr))
+			log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
 		}
 	}()
 

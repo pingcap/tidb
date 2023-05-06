@@ -434,7 +434,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 
 		tables[i] = &metautil.Table{
-			DB: nil,
+			DB: &model.DBInfo{Name: model.NewCIStr("test")},
 			Info: &model.TableInfo{
 				ID:             int64(i),
 				Name:           model.NewCIStr("test" + strconv.Itoa(i)),
@@ -637,6 +637,7 @@ func MockEmptySchemasReplace() *stream.SchemasReplace {
 	dbMap := make(map[stream.UpstreamID]*stream.DBReplace)
 	return stream.NewSchemasReplace(
 		dbMap,
+		nil,
 		9527,
 		filter.All(),
 		nil,

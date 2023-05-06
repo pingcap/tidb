@@ -26,7 +26,6 @@ import (
 
 type BackupKeyType = string
 type BackupValueType = RangeType
-type BackupRunner = CheckpointRunner[BackupKeyType, BackupValueType]
 
 const (
 	CheckpointMetaPath             = "checkpoint.meta"
@@ -50,7 +49,7 @@ func StartCheckpointBackupRunnerForTest(
 	cipher *backuppb.CipherInfo,
 	tick time.Duration,
 	timer GlobalTimer,
-) (*BackupRunner, error) {
+) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
 	runner := newCheckpointRunner[BackupKeyType, BackupValueType](ctx, storage, cipher, timer, flushPositionForBackup())
 
 	err := runner.initialLock(ctx)
@@ -66,7 +65,7 @@ func StartCheckpointRunnerForBackup(
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	timer GlobalTimer,
-) (*BackupRunner, error) {
+) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
 	runner := newCheckpointRunner[BackupKeyType, BackupValueType](ctx, storage, cipher, timer, flushPositionForBackup())
 
 	err := runner.initialLock(ctx)
@@ -79,7 +78,7 @@ func StartCheckpointRunnerForBackup(
 
 func AppendForBackup(
 	ctx context.Context,
-	r *BackupRunner,
+	r *CheckpointRunner[BackupKeyType, BackupValueType],
 	groupKey BackupKeyType,
 	startKey []byte,
 	endKey []byte,

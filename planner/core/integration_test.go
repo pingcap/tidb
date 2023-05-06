@@ -1444,7 +1444,7 @@ func TestSysdatePushDown(t *testing.T) {
 	tk.MustExec("use test")
 	now := time.Now()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())))
-	rows[1][2] = fmt.Sprintf("gt(test.t.d, %v)", now.Format("2006-01-02 15:04:05"))
+	rows[1][2] = fmt.Sprintf("gt(test.t.d, %v)", now.Format(time.DateTime))
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
@@ -4623,8 +4623,16 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 	tk.MustExec("create table t2(a int)")
 	tk.MustExec("set @@tidb_allow_mpp=1")
 
+	// Default should be 1
+	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
+	// Set ON
 	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = ON")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
+	// Set OFF
+	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = OFF")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
 
 	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)

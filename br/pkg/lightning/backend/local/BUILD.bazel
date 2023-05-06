@@ -34,6 +34,7 @@ go_library(
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/mydump",
         "//br/pkg/lightning/tikv",
+        "//br/pkg/lightning/verification",
         "//br/pkg/logutil",
         "//br/pkg/membuf",
         "//br/pkg/pdutil",

@@ -1312,6 +1312,13 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
 
+	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
+	EnableNonPreparedPlanCacheForDML bool
+
+	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
+	// related stats are analyzed after the plan cache is generated.
+	PlanCacheInvalidationOnFreshStats bool
+
 	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	NonPreparedPlanCacheSize uint64
 
@@ -1408,6 +1415,9 @@ type SessionVars struct {
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
 
+	// EnableRowLevelChecksum indicates whether row level checksum is enabled.
+	EnableRowLevelChecksum bool
+
 	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
 	// Only for disaggregated-tiflash mode.
 	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
@@ -1423,6 +1433,9 @@ type SessionVars struct {
 	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
+
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1605,6 +1618,12 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 // session variable, it isn't guaranteed to be used during query due to other conditions checking.
 func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
+}
+
+// IsRowLevelChecksumEnabled indicates whether row level checksum is enabled for current session, that is
+// tidb_enable_row_level_checksum is on and tidb_row_format_version is 2 and it's not a internal session.
+func (s *SessionVars) IsRowLevelChecksumEnabled() bool {
+	return s.EnableRowLevelChecksum && s.RowEncoder.Enable && !s.InRestrictedSQL
 }
 
 // BuildParserConfig generate parser.ParserConfig for initial parser
@@ -1856,7 +1875,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
 		MaxAllowedPacket:              DefMaxAllowedPacket,
 		TiFlashFastScan:               DefTiFlashFastScan,
-		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
+		EnableTiFlashReadForWriteStmt: true,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
@@ -1866,10 +1885,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
-	}
-	// Always disable late materialization for disaggregated TiFlash until it is supported.
-	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		vars.EnableLateMaterialization = false
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1925,6 +1940,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	if !EnableLocalTxn.Load() {
 		vars.TxnScope = kv.NewGlobalTxnScopeVar()
+	}
+	if EnableRowLevelChecksum.Load() {
+		vars.EnableRowLevelChecksum = true
 	}
 	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
 	return vars
@@ -2945,7 +2963,6 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	StatsInfos        map[string]uint64
 	CopTasks          *stmtctx.CopTasksDetails
 	ExecDetail        execdetails.ExecDetails
 	MemMax            int64
@@ -2969,8 +2986,7 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
-	// table -> name -> status
-	StatsLoadStatus   map[string]map[string]string
+	UsedStats         map[int64]*stmtctx.UsedStatsInfoForTable
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
 }
@@ -3058,26 +3074,23 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.Digest) > 0 {
 		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if len(logItems.StatsInfos) > 0 {
+	if len(logItems.UsedStats) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
-		vStr := ""
-		for k, v := range logItems.StatsInfos {
-			if v == 0 {
-				vStr = "pseudo"
-			} else {
-				vStr = strconv.FormatUint(v, 10)
+		keys := maps.Keys(logItems.UsedStats)
+		slices.Sort(keys)
+		for _, id := range keys {
+			usedStatsForTbl := logItems.UsedStats[id]
+			if usedStatsForTbl == nil {
+				continue
 			}
 			if firstComma {
-				buf.WriteString("," + k + ":" + vStr)
-			} else {
-				buf.WriteString(k + ":" + vStr)
-				firstComma = true
+				buf.WriteString(",")
 			}
-			if v != 0 && len(logItems.StatsLoadStatus[k]) > 0 {
-				writeStatsLoadStatusItems(&buf, logItems.StatsLoadStatus[k])
-			}
+			usedStatsForTbl.WriteToSlowLog(&buf)
+			firstComma = true
 		}
+
 		buf.WriteString("\n")
 	}
 	if logItems.CopTasks != nil {
@@ -3185,22 +3198,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	return buf.String()
-}
-
-func writeStatsLoadStatusItems(buf *bytes.Buffer, loadStatus map[string]string) {
-	if len(loadStatus) > 0 {
-		buf.WriteString("[")
-		firstComma := false
-		for name, status := range loadStatus {
-			if firstComma {
-				buf.WriteString("," + name + ":" + status)
-			} else {
-				buf.WriteString(name + ":" + status)
-				firstComma = true
-			}
-		}
-		buf.WriteString("]")
-	}
 }
 
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"

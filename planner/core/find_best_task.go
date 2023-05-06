@@ -1299,6 +1299,10 @@ func (ds *DataSource) buildIndexMergeTableScan(_ *property.PhysicalProperty, tab
 		}
 	}
 	ts.stats = ds.tableStats.ScaleByExpectCnt(totalRowCount)
+	usedStats := ds.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+	if usedStats != nil && usedStats[ts.physicalTableID] != nil {
+		ts.usedStatsInfo = usedStats[ts.physicalTableID]
+	}
 	if ds.statisticTable.Pseudo {
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
@@ -1481,7 +1485,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
-			Columns:         ds.Columns,
+			Columns:         util.CloneColInfos(ds.Columns),
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			DBName:          ds.DBName,
@@ -1495,6 +1499,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
 		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
 		ts.stats = &property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion}
+		usedStats := ds.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+		if usedStats != nil && usedStats[ts.physicalTableID] != nil {
+			ts.usedStatsInfo = usedStats[ts.physicalTableID]
+		}
 		cop.tablePlan = ts
 	}
 	task = cop
@@ -1512,10 +1520,26 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	}
 	if candidate.isMatchProp {
 		cop.keepOrder = true
-		// IndexScan on partition table can't keep order.
 		if ds.tableInfo.GetPartitionInfo() != nil {
-			return invalidTask, nil
+			// Add sort items for index scan for merge-sort operation between partitions.
+			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
+			for _, si := range prop.SortItems {
+				byItems = append(byItems, &util.ByItems{
+					Expr: si.Col,
+					Desc: si.Desc,
+				})
+			}
+			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
+			if !is.Index.Global && cop.tablePlan != nil {
+				is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
+				is.schema.Append(&expression.Column{
+					RetType:  types.NewFieldType(mysql.TypeLonglong),
+					UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+					ID:       model.ExtraPhysTblID,
+				})
+			}
 		}
+
 		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
 			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 			cop.extraHandleCol = col
@@ -1595,9 +1619,10 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		}
 	}
 
-	if isDoubleRead {
+	if isDoubleRead || is.Index.Global {
 		// If it's double read case, the first index must return handle. So we should add extra handle column
 		// if there isn't a handle column.
+		// If it's global index, handle and PidColID columns has to be added, so that needed pids can be filtered.
 		if !setHandle {
 			if !is.Table.IsCommonHandle {
 				indexCols = append(indexCols, &expression.Column{
@@ -1742,7 +1767,7 @@ func getColumnRangeCounts(sctx sessionctx.Context, colID int64, ranges []*ranger
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.Indices[idxID]
-			if idxHist == nil || idxHist.IsInvalid(false) {
+			if idxHist == nil || idxHist.IsInvalid(sctx, false) {
 				return nil, false
 			}
 			count, err = histColl.GetRowCountByIndexRanges(sctx, idxID, []*ranger.Range{ran})
@@ -2097,9 +2122,20 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
-		// TableScan on partition table can't keep order.
 		if ds.tableInfo.GetPartitionInfo() != nil {
-			return invalidTask, nil
+			// TableScan on partition table on TiFlash can't keep order.
+			if ts.StoreType == kv.TiFlash {
+				return invalidTask, nil
+			}
+			// Add sort items for table scan for merge-sort operation between partitions.
+			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
+			for _, si := range prop.SortItems {
+				byItems = append(byItems, &util.ByItems{
+					Expr: si.Col,
+					Desc: si.Desc,
+				})
+			}
+			ts.ByItems = byItems
 		}
 	}
 	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
@@ -2392,6 +2428,10 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	usedStats := ds.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+	if usedStats != nil && usedStats[ts.physicalTableID] != nil {
+		ts.usedStatsInfo = usedStats[ts.physicalTableID]
+	}
 	if isMatchProp {
 		ts.Desc = prop.SortItems[0].Desc
 		ts.KeepOrder = true
@@ -2405,7 +2445,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
-		Columns:          ds.Columns,
+		Columns:          util.CloneColInfos(ds.Columns),
 		Index:            idx,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,
@@ -2443,6 +2483,10 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		}
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	usedStats := ds.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+	if usedStats != nil && usedStats[is.physicalTableID] != nil {
+		is.usedStatsInfo = usedStats[is.physicalTableID]
+	}
 	if isMatchProp {
 		is.Desc = prop.SortItems[0].Desc
 		is.KeepOrder = true
