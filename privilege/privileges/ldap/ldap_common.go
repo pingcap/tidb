@@ -143,6 +143,8 @@ func (impl *ldapAuthImpl) getConnection() (*ldap.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// FIXME: if the connection in the pool is killed or timeout, re-initialize the connection.
 	return conn.(*ldap.Conn), nil
 }
 

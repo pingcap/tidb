@@ -203,7 +203,7 @@ func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]b
 		clientPlugin = mysql.AuthMySQLClearPassword
 	}
 	failpoint.Inject("FakeAuthSwitch", func() {
-		failpoint.Return([]byte(plugin), nil)
+		failpoint.Return([]byte(clientPlugin), nil)
 	})
 	enclen := 1 + len(clientPlugin) + 1 + len(cc.salt) + 1
 	data := cc.alloc.AllocWithLen(4, enclen)
