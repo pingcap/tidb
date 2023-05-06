@@ -44,36 +44,36 @@ var (
 	// the workload.
 	workloadBaseRUCostMap = map[ast.CalibrateResourceType]*baseResourceCost{
 		ast.TPCC: {
-			tidbCPU:       0.6,
-			kvCPU:         500,
-			readBytes:     units.MiB * 4,
-			writeBytes:    units.MiB * 1.25,
-			readReqCount:  350,
-			writeReqCount: 1465,
+			tidbToKVCPURatio: 0.6,
+			kvCPU:            0.5,
+			readBytes:        units.MiB * 4,
+			writeBytes:       units.MiB * 1.25,
+			readReqCount:     350,
+			writeReqCount:    1465,
 		},
 		ast.OLTPREADWRITE: {
-			tidbCPU:       1.1,
-			kvCPU:         400,
-			readBytes:     units.MiB * 8.5,
-			writeBytes:    units.MiB / 3,
-			readReqCount:  1365,
-			writeReqCount: 1430,
+			tidbToKVCPURatio: 1.1,
+			kvCPU:            0.4,
+			readBytes:        units.MiB * 8.5,
+			writeBytes:       units.MiB / 3,
+			readReqCount:     1365,
+			writeReqCount:    1430,
 		},
 		ast.OLTPREADONLY: {
-			tidbCPU:       1.3,
-			kvCPU:         500,
-			readBytes:     units.MiB * 20.5,
-			writeBytes:    0,
-			readReqCount:  3350,
-			writeReqCount: 0,
+			tidbToKVCPURatio: 1.3,
+			kvCPU:            0.5,
+			readBytes:        units.MiB * 20.5,
+			writeBytes:       0,
+			readReqCount:     3350,
+			writeReqCount:    0,
 		},
 		ast.OLTPWRITEONLY: {
-			tidbCPU:       1,
-			kvCPU:         0,
-			readBytes:     0,
-			writeBytes:    units.MiB,
-			readReqCount:  0,
-			writeReqCount: 3550,
+			tidbToKVCPURatio: 1,
+			kvCPU:            0,
+			readBytes:        0,
+			writeBytes:       units.MiB,
+			readReqCount:     0,
+			writeReqCount:    3550,
 		},
 	}
 
@@ -93,10 +93,10 @@ func GetResourceGroupController() *rmclient.ResourceGroupsController {
 
 // the resource cost rate of a specified workload per 1 tikv cpu.
 type baseResourceCost struct {
-	// the average tikv cpu time, this is used to calculate whether tikv cpu
+	// represents the average ratio of TiDB CPU time to TiKV CPU time, this is used to calculate whether tikv cpu
 	// or tidb cpu is the performance bottle neck.
-	tidbCPU float64
-	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage.
+	tidbToKVCPURatio float64
+	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage. The unit is seconds.
 	kvCPU float64
 	// the read bytes rate per 1 tikv cpu.
 	readBytes uint64
@@ -303,12 +303,12 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 		return errors.Errorf("unknown workload '%T'", e.workloadType)
 	}
 
-	if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
-		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbCPU
+	if totalTiDBCPU/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
+		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbToKVCPURatio
 	}
 	ruCfg := resourceGroupCtl.GetConfig()
 	ruPerKVCPU := float64(ruCfg.ReadBaseCost)*float64(baseCost.readReqCount) +
-		float64(ruCfg.CPUMsCost)*baseCost.kvCPU +
+		float64(ruCfg.CPUMsCost)*baseCost.kvCPU*1000 +
 		float64(ruCfg.ReadBytesCost)*float64(baseCost.readBytes) +
 		float64(ruCfg.WriteBaseCost)*float64(baseCost.writeReqCount) +
 		float64(ruCfg.WriteBytesCost)*float64(baseCost.writeBytes)
