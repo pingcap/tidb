@@ -39,7 +39,6 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "enforce_mpp_suite")
 	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
 	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
-	testDataMap.LoadTestSuiteData("testdata", "plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
 	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
