@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -75,6 +76,19 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 			return nil, err
 		}
 
+		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
+		if err != nil {
+			return nil, err
+		}
+		ver, err := getValidCurrentVersion(d.store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		startKey, endKey, err = getTableRange(d.jobContext(job.ID), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		subTaskMetas = make([][]byte, 0, 100)
 		regionBatch := len(recordRegionMetas) / 20
 		sort.Slice(recordRegionMetas, func(i, j int) bool {
@@ -87,6 +101,12 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 			}
 			batch := recordRegionMetas[i:end]
 			subTaskMeta := &BackfillSubTaskMeta{StartKey: batch[0].StartKey(), EndKey: batch[len(batch)-1].EndKey()}
+			if i == 0 {
+				subTaskMeta.StartKey = startKey
+			}
+			if end == len(recordRegionMetas) {
+				subTaskMeta.EndKey = endKey
+			}
 			metaBytes, err := json.Marshal(subTaskMeta)
 			if err != nil {
 				return nil, err
