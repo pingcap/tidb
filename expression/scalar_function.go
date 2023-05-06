@@ -440,7 +440,7 @@ func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types
 
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
-	if sc.CanonicalHashCode.Load() {
+	if sc.CanonicalHashCode {
 		if len(sf.canonicalhashcode) > 0 {
 			return sf.canonicalhashcode
 		}
@@ -457,8 +457,10 @@ func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 // ExpressionsSemanticEqual is used to judge whether two expression tree is semantic equivalent.
 func ExpressionsSemanticEqual(ctx sessionctx.Context, expr1, expr2 Expression) bool {
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.CanonicalHashCode.Store(true)
-	defer sc.CanonicalHashCode.Store(false)
+	sc.CanonicalHashCode = true
+	defer func() {
+		sc.CanonicalHashCode = false
+	}()
 	return bytes.Equal(expr1.HashCode(sc), expr2.HashCode(sc))
 }
 

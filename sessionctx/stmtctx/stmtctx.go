@@ -404,7 +404,7 @@ type StatementContext struct {
 	// Check if TiFlash read engine is removed due to strict sql mode.
 	TiFlashEngineRemovedDueToStrictSQLMode bool
 	// CanonicalHashCode try to get the canonical hash code from expression.
-	CanonicalHashCode atomic2.Bool
+	CanonicalHashCode bool
 }
 
 // StmtHints are SessionVars related sql hints.
