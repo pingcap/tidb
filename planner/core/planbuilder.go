@@ -1357,6 +1357,23 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		}
 	}
 
+	if tbl.Meta().Name.L == "t" {
+		publicPaths = append(publicPaths, &util.AccessPath{Index: &model.IndexInfo{
+			ID:    0,
+			Name:  model.NewCIStr("hypo_idx"),
+			Table: model.NewCIStr("t"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("b"),
+					Offset: 0,
+					Length: types.UnspecifiedLength,
+				},
+			},
+			State: model.StatePublic,
+			Tp:    model.IndexTypeBtree,
+		}})
+	}
+
 	hasScanHint, hasUseOrForce := false, false
 	available := make([]*util.AccessPath, 0, len(publicPaths))
 	ignored := make([]*util.AccessPath, 0, len(publicPaths))
