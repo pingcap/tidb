@@ -485,8 +485,8 @@ func (r *CheckpointRunner[K, V]) doChecksumFlush(ctx context.Context, checksumIt
 		return errors.Annotatef(err, "failed to write file %s for checkpoint checksum", fname)
 	}
 
-	failpoint.Inject("failed-after-checkpoint-flushes-checksum-x-times", func(_ failpoint.Value) {
-		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint flushes checksum x times"))
+	failpoint.Inject("failed-after-checkpoint-flushes-checksum", func(_ failpoint.Value) {
+		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint flushes checksum"))
 	})
 	return nil
 }
@@ -549,8 +549,8 @@ func (r *CheckpointRunner[K, V]) doFlush(ctx context.Context, meta map[K]*RangeG
 		}
 	}
 
-	failpoint.Inject("failed-after-checkpoint-flushes-x-times", func(_ failpoint.Value) {
-		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint flushes x times"))
+	failpoint.Inject("failed-after-checkpoint-flushes", func(_ failpoint.Value) {
+		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint flushes"))
 	})
 	return nil
 }
@@ -642,8 +642,8 @@ func (r *CheckpointRunner[K, V]) updateLock(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	failpoint.Inject("failed-after-checkpoint-updates-lock-x-times", func(_ failpoint.Value) {
-		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint updates lock x times"))
+	failpoint.Inject("failed-after-checkpoint-updates-lock", func(_ failpoint.Value) {
+		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint updates lock"))
 	})
 
 	return nil
