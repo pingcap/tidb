@@ -512,6 +512,8 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContex
 	case ast.UnaryNot:
 		child, ok := sf.GetArgs()[0].(*ScalarFunction)
 		if !ok {
+			// encode original function name.
+			sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
 			// use the origin arg hash code.
 			for _, argCode := range argsHashCode {
 				sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
