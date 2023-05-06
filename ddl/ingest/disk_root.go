@@ -76,18 +76,39 @@ func (d *diskRootImpl) ShouldImport() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	if d.bcUsed > variable.DDLDiskQuota.Load() {
+<<<<<<< HEAD
+=======
+		logutil.BgLogger().Info("[ddl-ingest] disk usage is over quota",
+			zap.Uint64("quota", variable.DDLDiskQuota.Load()),
+			zap.String("usage", d.usageInfo()))
+>>>>>>> a2465381c48 (ddl: flush data in local engine serially (#43524))
 		return true
 	}
 	if d.used == 0 && d.capacity == 0 {
 		return false
 	}
+<<<<<<< HEAD
 	return float64(d.used) >= float64(d.capacity)*capacityThreshold
+=======
+	if float64(d.used) >= float64(d.capacity)*capacityThreshold {
+		logutil.BgLogger().Warn("[ddl-ingest] available disk space is less than 10%, "+
+			"this may degrade the performance, "+
+			"please make sure the disk available space is larger than @@tidb_ddl_disk_quota before adding index",
+			zap.String("usage", d.usageInfo()))
+		return true
+	}
+	return false
+>>>>>>> a2465381c48 (ddl: flush data in local engine serially (#43524))
 }
 
 // UsageInfo implements DiskRoot interface.
 func (d *diskRootImpl) UsageInfo() string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+	return d.usageInfo()
+}
+
+func (d *diskRootImpl) usageInfo() string {
 	return fmt.Sprintf("disk usage: %d/%d, backend usage: %d", d.used, d.capacity, d.bcUsed)
 }
 
