@@ -39,9 +39,10 @@ type ScalarFunction struct {
 	FuncName model.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType  *types.FieldType
-	Function builtinFunc
-	hashcode []byte
+	RetType           *types.FieldType
+	Function          builtinFunc
+	hashcode          []byte
+	canonicalhashcode []byte
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
@@ -440,8 +441,11 @@ func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 	if sc.CanonicalHashCode.Load() {
+		if len(sf.canonicalhashcode) > 0 {
+			return sf.canonicalhashcode
+		}
 		simpleCanonicalizedHashCode(sf, sc)
-		return sf.hashcode
+		return sf.canonicalhashcode
 	}
 	if len(sf.hashcode) > 0 {
 		return sf.hashcode
@@ -460,8 +464,8 @@ func ExpressionsSemanticEqual(ctx sessionctx.Context, expr1, expr2 Expression) b
 
 // canonicalizedHashCode is used to judge whether two expression is semantically equal.
 func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
-	sf.hashcode = sf.hashcode[:0]
-	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
+	sf.canonicalhashcode = sf.canonicalhashcode[:0]
+	sf.canonicalhashcode = append(sf.canonicalhashcode, scalarFunctionFlag)
 
 	argsHashCode := make([][]byte, 0, len(sf.GetArgs()))
 	for _, arg := range sf.GetArgs() {
@@ -470,37 +474,37 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContex
 	switch sf.FuncName.L {
 	case ast.Plus, ast.Mul, ast.EQ, ast.In, ast.LogicOr, ast.LogicAnd:
 		// encode original function name.
-		sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
+		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
 		// reorder parameters hashcode, eg: a+b and b+a should has the same hashcode here.
 		sort.Slice(argsHashCode, func(i, j int) bool {
 			return bytes.Compare(argsHashCode[i], argsHashCode[j]) <= 0
 		})
 		for _, argCode := range argsHashCode {
-			sf.hashcode = append(sf.hashcode, argCode...)
+			sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
 		}
 
 	case ast.GE, ast.LE: // directed binary OP: a >= b and b <= a should have the same hashcode.
 		// encode GE function name.
-		sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(ast.GE))
+		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GE))
 		// encode GE function name and switch the args order.
 		if sf.FuncName.L == ast.GE {
 			for _, argCode := range argsHashCode {
-				sf.hashcode = append(sf.hashcode, argCode...)
+				sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
 			}
 		} else {
 			for i := len(argsHashCode) - 1; i >= 0; i-- {
-				sf.hashcode = append(sf.hashcode, argsHashCode[i]...)
+				sf.canonicalhashcode = append(sf.canonicalhashcode, argsHashCode[i]...)
 			}
 		}
 	case ast.GT, ast.LT:
-		sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(ast.GT))
+		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GT))
 		if sf.FuncName.L == ast.GT {
 			for _, argCode := range argsHashCode {
-				sf.hashcode = append(sf.hashcode, argCode...)
+				sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
 			}
 		} else {
 			for i := len(argsHashCode) - 1; i >= 0; i-- {
-				sf.hashcode = append(sf.hashcode, argsHashCode[i]...)
+				sf.canonicalhashcode = append(sf.canonicalhashcode, argsHashCode[i]...)
 			}
 		}
 	case ast.UnaryNot:
@@ -508,7 +512,7 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContex
 		if !ok {
 			// use the origin arg hash code.
 			for _, argCode := range argsHashCode {
-				sf.hashcode = append(sf.hashcode, argCode...)
+				sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
 			}
 		} else {
 			childArgsHashCode := make([][]byte, 0, len(child.GetArgs()))
@@ -517,38 +521,38 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContex
 			}
 			switch child.FuncName.L {
 			case ast.GT: // not GT  ==> LE  ==> use GE and switch args
-				sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(ast.GE))
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GE))
 				for i := len(childArgsHashCode) - 1; i >= 0; i-- {
-					sf.hashcode = append(sf.hashcode, childArgsHashCode[i]...)
+					sf.canonicalhashcode = append(sf.canonicalhashcode, childArgsHashCode[i]...)
 				}
 			case ast.LT: // not LT  ==> GE
-				sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(ast.GE))
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GE))
 				for _, argCode := range childArgsHashCode {
-					sf.hashcode = append(sf.hashcode, argCode...)
+					sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
 				}
 			case ast.GE: // not GE  ==> LT  ==> use GT and switch args
-				sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(ast.GT))
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GT))
 				for i := len(childArgsHashCode) - 1; i >= 0; i-- {
-					sf.hashcode = append(sf.hashcode, childArgsHashCode[i]...)
+					sf.canonicalhashcode = append(sf.canonicalhashcode, childArgsHashCode[i]...)
 				}
 			case ast.LE: // not LE  ==> GT
-				sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(ast.GT))
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GT))
 				for _, argCode := range childArgsHashCode {
-					sf.hashcode = append(sf.hashcode, argCode...)
+					sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
 				}
 			}
 		}
 	default:
 		// encode original function name.
-		sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
+		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
 		for _, argCode := range argsHashCode {
-			sf.hashcode = append(sf.hashcode, argCode...)
+			sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
 		}
 		// Cast is a special case. The RetType should also be considered as an argument.
 		// Please see `newFunctionImpl()` for detail.
 		if sf.FuncName.L == ast.Cast {
 			evalTp := sf.RetType.EvalType()
-			sf.hashcode = append(sf.hashcode, byte(evalTp))
+			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
 		}
 	}
 }
