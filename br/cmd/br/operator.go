@@ -41,7 +41,7 @@ func newPauseGcCommand() *cobra.Command {
 				return err
 			}
 			ctx := GetDefaultContext()
-			return operator.PauseGC(ctx, &cfg)
+			return operator.PauseGCAndScheduler(ctx, &cfg)
 		},
 	}
 	operator.DefineFlagsForPauseGcConfig(cmd.Flags())
