@@ -464,7 +464,9 @@ func ExpressionsSemanticEqual(ctx sessionctx.Context, expr1, expr2 Expression) b
 
 // canonicalizedHashCode is used to judge whether two expression is semantically equal.
 func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
-	sf.canonicalhashcode = sf.canonicalhashcode[:0]
+	if sf.canonicalhashcode != nil {
+		sf.canonicalhashcode = sf.canonicalhashcode[:0]
+	}
 	sf.canonicalhashcode = append(sf.canonicalhashcode, scalarFunctionFlag)
 
 	argsHashCode := make([][]byte, 0, len(sf.GetArgs()))
