@@ -236,7 +236,7 @@ func (r *CheckpointRunner[K, V]) Append(
 		return errors.Annotatef(ctx.Err(), "failed to append checkpoint message")
 	case err, ok := <-r.errCh:
 		if !ok {
-			return errors.Errorf("[checkpoint] Checksum: there is another goroutine has get the checkpoint error")
+			return errors.Errorf("[checkpoint] Append: there is another goroutine has get the checkpoint error")
 		}
 		return err
 	case r.appendCh <- message:
@@ -314,10 +314,6 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 	wg.Add(1)
 	flushWorker := func(ctx context.Context, errCh chan error) {
 		defer wg.Done()
-		// a failpoint value to record how many times the checkpoint flushes data
-		var flushCnt int = 0
-		var checksumCnt int = 0
-		var lockCnt int = 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -330,18 +326,8 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 					log.Info("stop checkpoint flush worker")
 					return
 				}
-				err := r.doFlush(ctx, meta)
-				failpoint.Inject("failed-after-checkpoint-flushes-x-times", func(v failpoint.Value) {
-					if len(meta) > 0 {
-						flushCnt += 1
-						errCnt := v.(int)
-						if errCnt <= flushCnt {
-							err = errors.Errorf("failpoint: failed after checkpoint flushes %d times", errCnt)
-						}
-					}
-				})
-				if err != nil {
-					errCh <- err
+				if err := r.doFlush(ctx, meta); err != nil {
+					errCh <- errors.Annotate(err, "failed to flush checkpoint data.")
 					return
 				}
 			case checksums, ok := <-r.checksumMetaCh:
@@ -349,18 +335,8 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 					log.Info("stop checkpoint flush worker")
 					return
 				}
-				err := r.doChecksumFlush(ctx, checksums)
-				failpoint.Inject("failed-after-checkpoint-flushes-checksum-x-times", func(v failpoint.Value) {
-					if len(checksums.Items) > 0 {
-						checksumCnt += 1
-						errCnt := v.(int)
-						if errCnt <= checksumCnt {
-							err = errors.Errorf("failpoint: failed after checkpoint flushes checksum %d times", errCnt)
-						}
-					}
-				})
-				if err != nil {
-					errCh <- err
+				if err := r.doChecksumFlush(ctx, checksums); err != nil {
+					errCh <- errors.Annotate(err, "failed to flush checkpoint checksum.")
 					return
 				}
 			case _, ok := <-r.lockCh:
@@ -368,16 +344,8 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 					log.Info("stop checkpoint flush worker")
 					return
 				}
-				err := r.updateLock(ctx)
-				failpoint.Inject("failed-after-checkpoint-updates-lock-x-times", func(v failpoint.Value) {
-					lockCnt += 1
-					errCnt := v.(int)
-					if errCnt >= lockCnt {
-						err = errors.Errorf("failpoint: failed after checkpoint updates lock %d times", errCnt)
-					}
-				})
-				if err != nil {
-					errCh <- errors.Annotate(err, "Failed to update checkpoint lock.")
+				if err := r.updateLock(ctx); err != nil {
+					errCh <- errors.Annotate(err, "failed to update checkpoint lock.")
 					return
 				}
 			}
@@ -513,8 +481,14 @@ func (r *CheckpointRunner[K, V]) doChecksumFlush(ctx context.Context, checksumIt
 	}
 
 	fname := fmt.Sprintf("%s/t%d_and__.cpt", r.CheckpointChecksumDir, checksumItems.Items[0].TableID)
-	err = r.storage.WriteFile(ctx, fname, data)
-	return errors.Trace(err)
+	if err = r.storage.WriteFile(ctx, fname, data); err != nil {
+		return errors.Annotatef(err, "failed to write file %s for checkpoint checksum", fname)
+	}
+
+	failpoint.Inject("failed-after-checkpoint-flushes-checksum-x-times", func(_ failpoint.Value) {
+		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint flushes checksum x times"))
+	})
+	return nil
 }
 
 // flush the meta to the external storage
@@ -574,6 +548,10 @@ func (r *CheckpointRunner[K, V]) doFlush(ctx context.Context, meta map[K]*RangeG
 			return errors.Trace(err)
 		}
 	}
+
+	failpoint.Inject("failed-after-checkpoint-flushes-x-times", func(_ failpoint.Value) {
+		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint flushes x times"))
+	})
 	return nil
 }
 
@@ -660,7 +638,15 @@ func (r *CheckpointRunner[K, V]) updateLock(ctx context.Context) error {
 	if err = r.checkLockFile(ctx, p); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(r.flushLock(ctx, p))
+	if err = r.flushLock(ctx, p); err != nil {
+		return errors.Trace(err)
+	}
+
+	failpoint.Inject("failed-after-checkpoint-updates-lock-x-times", func(_ failpoint.Value) {
+		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint updates lock x times"))
+	})
+
+	return nil
 }
 
 // Attempt to initialize the lock. Need to stop the backup when there is an unexpired locks.
@@ -840,13 +826,28 @@ func removeCheckpointData(ctx context.Context, s storage.ExternalStorage, subDir
 		zap.Int("remove-count", removeCnt),
 		zap.Int64("remove-size", removeSize),
 	)
+
+	maxFailedFilesNum := 16
+	failedFilesCount := struct {
+		lock  sync.Mutex
+		count int
+	}{
+		count: 0,
+	}
 	pool := utils.NewWorkerPool(4, "checkpoint remove worker")
 	eg, gCtx := errgroup.WithContext(ctx)
 	for _, filename := range removedFileNames {
 		name := filename
 		pool.ApplyOnErrorGroup(eg, func() error {
 			if err := s.DeleteFile(gCtx, name); err != nil {
-				return errors.Annotatef(err, "failed to remove the file: %s", name)
+				log.Warn("failed to remove the file", zap.String("filename", name), zap.Error(err))
+				failedFilesCount.lock.Lock()
+				failedFilesCount.count += 1
+				if failedFilesCount.count >= maxFailedFilesNum {
+					failedFilesCount.lock.Unlock()
+					return errors.Annotate(err, "failed to delete too many files")
+				}
+				failedFilesCount.lock.Unlock()
 			}
 			return nil
 		})

@@ -21,8 +21,10 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/model"
+	"go.uber.org/zap"
 )
 
 type LogRestoreKeyType = string
@@ -175,6 +177,7 @@ func removeCheckpointTaskInfoForLogRestore(ctx context.Context, s storage.Extern
 	}
 
 	if !exists {
+		log.Warn("the task info file doesn't exist", zap.String("file", fileName))
 		return nil
 	}
 
@@ -189,7 +192,7 @@ func RemoveCheckpointDataForLogRestore(
 ) error {
 	if err := removeCheckpointTaskInfoForLogRestore(ctx, s, clusterID); err != nil {
 		return errors.Annotatef(err,
-			"failed to remove the task info file: cluster-id is %d, taskName is %s",
+			"failed to remove the task info file: clusterId is %d, taskName is %s",
 			clusterID,
 			taskName,
 		)
