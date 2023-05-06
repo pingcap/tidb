@@ -138,7 +138,6 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// Convert the TLS config to the PD security option.
 func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
 	securityOption := pd.SecurityOption{}
 	securityOption.CAPath = tls.CA
