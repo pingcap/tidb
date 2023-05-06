@@ -29,9 +29,10 @@ type RestoreKeyType = int64
 type RestoreValueType = RangeType
 
 const (
-	CheckpointDataDirForRestoreFormat     = CheckpointDir + "/restore-%s/data"
-	CheckpointChecksumDirForRestoreFormat = CheckpointDir + "/restore-%s/checksum"
-	CheckpointMetaPathForRestoreFormat    = CheckpointDir + "/restore-%s/checkpoint.meta"
+	CheckpointRestoreDirFormat            = CheckpointDir + "/restore-%s"
+	CheckpointDataDirForRestoreFormat     = CheckpointRestoreDirFormat + "/data"
+	CheckpointChecksumDirForRestoreFormat = CheckpointRestoreDirFormat + "/checksum"
+	CheckpointMetaPathForRestoreFormat    = CheckpointRestoreDirFormat + "/checkpoint.meta"
 )
 
 func getCheckpointMetaPathByName(taskName string) string {
@@ -64,7 +65,7 @@ func StartCheckpointRestoreRunnerForTest(
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
-	runner.startCheckpointMainLoop(ctx, tick, 0)
+	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
 }
 
@@ -78,7 +79,7 @@ func StartCheckpointRunnerForRestore(
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, 0)
+	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
 	return runner, nil
 }
 
@@ -154,4 +155,9 @@ func ExistsRestoreCheckpoint(
 	taskName string,
 ) (bool, error) {
 	return s.FileExists(ctx, getCheckpointMetaPathByName(taskName))
+}
+
+func RemoveCheckpointDataForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) error {
+	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
+	return removeCheckpointData(ctx, s, prefix)
 }

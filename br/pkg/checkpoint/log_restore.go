@@ -19,9 +19,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/model"
+	"go.uber.org/zap"
 )
 
 type LogRestoreKeyType = string
@@ -49,7 +52,7 @@ func StartCheckpointLogRestoreRunnerForTest(
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
-	runner.startCheckpointMainLoop(ctx, tick, 0)
+	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
 }
 
@@ -62,7 +65,7 @@ func StartCheckpointRunnerForLogRestore(ctx context.Context,
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, 0)
+	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
 	return runner, nil
 }
 
@@ -164,4 +167,36 @@ func ExistsCheckpointTaskInfo(
 	clusterID uint64,
 ) (bool, error) {
 	return s.FileExists(ctx, getCheckpointTaskInfoPathByID(clusterID))
+}
+
+func removeCheckpointTaskInfoForLogRestore(ctx context.Context, s storage.ExternalStorage, clusterID uint64) error {
+	fileName := getCheckpointTaskInfoPathByID(clusterID)
+	exists, err := s.FileExists(ctx, fileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !exists {
+		log.Warn("the task info file doesn't exist", zap.String("file", fileName))
+		return nil
+	}
+
+	return s.DeleteFile(ctx, fileName)
+}
+
+func RemoveCheckpointDataForLogRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+	clusterID uint64,
+) error {
+	if err := removeCheckpointTaskInfoForLogRestore(ctx, s, clusterID); err != nil {
+		return errors.Annotatef(err,
+			"failed to remove the task info file: clusterId is %d, taskName is %s",
+			clusterID,
+			taskName,
+		)
+	}
+	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
+	return removeCheckpointData(ctx, s, prefix)
 }

@@ -637,6 +637,7 @@ func MockEmptySchemasReplace() *stream.SchemasReplace {
 	dbMap := make(map[stream.UpstreamID]*stream.DBReplace)
 	return stream.NewSchemasReplace(
 		dbMap,
+		true,
 		nil,
 		9527,
 		filter.All(),

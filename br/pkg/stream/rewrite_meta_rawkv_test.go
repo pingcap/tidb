@@ -30,6 +30,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange) *SchemasReplace {
 	}
 	return NewSchemasReplace(
 		dbMap,
+		true,
 		nil,
 		9527,
 		filter.All(),
@@ -78,7 +79,7 @@ func TestTidySchemaMaps(t *testing.T) {
 	drs[oldDBID] = dr
 
 	// create schemas replace and test TidySchemaMaps().
-	sr := NewSchemasReplace(drs, nil, 0, filter.All(), nil, nil, nil, nil)
+	sr := NewSchemasReplace(drs, true, nil, 0, filter.All(), nil, nil, nil, nil)
 	globalTableIdMap := sr.globalTableIdMap
 	require.Equal(t, len(globalTableIdMap), 3)
 	require.Equal(t, globalTableIdMap[oldTblID], newTblID)
@@ -461,6 +462,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 
 	sr := NewSchemasReplace(
 		dbMap,
+		true,
 		nil,
 		0,
 		filter.All(),
