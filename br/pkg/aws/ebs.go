@@ -5,7 +5,6 @@ package aws
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -49,66 +48,105 @@ func NewEC2Session(concurrency uint) (*EC2Session, error) {
 }
 
 // CreateSnapshots is the mainly steps to control the data volume snapshots.
-// It will do the following works.
-// 1. determine the order of volume snapshot.
-// 2. send snapshot requests to aws.
 func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[string]string, VolumeAZs, error) {
 	snapIDMap := make(map[string]string)
-	volumeIDs := []*string{}
+	var volumeIDs []*string
 
 	var mutex sync.Mutex
 	eg, _ := errgroup.WithContext(context.Background())
-	fillResult := func(snap *ec2.Snapshot, volume *config.EBSVolume) {
+	fillResult := func(createOutput *ec2.CreateSnapshotsOutput) {
 		mutex.Lock()
 		defer mutex.Unlock()
-		snapIDMap[volume.ID] = *snap.SnapshotId
+		for j := range createOutput.Snapshots {
+			snapshot := createOutput.Snapshots[j]
+			snapIDMap[*snapshot.VolumeId] = *snapshot.VolumeId
+		}
 	}
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshot")
+	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshots")
 	for i := range backupInfo.TiKVComponent.Stores {
 		store := backupInfo.TiKVComponent.Stores[i]
 		volumes := store.Volumes
-		if len(volumes) > 1 {
-			// if one store has multiple volume, we should respect the order
-			// raft log/engine first, then kv db. then wal
-			sort.SliceStable(volumes, func(i, j int) bool {
-				if strings.Contains(volumes[i].Type, "raft") {
-					return true
-				}
-				if strings.Contains(volumes[j].Type, "raft") {
-					return false
-				}
-				if strings.Contains(volumes[i].Type, "storage") {
-					return true
-				}
-				if strings.Contains(volumes[j].Type, "storage") {
-					return true
-				}
-				return true
-			})
-		}
+		if len(volumes) >= 1 {
+			log.Debug("fetch EC2 instance id using first volume")
+			var targetVolumeIDs []*string
+			for j := range volumes {
+				volume := volumes[j]
+				targetVolumeIDs = append(targetVolumeIDs, &volume.ID)
+				volumeIDs = append(volumeIDs, &volume.ID)
+			}
 
-		for j := range volumes {
-			volume := volumes[j]
-			volumeIDs = append(volumeIDs, &volume.ID)
+			// determine the ec2 instance id
+			resp, err := e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{VolumeIds: targetVolumeIDs[0:1]})
+			if err != nil {
+				return snapIDMap, nil, errors.Trace(err)
+			}
+			if resp.Volumes[0].Attachments[0] == nil || resp.Volumes[0].Attachments[0].InstanceId == nil {
+				return snapIDMap, nil, errors.Errorf("specified volume %s is not attached", volumes[0].ID)
+			}
+			ec2InstanceId := resp.Volumes[0].Attachments[0].InstanceId
+
+			// determine the root volume id
+			var rootVolumeID *string
+			resp1, err := e.ec2.DescribeInstances(&ec2.DescribeInstancesInput{InstanceIds: []*string{ec2InstanceId}})
+			if err != nil {
+				return snapIDMap, nil, errors.Trace(err)
+			}
+			for j := range resp1.Reservations[0].Instances[0].BlockDeviceMappings {
+				device := resp1.Reservations[0].Instances[0].BlockDeviceMappings[j]
+				if device.DeviceName == resp1.Reservations[0].Instances[0].RootDeviceName {
+					rootVolumeID = device.Ebs.VolumeId
+					break
+				}
+			}
+
+			// calculate the volume id list to exclude
+			var excludedVolumeIDs []*string
+			resp, err = e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{})
+			if err != nil {
+				return snapIDMap, nil, errors.Trace(err)
+			}
+
+			for i := range resp.Volumes {
+				volume := resp.Volumes[i]
+				if *volume.VolumeId == *rootVolumeID {
+					continue
+				}
+
+				toInclude := false
+				for j := range targetVolumeIDs {
+					tagertVolumeID := targetVolumeIDs[j]
+					if *tagertVolumeID == *volume.VolumeId {
+						toInclude = true
+						break
+					}
+				}
+				if !toInclude {
+					excludedVolumeIDs = append(excludedVolumeIDs, volume.VolumeId)
+				}
+			}
+
+			// create snapshots for volumes on this ec2 instance
 			workerPool.ApplyOnErrorGroup(eg, func() error {
-				log.Debug("starts snapshot", zap.Any("volume", volume))
-				resp, err := e.ec2.CreateSnapshot(&ec2.CreateSnapshotInput{
-					VolumeId: &volume.ID,
-					TagSpecifications: []*ec2.TagSpecification{
-						{
-							ResourceType: aws.String(ec2.ResourceTypeSnapshot),
-							Tags: []*ec2.Tag{
-								ec2Tag("TiDBCluster-BR", "old"),
-							},
-						},
-					},
-				})
+				log.Debug("starts snapshot", zap.Any("ec2", ec2InstanceId))
+
+				// Prepare for aws requests
+				instanceSpecification := ec2.InstanceSpecification{}
+				createSnapshotInput := ec2.CreateSnapshotsInput{}
+
+				instanceSpecification.SetInstanceId(*ec2InstanceId)
+				instanceSpecification.SetExcludeBootVolume(true)
+				instanceSpecification.SetExcludeDataVolumeIds(excludedVolumeIDs)
+
+				createSnapshotInput.SetCopyTagsFromSource("volume")
+				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
+
+				resp, err := e.ec2.CreateSnapshots(&createSnapshotInput)
 				if err != nil {
 					return errors.Trace(err)
 				}
 				log.Info("snapshot creating", zap.Stringer("snap", resp))
-				fillResult(resp, volume)
+				fillResult(resp)
 				return nil
 			})
 		}
