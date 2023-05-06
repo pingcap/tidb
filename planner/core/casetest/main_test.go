@@ -103,16 +103,8 @@ func GetPartitionPrunerData() testdata.TestData {
 	return testDataMap["partition_pruner"]
 }
 
-func GetPlanSuiteData() testdata.TestData {
-	return testDataMap["plan_suite"]
-}
-
 func GetIntegrationSuiteData() testdata.TestData {
 	return testDataMap["integration_suite"]
-}
-
-func GetAnalyzeSuiteData() testdata.TestData {
-	return testDataMap["analyze_suite"]
 }
 
 func GetWindowPushDownSuiteData() testdata.TestData {
