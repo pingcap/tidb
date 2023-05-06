@@ -57,9 +57,8 @@ type engineInfo struct {
 	writerCount  int
 	writerCache  generic.SyncMap[int, backend.EngineWriter]
 	memRoot      MemRoot
-	diskRoot     DiskRoot
-	rowSeq       atomic.Int64
 	flushLock    *sync.RWMutex
+	flushing     atomic.Bool
 }
 
 // newEngineInfo create a new engineInfo struct.
@@ -75,7 +74,6 @@ func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 		writerCount:  wCnt,
 		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](wCnt),
 		memRoot:      memRoot,
-		diskRoot:     diskRoot,
 		flushLock:    &sync.RWMutex{},
 	}
 }

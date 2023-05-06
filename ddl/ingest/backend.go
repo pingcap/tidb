@@ -133,17 +133,16 @@ func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported boo
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	shouldFlush, _ := bc.ShouldSync(force)
-	if !shouldFlush {
-		return false, false, nil
-	}
-	ei.flushLock.Lock()
-	defer ei.flushLock.Unlock()
-	// Check for the second time to avoid duplicate import.
 	shouldFlush, shouldImport := bc.ShouldSync(force)
 	if !shouldFlush {
 		return false, false, nil
 	}
+	if !ei.flushing.CompareAndSwap(false, true) {
+		return false, false, nil
+	}
+	defer ei.flushing.Store(false)
+	ei.flushLock.Lock()
+	defer ei.flushLock.Unlock()
 
 	err = ei.Flush()
 	if err != nil {
