@@ -2966,7 +2966,7 @@ func (rc *Client) restoreMetaKvEntries(
 
 	rc.rawKVClient.SetColumnFamily(columnFamily)
 
-	for i, entry := range entries {
+	for _, entry := range entries {
 		log.Debug("before rewrte entry", zap.Uint64("key-ts", entry.ts), zap.Int("key-len", len(entry.e.Key)),
 			zap.Int("value-len", len(entry.e.Value)), zap.ByteString("key", entry.e.Key))
 
@@ -2981,22 +2981,16 @@ func (rc *Client) restoreMetaKvEntries(
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.e.Value)), zap.ByteString("new-key", newEntry.Key))
 
-		failpoint.Inject("failed-when-restore-N-metakv", func(v failpoint.Value) {
-			j := v.(int)
-			if i+1 == j {
-				failpoint.Return(0, 0, errors.Errorf("failpoint: failed when restore %d metakv", j))
-			}
+		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
+			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
 		})
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 		// for failpoint, we need to flush the cache in rawKVClient every time
-		failpoint.Inject("failed-when-restore-N-metakv", func(v failpoint.Value) {
-			j := v.(int)
-			if j > 0 {
-				if err := rc.rawKVClient.PutRest(ctx); err != nil {
-					failpoint.Return(0, 0, errors.Trace(err))
-				}
+		failpoint.Inject("do-not-put-metakv-in-batch", func(_ failpoint.Value) {
+			if err := rc.rawKVClient.PutRest(ctx); err != nil {
+				failpoint.Return(0, 0, errors.Trace(err))
 			}
 		})
 		kvCount++
