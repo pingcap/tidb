@@ -33,6 +33,8 @@
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
 
+// Copyright 2015-2023 PingCAP Xingchen (Beijing) Technology Co., Ltd.
+
 package server
 
 import (
@@ -191,7 +193,7 @@ func (cc *clientConn) String() string {
 // plugin. MySQL 8.0 libmysqlclient based clients by default always try `caching_sha2_password`, even
 // when the server advertises the its default to be `mysql_native_password`. In addition to this switching
 // may be needed on a per user basis as the authentication method is set per user.
-// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::AuthSwitchRequest
+// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets_protocol_auth_switch_request.html
 // https://bugs.mysql.com/bug.php?id=93044
 func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]byte, error) {
 	clientPlugin := plugin
