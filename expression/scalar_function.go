@@ -440,7 +440,7 @@ func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types
 
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
-	if sc.CanonicalHashCode {
+	if sc != nil && sc.CanonicalHashCode {
 		if len(sf.canonicalhashcode) > 0 {
 			return sf.canonicalhashcode
 		}
