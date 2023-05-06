@@ -1743,7 +1743,10 @@ func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *Crea
 	}
 }
 
-// called by failpoint
+// called by failpoint, only used for test
+// it would print the checksum result into the log, and
+// the auto-test script records them to compare another
+// cluster's checksum.
 func (rc *Client) FailpointDoChecksumForLogRestore(
 	ctx context.Context,
 	kvClient kv.Client,
@@ -1768,7 +1771,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 		gcSafePointKeeperCancel()
 		// set the ttl to 0 to remove the gc-safe-point
 		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(cctx, pdClient, sp); err != nil {
+		if err := utils.UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
 			log.Warn("failed to update service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
@@ -1803,7 +1806,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 		if newTableInfo.Partition != nil {
 			for _, def := range newTableInfo.Partition.Definitions {
 				upid, ok := reidRules[def.ID]
-				if ok {
+				if !ok {
 					log.Panic("no rewrite rule for parition table id", zap.Int64("id", def.ID))
 				}
 				definitions = append(definitions, model.PartitionDefinition{

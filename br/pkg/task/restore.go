@@ -543,8 +543,7 @@ func removeCheckpointDataForLogRestore(ctx context.Context, storageName string, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = checkpoint.RemoveCheckpointDataForLogRestore(ctx, s, taskName, clusterID)
-	return errors.Trace(err)
+	return errors.Trace(checkpoint.RemoveCheckpointDataForLogRestore(ctx, s, taskName, clusterID))
 }
 
 // RunRestore starts a restore task inside the current goroutine.
