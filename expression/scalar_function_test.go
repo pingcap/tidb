@@ -27,6 +27,72 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExpressionSemanticEqual(t *testing.T) {
+	ctx := mock.NewContext()
+	a := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+	b := &Column{
+		UniqueID: 2,
+		RetType:  types.NewFieldType(mysql.TypeLong),
+	}
+	// order sensitive cases
+	// a < b; b > a
+	sf1 := newFunction(ast.LT, a, b)
+	sf2 := newFunction(ast.GT, b, a)
+	require.True(t, ExpressionsSemanticEqual(ctx, sf1, sf2))
+
+	// a > b; b < a
+	sf3 := newFunction(ast.GT, a, b)
+	sf4 := newFunction(ast.LT, b, a)
+	require.True(t, ExpressionsSemanticEqual(ctx, sf3, sf4))
+
+	// a<=b; b>=a
+	sf5 := newFunction(ast.LE, a, b)
+	sf6 := newFunction(ast.GE, b, a)
+	require.True(t, ExpressionsSemanticEqual(ctx, sf5, sf6))
+
+	// a>=b; b<=a
+	sf7 := newFunction(ast.GE, a, b)
+	sf8 := newFunction(ast.LE, b, a)
+	require.True(t, ExpressionsSemanticEqual(ctx, sf7, sf8))
+
+	// not(a<b); a >= b
+	sf9 := newFunction(ast.UnaryNot, sf1)
+	require.True(t, ExpressionsSemanticEqual(ctx, sf9, sf7))
+
+	// a < b; not(a>=b)
+	sf10 := newFunction(ast.UnaryNot, sf7)
+	require.True(t, ExpressionsSemanticEqual(ctx, sf1, sf10))
+
+	// order insensitive cases
+	// a + b; b + a
+	p1 := newFunction(ast.Plus, a, b)
+	p2 := newFunction(ast.Plus, b, a)
+	require.True(t, ExpressionsSemanticEqual(ctx, p1, p2))
+
+	// a * b; b * a
+	m1 := newFunction(ast.Mul, a, b)
+	m2 := newFunction(ast.Mul, b, a)
+	require.True(t, ExpressionsSemanticEqual(ctx, m1, m2))
+
+	// a = b; b = a
+	e1 := newFunction(ast.EQ, a, b)
+	e2 := newFunction(ast.EQ, b, a)
+	require.True(t, ExpressionsSemanticEqual(ctx, e1, e2))
+
+	// a = b AND b + a; a + b AND b = a
+	a1 := newFunction(ast.LogicAnd, e1, p2)
+	a2 := newFunction(ast.LogicAnd, p1, e2)
+	require.True(t, ExpressionsSemanticEqual(ctx, a1, a2))
+
+	// a * b OR a + b;  b + a OR b * a
+	o1 := newFunction(ast.LogicOr, m1, p1)
+	o2 := newFunction(ast.LogicOr, p2, m2)
+	require.True(t, ExpressionsSemanticEqual(ctx, o1, o2))
+}
+
 func TestScalarFunction(t *testing.T) {
 	ctx := mock.NewContext()
 	a := &Column{
