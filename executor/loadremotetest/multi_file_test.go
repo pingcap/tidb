@@ -89,7 +89,7 @@ func (s *mockGCSSuite) TestFilenameAsterisk() {
 	// only '*' is supported in pattern matching
 	s.tk.MustExec("TRUNCATE TABLE multi_load.t;")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/not.me.[1-9].tsv?endpoint=%s'
-		INTO TABLE multi_load.t;`, gcsEndpoint)
+		INTO TABLE multi_load.t with thread=1;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.Equal(uint64(0), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
@@ -160,7 +160,7 @@ func (s *mockGCSSuite) TestMultiBatchWithIgnoreLines() {
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/multi-batch.*.tsv?endpoint=%s'
-		INTO TABLE multi_load.t2 IGNORE 2 LINES WITH batch_size = 3;`, gcsEndpoint)
+		INTO TABLE multi_load.t2 IGNORE 2 LINES WITH batch_size = 3, thread=1;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t2;").Check(testkit.Rows(
 		"3", "4", "5", "6", "7", "8", "9", "10",

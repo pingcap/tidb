@@ -123,6 +123,7 @@ go_library(
         "//util/ranger",
         "//util/resourcegrouptag",
         "//util/rowDecoder",
+        "//util/rowcodec",
         "//util/set",
         "//util/slice",
         "//util/sqlexec",
@@ -220,6 +221,7 @@ go_test(
     deps = [
         "//autoid_service",
         "//config",
+        "//ddl/ingest",
         "//ddl/internal/callback",
         "//ddl/placement",
         "//ddl/schematracker",

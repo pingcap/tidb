@@ -39,8 +39,8 @@ import (
 
 // Time format without fractional seconds precision.
 const (
-	DateFormat = "2006-01-02"
-	TimeFormat = "2006-01-02 15:04:05"
+	DateFormat = gotime.DateOnly
+	TimeFormat = gotime.DateTime
 	// TimeFSPFormat is time format with fractional seconds precision.
 	TimeFSPFormat = "2006-01-02 15:04:05.000000"
 	// UTCTimeFormat is used to parse and format gotime.
@@ -771,7 +771,7 @@ func ParseDateFormat(format string) []string {
 
 	start := 0
 	// Initialize `seps` with capacity of 6. The input `format` is typically
-	// a date time of the form "2006-01-02 15:04:05", which has 6 numeric parts
+	// a date time of the form time.DateTime, which has 6 numeric parts
 	// (the fractional second part is usually removed by `splitDateTime`).
 	// Setting `seps`'s capacity to 6 avoids reallocation in this common case.
 	seps := make([]string, 0, 6)
