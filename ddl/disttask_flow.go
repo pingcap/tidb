@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -90,7 +91,12 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 		}
 
 		subTaskMetas = make([][]byte, 0, 100)
-		regionBatch := len(recordRegionMetas) / 20
+		tidbs, err := infoschema.GetTiDBServerInfo(nil)
+		if err != nil {
+			return nil, err
+		}
+		regionBatch := len(recordRegionMetas) / len(tidbs)
+		regionBatch += 1
 		sort.Slice(recordRegionMetas, func(i, j int) bool {
 			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 		})
