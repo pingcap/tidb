@@ -67,7 +67,6 @@ func (s *MockLDAPServer) Listen(port int) {
 	}()
 
 	s.listener = l
-	return
 }
 
 // Close closes the listener
