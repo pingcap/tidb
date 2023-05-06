@@ -63,7 +63,7 @@ type engineInfo struct {
 
 // newEngineInfo create a new engineInfo struct.
 func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.EngineConfig,
-	en *backend.OpenedEngine, uuid uuid.UUID, wCnt int, memRoot MemRoot, diskRoot DiskRoot) *engineInfo {
+	en *backend.OpenedEngine, uuid uuid.UUID, wCnt int, memRoot MemRoot) *engineInfo {
 	return &engineInfo{
 		ctx:          ctx,
 		jobID:        jobID,
