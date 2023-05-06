@@ -25,7 +25,7 @@
               "github.com/pingcap/tidb/planner/core.getStatsTable": {
                 "CountIsZero": false,
                 "HandleIsNil": false,
-                "InputPhysicalID": 88,
+                "InputPhysicalID": 100,
                 "Outdated": false,
                 "StatsTblInfo": {
                   "Columns": [
@@ -34,7 +34,7 @@
                       "Correlation": 0,
                       "HistogramSize": 0,
                       "ID": 1,
-                      "LastUpdateVersion": 0,
+                      "LastUpdateVersion": 440930000000000000,
                       "LoadingStatus": "unInitialized",
                       "NDV": 0,
                       "Name": "col1",
@@ -51,7 +51,7 @@
                       "Correlation": 0,
                       "HistogramSize": 0,
                       "ID": 1,
-                      "LastUpdateVersion": 0,
+                      "LastUpdateVersion": 440930000000000000,
                       "LoadingStatus": "unInitialized",
                       "NDV": 0,
                       "Name": "i",
@@ -62,8 +62,8 @@
                     }
                   ],
                   "ModifyCount": 0,
-                  "PhysicalID": 88,
-                  "Version": 0
+                  "PhysicalID": 100,
+                  "Version": 440930000000000000
                 },
                 "TableName": "t",
                 "TblInfoID": 88,
@@ -93,7 +93,7 @@
                             "github.com/pingcap/tidb/planner/core.getStatsTable": {
                               "CountIsZero": false,
                               "HandleIsNil": false,
-                              "InputPhysicalID": 88,
+                              "InputPhysicalID": 100,
                               "Outdated": false,
                               "StatsTblInfo": {
                                 "Columns": [
@@ -102,7 +102,7 @@
                                     "Correlation": 0,
                                     "HistogramSize": 0,
                                     "ID": 1,
-                                    "LastUpdateVersion": 0,
+                                    "LastUpdateVersion": 440930000000000000,
                                     "LoadingStatus": "unInitialized",
                                     "NDV": 0,
                                     "Name": "col1",
@@ -119,7 +119,7 @@
                                     "Correlation": 0,
                                     "HistogramSize": 0,
                                     "ID": 1,
-                                    "LastUpdateVersion": 0,
+                                    "LastUpdateVersion": 440930000000000000,
                                     "LoadingStatus": "unInitialized",
                                     "NDV": 0,
                                     "Name": "i",
@@ -130,8 +130,8 @@
                                   }
                                 ],
                                 "ModifyCount": 0,
-                                "PhysicalID": 88,
-                                "Version": 0
+                                "PhysicalID": 100,
+                                "Version": 440930000000000000
                               },
                               "TableName": "t",
                               "TblInfoID": 88,
@@ -333,7 +333,7 @@
                         "github.com/pingcap/tidb/planner/core.getStatsTable": {
                           "CountIsZero": false,
                           "HandleIsNil": false,
-                          "InputPhysicalID": 88,
+                          "InputPhysicalID": 100,
                           "Outdated": false,
                           "StatsTblInfo": {
                             "Columns": [
@@ -342,7 +342,7 @@
                                 "Correlation": 0,
                                 "HistogramSize": 0,
                                 "ID": 1,
-                                "LastUpdateVersion": 0,
+                                "LastUpdateVersion": 440930000000000000,
                                 "LoadingStatus": "unInitialized",
                                 "NDV": 0,
                                 "Name": "col1",
@@ -359,7 +359,7 @@
                                 "Correlation": 0,
                                 "HistogramSize": 0,
                                 "ID": 1,
-                                "LastUpdateVersion": 0,
+                                "LastUpdateVersion": 440930000000000000,
                                 "LoadingStatus": "unInitialized",
                                 "NDV": 0,
                                 "Name": "i",
@@ -370,8 +370,8 @@
                               }
                             ],
                             "ModifyCount": 0,
-                            "PhysicalID": 88,
-                            "Version": 0
+                            "PhysicalID": 100,
+                            "Version": 440930000000000000
                           },
                           "TableName": "t",
                           "TblInfoID": 88,

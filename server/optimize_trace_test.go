@@ -99,8 +99,10 @@ func prepareData4OptimizeTrace(t *testing.T, client *testServerClient, statHandl
 
 func TestOptimizerDebugTrace(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/SetBindingTimeToZero", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DebugTraceStableStatsTbl", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/SetBindingTimeToZero"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DebugTraceStableStatsTbl"))
 	}()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

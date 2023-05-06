@@ -337,6 +337,9 @@ type topNRangeInfo struct {
 }
 
 func debugTraceTopNRange(s sessionctx.Context, t *TopN, startIdx, endIdx int) {
+	if endIdx <= startIdx {
+		return
+	}
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := new(topNRangeInfo)
 	traceInfo.FirstIdx = startIdx
