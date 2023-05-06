@@ -45,26 +45,26 @@ var (
 	workloadBaseRUCostMap = map[ast.CalibrateResourceType]*baseResourceCost{
 		ast.TPCC: {
 			tidbCPU:       0.6,
-			kvCPU:         0.15,
-			readBytes:     units.MiB / 2,
-			writeBytes:    units.MiB,
-			readReqCount:  300,
-			writeReqCount: 1750,
+			kvCPU:         500,
+			readBytes:     units.MiB * 4,
+			writeBytes:    units.MiB * 1.25,
+			readReqCount:  350,
+			writeReqCount: 1465,
 		},
 		ast.OLTPREADWRITE: {
-			tidbCPU:       1.25,
-			kvCPU:         0.35,
-			readBytes:     units.MiB * 4.25,
+			tidbCPU:       1.1,
+			kvCPU:         400,
+			readBytes:     units.MiB * 8.5,
 			writeBytes:    units.MiB / 3,
-			readReqCount:  1600,
-			writeReqCount: 1400,
+			readReqCount:  1365,
+			writeReqCount: 1430,
 		},
 		ast.OLTPREADONLY: {
-			tidbCPU:       2,
-			kvCPU:         0.52,
-			readBytes:     units.MiB * 28,
+			tidbCPU:       1.3,
+			kvCPU:         500,
+			readBytes:     units.MiB * 20.5,
 			writeBytes:    0,
-			readReqCount:  4500,
+			readReqCount:  3350,
 			writeReqCount: 0,
 		},
 		ast.OLTPWRITEONLY: {
@@ -243,7 +243,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		}
 		tikvQuota, tidbQuota := tikvCPUs.getValue()/totalKVCPUQuota, tidbCPUs.getValue()/totalTiDBCPU
 		// If one of the two cpu usage is greater than the `valuableUsageThreshold`, we can accept it.
-		// And if both are greater than the `lowUsageThreshold`, we can also accpet it.
+		// And if both are greater than the `lowUsageThreshold`, we can also accept it.
 		if tikvQuota > valuableUsageThreshold || tidbQuota > valuableUsageThreshold {
 			quotas = append(quotas, rus.getValue()/mathutil.Max(tikvQuota, tidbQuota))
 		} else if tikvQuota < lowUsageThreshold || tidbQuota < lowUsageThreshold {
@@ -262,7 +262,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		sort.Slice(quotas, func(i, j int) bool {
 			return quotas[i] > quotas[j]
 		})
-		lowerBound := int(math.Round(float64(len(quotas)) * float64(discardRate)))
+		lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
 		upperBound := len(quotas) - lowerBound
 		sum := 0.
 		for i := lowerBound; i < upperBound; i++ {
