@@ -41,6 +41,7 @@ const (
 	TaskStatePaused        = "paused"
 	TaskStateRevertPending = "revert_pending"
 	TaskStateReverted      = "reverted"
+	TaskStateFlushed       = "Flushed"
 )
 
 // TaskStep is the step of task.

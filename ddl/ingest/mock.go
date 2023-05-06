@@ -108,6 +108,12 @@ func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error 
 	return nil
 }
 
+// ImportAndClean implements BackendCtx.ImportAndClean interface.
+func (*MockBackendCtx) ImportAndClean(indexID int64) error {
+	logutil.BgLogger().Info("mock backend ctx import and clean", zap.Int64("indexID", indexID))
+	return nil
+}
+
 // ResetWorkers implements BackendCtx.ResetWorkers interface.
 func (*MockBackendCtx) ResetWorkers(_, _ int64) {
 }
