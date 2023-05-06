@@ -76,17 +76,19 @@ func (d *diskRootImpl) ShouldImport() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	if d.bcUsed > variable.DDLDiskQuota.Load() {
-		logutil.BgLogger().Info("[ddl-ingest] disk usage is over quota, start importing",
+		logutil.BgLogger().Info("[ddl-ingest] disk usage is over quota",
 			zap.Uint64("quota", variable.DDLDiskQuota.Load()),
-			zap.String("usage", d.UsageInfo()))
+			zap.String("usage", d.usageInfo()))
 		return true
 	}
 	if d.used == 0 && d.capacity == 0 {
 		return false
 	}
 	if float64(d.used) >= float64(d.capacity)*capacityThreshold {
-		logutil.BgLogger().Warn("[ddl-ingest] available disk space is less than 10%, start importing, this may degrade the performance",
-			zap.String("usage", d.UsageInfo()))
+		logutil.BgLogger().Warn("[ddl-ingest] available disk space is less than 10%, "+
+			"this may degrade the performance, "+
+			"please make sure the disk available space is larger than @@tidb_ddl_disk_quota before adding index",
+			zap.String("usage", d.usageInfo()))
 		return true
 	}
 	return false
@@ -96,6 +98,10 @@ func (d *diskRootImpl) ShouldImport() bool {
 func (d *diskRootImpl) UsageInfo() string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+	return d.usageInfo()
+}
+
+func (d *diskRootImpl) usageInfo() string {
 	return fmt.Sprintf("disk usage: %d/%d, backend usage: %d", d.used, d.capacity, d.bcUsed)
 }
 
