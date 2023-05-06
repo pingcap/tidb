@@ -302,7 +302,6 @@ go_test(
         "index_advise_test.go",
         "index_lookup_join_test.go",
         "index_lookup_merge_join_test.go",
-        "index_merge_reader_test.go",
         "infoschema_cluster_table_test.go",
         "infoschema_reader_test.go",
         "insert_test.go",
