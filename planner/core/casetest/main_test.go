@@ -39,9 +39,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "enforce_mpp_suite")
 	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
 	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
-	testDataMap.LoadTestSuiteData("testdata", "plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
-	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
 	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
 	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
@@ -103,16 +101,8 @@ func GetPartitionPrunerData() testdata.TestData {
 	return testDataMap["partition_pruner"]
 }
 
-func GetPlanSuiteData() testdata.TestData {
-	return testDataMap["plan_suite"]
-}
-
 func GetIntegrationSuiteData() testdata.TestData {
 	return testDataMap["integration_suite"]
-}
-
-func GetAnalyzeSuiteData() testdata.TestData {
-	return testDataMap["analyze_suite"]
 }
 
 func GetWindowPushDownSuiteData() testdata.TestData {
