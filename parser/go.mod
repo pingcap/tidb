@@ -4,7 +4,7 @@ require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
 	github.com/cznic/strutil v0.0.0-20181122101858-275e90344537
-	github.com/go-sql-driver/mysql v1.7.0
+	github.com/go-sql-driver/mysql v1.7.1
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
 	github.com/stretchr/testify v1.8.2
