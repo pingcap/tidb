@@ -2864,6 +2864,16 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 			// To trigger full-reload instead of diff-reload, we need to increase the schema version
 			// by at least `domain.LoadSchemaDiffVersionGapThreshold`.
 			schemaVersion, e = t.GenSchemaVersions(64 + domain.LoadSchemaDiffVersionGapThreshold)
+			// Or we can add a wrong schema diff with the `schemaVersion`.
+			// So once a node attempts to update schemas by loading the schemaDiffs, it will fail
+			// due to this diff key of the `schemaVersion`, and so as to fall back to full load.
+			//
+			// t.SetSchemaDiff(&model.SchemaDiff{
+			//   Version:  schemaVersion,
+			//   Type:     model.ActionNone,
+			//   SchemaID: -1,
+			//   TableID:  -1,
+			// })
 			return e
 		},
 	); err != nil {
@@ -2883,9 +2893,7 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		return errors.Annotatef(err, "failed to put global schema verson %v to etcd", ver)
 	}
 
-	// proactively reload the domain once
-	err := rc.GetDomain().Reload()
-	return errors.Trace(err)
+	return nil
 }
 
 const (
