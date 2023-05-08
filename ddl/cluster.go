@@ -108,13 +108,7 @@ func getStoreMinResolvedTS(s kv.Storage) time.Time {
 	pdHelper := helper.NewHelper(tikvStore)
 	resolvedTS := pdHelper.GetMinResolvedTS(kv.GlobalTxnScope)
 	if resolvedTS == 0 {
-		// Inject mocked SafeTS for test.
-		failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
-			injectTS := val.(int)
-			resolvedTS = uint64(injectTS)
-		})
 		resolvedTS = s.GetMinSafeTS(kv.GlobalTxnScope)
-		return oracle.GetTimeFromTS(resolvedTS)
 	}
 
 	// Inject mocked SafeTS for test.
@@ -122,6 +116,7 @@ func getStoreMinResolvedTS(s kv.Storage) time.Time {
 		injectTS := val.(int)
 		resolvedTS = uint64(injectTS)
 	})
+
 	return oracle.GetTimeFromTS(resolvedTS)
 }
 
