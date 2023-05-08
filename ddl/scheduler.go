@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -122,8 +125,46 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 	return nil
 }
 
+const retryInterval = 5 * time.Second
+
+func acquireLock(client *clientv3.Client, key string, maxRetries int) error {
+	retryCount := 0
+	leaseResp, err := client.Lease.Grant(context.Background(), 10)
+	if err != nil {
+		return err
+	}
+
+	for retryCount < maxRetries {
+		tx := client.Txn(context.Background()).
+			If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
+			Then(clientv3.OpPut(key, "", clientv3.WithLease(leaseResp.ID)))
+		_, err = tx.Commit()
+		if err == nil {
+			return nil // Lock acquired successfully
+		}
+
+		if errors.ErrorEqual(err, context.Canceled) || errors.ErrorEqual(err, context.DeadlineExceeded) {
+			return err // Context error, don't retry
+		}
+
+		retryCount++
+		time.Sleep(retryInterval)
+	}
+
+	return errors.New("failed to acquire lock after maximum retries")
+}
+
+func releaseLock(client *clientv3.Client, key string) error {
+	_, err := client.Delete(context.Background(), key)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // SplitSubtask implements the Scheduler interface.
-func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
 	d := b.d
@@ -201,6 +242,18 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 		}
 	}
 	ingestScheduler.close(false)
+
+	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", b.job.ID, b.index.ID)
+	err = acquireLock(d.etcdCli, distLockKey, 10)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err = releaseLock(d.etcdCli, distLockKey)
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] release lock error", zap.Error(err))
+		}
+	}()
 
 	_, _, err = b.bc.Flush(b.index.ID, true)
 	if err != nil {
