@@ -96,8 +96,8 @@ import (
 var (
 	mdlCheckLookDuration = 50 * time.Millisecond
 
-	// The threshold for version gap to reload domain by loading schema diffs
-	LoadSchemaDiffVersionGapThreshold = int64(100)
+	// LoadSchemaDiffVersionGapThreshold is the threshold for version gap to reload domain by loading schema diffs
+	LoadSchemaDiffVersionGapThreshold int64 = 100
 )
 
 func init() {
