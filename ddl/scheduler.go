@@ -127,7 +127,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 
 const retryInterval = 5 * time.Second
 
-func acquireLock(client *clientv3.Client, key string, maxRetries int) error {
+func acquireLock(client *clientv3.Client, key string, maxRetries int, id string) error {
 	retryCount := 0
 	leaseResp, err := client.Lease.Grant(context.Background(), 10)
 	if err != nil {
@@ -137,14 +137,18 @@ func acquireLock(client *clientv3.Client, key string, maxRetries int) error {
 	for retryCount < maxRetries {
 		tx := client.Txn(context.Background()).
 			If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
-			Then(clientv3.OpPut(key, "", clientv3.WithLease(leaseResp.ID)))
+			Then(clientv3.OpPut(key, id, clientv3.WithLease(leaseResp.ID)))
 		_, err = tx.Commit()
-		if err == nil {
-			return nil // Lock acquired successfully
-		}
-
 		if errors.ErrorEqual(err, context.Canceled) || errors.ErrorEqual(err, context.DeadlineExceeded) {
 			return err // Context error, don't retry
+		}
+
+		resp, err := client.Get(context.TODO(), key)
+		if err != nil {
+			return err
+		}
+		if resp.Count != 0 && string(resp.Kvs[0].Value) == id {
+			return nil
 		}
 
 		retryCount++
@@ -244,7 +248,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	ingestScheduler.close(false)
 
 	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", b.job.ID, b.index.ID)
-	err = acquireLock(d.etcdCli, distLockKey, 10)
+	err = acquireLock(d.etcdCli, distLockKey, 10, d.uuid)
 	if err != nil {
 		return nil, err
 	}
