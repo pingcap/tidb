@@ -315,11 +315,15 @@ func (j *regionJob) writeToTiKV(
 			region.Id, leaderID)
 	}
 
+	takeTime := time.Since(begin)
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
 		zap.Int64("buf_size", bytesBuf.TotalSize()),
-		zap.Stringer("takeTime", time.Since(begin)))
+		zap.Stringer("takeTime", takeTime))
+	if m, ok := metric.FromContext(ctx); ok {
+		m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
+	}
 
 	stats.count = totalCount
 	stats.totalBytes = totalSize
@@ -342,7 +346,7 @@ func (j *regionJob) ingest(
 	splitCli split.SplitClient,
 	supportMultiIngest bool,
 	shouldCheckWriteStall bool,
-) error {
+) (err error) {
 	if j.stage != wrote {
 		return nil
 	}
@@ -350,6 +354,15 @@ func (j *regionJob) ingest(
 	if len(j.writeResult.sstMeta) == 0 {
 		j.convertStageTo(ingested)
 		return nil
+	}
+
+	if m, ok := metric.FromContext(ctx); ok {
+		begin := time.Now()
+		defer func() {
+			if err == nil {
+				m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessIngest).Observe(time.Since(begin).Seconds())
+			}
+		}()
 	}
 
 	for retry := 0; retry < maxRetryTimes; retry++ {
