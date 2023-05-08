@@ -1106,8 +1106,10 @@ func TestCancelJobWriteConflict(t *testing.T) {
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
 			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL", `return(true)`))
-			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL")) }()
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL"))
+			}()
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}
@@ -1128,6 +1130,73 @@ func TestCancelJobWriteConflict(t *testing.T) {
 	tk1.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
 	require.NoError(t, cancelErr)
 	result := tk2.ResultSetToResultWithCtx(context.Background(), rs[0], "cancel ddl job fails")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+}
+
+func TestPauseJobWriteConflict(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+
+	tk1.MustExec("create table t(id int)")
+
+	var pauseErr error
+	var resumeErr error
+	var cancelErr error
+	var pauseRS []sqlexec.RecordSet
+	var resumeRS []sqlexec.RecordSet
+	var cancelRS []sqlexec.RecordSet
+	hook := &callback.TestDDLCallback{Do: dom}
+	d := dom.DDL()
+	originalHook := d.GetHook()
+	d.SetHook(hook)
+	defer d.SetHook(originalHook)
+
+	// Test when pause cannot be retried and adding index succeeds.
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			stmt := fmt.Sprintf("admin pause ddl jobs %d", job.ID)
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
+			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL"))
+			}()
+			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
+		}
+	}
+	tk1.MustExec("alter table t add index (id)")
+	require.EqualError(t, pauseErr, "mock commit error")
+	tk2.ResultSetToResultWithCtx(context.Background(), pauseRS[0], "cancel ddl job fails")
+
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			jobID = job.ID
+			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID)
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("retry_once")`))
+			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
+			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
+
+			stmt = fmt.Sprintf("admin resume ddl jobs %d", jobID)
+			resumeRS, resumeErr = tk2.Session().Execute(context.Background(), stmt)
+
+			stmt = fmt.Sprintf("admin cancel ddl jobs %d", jobID)
+			cancelRS, cancelErr = tk2.Session().Execute(context.Background(), stmt)
+		}
+	}
+	tk1.MustExec("alter table t add index (id)")
+	require.NoError(t, pauseErr)
+	require.NoError(t, resumeErr)
+	require.NoError(t, cancelErr)
+	var result = tk2.ResultSetToResultWithCtx(context.Background(), pauseRS[0], "pause ddl job successfully")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+	result = tk2.ResultSetToResultWithCtx(context.Background(), resumeRS[0], "resume ddl job successfully")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+	result = tk2.ResultSetToResultWithCtx(context.Background(), cancelRS[0], "cancel ddl job successfully")
 	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
 }
 
