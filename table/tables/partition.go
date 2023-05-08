@@ -182,7 +182,11 @@ type ForRangeColumnsPruning struct {
 	LessThan [][]*expression.Expression
 }
 
+<<<<<<< HEAD
 func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
+=======
+func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser, colOffsets []int) (*ForRangeColumnsPruning, error) {
+>>>>>>> 65eae6281c1 (*: Fix issue in multi column range partition pruning (#43506))
 	var res ForRangeColumnsPruning
 	res.LessThan = make([][]*expression.Expression, 0, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
@@ -197,6 +201,17 @@ func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo,
 			tmp, err := parseSimpleExprWithNames(p, ctx, pi.Definitions[i].LessThan[j], schema, names)
 			if err != nil {
 				return nil, err
+			}
+			_, ok := tmp.(*expression.Constant)
+			if !ok {
+				return nil, dbterror.ErrPartitionConstDomain
+			}
+			// TODO: Enable this for all types!
+			// Currently it will trigger changes for collation differences
+			switch schema.Columns[colOffsets[j]].RetType.GetType() {
+			case mysql.TypeDatetime, mysql.TypeDate:
+				// Will also fold constant
+				tmp = expression.BuildCastFunction(ctx, tmp, schema.Columns[colOffsets[j]].RetType)
 			}
 			lessThanCols = append(lessThanCols, &tmp)
 		}
@@ -497,8 +512,47 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	p := parser.New()
 	schema := expression.NewSchema(columns...)
 	partStrs := rangePartitionExprStrings(pi)
+<<<<<<< HEAD
 	for i := 0; i < len(pi.Definitions); i++ {
 		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
+=======
+	locateExprs, err := getRangeLocateExprs(ctx, p, defs, partStrs, schema, names)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ret := &PartitionExpr{
+		UpperBounds: locateExprs,
+	}
+
+	partExpr, _, offset, err := extractPartitionExprColumns(ctx, pi, columns, names)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ret.ColumnOffset = offset
+
+	if len(pi.Columns) < 1 {
+		tmp, err := dataForRangePruning(ctx, defs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ret.Expr = partExpr
+		ret.ForRangePruning = tmp
+	} else {
+		tmp, err := dataForRangeColumnsPruning(ctx, defs, schema, names, p, offset)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ret.ForRangeColumnsPruning = tmp
+	}
+	return ret, nil
+}
+
+func getRangeLocateExprs(ctx sessionctx.Context, p *parser.Parser, defs []model.PartitionDefinition, partStrs []string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
+	var buf bytes.Buffer
+	locateExprs := make([]expression.Expression, 0, len(defs))
+	for i := 0; i < len(defs); i++ {
+		if strings.EqualFold(defs[i].LessThan[0], "MAXVALUE") {
+>>>>>>> 65eae6281c1 (*: Fix issue in multi column range partition pruning (#43506))
 			// Expr less than maxvalue is always true.
 			fmt.Fprintf(&buf, "true")
 		} else {
