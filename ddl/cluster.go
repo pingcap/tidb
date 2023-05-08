@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -99,14 +100,29 @@ func recoverPDSchedule(pdScheduleParam map[string]interface{}) error {
 	return infosync.SetPDScheduleConfig(context.Background(), pdScheduleParam)
 }
 
-func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
-	minSafeTS := s.GetMinSafeTS(kv.GlobalTxnScope)
+func getStoreMinResolvedTS(s kv.Storage) time.Time {
+	tikvStore, ok := s.(helper.Storage)
+	if !ok {
+		return oracle.GetTimeFromTS(0)
+	}
+	pdHelper := helper.NewHelper(tikvStore)
+	resolvedTS := pdHelper.GetMinResolvedTS(kv.GlobalTxnScope)
+	if resolvedTS == 0 {
+		// Inject mocked SafeTS for test.
+		failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
+			injectTS := val.(int)
+			resolvedTS = uint64(injectTS)
+		})
+		resolvedTS = s.GetMinSafeTS(kv.GlobalTxnScope)
+		return oracle.GetTimeFromTS(resolvedTS)
+	}
+
 	// Inject mocked SafeTS for test.
 	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
 		injectTS := val.(int)
-		minSafeTS = uint64(injectTS)
+		resolvedTS = uint64(injectTS)
 	})
-	return oracle.GetTimeFromTS(minSafeTS)
+	return oracle.GetTimeFromTS(resolvedTS)
 }
 
 // ValidateFlashbackTS validates that flashBackTS in range [gcSafePoint, currentTS).
@@ -133,16 +149,16 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	})
 
 	start := time.Now()
-	minSafeTime := getStoreGlobalMinSafeTS(sctx.GetStore())
+	minResolvedTime := getStoreMinResolvedTS(sctx.GetStore())
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	for oracleFlashbackTS.After(minSafeTime) {
+	for oracleFlashbackTS.After(minResolvedTime) {
 		if time.Since(start) >= flashbackGetMinSafeTimeTimeout {
-			return errors.Errorf("cannot set flashback timestamp after min-resolved-ts(%s)", minSafeTime)
+			return errors.Errorf("cannot set flashback timestamp after min-resolved-ts(%s)", minResolvedTime)
 		}
 		select {
 		case <-ticker.C:
-			minSafeTime = getStoreGlobalMinSafeTS(sctx.GetStore())
+			minResolvedTime = getStoreMinResolvedTS(sctx.GetStore())
 			break
 		case <-ctx.Done():
 			return ctx.Err()

@@ -11,6 +11,7 @@ go_library(
         "//metrics",
         "//parser/model",
         "//store/driver/error",
+        "//store/pdtypes",
         "//tablecodec",
         "//util",
         "//util/codec",

@@ -27,6 +27,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -85,6 +87,9 @@ type Storage interface {
 type Helper struct {
 	Store       Storage
 	RegionCache *tikv.RegionCache
+
+	// minResolvedTS stores the minimum resolved ts value for each txnScope.
+	minResolvedTS sync.Map
 }
 
 // NewHelper gets a Helper from Storage
@@ -1018,6 +1023,89 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 	dec := json.NewDecoder(resp.Body)
 
 	return dec.Decode(stats)
+}
+
+// GetMinResolvedTS return the minimal ResolvedTS of the storage with given txnScope.
+func (h *Helper) GetMinResolvedTS(txnScope string) uint64 {
+	txnScopeMap := make(map[string][]uint64)
+	stores := h.RegionCache.GetAllStores()
+	for _, store := range stores {
+		txnScopeMap[oracle.GlobalTxnScope] = append(txnScopeMap[oracle.GlobalTxnScope], store.StoreID())
+
+		if label, ok := store.GetLabelValue(tikv.DCLabelKey); ok {
+			txnScopeMap[label] = append(txnScopeMap[label], store.StoreID())
+		}
+	}
+
+	for txnScope, storeIDs := range txnScopeMap {
+		h.updateResolvedTS(txnScope, storeIDs)
+	}
+
+	if val, ok := h.minResolvedTS.Load(txnScope); ok {
+		return val.(uint64)
+	}
+	return 0
+}
+
+func (h *Helper) updateResolvedTS(txnScope string, storeIDs []uint64) {
+	minResolvedTS := uint64(math.MaxUint64)
+	// When there is no store, directly return 0.
+	if len(storeIDs) < 1 {
+		h.minResolvedTS.Store(txnScope, 0)
+	}
+	for _, store := range storeIDs {
+		if safeTS, err := h.GetStoreMinResolvedTS(store); err != nil {
+			if safeTS != 0 && safeTS < minResolvedTS {
+				minResolvedTS = safeTS
+			}
+		} else {
+			minResolvedTS = 0
+		}
+	}
+	h.minResolvedTS.Store(txnScope, minResolvedTS)
+}
+
+type minResolvedTS struct {
+	IsRealTime      bool             `json:"is_real_time,omitempty"`
+	MinResolvedTS   uint64           `json:"min_resolved_ts"`
+	PersistInterval pdtypes.Duration `json:"persist_interval,omitempty"`
+}
+
+// GetStoreMinResolvedTS gets the min resolved ts of a store.
+func (h *Helper) GetStoreMinResolvedTS(storeID uint64) (uint64, error) {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	statURL := fmt.Sprintf("%s://%s/pd/api/v1/min-resolved-ts/store_id=%s",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		url.QueryEscape(strconv.FormatUint(storeID, 10)))
+
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return 0, errors.Errorf("GetStoreMinResolvedTS %d: %s", resp.StatusCode, err)
+		}
+		return 0, errors.Errorf("GetStoreMinResolvedTS %d: %s", resp.StatusCode, string(body))
+	}
+	dec := json.NewDecoder(resp.Body)
+	var resolvedTS minResolvedTS
+	if err := dec.Decode(&resolvedTS); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return resolvedTS.MinResolvedTS, nil
 }
 
 // DeletePlacementRule is to delete placement rule for certain group.
