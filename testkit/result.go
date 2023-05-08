@@ -130,8 +130,6 @@ func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
 	need := fmt.Sprintf("%s", expected)
 	res.require.Equal(need, got, res.comment)
 }
-<<<<<<< HEAD
-=======
 
 // CheckContain checks whether the result contains the expected string
 func (res *Result) CheckContain(expected string) {
@@ -179,4 +177,3 @@ func (res *Result) MultiCheckNotContain(unexpecteds []string) {
 		res.CheckNotContain(unexpected)
 	}
 }
->>>>>>> 65eae6281c1 (*: Fix issue in multi column range partition pruning (#43506))
