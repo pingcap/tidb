@@ -978,26 +978,31 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec("create table tcommonhash(a int, b int, c int, d int auto_increment, primary key(a, c, d), index idx_bc(b, c)) PARTITION BY HASH (`c`) PARTITIONS 4")
 	tk.MustExec("create table tpkhash(a int, b int, c int, d int auto_increment, primary key(d), index idx_ac(a, c), index idx_bc(b, c)) PARTITION BY HASH (`d`) PARTITIONS 4")
 
-	valueSlice := make([]*valueStruct, 0, 2000)
-	for i := 0; i < 2000; i++ {
-		a := rand.Intn(32)
-		b := rand.Intn(32)
-		c := rand.Intn(32)
-		tk.MustExec(fmt.Sprintf("insert into thandle values (%v, %v, %v)", a, b, c))
-		tk.MustExec(fmt.Sprintf("insert into tpk(a,b,c) values (%v, %v, %v)", a, b, c))
-		tk.MustExec(fmt.Sprintf("insert into tcommon(a,b,c) values (%v, %v, %v)", a, b, c))
-		tk.MustExec(fmt.Sprintf("insert into thash(a,b,c) values (%v, %v, %v)", a, b, c))
-		tk.MustExec(fmt.Sprintf("insert into tcommonhash(a,b,c) values (%v, %v, %v)", a, b, c))
-		tk.MustExec(fmt.Sprintf("insert into tpkhash(a,b,c) values (%v, %v, %v)", a, b, c))
-		valueSlice = append(valueSlice, &valueStruct{a, b, c})
-	}
-
+	// analyze before insert rows to speed up UT and let query run in dynamic pruning mode.
 	tk.MustExec("analyze table thandle")
 	tk.MustExec("analyze table tpk")
 	tk.MustExec("analyze table tcommon")
 	tk.MustExec("analyze table thash")
 	tk.MustExec("analyze table tcommonhash")
 	tk.MustExec("analyze table tpkhash")
+
+	valueSlice := make([]*valueStruct, 0, 2000)
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		a := rand.Intn(32)
+		b := rand.Intn(32)
+		c := rand.Intn(32)
+		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", a, b, c))
+		valueSlice = append(valueSlice, &valueStruct{a, b, c})
+	}
+	valInserted := strings.Join(vals, ",")
+
+	tk.MustExec(fmt.Sprintf("insert into thandle values %s", valInserted))
+	tk.MustExec(fmt.Sprintf("insert into tpk(a,b,c) values %s", valInserted))
+	tk.MustExec(fmt.Sprintf("insert into tcommon(a,b,c) values %s", valInserted))
+	tk.MustExec(fmt.Sprintf("insert into thash(a,b,c) values %s", valInserted))
+	tk.MustExec(fmt.Sprintf("insert into tcommonhash(a,b,c) values %s", valInserted))
+	tk.MustExec(fmt.Sprintf("insert into tpkhash(a,b,c) values %s", valInserted))
 
 	for i := 0; i < 100; i++ {
 		a := rand.Intn(32)
