@@ -31,11 +31,11 @@ type EC2Session struct {
 
 type VolumeAZs map[string]string
 
-func NewEC2Session(concurrency uint) (*EC2Session, error) {
+func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 	// aws-sdk has builtin exponential backoff retry mechanism, see:
 	// https://github.com/aws/aws-sdk-go/blob/db4388e8b9b19d34dcde76c492b17607cd5651e2/aws/client/default_retryer.go#L12-L16
 	// with default retryer & max-retry=9, we will wait for at least 30s in total
-	awsConfig := aws.NewConfig().WithMaxRetries(9)
+	awsConfig := aws.NewConfig().WithMaxRetries(9).WithRegion(region)
 	// TiDB Operator need make sure we have the correct permission to call aws api(through aws env variables)
 	// we may change this behaviour in the future.
 	sessionOptions := session.Options{Config: *awsConfig}
@@ -59,7 +59,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		defer mutex.Unlock()
 		for j := range createOutput.Snapshots {
 			snapshot := createOutput.Snapshots[j]
-			snapIDMap[*snapshot.VolumeId] = *snapshot.VolumeId
+			snapIDMap[*snapshot.VolumeId] = *snapshot.SnapshotId
 		}
 	}
 
@@ -68,7 +68,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		store := backupInfo.TiKVComponent.Stores[i]
 		volumes := store.Volumes
 		if len(volumes) >= 1 {
-			log.Debug("fetch EC2 instance id using first volume")
+			log.Info("fetch EC2 instance id using first volume")
 			var targetVolumeIDs []*string
 			for j := range volumes {
 				volume := volumes[j]
@@ -85,50 +85,40 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				return snapIDMap, nil, errors.Errorf("specified volume %s is not attached", volumes[0].ID)
 			}
 			ec2InstanceId := resp.Volumes[0].Attachments[0].InstanceId
+			log.Info("EC2 instance id", zap.Any("id", ec2InstanceId))
 
-			// determine the root volume id
-			var rootVolumeID *string
+			// determine the exclude volume list
+			var excludedVolumeIDs []*string
 			resp1, err := e.ec2.DescribeInstances(&ec2.DescribeInstancesInput{InstanceIds: []*string{ec2InstanceId}})
 			if err != nil {
 				return snapIDMap, nil, errors.Trace(err)
 			}
+			log.Info("describe instance output is", zap.Any("result", resp1))
 			for j := range resp1.Reservations[0].Instances[0].BlockDeviceMappings {
 				device := resp1.Reservations[0].Instances[0].BlockDeviceMappings[j]
-				if device.DeviceName == resp1.Reservations[0].Instances[0].RootDeviceName {
-					rootVolumeID = device.Ebs.VolumeId
-					break
-				}
-			}
-
-			// calculate the volume id list to exclude
-			var excludedVolumeIDs []*string
-			resp, err = e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{})
-			if err != nil {
-				return snapIDMap, nil, errors.Trace(err)
-			}
-
-			for i := range resp.Volumes {
-				volume := resp.Volumes[i]
-				if *volume.VolumeId == *rootVolumeID {
+				// skip root volume
+				if *device.DeviceName == *resp1.Reservations[0].Instances[0].RootDeviceName {
 					continue
-				}
-
-				toInclude := false
-				for j := range targetVolumeIDs {
-					tagertVolumeID := targetVolumeIDs[j]
-					if *tagertVolumeID == *volume.VolumeId {
-						toInclude = true
-						break
+				} else {
+					toInclude := false
+					for k := range targetVolumeIDs {
+						tagertVolumeID := targetVolumeIDs[k]
+						if *tagertVolumeID == *device.Ebs.VolumeId {
+							toInclude = true
+							break
+						}
+					}
+					if !toInclude {
+						excludedVolumeIDs = append(excludedVolumeIDs, device.Ebs.VolumeId)
 					}
 				}
-				if !toInclude {
-					excludedVolumeIDs = append(excludedVolumeIDs, volume.VolumeId)
-				}
 			}
+
+			log.Info("exclude volume list", zap.Any("exclude volume list", excludedVolumeIDs))
 
 			// create snapshots for volumes on this ec2 instance
 			workerPool.ApplyOnErrorGroup(eg, func() error {
-				log.Debug("starts snapshot", zap.Any("ec2", ec2InstanceId))
+				log.Info("starts snapshot", zap.Any("ec2", ec2InstanceId))
 
 				// Prepare for aws requests
 				instanceSpecification := ec2.InstanceSpecification{}
@@ -145,7 +135,6 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				if err != nil {
 					return errors.Trace(err)
 				}
-				log.Info("snapshot creating", zap.Stringer("snap", resp))
 				fillResult(resp)
 				return nil
 			})
