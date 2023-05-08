@@ -229,6 +229,25 @@ func TestIssue43520(t *testing.T) {
 	require.ErrorContains(t, err, "value is out of range in")
 }
 
+func TestIssue14875(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t(a varchar(8) not null, b varchar(8) not null)`)
+	tk.MustExec(`insert into t values('1','1')`)
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t2.b = '1' and t2.b = ?"`)
+	tk.MustExec(`set @a = '1'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @a = '2'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t1.a > ?"`)
+	tk.MustExec(`set @a = '1'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @a = '0'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
+}
+
 func TestNonPreparedPlanCacheDMLHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
