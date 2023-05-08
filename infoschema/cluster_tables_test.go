@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
@@ -452,23 +453,23 @@ func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {
 	tk.MustExec("set time_zone = '+08:00';")
 	tk.MustExec("select sleep(0.1);")
 	r := tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
-	date8First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
+	date8First, err := time.Parse(time.DateTime, r.Rows()[0][0].(string))
 	require.NoError(t, err)
-	date8Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
+	date8Last, err := time.Parse(time.DateTime, r.Rows()[0][1].(string))
 	require.NoError(t, err)
-	date8Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	date8Begin, err := time.Parse(time.DateTime, r.Rows()[0][2].(string))
 	require.NoError(t, err)
-	date8End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	date8End, err := time.Parse(time.DateTime, r.Rows()[0][3].(string))
 	require.NoError(t, err)
 	tk.MustExec("set time_zone = '+01:00';")
 	r = tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
-	date1First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
+	date1First, err := time.Parse(time.DateTime, r.Rows()[0][0].(string))
 	require.NoError(t, err)
-	date1Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
+	date1Last, err := time.Parse(time.DateTime, r.Rows()[0][1].(string))
 	require.NoError(t, err)
-	date1Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	date1Begin, err := time.Parse(time.DateTime, r.Rows()[0][2].(string))
 	require.NoError(t, err)
-	date1End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	date1End, err := time.Parse(time.DateTime, r.Rows()[0][3].(string))
 	require.NoError(t, err)
 
 	require.Less(t, date1First.Unix(), date8First.Unix())
@@ -704,7 +705,7 @@ select * from t1;
 
 		err = tk.QueryToErr("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 		require.Error(t, err, quota)
-		require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
+		require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg, quota)
 	}
 	memQuotas := []int{128, 512, 1024, 2048, 4096}
 	for _, quota := range memQuotas {
@@ -1153,15 +1154,15 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	time.Sleep(time.Millisecond * 10)
 	binding := tk.MustQuery("show bindings").Rows()
 	loc, _ := time.LoadLocation("Asia/Shanghai")
-	createTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][4].(string), loc)
-	updateTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][5].(string), loc)
+	createTime, _ := time.ParseInLocation(time.DateTime, binding[0][4].(string), loc)
+	updateTime, _ := time.ParseInLocation(time.DateTime, binding[0][5].(string), loc)
 
 	// binding from history cover binding from history
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
 	time.Sleep(time.Millisecond * 10)
 	binding1 := tk.MustQuery("show bindings").Rows()
-	createTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][4].(string), loc)
-	updateTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][5].(string), loc)
+	createTime1, _ := time.ParseInLocation(time.DateTime, binding1[0][4].(string), loc)
+	updateTime1, _ := time.ParseInLocation(time.DateTime, binding1[0][5].(string), loc)
 	require.Greater(t, createTime1.UnixNano(), createTime.UnixNano())
 	require.Greater(t, updateTime1.UnixNano(), updateTime.UnixNano())
 	for i := range binding1[0] {
@@ -1173,8 +1174,8 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	tk.MustExec("create binding for select * from t where a = 1 using select /*+ ignore_index(t, a) */ * from t where a = 1")
 	time.Sleep(time.Millisecond * 10)
 	binding2 := tk.MustQuery("show bindings").Rows()
-	createTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][4].(string), loc)
-	updateTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][5].(string), loc)
+	createTime2, _ := time.ParseInLocation(time.DateTime, binding2[0][4].(string), loc)
+	updateTime2, _ := time.ParseInLocation(time.DateTime, binding2[0][5].(string), loc)
 	require.Greater(t, createTime2.UnixNano(), createTime1.UnixNano())
 	require.Greater(t, updateTime2.UnixNano(), updateTime1.UnixNano())
 	require.Equal(t, binding2[0][8], "manual")
@@ -1189,8 +1190,8 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
 	time.Sleep(time.Millisecond * 10)
 	binding3 := tk.MustQuery("show bindings").Rows()
-	createTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][4].(string), loc)
-	updateTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][5].(string), loc)
+	createTime3, _ := time.ParseInLocation(time.DateTime, binding3[0][4].(string), loc)
+	updateTime3, _ := time.ParseInLocation(time.DateTime, binding3[0][5].(string), loc)
 	require.Greater(t, createTime3.UnixNano(), createTime2.UnixNano())
 	require.Greater(t, updateTime3.UnixNano(), updateTime2.UnixNano())
 	require.Equal(t, binding3[0][8], "history")

@@ -2468,7 +2468,8 @@
           "      └─Projection 2.00 batchCop[tiflash]  test.t.a, test.t.b",
           "        └─TopN 2.00 batchCop[tiflash]  Column#3, offset:0, count:2",
           "          └─Projection 3333.33 batchCop[tiflash]  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
-          "            └─TableFullScan 3333.33 batchCop[tiflash] table:t pushed down filter:gt(test.t.b, \"a\"), keep order:false, stats:pseudo"
+          "            └─Selection 3333.33 batchCop[tiflash]  gt(test.t.b, \"a\")",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2477,7 +2478,8 @@
           "TopN 2.00 root  test.t.b, offset:0, count:2",
           "└─TableReader 2.00 root  data:TopN",
           "  └─TopN 2.00 batchCop[tiflash]  test.t.b, offset:0, count:2",
-          "    └─TableFullScan 3333.33 batchCop[tiflash] table:t pushed down filter:gt(test.t.b, \"a\"), keep order:false, stats:pseudo"
+          "    └─Selection 3333.33 batchCop[tiflash]  gt(test.t.b, \"a\")",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -3830,13 +3832,13 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
           "      └─HashJoin 32.00 mpp[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10), other cond:gt(test.fact_t.col1, test.d1_t.value)",
-          "        ├─ExchangeReceiver(Build) 16.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
-          "        │   └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "        │     └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false",
-          "        └─ExchangeReceiver(Probe) 4.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
-          "            └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false"
+          "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
+          "        │   └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
+          "        └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
+          "            └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
         ]
       },
       {
@@ -4768,6 +4770,58 @@
           "    └─TableReader_27 1.00 root  data:TopN_26",
           "      └─TopN_26 1.00 cop[tikv]  test.t.a, offset:0, count:1",
           "        └─TableRangeScan_25 3333.33 cop[tikv] table:t range:[-inf,10), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1",
+        "Plan": [
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─IndexReader_15 1.00 root partition:all index:Limit_14",
+          "  └─Limit_14 1.00 cop[tikv]  offset:0, count:1",
+          "    └─IndexRangeScan_13 1.00 cop[tikv] table:th, index:a(a) range:[-inf,1), keep order:true, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ no_order_index(th, a) */ a from th where a<1 order by a limit 1",
+        "Plan": [
+          "TopN_8 1.00 root  test.th.a, offset:0, count:1",
+          "└─IndexReader_15 1.00 root partition:all index:TopN_14",
+          "  └─TopN_14 1.00 cop[tikv]  test.th.a, offset:0, count:1",
+          "    └─IndexRangeScan_13 3323.33 cop[tikv] table:th, index:a(a) range:[-inf,1), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ order_index(thp, primary) */ a from thp where a<1 order by a limit 1",
+        "Plan": [
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─TableReader_15 1.00 root partition:all data:Limit_14",
+          "  └─Limit_14 1.00 cop[tikv]  offset:0, count:1",
+          "    └─TableRangeScan_13 3333.33 cop[tikv] table:thp range:[-inf,1), keep order:true, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ no_order_index(thp, primary) */ a from thp where a<1 order by a limit 1",
+        "Plan": [
+          "TopN_8 1.00 root  test.thp.a, offset:0, count:1",
+          "└─TableReader_15 1.00 root partition:all data:TopN_14",
+          "  └─TopN_14 1.00 cop[tikv]  test.thp.a, offset:0, count:1",
+          "    └─TableRangeScan_13 3333.33 cop[tikv] table:thp range:[-inf,1), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1",
+        "Plan": [
+          "Limit_12 1.00 root  offset:0, count:1",
+          "└─Projection_17 1.00 root  test.thh.a, test.thh.b",
+          "  └─IndexLookUp_16 1.00 root partition:all ",
+          "    ├─Limit_15(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "    │ └─IndexRangeScan_13 1.00 cop[tikv] table:thh, index:a(a) range:[-inf,1), keep order:true, stats:pseudo",
+          "    └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:thh keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -6588,10 +6642,11 @@
           "          └─HashAgg 3544.89 mpp[tiflash]  group by:Column#14, Column#15, ",
           "            └─Union 4431.11 mpp[tiflash]  ",
           "              ├─Projection 3323.33 mpp[tiflash]  cast(test.t.a, int(11) BINARY)->Column#14, test.t.b",
-          "              │ └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.a, 18), lt(test.t.a, 60), keep order:false, stats:pseudo",
+          "              │ └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
+          "              │   └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
           "              └─Projection 1107.78 mpp[tiflash]  cast(test.t.a, int(11) BINARY)->Column#14, test.t.b",
-          "                └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1)",
-          "                  └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.a, 60), keep order:false, stats:pseudo"
+          "                └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -6637,7 +6692,8 @@
           "└─TableReader 1.00 root  MppVersion: 1, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  test.t.b, offset:0, count:1",
-          "      └─TableFullScan 3333.33 mpp[tiflash] table:t pushed down filter:gt(test.t.a, 10), keep order:false, stats:pseudo"
+          "      └─Selection 3333.33 mpp[tiflash]  gt(test.t.a, 10)",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -8567,7 +8623,8 @@
         "Plan": [
           "TableReader 3323.33 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─TableFullScan 3323.33 mpp[tiflash] table:t pushed down filter:lt(test.t.id, 2), keep order:false, stats:pseudo"
+          "  └─Selection 3323.33 mpp[tiflash]  lt(test.t.id, 2)",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -10594,8 +10651,8 @@
           "        └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
           "          ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "          │   └─TableFullScan 10000.00 mpp[tiflash] table:supplier keep order:false",
-          "          └─TableFullScan(Probe) 800000.00 mpp[tiflash] table:partsupp keep order:false"
+          "          │   └─TableFullScan 10000.00 mpp[tiflash] table:supplier keep order:false, stats:pseudo",
+          "          └─TableFullScan(Probe) 800000.00 mpp[tiflash] table:partsupp keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -10712,7 +10769,8 @@
           "                └─ExchangeReceiver 2666.67 mpp[tiflash]  ",
           "                  └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
           "                    └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#9, funcs:firstrow(test.t1.c2)->Column#10",
-          "                      └─TableFullScan 3333.33 mpp[tiflash] table:t1 pushed down filter:gt(test.t1.c1, 10), keep order:false, stats:pseudo"
+          "                      └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c1, 10)",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -10730,7 +10788,8 @@
           "                └─ExchangeReceiver 2666.67 mpp[tiflash]  ",
           "                  └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c2, collate: binary]",
           "                    └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c2, funcs:count(test.t1.c1)->Column#9, funcs:firstrow(test.t1.c1)->Column#10",
-          "                      └─TableFullScan 3333.33 mpp[tiflash] table:t1 pushed down filter:gt(test.t1.c2, 10), keep order:false, stats:pseudo"
+          "                      └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c2, 10)",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -10800,7 +10859,8 @@
           "            └─ExchangeReceiver 2666.67 mpp[tiflash]  ",
           "              └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
           "                └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#9, funcs:firstrow(test.t1.c2)->Column#11",
-          "                  └─TableFullScan 3333.33 mpp[tiflash] table:t1 pushed down filter:gt(test.t1.c1, 10), keep order:false, stats:pseudo"
+          "                  └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c1, 10)",
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -11176,6 +11236,57 @@
           "TableDual 0.00 root  rows:0"
         ],
         "Result": null
+      }
+    ]
+  },
+  {
+    "Name": "TestFixControl",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"1000:'on', 10000:1\"",
+        "FixControl": {
+          "1000": "'on'",
+          "10000": "1"
+        },
+        "Error": "",
+        "Warnings": [],
+        "Variable": [
+          "1000:'on', 10000:1"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"100:'on', 100:1\"",
+        "FixControl": {
+          "100": "1"
+        },
+        "Error": "",
+        "Warnings": [
+          [
+            "Warning",
+            "1105",
+            "found repeated fix control: 100:'on' is overwritten with 1"
+          ]
+        ],
+        "Variable": [
+          "100:'on', 100:1"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"100, 100\"",
+        "FixControl": {
+          "100": "1"
+        },
+        "Error": "invalid fix control: colon not found",
+        "Warnings": [
+          [
+            "Error",
+            "1105",
+            "invalid fix control: colon not found"
+          ]
+        ],
+        "Variable": [
+          "100:'on', 100:1"
+        ]
       }
     ]
   }

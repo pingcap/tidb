@@ -15,14 +15,22 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,4 +95,61 @@ func prepareData4OptimizeTrace(t *testing.T, client *testServerClient, statHandl
 	err = rows.Scan(&filename)
 	require.NoError(t, err)
 	return filename
+}
+
+func TestOptimizerDebugTrace(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/SetBindingTimeToZero", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DebugTraceStableStatsTbl", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/SetBindingTimeToZero"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DebugTraceStableStatsTbl"))
+	}()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tidbdrv := NewTiDBDriver(store)
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	defer server.Close()
+	cc := &clientConn{
+		server:     server,
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	ctx := context.Background()
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (col1 int, index i(col1))")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+
+	tk.MustExec("plan replayer capture '0595c79f25d183319d0830ff8ca538c9054cbf407e5e27488b5dc40e4738a7c8' '*'")
+	tk.MustExec("plan replayer capture 'c0fcc0abbaaffcaafe21115a3c67ae5d96a188cc197559953d2865ea6852d3cc' '*'")
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t where col1 < ? and col1 > 100"))
+	var (
+		in  []string
+		out []interface{}
+	)
+	optSuiteData := testDataMap["optimizer_suite"]
+	optSuiteData.LoadTestCases(t, &in, &out)
+	for i, cmdString := range in {
+		require.NoError(t, cc.dispatch(ctx, []byte(cmdString)))
+		traceInfo := cc.ctx.Session.GetSessionVars().StmtCtx.OptimizerDebugTrace
+		var buf bytes.Buffer
+		encoder := json.NewEncoder(&buf)
+		encoder.SetEscapeHTML(false)
+		require.NoError(t, encoder.Encode(traceInfo))
+		var res interface{}
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &res))
+		testdata.OnRecord(func() {
+			out[i] = res
+		})
+		require.Equal(t, out[i], res, cmdString)
+	}
 }

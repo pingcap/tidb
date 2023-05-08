@@ -118,10 +118,23 @@ const (
 		"Priv LONGTEXT NOT NULL DEFAULT ''," +
 		"PRIMARY KEY (Host, User)" +
 		")"
+
+	// For `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` table, we have a slight different
+	// schema definition with MySQL: columns `DB`/`Table_name`/`Column_name` are defined with case-insensitive
+	// collation(in MySQL, they are case-sensitive).
+
+	// The reason behind this is that when writing those records, MySQL always converts those names into lower case
+	// while TiDB does not do so in early implementations, which makes some 'GRANT'/'REVOKE' operations case-sensitive.
+
+	// In order to fix this, we decide to explicitly set case-insensitive collation for the related columns here, to
+	// make sure:
+	// * The 'GRANT'/'REVOKE' could be case-insensitive for new clusters(compatible with MySQL).
+	// * Keep all behaviors unchanged for upgraded cluster.
+
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE IF NOT EXISTS mysql.db (
 		Host					CHAR(255),
-		DB						CHAR(64),
+		DB						CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User					CHAR(32),
 		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Insert_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -146,9 +159,9 @@ const (
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
 		Host		CHAR(255),
-		DB			CHAR(64),
+		DB			CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User		CHAR(32),
-		Table_name	CHAR(64),
+		Table_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Grantor		CHAR(77),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
@@ -157,10 +170,10 @@ const (
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
 		Host		CHAR(255),
-		DB			CHAR(64),
+		DB			CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User		CHAR(32),
-		Table_name	CHAR(64),
-		Column_name	CHAR(64),
+		Table_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
+		Column_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
@@ -562,6 +575,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
+		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
 	);`
@@ -854,11 +868,24 @@ const (
 	version139 = 139
 	// version 140 add column task_key to mysql.tidb_global_task
 	version140 = 140
+	// version 141
+	//   set the value of `tidb_session_plan_cache_size` to "tidb_prepared_plan_cache_size" if there is no `tidb_session_plan_cache_size`.
+	//   update tidb_load_based_replica_read_threshold from 0 to 4
+	// This will only happens when we upgrade a cluster before 7.1.
+	version141 = 141
+	// version 142 insert "tidb_enable_non_prepared_plan_cache|0" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_non_prepared_plan_cache.
+	// This will only happens when we upgrade a cluster before 6.5.
+	version142 = 142
+	// version 143 add column `error` to `mysql.tidb_global_task` and `mysql.tidb_background_subtask`
+	version143 = 143
+	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
+	// if it's upgraded from an existing old version cluster.
+	version144 = 144
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version140
+var currentBootstrapVersion int64 = version144
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -987,6 +1014,10 @@ var (
 		upgradeToVer138,
 		upgradeToVer139,
 		upgradeToVer140,
+		upgradeToVer141,
+		upgradeToVer142,
+		upgradeToVer143,
+		upgradeToVer144,
 	}
 )
 
@@ -1075,6 +1106,9 @@ func upgrade(s Session) {
 	if isNull {
 		upgradeToVer99Before(s)
 	}
+
+	// It is only used in test.
+	addMockBootstrapVersionForTest()
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
@@ -2412,7 +2446,7 @@ func upgradeToVer136(s Session, ver int64) {
 	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer137(s Session, ver int64) {
+func upgradeToVer137(_ Session, _ int64) {
 	// NOOP, we don't depend on ddl to init the default group due to backward compatible issue.
 }
 
@@ -2437,6 +2471,78 @@ func upgradeToVer140(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `task_key` VARCHAR(256) NOT NULL AFTER `id`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD UNIQUE KEY task_key(task_key)", dbterror.ErrDupKeyName)
+}
+
+// upgradeToVer141 sets the value of `tidb_session_plan_cache_size` as `tidb_prepared_plan_cache_size` for compatibility,
+// and update tidb_load_based_replica_read_threshold from 0 to 4.
+func upgradeToVer141(s Session, ver int64) {
+	if ver >= version141 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPrepPlanCacheSize)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	if err != nil || req.NumRows() == 0 {
+		return
+	}
+	row := req.GetRow(0)
+	if row.IsNull(0) {
+		return
+	}
+	val := row.GetString(0)
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBSessionPlanCacheSize, val)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBLoadBasedReplicaReadThreshold, variable.DefTiDBLoadBasedReplicaReadThreshold.String())
+}
+
+func upgradeToVer142(s Session, ver int64) {
+	if ver >= version142 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache, variable.Off)
+}
+
+func upgradeToVer143(s Session, ver int64) {
+	if ver >= version143 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer144(s Session, ver int64) {
+	if ver >= version144 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
 }
 
 func writeOOMAction(s Session) {

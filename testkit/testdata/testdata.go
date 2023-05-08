@@ -97,7 +97,15 @@ func loadTestSuiteCases(filePath string) (res []testCases, err error) {
 		return res, err
 	}
 	// Remove comments, since they are not allowed in json.
-	re := regexp.MustCompile("(?s)//.*?\n")
+	// Note that this logic is not always correct. For example, you can only add comments in a new line.
+	// Appending comments to the end of a line with other content can't be identified.
+	// flag:
+	//   s: let . match \n
+	//   m: let ^/$ match begin/end of a line in addition to begin/end of the entire text
+	// ^: begin of line
+	// \s*: zero or more whitespace characters
+	// .*?: zero or more any characters, but match as few as possible
+	re := regexp.MustCompile(`(?sm)^\s*//.*?\n`)
 	err = json.Unmarshal(re.ReplaceAll(byteValue, nil), &res)
 	return res, err
 }

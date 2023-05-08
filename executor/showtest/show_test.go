@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/autoid_service"
@@ -1044,7 +1045,7 @@ func TestShow2(t *testing.T) {
 	is := dom.InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
+	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
 	// The Hostname is the actual host
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
@@ -1187,7 +1188,7 @@ func TestUnprivilegedShow(t *testing.T) {
 	is := dom.InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("testshow"), model.NewCIStr("t1"))
 	require.NoError(t, err)
-	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
+	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
 	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   ", createTime)))
 }
@@ -1523,7 +1524,7 @@ func TestShowBuiltin(t *testing.T) {
 	res := tk.MustQuery("show builtins;")
 	require.NotNil(t, res)
 	rows := res.Rows()
-	const builtinFuncNum = 287
+	const builtinFuncNum = 288
 	require.Equal(t, builtinFuncNum, len(rows))
 	require.Equal(t, rows[0][0].(string), "abs")
 	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")
