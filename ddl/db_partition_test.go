@@ -4256,10 +4256,10 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 			time.Sleep(30 * time.Millisecond)
 		}
 	}
-	var errCount int32
+	var errCount atomic.Int32
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
-			atomic.AddInt32(&errCount, 1)
+			errCount.Add(1)
 		}
 	}
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -4269,7 +4269,7 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 	go backgroundExec(store, "test", "alter table test.t truncate partition p0;", done2)
 	<-done1
 	<-done2
-	require.LessOrEqual(t, errCount, int32(1))
+	require.LessOrEqual(t, errCount.Load(), int32(1))
 }
 
 func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
