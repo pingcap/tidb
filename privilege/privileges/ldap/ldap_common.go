@@ -50,8 +50,10 @@ type ldapAuthImpl struct {
 	ldapConnectionPool *pools.ResourcePool
 }
 
-func (impl *ldapAuthImpl) searchUser(userName string) (string, error) {
-	l, err := impl.getConnection()
+func (impl *ldapAuthImpl) searchUser(userName string) (dn string, err error) {
+	var l *ldap.Conn
+
+	l, err = impl.getConnection()
 	if err != nil {
 		return "", err
 	}
@@ -61,6 +63,12 @@ func (impl *ldapAuthImpl) searchUser(userName string) (string, error) {
 	if err != nil {
 		return "", errors.Wrap(err, "bind root dn to search user")
 	}
+	defer func() {
+		// bind to anonymous user
+		_, err = l.SimpleBind(&ldap.SimpleBindRequest{
+			AllowEmptyPassword: true,
+		})
+	}()
 
 	result, err := l.Search(&ldap.SearchRequest{
 		BaseDN: impl.bindBaseDN,
@@ -68,15 +76,15 @@ func (impl *ldapAuthImpl) searchUser(userName string) (string, error) {
 		Filter: fmt.Sprintf("(%s=%s)", impl.searchAttr, userName),
 	})
 	if err != nil {
-		return "", err
+		return
 	}
 
 	if len(result.Entries) == 0 {
 		return "", errors.New("LDAP user not found")
 	}
 
-	entry := result.Entries[0]
-	return entry.DN, nil
+	dn = result.Entries[0].DN
+	return
 }
 
 // canonicalizeDN turns the `dn` provided in database to the `dn` recognized by LDAP server
@@ -138,14 +146,38 @@ func (impl *ldapAuthImpl) connectionFactory() (pools.Resource, error) {
 	return ldapConnection, nil
 }
 
-func (impl *ldapAuthImpl) getConnection() (*ldap.Conn, error) {
-	conn, err := impl.ldapConnectionPool.Get()
-	if err != nil {
-		return nil, err
-	}
+const getConnectionMaxRetry = 10
 
-	// FIXME: if the connection in the pool is killed or timeout, re-initialize the connection.
-	return conn.(*ldap.Conn), nil
+func (impl *ldapAuthImpl) getConnection() (*ldap.Conn, error) {
+	retryCount := 0
+	for {
+		conn, err := impl.ldapConnectionPool.Get()
+		if err != nil {
+			return nil, err
+		}
+
+		// try to bind anonymous user. It has two meanings:
+		// 1. Clear the state of previous binding, to avoid security leaks. (Though it's not serious, because even the current
+		//   connection has binded to other users, the following authentication will still fail. But the ACL for anonymous
+		//   user and a valid user could be different, so it's better to bind back to anonymous user here.
+		// 2. Detect whether this connection is still valid to use, in case the server has closed this connection.
+		ldapConnection := conn.(*ldap.Conn)
+		_, err = ldapConnection.SimpleBind(&ldap.SimpleBindRequest{
+			AllowEmptyPassword: true,
+		})
+		if err != nil {
+			// fail to bind to anonymous user, just release this connection and try to get a new one
+			impl.ldapConnectionPool.Put(nil)
+
+			retryCount++
+			if retryCount >= getConnectionMaxRetry {
+				return nil, errors.Wrap(err, "fail to bind to anonymous user")
+			}
+			continue
+		}
+
+		return conn.(*ldap.Conn), nil
+	}
 }
 
 func (impl *ldapAuthImpl) putConnection(conn *ldap.Conn) {
