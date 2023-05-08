@@ -746,7 +746,7 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool) (model.R
 	}
 	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 	logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
-		zap.Bool("lightning env initialized", false))
+		zap.Bool("lightning env initialized", ingest.LitInitialized))
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 	return model.ReorgTypeTxnMerge, nil
 }
@@ -921,6 +921,13 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if err != nil {
 		err = tryFallbackToTxnMerge(job, err)
 		return false, ver, errors.Trace(err)
+	}
+	if bc.GetCheckpointManager() == nil {
+		mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, indexInfo.ID)
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl-ingest] create checkpoint manager failed", zap.Error(err))
+		}
+		bc.AttachCheckpointManager(mgr)
 	}
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	if err != nil {

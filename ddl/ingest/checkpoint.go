@@ -36,11 +36,12 @@ import (
 
 // CheckpointManager is a checkpoint manager implementation that used by non-distributed reorganization.
 type CheckpointManager struct {
-	ctx       context.Context
-	flushCtrl FlushController
-	sessPool  *sess.Pool
-	jobID     int64
-	indexID   int64
+	ctx        context.Context
+	flushCtrl  FlushController
+	sessPool   *sess.Pool
+	jobID      int64
+	indexID    int64
+	physicalID int64
 
 	// Derived and unchanged after the initialization.
 	instanceAddr     string
@@ -76,7 +77,7 @@ type TaskCheckpoint struct {
 
 // FlushController is an interface to control the flush of the checkpoint.
 type FlushController interface {
-	Flush(indexID int64, force bool) (flushed, imported bool, err error)
+	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
@@ -164,7 +165,7 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	cp.currentKeys += added
 	s.mu.Unlock()
 
-	flushed, imported, err := s.flushCtrl.Flush(s.indexID, false)
+	flushed, imported, err := s.flushCtrl.Flush(s.indexID, FlushModeAuto)
 	if !flushed || err != nil {
 		return err
 	}
@@ -194,11 +195,6 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 func (s *CheckpointManager) Close() {
 	s.updaterExitCh <- struct{}{}
 	s.updaterWg.Wait()
-	for id, cp := range s.checkpoints {
-		s.localCnt += cp.totalKeys
-		s.globalCnt = s.localCnt
-		delete(s.checkpoints, id)
-	}
 }
 
 // Sync syncs the checkpoint.
@@ -207,6 +203,28 @@ func (s *CheckpointManager) Sync() {
 	wg.Add(1)
 	s.updaterCh <- &wg
 	wg.Wait()
+}
+
+// Reset resets the checkpoint manager between two partitions.
+func (s *CheckpointManager) Reset(newPhysicalID int64) {
+	if s.physicalID != 0 {
+		_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal)
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl-ingest] flush local engine failed", zap.Error(err))
+		}
+	}
+	s.mu.Lock()
+	if s.physicalID != newPhysicalID {
+		s.minKeySyncLocal = nil
+		s.minKeySyncGlobal = nil
+		s.minTaskIDSynced = 0
+		s.physicalID = newPhysicalID
+		for id, cp := range s.checkpoints {
+			s.localCnt += cp.totalKeys
+			delete(s.checkpoints, id)
+		}
+	}
+	s.mu.Unlock()
 }
 
 // JobReorgMeta is the metadata for a reorg job.
@@ -221,6 +239,7 @@ type ReorgCheckpoint struct {
 	GlobalSyncKey  kv.Key `json:"global_sync_key"`
 	GlobalKeyCount int    `json:"global_key_count"`
 	InstanceAddr   string `json:"instance_addr"`
+	PhysicalID     int64  `json:"physical_id"`
 	Version        int64  `json:"version"`
 }
 
@@ -261,6 +280,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 				s.localDataIsValid = true
 				s.minKeySyncLocal = cp.LocalSyncKey
 				s.localCnt = cp.LocalKeyCount
+				s.physicalID = cp.PhysicalID
 			}
 			logutil.BgLogger().Info("[ddl-ingest] resume checkpoint",
 				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
@@ -304,6 +324,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 			LocalKeyCount:  currentLocalCnt,
 			GlobalKeyCount: currentGlobalCnt,
 			InstanceAddr:   s.instanceAddr,
+			PhysicalID:     s.physicalID,
 			Version:        JobCheckpointVersionCurrent,
 		}
 		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})

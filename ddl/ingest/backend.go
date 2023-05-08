@@ -41,10 +41,25 @@ type BackendCtx interface {
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	ResetWorkers(jobID, indexID int64)
-	Flush(indexID int64, force bool) (flushed, imported bool, err error)
+	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
 	Done() bool
 	SetDone()
+
+	AttachCheckpointManager(*CheckpointManager)
+	GetCheckpointManager() *CheckpointManager
 }
+
+// FlushMode is used to control how to flush.
+type FlushMode byte
+
+const (
+	// FlushModeAuto means flush when the memory table size reaches the threshold.
+	FlushModeAuto FlushMode = iota
+	// FlushModeForceLocal means flush all data to local storage.
+	FlushModeForceLocal
+	// FlushModeForceGlobal means import all data in local storage to global storage.
+	FlushModeForceGlobal
+)
 
 // litBackendCtx store a backend info for add index reorg task.
 type litBackendCtx struct {
@@ -61,6 +76,7 @@ type litBackendCtx struct {
 
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
+	checkpointMgr   *CheckpointManager
 }
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
@@ -126,14 +142,14 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 }
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported bool, err error) {
+func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error) {
 	ei, exist := bc.Load(indexID)
 	if !exist {
 		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	shouldFlush, shouldImport := bc.ShouldSync(force)
+	shouldFlush, shouldImport := bc.ShouldSync(mode)
 	if !shouldFlush {
 		return false, false, nil
 	}
@@ -164,9 +180,12 @@ func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported boo
 	return true, true, nil
 }
 
-func (bc *litBackendCtx) ShouldSync(force bool) (shouldFlush bool, shouldImport bool) {
-	if force {
+func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImport bool) {
+	if mode == FlushModeForceGlobal {
 		return true, true
+	}
+	if mode == FlushModeForceLocal {
+		return true, false
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
@@ -183,4 +202,14 @@ func (bc *litBackendCtx) Done() bool {
 // SetDone sets the done flag.
 func (bc *litBackendCtx) SetDone() {
 	bc.done = true
+}
+
+// AttachCheckpointManager attaches a checkpoint manager to the backend context.
+func (bc *litBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
+	bc.checkpointMgr = mgr
+}
+
+// GetCheckpointManager returns the checkpoint manager attached to the backend context.
+func (bc *litBackendCtx) GetCheckpointManager() *CheckpointManager {
+	return bc.checkpointMgr
 }

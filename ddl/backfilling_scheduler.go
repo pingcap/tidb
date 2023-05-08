@@ -296,11 +296,9 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	b.backendCtx = bc
-	if !b.distribute {
-		mgr, err := ingest.NewCheckpointManager(b.ctx, bc, b.sessPool, job.ID, b.reorgInfo.currElement.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	mgr := bc.GetCheckpointManager()
+	if mgr != nil {
+		mgr.Reset(b.tbl.GetPhysicalID())
 		b.checkpointMgr = mgr
 	}
 	copReqSenderPool, err := b.createCopReqSenderPool()
@@ -333,7 +331,6 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		b.writerPool.ReleaseAndWait()
 	}
 	if b.checkpointMgr != nil {
-		b.checkpointMgr.Close()
 		// Get the latest status after all workers are closed so that the result is more accurate.
 		cnt, nextKey := b.checkpointMgr.Status()
 		b.resultCh <- &backfillResult{
