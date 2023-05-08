@@ -215,9 +215,5 @@ func NormalizeOrWrapErr(rfcErr *errors.Error, err error, args ...interface{}) er
 	if IsContextCanceledError(err) {
 		return err
 	}
-	normalizedErr := NormalizeError(err)
-	if berrors.Is(normalizedErr, ErrUnknown) {
-		return rfcErr.Wrap(err).GenWithStackByArgs(args...)
-	}
-	return normalizedErr
+	return err
 }
