@@ -6712,6 +6712,27 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) err
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
+func (d *ddl) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName model.CIStr, indexInfo *model.IndexInfo) error {
+	sctx := ctx.GetSessionVars()
+	indexName := indexInfo.Name
+
+	if sctx.HypoIndexes == nil {
+		sctx.HypoIndexes = make(map[string]map[string]map[string]*model.IndexInfo)
+	}
+	if sctx.HypoIndexes[schemaName.L] == nil {
+		sctx.HypoIndexes[schemaName.L] = make(map[string]map[string]*model.IndexInfo)
+	}
+	if sctx.HypoIndexes[schemaName.L][tableName.L] == nil {
+		sctx.HypoIndexes[schemaName.L][tableName.L] = make(map[string]*model.IndexInfo)
+	}
+	if _, exist := sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L]; exist {
+		// TODO: conflict
+	}
+
+	sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L] = indexInfo
+	return nil
+}
+
 func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
@@ -6800,6 +6821,15 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	if indexOption != nil && indexOption.Tp == model.IndexTypeHypo {
+		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique, global,
+			indexPartSpecifications, indexOption, model.StatePublic)
+		if err != nil {
+			return err
+		}
+		return d.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)

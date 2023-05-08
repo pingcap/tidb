@@ -1357,21 +1357,13 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		}
 	}
 
-	if tbl.Meta().Name.L == "t" {
-		publicPaths = append(publicPaths, &util.AccessPath{Index: &model.IndexInfo{
-			ID:    0,
-			Name:  model.NewCIStr("hypo_idx"),
-			Table: model.NewCIStr("t"),
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("b"),
-					Offset: 0,
-					Length: types.UnspecifiedLength,
-				},
-			},
-			State: model.StatePublic,
-			Tp:    model.IndexTypeBtree,
-		}})
+	hypoIndexes := ctx.GetSessionVars().HypoIndexes
+	if hypoIndexes != nil {
+		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][tblName.L] != nil {
+			for _, index := range hypoIndexes[dbName.L][tblName.L] {
+				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+			}
+		}
 	}
 
 	hasScanHint, hasUseOrForce := false, false
