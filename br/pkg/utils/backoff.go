@@ -190,11 +190,11 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 	// bo.attempt--
 	e := errors.Cause(err)
 	switch e { // nolint:errorlint
-	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
+	case nil, context.Canceled, context.DeadlineExceeded, sql.ErrNoRows:
 		// Excepted error, finish the operation
 		bo.delayTime = 0
 		bo.attempt = 0
-	case berrors.ErrRestoreTotalKVMismatch:
+	case berrors.ErrRestoreTotalKVMismatch, io.EOF:
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	default:
