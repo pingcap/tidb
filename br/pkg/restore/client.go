@@ -3072,8 +3072,20 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			var e error
-			schemaVersion, e = t.GenSchemaVersions(128)
-			return e
+			// To trigger full-reload instead of diff-reload, we need to increase the schema version
+			// by at least `domain.LoadSchemaDiffVersionGapThreshold`.
+			schemaVersion, e = t.GenSchemaVersions(64 + domain.LoadSchemaDiffVersionGapThreshold)
+			if e != nil {
+				return e
+			}
+			// add the diff key so that the domain won't retry to reload the schemas with `schemaVersion` frequently.
+			return t.SetSchemaDiff(&model.SchemaDiff{
+				Version:             schemaVersion,
+				Type:                model.ActionNone,
+				SchemaID:            -1,
+				TableID:             -1,
+				RegenerateSchemaMap: true,
+			})
 		},
 	); err != nil {
 		return errors.Trace(err)
