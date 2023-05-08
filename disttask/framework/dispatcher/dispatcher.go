@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
@@ -438,7 +439,8 @@ func GetEligibleInstance(serverNodes []*infosync.ServerInfo, pos int) (string, e
 		return "", errors.New("no available TiDB node")
 	}
 	pos = pos % len(serverNodes)
-	return serverNodes[pos].ID, nil
+	serverID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+	return serverID, nil
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
