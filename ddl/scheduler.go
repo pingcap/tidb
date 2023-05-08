@@ -148,9 +148,11 @@ func acquireLock(client *clientv3.Client, key string, maxRetries int, id string)
 			return err
 		}
 		if resp.Count != 0 && string(resp.Kvs[0].Value) == id {
+			logutil.BgLogger().Info("[ddl] lightning acquire lock success", zap.String("id", id))
 			return nil
 		}
 
+		logutil.BgLogger().Info("[ddl] lightning acquire lock failed", zap.String("id", id))
 		retryCount++
 		time.Sleep(retryInterval)
 	}
