@@ -188,7 +188,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte
 	}
 	ingestScheduler.close(false)
 
-	_, _, err = b.bc.Flush(b.index.ID, true)
+	_, _, err = b.bc.Flush(b.index.ID, ingest.FlushModeForceGlobal)
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
