@@ -11,9 +11,12 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -165,22 +168,39 @@ func pdRequestWithCode(
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	resp, err := cli.Do(req)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
-	}
+	var resp *http.Response
 	count := 0
 	for {
+		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
-		if count > pdRequestRetryTime || resp.StatusCode < 500 {
+		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
+			if failType, ok := v.(int); ok && count <= pdRequestRetryTime-1 {
+				resp = nil
+				switch failType {
+				case 0:
+					err = &net.OpError{
+						Op:  "read",
+						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+					}
+				default:
+					err = &url.Error{
+						Op:  "read",
+						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+					}
+				}
+			}
+		})
+		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
+			(err != nil && !common.IsRetryableError(err)) {
 			break
 		}
-		_ = resp.Body.Close()
-		time.Sleep(pdRequestRetryInterval())
-		resp, err = cli.Do(req)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		if resp != nil {
+			_ = resp.Body.Close()
 		}
+		time.Sleep(pdRequestRetryInterval())
+	}
+	if err != nil {
+		return 0, nil, errors.Trace(err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -663,6 +683,22 @@ func (p *PdController) RemoveSchedulers(ctx context.Context) (undo UndoFunc, err
 
 	undo = p.MakeUndoFunctionByConfig(ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg})
 	return undo, errors.Trace(err)
+}
+
+// RemoveSchedulersWithConfig removes the schedulers that may slow down BR speed.
+func (p *PdController) RemoveSchedulersWithConfig(
+	ctx context.Context,
+) (undo UndoFunc, config *ClusterConfig, err error) {
+	undo = Nop
+
+	origin, _, err1 := p.RemoveSchedulersWithOrigin(ctx)
+	if err1 != nil {
+		err = err1
+		return
+	}
+
+	undo = p.MakeUndoFunctionByConfig(ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg})
+	return undo, &origin, errors.Trace(err)
 }
 
 // RemoveAllPDSchedulers pause pd scheduler during the snapshot backup and restore

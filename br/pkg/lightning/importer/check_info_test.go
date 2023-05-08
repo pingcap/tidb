@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl"
@@ -41,7 +41,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const passed CheckType = "pass"
+const passed precheck.CheckType = "pass"
 
 func TestCheckCSVHeader(t *testing.T) {
 	dir := t.TempDir()
@@ -59,7 +59,7 @@ func TestCheckCSVHeader(t *testing.T) {
 	cases := []struct {
 		ignoreColumns []*config.IgnoreColumns
 		// empty msg means check pass
-		level   CheckType
+		level   precheck.CheckType
 		Sources map[string][]*tableSource
 	}{
 
@@ -99,7 +99,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -115,7 +115,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -132,7 +132,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -148,7 +148,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -171,7 +171,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -194,7 +194,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -217,7 +217,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -234,7 +234,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		// non unique key, but data type inconsistent
 		{
 			nil,
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -257,7 +257,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -274,7 +274,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		// multiple tables, test the choose priority
 		{
 			nil,
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -297,7 +297,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		},
 		{
 			nil,
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -492,7 +492,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	mock.MatchExpectationsInOrder(false)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
@@ -507,7 +507,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	// single table contains data
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	mock.MatchExpectationsInOrder(false)
 	// test auto retry retryable error
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
@@ -530,7 +530,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	// multi tables contains data
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
@@ -574,7 +574,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	rc.precheckItemBuilder.checkpointsDB = rc.checkpointsDB
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	// only need to check the one that is not in checkpoint
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))

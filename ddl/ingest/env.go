@@ -29,7 +29,7 @@ import (
 
 var (
 	// LitBackCtxMgr is the entry for the lightning backfill process.
-	LitBackCtxMgr backendCtxManager
+	LitBackCtxMgr BackendCtxMgr
 	// LitMemRoot is used to track the memory usage of the lightning backfill process.
 	LitMemRoot MemRoot
 	// LitDiskRoot is used to track the disk usage of the lightning backfill process.
@@ -62,20 +62,12 @@ func InitGlobalLightningEnv() {
 		return
 	}
 	LitSortPath = sPath
-	LitMemRoot = NewMemRootImpl(int64(maxMemoryQuota), &LitBackCtxMgr)
-	LitDiskRoot = NewDiskRootImpl(LitSortPath, &LitBackCtxMgr)
-	err = LitDiskRoot.UpdateUsageAndQuota()
-	if err != nil {
-		logutil.BgLogger().Warn(LitErrUpdateDiskStats, zap.Error(err),
-			zap.Bool("lightning is initialized", LitInitialized))
-		return
-	}
-	LitBackCtxMgr.init(LitMemRoot, LitDiskRoot)
+	LitBackCtxMgr = newLitBackendCtxMgr(LitSortPath, maxMemoryQuota)
 	LitRLimit = util.GenRLimit()
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
 		zap.Uint64("memory limitation", maxMemoryQuota),
-		zap.Uint64("sort path disk quota", LitDiskRoot.MaxQuota()),
+		zap.String("disk usage info", LitDiskRoot.UsageInfo()),
 		zap.Uint64("max open file number", LitRLimit),
 		zap.Bool("lightning is initialized", LitInitialized))
 }

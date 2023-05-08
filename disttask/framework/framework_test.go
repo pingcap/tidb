@@ -42,7 +42,7 @@ func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHan
 	return nil, nil
 }
 
-func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
+func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	return nil, nil
 }
 
@@ -58,12 +58,16 @@ func (t *testScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return 
 
 func (t *testScheduler) Rollback(_ context.Context) error { return nil }
 
-func (t *testScheduler) SplitSubtask(subtask []byte) ([]proto.MinimalTask, error) {
+func (t *testScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	return []proto.MinimalTask{
 		testMiniTask{},
 		testMiniTask{},
 		testMiniTask{},
 	}, nil
+}
+
+func (t *testScheduler) OnSubtaskFinished(_ context.Context, _ []byte) error {
+	return nil
 }
 
 type testSubtaskExecutor struct {

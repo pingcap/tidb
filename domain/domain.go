@@ -81,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -89,6 +90,7 @@ import (
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -124,7 +126,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
-	m               sync.Mutex
+	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	sysSessionPool  *sessionPool
 	exit            chan struct{}
@@ -1036,13 +1038,17 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	backoffCfg := backoff.DefaultConfig
+	backoffCfg.MaxDelay = 3 * time.Second
 	cli, err := clientv3.New(clientv3.Config{
 		LogConfig:        &etcdLogCfg,
 		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
-			grpc.WithBackoffMaxDelay(time.Second * 3),
+			grpc.WithConnectParams(grpc.ConnectParams{
+				Backoff: backoffCfg,
+			}),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
 				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
@@ -2148,6 +2154,26 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	return statsOwner
 }
 
+func (do *Domain) initStats() {
+	statsHandle := do.StatsHandle()
+	defer func() {
+		close(statsHandle.InitStatsDone)
+	}()
+	t := time.Now()
+	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	var err error
+	if liteInitStats {
+		err = statsHandle.InitStatsLite(do.InfoSchema())
+	} else {
+		err = statsHandle.InitStats(do.InfoSchema())
+	}
+	if err != nil {
+		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
+	}
+}
+
 func (do *Domain) loadStatsWorker() {
 	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
 	lease := do.statsLease
@@ -2161,14 +2187,9 @@ func (do *Domain) loadStatsWorker() {
 		updStatsHealthyTicker.Stop()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
+	do.initStats()
 	statsHandle := do.StatsHandle()
-	t := time.Now()
-	err := statsHandle.InitStats(do.InfoSchema())
-	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Duration("take time", time.Since(t)), zap.Error(err))
-	} else {
-		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
-	}
+	var err error
 	for {
 		select {
 		case <-loadTicker.C:

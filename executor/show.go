@@ -2162,7 +2162,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 // fetchShowLoadDataJobs fills the result with the schema
 // {"Job_ID", "Create_Time", "Start_Time", "End_Time",
 // "Data_Source", "Target_Table", "Import_Mode", "Created_By",
-// "Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+// "Job_State", "Job_Status", "Source_File_Size", "Imported_rows",
 // "Result_Code", "Result_Message"}.
 func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.SQLExecutor)
@@ -2189,7 +2189,7 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 			e.result.AppendNull(11)
 		} else {
 			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
-			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize.Load())))
+			e.result.AppendUint64(11, progress.LoadedRowCnt.Load())
 		}
 		terr := new(terror.Error)
 		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))
@@ -2207,7 +2207,8 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 	}
 
 	if e.LoadDataJobID != nil {
-		info, err := asyncloaddata.GetJobInfo(ctx, exec, *e.LoadDataJobID, e.ctx.GetSessionVars().User.String())
+		job := asyncloaddata.NewJob(*e.LoadDataJobID, exec, e.ctx.GetSessionVars().User.String())
+		info, err := job.GetJobInfo(ctx)
 		if err != nil {
 			return err
 		}

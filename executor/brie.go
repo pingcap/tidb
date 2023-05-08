@@ -17,17 +17,21 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/br/pkg/task/show"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -35,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -50,6 +55,7 @@ import (
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 )
 
 const clearInterval = 10 * time.Minute
@@ -92,11 +98,17 @@ func (p *brieTaskProgress) GetCurrent() int64 {
 // Close implements glue.Progress
 func (p *brieTaskProgress) Close() {
 	p.lock.Lock()
+	current := atomic.LoadInt64(&p.current)
+	if current < p.total {
+		p.cmd = fmt.Sprintf("%s Cacneled", p.cmd)
+	}
 	atomic.StoreInt64(&p.current, p.total)
 	p.lock.Unlock()
 }
 
 type brieTaskInfo struct {
+	id          uint64
+	query       string
 	queueTime   types.Time
 	execTime    types.Time
 	finishTime  types.Time
@@ -130,6 +142,15 @@ var globalBRIEQueue = &brieQueue{
 	workerCh: make(chan struct{}, 1),
 }
 
+// ResetGlobalBRIEQueueForTest resets the ID allocation for the global BRIE queue.
+// In some of our test cases, we rely on the ID is allocated from 1.
+// When batch executing test cases, the assumation may be broken and make the cases fail.
+func ResetGlobalBRIEQueueForTest() {
+	globalBRIEQueue = &brieQueue{
+		workerCh: make(chan struct{}, 1),
+	}
+}
+
 // registerTask registers a BRIE task in the queue.
 func (bq *brieQueue) registerTask(
 	ctx context.Context,
@@ -147,8 +168,17 @@ func (bq *brieQueue) registerTask(
 
 	taskID := atomic.AddUint64(&bq.nextID, 1)
 	bq.tasks.Store(taskID, item)
+	info.id = taskID
 
 	return taskCtx, taskID
+}
+
+// query task queries a task from the queue.
+func (bq *brieQueue) queryTask(taskID uint64) (*brieTaskInfo, bool) {
+	if item, ok := bq.tasks.Load(taskID); ok {
+		return item.(*brieQueueItem).info, true
+	}
+	return nil, false
 }
 
 // acquireTask prepares to execute a BRIE task. Only one BRIE task can be
@@ -174,12 +204,16 @@ func (bq *brieQueue) releaseTask() {
 	<-bq.workerCh
 }
 
-func (bq *brieQueue) cancelTask(taskID uint64) {
+func (bq *brieQueue) cancelTask(taskID uint64) bool {
 	item, ok := bq.tasks.Load(taskID)
 	if !ok {
-		return
+		return false
 	}
-	item.(*brieQueueItem).cancel()
+	i := item.(*brieQueueItem)
+	i.cancel()
+	i.progress.Close()
+	log.Info("BRIE job canceled.", zap.Uint64("ID", i.info.id))
+	return true
 }
 
 func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
@@ -213,6 +247,27 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 }
 
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
+	if s.Kind == ast.BRIEKindShowBackupMeta {
+		return execOnce(&showMetaExec{
+			baseExecutor: newBaseExecutor(b.ctx, schema, 0),
+			showConfig:   buildShowMetadataConfigFrom(s),
+		})
+	}
+
+	if s.Kind == ast.BRIEKindShowQuery {
+		return execOnce(&showQueryExec{
+			baseExecutor: newBaseExecutor(b.ctx, schema, 0),
+			targetID:     uint64(s.JobID),
+		})
+	}
+
+	if s.Kind == ast.BRIEKindCancelJob {
+		return &cancelJobExec{
+			baseExecutor: newBaseExecutor(b.ctx, schema, 0),
+			targetID:     uint64(s.JobID),
+		}
+	}
+
 	e := &BRIEExec{
 		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
 		info: &brieTaskInfo{
@@ -301,6 +356,11 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	// is expected to be performed insensitive.
 	cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
 
+	// We cannot directly use the query string, or the secret may be print.
+	// NOTE: the ownership of `s.Storage` is taken here.
+	s.Storage = e.info.storage
+	e.info.query = restoreQuery(s)
+
 	switch s.Kind {
 	case ast.BRIEKindBackup:
 		e.backupCfg = &task.BackupConfig{Config: cfg}
@@ -347,13 +407,118 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	return e
 }
 
+// oneshotExecutor wraps a executor, making its `Next` would only be called once.
+type oneshotExecutor struct {
+	Executor
+	finished bool
+}
+
+func (o *oneshotExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	if o.finished {
+		req.Reset()
+		return nil
+	}
+
+	if err := o.Executor.Next(ctx, req); err != nil {
+		return err
+	}
+	o.finished = true
+	return nil
+}
+
+func execOnce(ex Executor) Executor {
+	return &oneshotExecutor{Executor: ex}
+}
+
+type showQueryExec struct {
+	baseExecutor
+
+	targetID uint64
+}
+
+func (s *showQueryExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+
+	tsk, ok := globalBRIEQueue.queryTask(s.targetID)
+	if !ok {
+		return nil
+	}
+
+	req.AppendString(0, tsk.query)
+	return nil
+}
+
+type cancelJobExec struct {
+	baseExecutor
+
+	targetID uint64
+}
+
+func (s cancelJobExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if !globalBRIEQueue.cancelTask(s.targetID) {
+		s.ctx.GetSessionVars().StmtCtx.AppendWarning(exeerrors.ErrLoadDataJobNotFound.FastGenByArgs(s.targetID))
+	}
+	return nil
+}
+
+type showMetaExec struct {
+	baseExecutor
+
+	showConfig show.Config
+}
+
 // BRIEExec represents an executor for BRIE statements (BACKUP, RESTORE, etc)
 type BRIEExec struct {
 	baseExecutor
 
 	backupCfg  *task.BackupConfig
 	restoreCfg *task.RestoreConfig
+	showConfig *show.Config
 	info       *brieTaskInfo
+}
+
+func buildShowMetadataConfigFrom(s *ast.BRIEStmt) show.Config {
+	if s.Kind != ast.BRIEKindShowBackupMeta {
+		panic(fmt.Sprintf("precondition failed: `fillByShowMetadata` should always called by a ast.BRIEKindShowBackupMeta, but it is %s.", s.Kind))
+	}
+
+	store := s.Storage
+	cfg := show.Config{
+		Storage: store,
+		Cipher: backuppb.CipherInfo{
+			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+		},
+	}
+	return cfg
+}
+
+func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	exe, err := show.CreateExec(ctx, e.showConfig)
+	if err != nil {
+		return errors.Annotate(err, "failed to create show exec")
+	}
+	res, err := exe.Read(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to read metadata from backupmeta")
+	}
+
+	startTime := oracle.GetTimeFromTS(uint64(res.StartVersion))
+	endTime := oracle.GetTimeFromTS(uint64(res.EndVersion))
+
+	for _, table := range res.Tables {
+		req.AppendString(0, table.DBName)
+		req.AppendString(1, table.TableName)
+		req.AppendInt64(2, int64(table.KVCount))
+		req.AppendInt64(3, int64(table.KVSize))
+		if res.StartVersion > 0 {
+			req.AppendTime(4, types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, 0))
+		} else {
+			req.AppendNull(4)
+		}
+		req.AppendTime(5, types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, 0))
+	}
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -370,7 +535,13 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
 	taskCtx, taskID := bq.registerTask(ctx, e.info)
 	defer bq.cancelTask(taskID)
-
+	failpoint.Inject("block-on-brie", func() {
+		log.Warn("You shall not pass, nya. :3")
+		<-taskCtx.Done()
+		if taskCtx.Err() != nil {
+			failpoint.Return(taskCtx.Err())
+		}
+	})
 	// manually monitor the Killed status...
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
@@ -443,17 +614,18 @@ func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
 			item.progress.lock.Lock()
 			defer item.progress.lock.Unlock()
 			current := atomic.LoadInt64(&item.progress.current)
-			e.result.AppendString(0, item.info.storage)
-			e.result.AppendString(1, item.progress.cmd)
-			e.result.AppendFloat64(2, 100.0*float64(current)/float64(item.progress.total))
-			e.result.AppendTime(3, item.info.queueTime)
-			e.result.AppendTime(4, item.info.execTime)
-			e.result.AppendTime(5, item.info.finishTime)
-			e.result.AppendUint64(6, item.info.connID)
+			e.result.AppendUint64(0, item.info.id)
+			e.result.AppendString(1, item.info.storage)
+			e.result.AppendString(2, item.progress.cmd)
+			e.result.AppendFloat64(3, 100.0*float64(current)/float64(item.progress.total))
+			e.result.AppendTime(4, item.info.queueTime)
+			e.result.AppendTime(5, item.info.execTime)
+			e.result.AppendTime(6, item.info.finishTime)
+			e.result.AppendUint64(7, item.info.connID)
 			if len(item.info.message) > 0 {
-				e.result.AppendString(7, item.info.message)
+				e.result.AppendString(8, item.info.message)
 			} else {
-				e.result.AppendNull(7)
+				e.result.AppendNull(8)
 			}
 		}
 		return true
@@ -597,4 +769,13 @@ func (gs *tidbGlueSession) GetVersion() string {
 func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se glue.Session) error) error {
 	// in SQL backup. we don't need to close domain.
 	return fn(gs)
+}
+
+func restoreQuery(stmt *ast.BRIEStmt) string {
+	out := bytes.NewBuffer(nil)
+	rc := format.NewRestoreCtx(format.RestoreNameBackQuotes|format.RestoreStringSingleQuotes, out)
+	if err := stmt.Restore(rc); err != nil {
+		return "N/A"
+	}
+	return out.String()
 }

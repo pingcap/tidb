@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -59,12 +59,10 @@ type CheckpointManager struct {
 	globalCnt        int
 
 	// For persisting the checkpoint periodically.
-	timeOfLastFlush time.Time
-	updateInterval  time.Duration
-	updating        bool
-	updaterWg       sync.WaitGroup
-	updaterCh       chan *sync.WaitGroup
-	updaterExitCh   chan struct{}
+	updating      bool
+	updaterWg     sync.WaitGroup
+	updaterCh     chan *sync.WaitGroup
+	updaterExitCh chan struct{}
 }
 
 // TaskCheckpoint is the checkpoint for a single task.
@@ -78,27 +76,25 @@ type TaskCheckpoint struct {
 
 // FlushController is an interface to control the flush of the checkpoint.
 type FlushController interface {
-	// Flush flushes the checkpoint to the storage.
-	Flush(indexID int64) (bool, error)
+	Flush(indexID int64, force bool) (flushed, imported bool, err error)
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
-	sessPool *sess.Pool, jobID, indexID int64, interval time.Duration) (*CheckpointManager, error) {
+	sessPool *sess.Pool, jobID, indexID int64) (*CheckpointManager, error) {
 	instanceAddr := InitInstanceAddr()
 	cm := &CheckpointManager{
-		ctx:            ctx,
-		flushCtrl:      flushCtrl,
-		sessPool:       sessPool,
-		jobID:          jobID,
-		indexID:        indexID,
-		checkpoints:    make(map[int]*TaskCheckpoint, 16),
-		mu:             sync.Mutex{},
-		instanceAddr:   instanceAddr,
-		updateInterval: interval,
-		updaterWg:      sync.WaitGroup{},
-		updaterExitCh:  make(chan struct{}),
-		updaterCh:      make(chan *sync.WaitGroup),
+		ctx:           ctx,
+		flushCtrl:     flushCtrl,
+		sessPool:      sessPool,
+		jobID:         jobID,
+		indexID:       indexID,
+		checkpoints:   make(map[int]*TaskCheckpoint, 16),
+		mu:            sync.Mutex{},
+		instanceAddr:  instanceAddr,
+		updaterWg:     sync.WaitGroup{},
+		updaterExitCh: make(chan struct{}),
+		updaterCh:     make(chan *sync.WaitGroup),
 	}
 	err := cm.resumeCheckpoint()
 	if err != nil {
@@ -134,7 +130,11 @@ func (s *CheckpointManager) IsComplete(end kv.Key) bool {
 func (s *CheckpointManager) Status() (int, kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.localCnt, s.minKeySyncGlobal
+	total := 0
+	for _, cp := range s.checkpoints {
+		total += cp.currentKeys
+	}
+	return s.localCnt + total, s.minKeySyncGlobal
 }
 
 // Register registers a new task.
@@ -160,19 +160,17 @@ func (s *CheckpointManager) UpdateTotal(taskID int, added int, last bool) {
 // This is called by the writer after writing the local engine to update the current number of rows written.
 func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	cp := s.checkpoints[taskID]
 	cp.currentKeys += added
+	s.mu.Unlock()
 
-	if !intest.InTest && time.Since(s.timeOfLastFlush) < s.updateInterval {
-		return nil
-	}
-	s.timeOfLastFlush = time.Now()
-	imported, err := s.flushCtrl.Flush(s.indexID)
-	if err != nil {
+	flushed, imported, err := s.flushCtrl.Flush(s.indexID, false)
+	if !flushed || err != nil {
 		return err
 	}
 	// Progress the minimum synced key.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for {
 		cp := s.checkpoints[s.minTaskIDSynced+1]
 		if cp == nil || !cp.lastBatchSent || cp.currentKeys < cp.totalKeys {
@@ -241,7 +239,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 	ddlSess := sess.NewSession(sessCtx)
 	return ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = %s;"
-		sql := fmt.Sprintf(template, s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
+		sql := fmt.Sprintf(template, s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
 		rows, err := se.Execute(ctx, sql, "get_checkpoint")
 		if err != nil {
@@ -312,7 +310,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		sql := fmt.Sprintf(template, wrapKey2String(rawReorgMeta), s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
+		sql := fmt.Sprintf(template, util.WrapKey2String(rawReorgMeta), s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
 		_, err = se.Execute(ctx, sql, "update_checkpoint")
 		if err != nil {
@@ -357,11 +355,4 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			return
 		}
 	}
-}
-
-func wrapKey2String(key []byte) string {
-	if len(key) == 0 {
-		return "''"
-	}
-	return fmt.Sprintf("0x%x", key)
 }

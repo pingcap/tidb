@@ -134,14 +134,20 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 			logutil.Logger(s.logCtx).Info("scheduler finished subtasks", zap.Any("step", task.Step))
 			break
 		}
-		s.updateSubtaskState(subtask.ID, proto.TaskStateRunning)
+		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateRunning, "")
 		if err := s.getError(); err != nil {
 			break
 		}
 
-		minimalTasks, err := scheduler.SplitSubtask(subtask.Meta)
+		var minimalTasks []proto.MinimalTask
+		minimalTasks, err = scheduler.SplitSubtask(runCtx, subtask.Meta)
 		if err != nil {
 			s.onError(err)
+			if errors.Cause(err) == context.Canceled {
+				s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
+			} else {
+				s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError().Error())
+			}
 			break
 		}
 		logutil.Logger(s.logCtx).Info("split subTask", zap.Any("cnt", len(minimalTasks)), zap.Any("subtask_id", subtask.ID))
@@ -154,15 +160,20 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 			}
 		}
 		minimalTaskWg.Wait()
+		if err := s.getError(); err == nil {
+			if err := scheduler.OnSubtaskFinished(runCtx, subtask.Meta); err != nil {
+				s.onError(err)
+			}
+		}
 		if err := s.getError(); err != nil {
 			if errors.Cause(err) == context.Canceled {
-				s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
+				s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
 			} else {
-				s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
+				s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError().Error())
 			}
 			break
 		}
-		s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
+		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateSucceed, "")
 	}
 
 	return s.getError()
@@ -213,17 +224,17 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 		logutil.BgLogger().Warn("scheduler rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
 		return nil
 	}
-	s.updateSubtaskState(subtask.ID, proto.TaskStateReverting)
+	s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateReverting, "")
 	if err := s.getError(); err != nil {
 		return err
 	}
 
 	err = scheduler.Rollback(rollbackCtx)
 	if err != nil {
-		s.updateSubtaskState(subtask.ID, proto.TaskStateRevertFailed)
+		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateRevertFailed, "")
 		s.onError(err)
 	} else {
-		s.updateSubtaskState(subtask.ID, proto.TaskStateReverted)
+		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateReverted, "")
 	}
 	return s.getError()
 }
@@ -280,8 +291,8 @@ func (s *InternalSchedulerImpl) resetError() {
 	s.mu.err = nil
 }
 
-func (s *InternalSchedulerImpl) updateSubtaskState(id int64, state string) {
-	err := s.taskTable.UpdateSubtaskState(id, state)
+func (s *InternalSchedulerImpl) updateSubtaskStateAndError(id int64, state string, subTaskErr string) {
+	err := s.taskTable.UpdateSubtaskStateAndError(id, state, subTaskErr)
 	if err != nil {
 		s.onError(err)
 	}

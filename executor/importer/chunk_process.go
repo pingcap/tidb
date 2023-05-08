@@ -28,9 +28,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // constants, make it a variable for test
@@ -42,14 +44,13 @@ var (
 )
 
 type deliveredRow struct {
-	kvs    *kv.Pairs // if kvs is nil, this indicated we've got the last message.
+	kvs *kv.Pairs // if kvs is nil, this indicated we've got the last message.
+	// end offset in data file after encode this row.
 	offset int64
-	rowID  int64
 }
 
 type deliverResult struct {
-	totalDur time.Duration
-	err      error
+	err error
 }
 
 type deliverKVBatch struct {
@@ -99,15 +100,6 @@ func (b *deliverKVBatch) add(kvs *kv.Pairs) {
 	}
 }
 
-func firstErr(errors ...error) error {
-	for _, err := range errors {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // chunkProcessor process data chunk, it encodes and writes KV to local disk.
 type chunkProcessor struct {
 	parser      mydump.Parser
@@ -117,42 +109,43 @@ type chunkProcessor struct {
 	dataWriter  backend.EngineWriter
 	indexWriter backend.EngineWriter
 
-	checksum verify.KVChecksum
-	encoder  kvEncoder
-	kvCodec  tikv.Codec
+	encoder     kvEncoder
+	kvCodec     tikv.Codec
+	progress    *asyncloaddata.Progress
+	startOffset int64
 }
 
-func (p *chunkProcessor) process(ctx context.Context) error {
-	// todo: use error group pattern to simplify the code
-	deliverCompleteCh := make(chan deliverResult)
-	go func() {
-		defer close(deliverCompleteCh)
-		err := p.deliverLoop(ctx)
-		select {
-		case <-ctx.Done():
-		case deliverCompleteCh <- deliverResult{err: err}:
-		}
+func (p *chunkProcessor) process(ctx context.Context) (err error) {
+	task := log.BeginTask(p.logger, "process chunk")
+	defer func() {
+		task.End(zap.ErrorLevel, err)
 	}()
-
-	p.logger.Info("process chunk")
-
-	encodeErr := p.encodeLoop(ctx, deliverCompleteCh)
-	var deliverErr error
-	select {
-	case result, ok := <-deliverCompleteCh:
-		if ok {
-			deliverErr = result.err
-		} else {
-			// else, this must cause by ctx cancel
-			deliverErr = ctx.Err()
-		}
-	case <-ctx.Done():
-		deliverErr = ctx.Err()
+	if err2 := p.initProgress(); err2 != nil {
+		return err2
 	}
-	return errors.Trace(firstErr(encodeErr, deliverErr))
+
+	group, gCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		return p.deliverLoop(gCtx)
+	})
+	group.Go(func() error {
+		return p.encodeLoop(gCtx)
+	})
+	return group.Wait()
 }
 
-func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-chan deliverResult) error {
+func (p *chunkProcessor) initProgress() error {
+	// we might skip N rows or start from checkpoint
+	offset, err := p.parser.ScannedPos()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	p.progress.EncodeFileSize.Add(offset)
+	p.startOffset = offset
+	return nil
+}
+
+func (p *chunkProcessor) encodeLoop(ctx context.Context) error {
 	defer close(p.kvsCh)
 
 	send := func(kvs []deliveredRow) error {
@@ -161,15 +154,6 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
-		case result, ok := <-deliverCompleteCh:
-			if result.err == nil && !ok {
-				result.err = ctx.Err()
-			}
-			if result.err == nil {
-				result.err = errors.New("unexpected premature fulfillment")
-				p.logger.DPanic("unexpected: deliverCompleteCh prematurely fulfilled with no error", zap.Bool("chIsOpen", ok))
-			}
-			return errors.Trace(result.err)
 		}
 	}
 
@@ -179,13 +163,14 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 		var readDur, encodeDur time.Duration
 		canDeliver := false
 		rowBatch := make([]deliveredRow, 0, MinDeliverRowCnt)
-		var newOffset, rowID int64
+		var newOffset int64
 		var kvSize uint64
 	outLoop:
 		for !canDeliver {
 			readDurStart := time.Now()
 			err = p.parser.ReadRow()
-			newOffset, rowID = p.parser.Pos()
+			// todo: we can implement a ScannedPos which don't return error, will change it later.
+			newOffset, _ = p.parser.ScannedPos()
 
 			switch errors.Cause(err) {
 			case nil:
@@ -212,7 +197,8 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 				return err
 			}
 
-			rowBatch = append(rowBatch, deliveredRow{kvs: kvs, offset: newOffset, rowID: rowID})
+			p.progress.ReadRowCnt.Inc()
+			rowBatch = append(rowBatch, deliveredRow{kvs: kvs, offset: newOffset})
 			kvSize += kvs.Size()
 			// pebble cannot allow > 4.0G kv in one batch.
 			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
@@ -236,6 +222,7 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 	kvBatch := newDeliverKVBatch(p.kvCodec)
 
+	prevOffset, currOffset := p.startOffset, p.startOffset
 	for {
 	outer:
 		for kvBatch.size() < MinDeliverBytes {
@@ -244,8 +231,9 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 				if !ok {
 					break outer
 				}
-				for _, p := range kvPacket {
-					kvBatch.add(p.kvs)
+				for _, row := range kvPacket {
+					kvBatch.add(row.kvs)
+					currOffset = row.offset
 				}
 			case <-ctx.Done():
 				return ctx.Err()
@@ -276,26 +264,14 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 			return err
 		}
 
-		p.checksum.Add(kvBatch.dataChecksum)
-		p.checksum.Add(kvBatch.indexChecksum)
+		p.progress.EncodeFileSize.Add(currOffset - prevOffset)
+		prevOffset = currOffset
+
+		p.chunkInfo.Checksum.Add(kvBatch.dataChecksum)
+		p.chunkInfo.Checksum.Add(kvBatch.indexChecksum)
 
 		kvBatch.reset()
 	}
 
 	return nil
-}
-
-func (p *chunkProcessor) close(ctx context.Context) {
-	if err2 := p.parser.Close(); err2 != nil {
-		p.logger.Error("failed to close parser", zap.Error(err2))
-	}
-	if err2 := p.encoder.Close(); err2 != nil {
-		p.logger.Error("failed to close encoder", zap.Error(err2))
-	}
-	if _, err2 := p.dataWriter.Close(ctx); err2 != nil {
-		p.logger.Error("failed to close data writer", zap.Error(err2))
-	}
-	if _, err2 := p.indexWriter.Close(ctx); err2 != nil {
-		p.logger.Error("failed to close data writer", zap.Error(err2))
-	}
 }
