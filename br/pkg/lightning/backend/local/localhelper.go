@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"math"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -52,8 +51,6 @@ const (
 )
 
 var (
-	// the max keys count in a batch to split one region
-	maxBatchSplitKeys = 4096
 	// the max total key size in a split region batch.
 	// our threshold should be smaller than TiKV's raft max entry size(default is 8MB).
 	maxBatchSplitSize = 6 * units.MiB
@@ -212,8 +209,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 		}
 
 		var syncLock sync.Mutex
-		// TODO, make this size configurable
-		size := mathutil.Min(len(splitKeyMap), runtime.GOMAXPROCS(0))
+		size := mathutil.Min(len(splitKeyMap), local.regionSplitConcurrency)
 		ch := make(chan *splitInfo, size)
 		eg, splitCtx := errgroup.WithContext(ctx)
 
@@ -232,7 +228,9 @@ func (local *local) SplitAndScatterRegionByRanges(
 					endIdx := 0
 					batchKeySize := 0
 					for endIdx <= len(keys) {
-						if endIdx == len(keys) || batchKeySize+len(keys[endIdx]) > maxBatchSplitSize || endIdx-startIdx >= maxBatchSplitKeys {
+						if endIdx == len(keys) ||
+							batchKeySize+len(keys[endIdx]) > maxBatchSplitSize ||
+							endIdx-startIdx >= local.regionSplitBatchSize {
 							splitRegionStart := codec.EncodeBytes([]byte{}, keys[startIdx])
 							splitRegionEnd := codec.EncodeBytes([]byte{}, keys[endIdx-1])
 							if bytes.Compare(splitRegionStart, splitRegion.Region.StartKey) < 0 || !beforeEnd(splitRegionEnd, splitRegion.Region.EndKey) {
@@ -382,6 +380,9 @@ func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (
 	return stats, errors.Trace(err)
 }
 
+// BatchSplitRegions will split regions by the given split keys and tries to
+// scatter new regions. If split/scatter fails because new region is not ready,
+// this function will not return error.
 func (local *local) BatchSplitRegions(
 	ctx context.Context,
 	region *split.RegionInfo,
@@ -397,34 +398,42 @@ func (local *local) BatchSplitRegions(
 	var failedErr error
 	retryRegions := make([]*split.RegionInfo, 0)
 	scatterRegions := newRegions
-	waitTime := splitRegionBaseBackOffTime
-	for i := 0; i < maxRetryTimes; i++ {
+	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
+	_ = utils.WithRetry(ctx, func() error {
+		retryRegions = make([]*split.RegionInfo, 0, 16)
 		for _, region := range scatterRegions {
 			// Wait for a while until the regions successfully splits.
-			local.waitForSplit(ctx, region.Region.Id)
+			ok, err2 := local.hasRegion(ctx, region.Region.Id)
+			if !ok || err2 != nil {
+				failedErr = err2
+				if failedErr == nil {
+					failedErr = errors.Errorf("region %d not exists", region.Region.Id)
+				}
+				retryRegions = append(retryRegions, region)
+				continue
+			}
 			if err = local.splitCli.ScatterRegion(ctx, region); err != nil {
 				failedErr = err
 				retryRegions = append(retryRegions, region)
 			}
 		}
 		if len(retryRegions) == 0 {
-			break
+			return nil
+		}
+		// if the number of becomes smaller, we can infer TiKV side really
+		// made some progress so don't increase the retry times.
+		if len(retryRegions) < len(scatterRegions) {
+			backoffer.Stat.ReduceRetry()
 		}
 		// the scatter operation likely fails because region replicate not finish yet
 		// pack them to one log to avoid printing a lot warn logs.
 		log.FromContext(ctx).Warn("scatter region failed", zap.Int("regionCount", len(newRegions)),
-			zap.Int("failedCount", len(retryRegions)), zap.Error(failedErr), zap.Int("retry", i))
+			zap.Int("failedCount", len(retryRegions)), zap.Error(failedErr))
 		scatterRegions = retryRegions
-		retryRegions = make([]*split.RegionInfo, 0)
-		select {
-		case <-time.After(waitTime):
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		}
-		waitTime *= 2
-	}
+		return failedErr
+	}, backoffer)
 
-	return region, newRegions, nil
+	return region, newRegions, ctx.Err()
 }
 
 func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
@@ -433,24 +442,6 @@ func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error
 		return false, err
 	}
 	return regionInfo != nil, nil
-}
-
-func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
-	for i := 0; i < split.SplitCheckMaxRetryTimes; i++ {
-		ok, err := local.hasRegion(ctx, regionID)
-		if err != nil {
-			log.FromContext(ctx).Info("wait for split failed", log.ShortError(err))
-			return
-		}
-		if ok {
-			break
-		}
-		select {
-		case <-time.After(time.Second):
-		case <-ctx.Done():
-			return
-		}
-	}
 }
 
 func (local *local) waitForScatterRegions(ctx context.Context, regions []*split.RegionInfo) (scatterCount int, _ error) {
@@ -478,6 +469,10 @@ func (local *local) waitForScatterRegions(ctx context.Context, regions []*split.
 		select {
 		case <-time.After(time.Second):
 		case <-subCtx.Done():
+			if len(regions) > 0 {
+				log.FromContext(ctx).Warn("wait for scatter region timeout, print the first region",
+					logutil.Region(regions[0].Region))
+			}
 			return
 		}
 	}
