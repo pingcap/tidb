@@ -1637,6 +1637,14 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.setSchemaAndNames(buildCancelDDLJobsFields())
 		ret = p
+	case ast.AdminPauseDDLJobs:
+		p := &PauseDDLJobs{JobIDs: as.JobIDs}
+		p.setSchemaAndNames(buildPauseDDLJobsFields())
+		ret = p
+	case ast.AdminResumeDDLJobs:
+		p := &ResumeDDLJobs{JobIDs: as.JobIDs}
+		p.setSchemaAndNames(buildResumeDDLJobsFields())
+		ret = p
 	case ast.AdminCheckIndexRange:
 		schema, names, err := b.buildCheckIndexSchema(as.Tables[0], as.Index)
 		if err != nil {
@@ -3110,12 +3118,24 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
-func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
+func buildCommandOnDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(2)
 	schema.Append(buildColumnWithName("", "JOB_ID", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "RESULT", mysql.TypeVarchar, 128))
 
 	return schema.col2Schema(), schema.names
+}
+
+func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
+}
+
+func buildPauseDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
+}
+
+func buildResumeDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
 }
 
 func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {
@@ -3124,16 +3144,22 @@ func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(len(names))
 	for i := range names {
 		fLen, _ := mysql.GetDefaultFieldLengthAndDecimal(ftypes[i])
+		if ftypes[i] == mysql.TypeVarchar {
+			// the default varchar length is `5`, which might be too short for us.
+			fLen = 255
+		}
 		schema.Append(buildColumnWithName("", names[i], ftypes[i], fLen))
 	}
 	return schema.col2Schema(), schema.names
 }
 
-func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
-	if kind == ast.BRIEKindShowBackupMeta {
-		return buildShowBackupMetaSchema()
-	}
+func buildShowBackupQuerySchema() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "Query", mysql.TypeVarchar, 4096))
+	return schema.col2Schema(), schema.names
+}
 
+func buildBackupRestoreSchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	datetimeSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDatetime)
 
@@ -3147,6 +3173,20 @@ func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
 	schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
 	return schema.col2Schema(), schema.names
+}
+
+func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
+	switch kind {
+	case ast.BRIEKindShowBackupMeta:
+		return buildShowBackupMetaSchema()
+	case ast.BRIEKindShowQuery:
+		return buildShowBackupQuerySchema()
+	case ast.BRIEKindBackup, ast.BRIEKindRestore:
+		return buildBackupRestoreSchema(kind)
+	default:
+		s := newColumnsWithNames(0)
+		return s.col2Schema(), s.names
+	}
 }
 
 func buildCalibrateResourceSchema() (*expression.Schema, types.NameSlice) {
@@ -5256,8 +5296,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}
 	case ast.ShowBackups, ast.ShowRestores:
-		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
+		names = []string{"Id", "Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowPlacementLabels:
 		names = []string{"Key", "Values"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeJSON}

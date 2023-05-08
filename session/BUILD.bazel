@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "advisory_locks.go",
         "bootstrap.go",
+        "mock_bootstrap.go",
         "nontransactional.go",
         "session.go",
         "testutil.go",  #keep

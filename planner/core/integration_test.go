@@ -1444,7 +1444,7 @@ func TestSysdatePushDown(t *testing.T) {
 	tk.MustExec("use test")
 	now := time.Now()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())))
-	rows[1][2] = fmt.Sprintf("gt(test.t.d, %v)", now.Format("2006-01-02 15:04:05"))
+	rows[1][2] = fmt.Sprintf("gt(test.t.d, %v)", now.Format(time.DateTime))
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")

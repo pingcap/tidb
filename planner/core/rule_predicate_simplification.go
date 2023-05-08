@@ -88,6 +88,10 @@ func updateInPredicate(inPredicate expression.Expression, notEQPredicate express
 	}
 	v := inPredicate.(*expression.ScalarFunction)
 	notEQValue := notEQPredicate.(*expression.ScalarFunction).GetArgs()[1].(*expression.Constant)
+	// do not simplify != NULL since it is always false.
+	if notEQValue.Value.IsNull() {
+		return inPredicate, true
+	}
 	newValues := make([]expression.Expression, 0, len(v.GetArgs()))
 	var lastValue *expression.Constant
 	for _, element := range v.GetArgs() {

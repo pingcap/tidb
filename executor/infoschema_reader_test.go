@@ -174,6 +174,10 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustExec("CREATE TABLE t (`COL3` bit(1) NOT NULL,b year) ;")
 	tk.MustQuery("select column_type from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't';").
 		Check(testkit.Rows("bit(1)", "year(4)"))
+
+	// For issue: https://github.com/pingcap/tidb/issues/43379
+	tk.MustQuery("select ordinal_position from information_schema.columns where table_schema=database() and table_name='t' and column_name='b'").
+		Check(testkit.Rows("2"))
 }
 
 func TestEngines(t *testing.T) {
@@ -607,7 +611,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 		// test `End_time` field
 		str, ok := row[6].(string)
 		require.True(t, ok)
-		_, err := time.Parse("2006-01-02 15:04:05", str)
+		_, err := time.Parse(time.DateTime, str)
 		require.NoError(t, err)
 	}
 	rows2 := tk.MustQuery("show analyze status where TABLE_NAME='t1'").Sort().Rows()
