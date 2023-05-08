@@ -133,38 +133,46 @@ func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported boo
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	bc.diskRoot.UpdateUsage()
-	shouldImport := bc.diskRoot.ShouldImport()
-	shouldFlush := force ||
-		shouldImport ||
-		time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+	shouldFlush, shouldImport := bc.ShouldSync(force)
 	if !shouldFlush {
 		return false, false, nil
 	}
+	if !ei.flushing.CompareAndSwap(false, true) {
+		return false, false, nil
+	}
+	defer ei.flushing.Store(false)
+	ei.flushLock.Lock()
+	defer ei.flushLock.Unlock()
 
-	bc.timeOfLastFlush.Store(time.Now())
 	err = ei.Flush()
 	if err != nil {
 		return false, false, err
 	}
+	bc.timeOfLastFlush.Store(time.Now())
 
-	if force || shouldImport {
-		release := ei.acquireFlushLock()
-		if release == nil {
-			return true, false, nil
-		}
-		defer release()
-		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
-			zap.String("usage info", bc.diskRoot.UsageInfo()))
-		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
-		if err != nil {
-			logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
-				zap.String("usage info", bc.diskRoot.UsageInfo()))
-			return true, false, err
-		}
-		return true, true, nil
+	if !shouldImport {
+		return true, false, nil
 	}
-	return true, false, nil
+	logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
+		zap.String("usage info", bc.diskRoot.UsageInfo()))
+	err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
+	if err != nil {
+		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
+			zap.String("usage info", bc.diskRoot.UsageInfo()))
+		return true, false, err
+	}
+	return true, true, nil
+}
+
+func (bc *litBackendCtx) ShouldSync(force bool) (shouldFlush bool, shouldImport bool) {
+	if force {
+		return true, true
+	}
+	bc.diskRoot.UpdateUsage()
+	shouldImport = bc.diskRoot.ShouldImport()
+	shouldFlush = shouldImport ||
+		time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+	return shouldFlush, shouldImport
 }
 
 // Done returns true if the lightning backfill is done.
