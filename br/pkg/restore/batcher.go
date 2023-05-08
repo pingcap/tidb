@@ -59,7 +59,7 @@ type Batcher struct {
 	batchSizeThreshold int
 	size               int32
 
-	tree map[int64]rtree.RangeTree
+	checkpointTrees map[int64]rtree.RangeTree
 }
 
 // Len calculate the current size of this batcher.
@@ -254,21 +254,30 @@ func newDrainResult() DrainResult {
 // fileterOutRanges filter out the range from `drained-range` that is overlapped with ranges in the `range-tree`
 func (b *Batcher) filterOutRanges(tree rtree.RangeTree, drained []rtree.Range) []rtree.Range {
 	newRanges := make([]rtree.Range, 0, len(drained))
-	progress := int64(0)
+	progress := int(0)
+	totalKVs := uint64(0)
+	totalBytes := uint64(0)
 	for _, rg := range drained {
 		if r := tree.Find(&rg); r != nil {
 			// The range is overlapped with ranges in the tree,
 			// so skip it and update the summary information.
-			progress += 2 // split/scatter + download/ingest
+			progress += 1
 			for _, f := range rg.Files {
-				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
-				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+				totalKVs += f.TotalKvs
+				totalBytes += f.TotalBytes
 			}
 		} else {
 			newRanges = append(newRanges, rg)
 		}
 	}
-	b.updateCh.IncBy(progress)
+	if progress > 0 {
+		// split/scatter + download/ingest
+		b.updateCh.IncBy(int64(progress) * 2)
+		summary.CollectSuccessUnit(summary.TotalKV, progress, totalKVs)
+		summary.CollectSuccessUnit(summary.SkippedKVCountByCheckpoint, progress, totalKVs)
+		summary.CollectSuccessUnit(summary.TotalBytes, progress, totalBytes)
+		summary.CollectSuccessUnit(summary.SkippedBytesByCheckpoint, progress, totalBytes)
+	}
 	return newRanges
 }
 
@@ -297,7 +306,7 @@ func (b *Batcher) drainRanges() DrainResult {
 	defer b.cachedTablesMu.Unlock()
 
 	for offset, thisTable := range b.cachedTables {
-		t, exists := b.tree[thisTable.Table.ID]
+		t, exists := b.checkpointTrees[thisTable.Table.ID]
 		thisTableLen := len(thisTable.Range)
 		collected := len(result.Ranges)
 
@@ -418,6 +427,6 @@ func (b *Batcher) SetThreshold(newThreshold int) {
 	b.batchSizeThreshold = newThreshold
 }
 
-func (b *Batcher) SetCheckpoint(tree map[int64]rtree.RangeTree) {
-	b.tree = tree
+func (b *Batcher) SetCheckpoint(trees map[int64]rtree.RangeTree) {
+	b.checkpointTrees = trees
 }
