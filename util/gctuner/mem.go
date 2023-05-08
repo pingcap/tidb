@@ -15,10 +15,12 @@
 package gctuner
 
 import (
+	"sync/atomic"
+
 	"github.com/pingcap/tidb/util/memory"
 )
 
 func readMemoryInuse() uint64 {
 	memStats := memory.ForceReadMemStats()
-	return memStats.HeapInuse
+	return atomic.LoadUint64(&memStats.HeapInuse)
 }
