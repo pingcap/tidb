@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
@@ -39,6 +38,7 @@ type backfillSchedulerHandle struct {
 	bc          ingest.BackendCtx
 	ptbl        table.PhysicalTable
 	jc          *JobContext
+	tbl         table.Table
 	eleTypeKey  []byte
 	totalRowCnt int64
 }
@@ -188,14 +188,16 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	}
 	ingestScheduler.close(false)
 
-	_, _, err = b.bc.Flush(b.index.ID, true)
-	if err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
+	/*
+		_, _, err = b.bc.Flush(b.index.ID, true)
+		if err != nil {
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
+			}
+			logutil.BgLogger().Error("[ddl] flush error", zap.Error(err))
+			return nil, err
 		}
-		logutil.BgLogger().Error("[ddl] flush error", zap.Error(err))
-		return nil, err
-	}
+	*/
 	return nil, consumer.getResult()
 }
 
@@ -208,6 +210,9 @@ func (*backfillSchedulerHandle) OnSubtaskFinished(context.Context, []byte) error
 func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
 
+	if err := b.bc.ImportAndClean(b.index.ID); err != nil {
+		return err
+	}
 	b.bc.Unregister(b.job.ID, b.index.ID)
 	return nil
 }

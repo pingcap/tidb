@@ -40,6 +40,7 @@ type BackendCtx interface {
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
+	ImportAndClean(indexID int64) error
 	ResetWorkers(jobID, indexID int64)
 	Flush(indexID int64, force bool) (flushed, imported bool, err error)
 	Done() bool
@@ -183,4 +184,18 @@ func (bc *litBackendCtx) Done() bool {
 // SetDone sets the done flag.
 func (bc *litBackendCtx) SetDone() {
 	bc.done = true
+}
+
+// ImportAndClean only do Import and clean lightning engine.
+func (bc *litBackendCtx) ImportAndClean(indexID int64) error {
+	ei, exist := bc.Load(indexID)
+	if !exist {
+		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
+	}
+
+	err := ei.ImportAndClean()
+	if err != nil {
+		return err
+	}
+	return nil
 }
