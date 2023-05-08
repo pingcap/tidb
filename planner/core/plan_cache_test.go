@@ -248,6 +248,19 @@ func TestIssue14875(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
 }
 
+func TestIssue14871(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t(a varchar(8), b varchar(8))`)
+	tk.MustExec(`insert into t values('1','1')`)
+	tk.MustExec(`prepare stmt from "select count(1) from t t1 left join t t2 on t1.a = t2.a where t2.b = ? and t2.b = ?"`)
+	tk.MustExec(`set @p0 = '1', @p1 = '2'`)
+	tk.MustQuery(`execute stmt using @p0, @p1`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @p0 = '1', @p1 = '1'`)
+	tk.MustQuery(`execute stmt using @p0, @p1`).Check(testkit.Rows("1"))
+}
+
 func TestNonPreparedPlanCacheDMLHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
