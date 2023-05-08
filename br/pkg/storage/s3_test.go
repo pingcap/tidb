@@ -1315,7 +1315,6 @@ func TestRetryError(t *testing.T) {
 		}
 
 		w.WriteHeader(200)
-
 	}))
 
 	defer server.Close()
