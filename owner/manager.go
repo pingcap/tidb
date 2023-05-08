@@ -323,8 +323,12 @@ func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPa
 		if err == nil {
 			break
 		}
-		logutil.BgLogger().Warn("[ddl] etcd-cli get leader failed", zap.String("key", ownerPath), zap.Error(err), zap.Int("retryCnt", i))
+		logutil.BgLogger().Info("[ddl] etcd-cli get owner info failed", zap.String("key", ownerPath), zap.Int("retryCnt", i), zap.Error(err))
 		time.Sleep(util.KeyOpRetryInterval)
+	}
+	if err != nil {
+		logutil.Logger(logCtx).Warn("etcd-cli get owner info failed", zap.Error(err))
+		return "", nil, op, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
 		return "", nil, op, 0, concurrency.ErrElectionNoLeader
@@ -403,6 +407,11 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 
 // GetOwnerOpValue gets the owner op value.
 func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath, logPrefix string) (OpType, error) {
+	// It's using for testing.
+	if etcdCli == nil {
+		return mockOwnerOpValue, nil
+	}
+
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
 	_, _, op, _, err := getOwnerInfo(ctx, logCtx, etcdCli, ownerPath)
 	return op, errors.Trace(err)

@@ -38,9 +38,7 @@ const (
 	// StateUpgrading represents the cluster global state is upgrading. It is exports for testing.
 	StateUpgrading = "upgrading"
 	// StateNormalRunning represents the cluster global state is normal running. It is exports for testing.
-	StateNormalRunning       = ""
-	StateUpgradingRetryTimes = 10
-	StateUpgradingInterval   = 200 * time.Millisecond
+	StateNormalRunning = ""
 )
 
 // StateSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.

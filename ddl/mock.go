@@ -154,6 +154,7 @@ func (s *MockStateSyncer) Init(context.Context) error {
 
 // UpdateGlobalState implements StateSyncer.UpdateGlobalState interface.
 func (s *MockStateSyncer) UpdateGlobalState(_ context.Context, stateInfo *syncer.StateInfo) error {
+	s.globalVerCh <- clientv3.WatchResponse{}
 	s.clusterState = stateInfo
 	return nil
 }

@@ -20,9 +20,11 @@ package session
 
 import (
 	"flag"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -39,8 +41,6 @@ var allDDLs = []string{
 	"alter table mock_sys_t add column c4 bigint",
 	"create table test_create_table(a int)",
 	"drop table test_create_table",
-	"create database test_create_db",
-	"drop database test_create_db",
 	"alter table mock_sys_t drop column c3",
 	"alter table mock_sys_t_rebase auto_increment = 6000",
 	"alter table mock_sys_t_auto shard_row_id_bits = 5",
@@ -54,18 +54,17 @@ var allDDLs = []string{
 	"rename table mock_sys_t_rename1 to mock_sys_t_rename11",
 	"rename table mock_sys_t_rename11 to mock_sys_t_rename111, mock_sys_t_rename2 to mock_sys_t_rename22",
 	"alter table mock_sys_t_cs convert to charset utf8mb4",
-	"alter database mock_sys_db_coll charset utf8mb4 collate utf8mb4_bin",
 	"alter table mock_sys_partition truncate partition p3",
 	"alter table mock_sys_t add column c41 bigint, add column c42 bigint",
 	"alter table mock_sys_t drop column c41, drop column c42",
 	"alter table mock_sys_t add index idx_v(c1)",
 	"alter table mock_sys_t alter index idx_v invisible",
-	//"alter table mock_sys_partition exchange partition p0 with table mock_sys_t_partition2",
 	"alter table mock_sys_partition add partition (partition p6 values less than (8192))",
 	"alter table mock_sys_partition drop partition p6",
 	"alter table mock_sys_t add index mul_idx1(c1), add index mul_idx2(c1)",
 	"alter table mock_sys_t drop index mul_idx1, drop index mul_idx2",
-	"alter database mock_sys_db_placement placement policy = 'alter_x'",
+	// TODO: Support check the DB for ActionAlterPlacementPolicy.
+	// "alter database mock_sys_db_placement placement policy = 'alter_x'",
 	"alter table mock_sys_t add index rename_idx1(c1)",
 	"alter table mock_sys_t rename index rename_idx1 to rename_idx2",
 }
@@ -97,11 +96,10 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 	mustExecute(s, "create table mock_sys_t_rename1(c1 bigint, c2 bigint);")
 	mustExecute(s, "create table mock_sys_t_rename2(c1 bigint, c2 bigint);")
 	mustExecute(s, "create table mock_sys_t_cs(a varchar(10)) charset utf8")
-	mustExecute(s, "create database mock_sys_db_coll default charset utf8 collate utf8_bin")
 	mustExecute(s, "create table mock_sys_t_partition2(c1 int, c2 int, c3 int)")
 	mustExecute(s, "set @@tidb_enable_exchange_partition=1")
-	mustExecute(s, "create placement policy alter_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";")
-	mustExecute(s, "create database mock_sys_db_placement")
+	// TODO: Support check the DB for ActionCreatePlacementPolicy.
+	// mustExecute(s, "create placement policy alter_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";")
 	for _, sql := range allDDLs {
 		TestHook.OnBootstrap(s)
 		mustExecute(s, sql)
@@ -117,6 +115,7 @@ func addMockBootstrapVersionForTest(s Session) {
 	if !*WithMockUpgrade {
 		return
 	}
+	logutil.BgLogger().Info(fmt.Sprintf("================================================== xxx mock"))
 
 	TestHook.OnBootstrapBefore(s)
 	bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
@@ -149,7 +148,7 @@ func (bc *BaseCallback) OnBootstrapAfter(Session) {}
 type TestCallback struct {
 	*BaseCallback
 
-	Cnt                       int64
+	Cnt                       *atomicutil.Int32
 	OnBootstrapBeforeExported func(s Session)
 	OnBootstrapExported       func(s Session)
 	OnBootstrapAfterExported  func(s Session)

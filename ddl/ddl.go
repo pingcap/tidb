@@ -262,8 +262,9 @@ type DDL interface {
 }
 
 type limitJobTask struct {
-	job *model.Job
-	err chan error
+	job      *model.Job
+	err      chan error
+	cacheErr error
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -1023,7 +1024,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-	task := &limitJobTask{job, make(chan error)}
+	task := &limitJobTask{job, make(chan error), nil}
 	d.limitJobCh <- task
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
@@ -1031,7 +1032,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			<-task.err
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			task1 := &limitJobTask{job, make(chan error)}
+			task1 := &limitJobTask{job, make(chan error), nil}
 			d.limitJobCh <- task1
 			// The second job result is used for test.
 			task = task1
@@ -1468,13 +1469,18 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 	job.State = model.JobStatePausing
 	job.AdminOperator = byWho
 
+	if job.RawArgs == nil {
+		return nil
+	}
+
 	return json.Unmarshal(job.RawArgs, &job.Args)
 }
 
 // resumePausedJob check and resume the Paused Job
 func resumePausedJob(se *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
-	if !job.IsResumable() ||
+	// TODO: Remove job.IsPausing().
+	if !(job.IsResumable() || job.IsPausing()) ||
 		// The Paused job should only be resumed by who paused it
 		job.AdminOperator != byWho {
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID)

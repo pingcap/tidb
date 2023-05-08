@@ -123,6 +123,13 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 			return nil, errors.Trace(err)
 		}
 		if row.GetInt64(1) == 1 {
+			isFilter, err := d.filterEndUserDDL(se, &runJob)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if isFilter {
+				continue
+			}
 			return &runJob, nil
 		}
 		b, err := filter(&runJob)
@@ -132,7 +139,6 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		if b {
 			isFilter, err := d.filterEndUserDDL(se, &runJob)
 			if err != nil {
-				logutil.BgLogger().Warn("[ddl] handle ddl job failed: filter end user DDL meet error", zap.Error(err), zap.String("job", runJob.String()))
 				return nil, errors.Trace(err)
 			}
 			if isFilter {
@@ -150,6 +156,7 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 
 func hasSysDB(job *model.Job) bool {
 	sNames := job2SchemaNames(job)
+	// TODO: Handle for the name is empty, like ActionCreatePlacementPolicy.
 	for _, name := range sNames {
 		if tidb_util.IsSysDB(name) {
 			return true
@@ -161,18 +168,32 @@ func hasSysDB(job *model.Job) bool {
 func (d *ddl) filterEndUserDDL(se *sess.Session, job *model.Job) (bool, error) {
 	if !d.stateSyncer.IsUpgradingState() {
 		if !job.IsPausedBySystem() || hasSysDB(job) {
+			logutil.BgLogger().Info("[ddl] xxx ******************** ---------------------------------------------- normal, paused sys or sys",
+				zap.Stringer("job", job), zap.String("query", job.Query))
 			return false, nil
 		}
 		_, err := ResumeJobsBySystem(se.Session(), []int64{job.ID})
 		if err != nil {
+			logutil.BgLogger().Info("[ddl] xxx ******************** resume user DDL by system", zap.Stringer("job", job), zap.Error(err))
+			// logutil.BgLogger().Info("[ddl] resume user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 			return false, err
 		}
+		logutil.BgLogger().Info("[ddl] xxx ******************** resume user DDL by system", zap.Stringer("job", job), zap.Error(err))
+		// logutil.BgLogger().Info("[ddl] resume user DDL by system successful", zap.Stringer("job", job))
+		return false, nil
+	}
+	if job.IsPausing() {
+		logutil.BgLogger().Info("[ddl] xxx zzz ******************** ----------------------------------------------upgrading, pausing",
+			zap.Int64("id", job.ID), zap.String("query", job.Query))
+		return true, nil
 	}
 	if hasSysDB(job) {
+		logutil.BgLogger().Info("[ddl] xxx ******************** ----------------------------------------------upgrading, sys", zap.Int64("id", job.ID), zap.String("query", job.Query))
 		return false, nil
 	}
 	_, err := PauseJobsBySystem(se.Session(), []int64{job.ID})
-	logutil.BgLogger().Info("[ddl] pause user DDL by system", zap.Stringer("job", job), zap.Error(err))
+	// logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job), zap.Error(err))
+	logutil.BgLogger().Info("[ddl] xxx zzz ******************** pause user DDL by system", zap.Stringer("job", job), zap.Error(err))
 	return true, err
 }
 
@@ -220,15 +241,16 @@ func (d *ddl) startDispatchLoop() {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
-	if err := d.checkClusterState(false); err != nil {
+	if err := d.doCheckClusterState(false); err != nil {
 		logutil.BgLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
 	defer ticker.Stop()
+	isFirst := true
 	for {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
-		d.needCheckClusterState()
+		d.needCheckClusterState(isFirst || d.once.Load())
 		if !d.isOwner() {
 			d.once.Store(true)
 			time.Sleep(dispatchLoopWaitingDuration)
@@ -245,58 +267,57 @@ func (d *ddl) startDispatchLoop() {
 				continue
 			}
 		case _, ok := <-d.stateSyncer.WatchChan():
-			d.checkClusterState(ok)
+			d.doCheckClusterState(!ok)
 		case <-d.ctx.Done():
 			return
 		}
 		d.loadDDLJobAndRun(se, d.generalDDLWorkerPool, d.getGeneralJob)
 		d.loadDDLJobAndRun(se, d.reorgWorkerPool, d.getReorgJob)
+		isFirst = false
 	}
 }
 
-func (d *ddl) needCheckClusterState() error {
+func (d *ddl) needCheckClusterState(mustCheck bool) error {
 	select {
 	case _, ok := <-d.stateSyncer.WatchChan():
-		d.checkClusterState(ok)
+		logutil.BgLogger().Info("[ddl] xxx ******************** ---------------------------------------------, watch chan 000", zap.Bool("new rewatch", ok))
+		d.doCheckClusterState(!ok)
 	default:
+		if mustCheck {
+			d.doCheckClusterState(false)
+		}
 	}
 	return nil
 }
 
-func (d *ddl) checkClusterState(needRewatch bool) error {
+func (d *ddl) doCheckClusterState(needRewatch bool) error {
 	if needRewatch {
 		d.stateSyncer.Rewatch(d.ctx)
 		return nil
 	}
 
-	// if resp.Canceled {
-	// 	logutil.BgLogger().Warn("watch canceled, no owner")
-	// 	return nil
-	// }
-
-	// for _, ev := range resp.Events {
-	// 	if ev.Type == mvccpb.DELETE {
-	// 		logutil.BgLogger().Info("watch failed, owner is deleted")
-	// 		return nil
-	// 	}
-	// 	if ev.Type == mvccpb.PUT {
-	// 		ev.Kv.Value
-	// 	}
-	// }
-	state, err := d.stateSyncer.GetGlobalState(d.ctx)
+	oldState := d.stateSyncer.IsUpgradingState()
+	stateInfo, err := d.stateSyncer.GetGlobalState(d.ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] get global state failed", zap.Error(err))
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("[ddl] get global state, and global state change",
+		zap.Bool("oldState", oldState), zap.Bool("currState", d.stateSyncer.IsUpgradingState()))
+	if !d.isOwner() {
+		return nil
+	}
+
 	ownerOp := owner.OpNone
-	if state.State == syncer.StateUpgrading {
+	if stateInfo.State == syncer.StateUpgrading {
 		ownerOp = owner.OpGetUpgradingState
 	}
 	err = d.ownerManager.SetOwnerOpValue(d.ctx, ownerOp)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] set owner operator value failed", zap.Error(err))
+		logutil.BgLogger().Warn("[ddl] the owner sets global state to owner operator value failed", zap.Error(err))
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("[ddl] the owner sets owner operator value", zap.Stringer("ownerOp", ownerOp))
 	return nil
 }
 
@@ -505,9 +526,15 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 func job2SchemaNames(job *model.Job) []string {
 	switch job.Type {
 	case model.ActionRenameTable:
+		var oldSchemaID int64
+		var oldSchemaName model.CIStr
+		var tableName model.CIStr
+		if err := job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName); err != nil {
+			// TODO: Handle this error
+		}
 		names := make([]string, 0, 2)
-		names = append(names, job.SchemaName)
-		names = append(names, job.Args[2].(string))
+		names = append(names, strings.ToLower(job.SchemaName))
+		names = append(names, oldSchemaName.O)
 		return names
 	case model.ActionRenameTables:
 		// TODO: Get this action's schema names.

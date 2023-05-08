@@ -1076,6 +1076,9 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	return row.GetString(0), false, nil
 }
 
+// SupportUpgradeStateVer is exported for testing.
+var SupportUpgradeStateVer = version144
+
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
@@ -1104,7 +1107,7 @@ func upgrade(s Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
-	if ver > version144 {
+	if ver >= int64(SupportUpgradeStateVer) {
 		syncUpgradeState(s)
 	}
 	if isNull {
@@ -1114,12 +1117,13 @@ func upgrade(s Session) {
 	// It is only used in test.
 	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
+		logutil.BgLogger().Info(fmt.Sprintf("================================================== xxx 111"))
 		upgrade(s, ver)
 	}
 	if isNull {
 		upgradeToVer99After(s)
 	}
-	if ver > version144 {
+	if ver >= int64(SupportUpgradeStateVer) {
 		syncNormalRunning(s)
 	}
 
@@ -1157,30 +1161,34 @@ func syncUpgradeState(s Session) error {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgrade update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
 	}
-	for i := 0; i < syncer.StateUpgradingRetryTimes; i++ {
+
+	retryTimes := 10
+	interval := 200 * time.Millisecond
+	for i := 0; i < retryTimes; i++ {
 		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
 		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
 			break
 		}
-		if i == syncer.StateUpgradingRetryTimes-1 {
+		if i == retryTimes-1 {
 			logutil.BgLogger().Fatal("upgrade get owner op failed", zap.Stringer("state", op), zap.Error(err))
 		}
 		logutil.BgLogger().Warn("upgrade get owner op failed", zap.Stringer("state", op), zap.Error(err))
-		time.Sleep(syncer.StateUpgradingInterval)
+		time.Sleep(interval)
 	}
 
-	for i := 0; i < syncer.StateUpgradingRetryTimes; i++ {
-		_, err = ddl.PauseAllJobsBySystem(s)
-		if err == nil {
+	for i := 0; i < retryTimes; i++ {
+		if _, err = ddl.PauseAllJobsBySystem(s); err == nil {
 			break
 		}
 
-		if i == syncer.StateUpgradingRetryTimes-1 {
+		if i == retryTimes-1 {
 			logutil.BgLogger().Fatal("upgrade pause all jobs failed", zap.Error(err))
 		}
 		logutil.BgLogger().Warn("upgrade pause all jobs failed", zap.Error(err))
-		time.Sleep(syncer.StateUpgradingInterval)
+		time.Sleep(interval)
 	}
+	logutil.BgLogger().Info("xxx ******************** upgrade update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+	// logutil.BgLogger().Info("upgrade update global state to upgrading", zap.String("state", syncer.StateUpgrading))
 
 	return nil
 }
@@ -1198,6 +1206,10 @@ func syncNormalRunning(s Session) error {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgrade update global state failed", zap.String("state", syncer.StateNormalRunning), zap.Error(err))
 	}
+	logutil.BgLogger().Info("xxx ******************** upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
+	logutil.BgLogger().Info("xxx ******************** upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
+	logutil.BgLogger().Info("xxx ******************** upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
+	// logutil.BgLogger().Info("upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
 
 	return nil
 }

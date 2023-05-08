@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	atomicutil "go.uber.org/atomic"
 )
 
 func TestUpgradeVersion83(t *testing.T) {
@@ -310,14 +312,16 @@ func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.R
 }
 
 func TestUpgradeWithPauseDDL(t *testing.T) {
-	*session.WithMockUpgrade = true
-
+	session.SupportUpgradeStateVer--
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	tc := session.TestCallback{}
-	tk1 := testkit.NewTestKit(t, store)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	_, err = execute(context.Background(), se, "create table test.pause_user_ddl_t(a int, b int)")
+	require.NoError(t, err)
 
+	tc := session.TestCallback{Cnt: atomicutil.NewInt32(0)}
 	sql := "select job_meta, processing from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing) order by processing desc, job_id"
 	tc.OnBootstrapBeforeExported = func(s session.Session) {
 		rows, err := execute(context.Background(), s, sql)
@@ -326,30 +330,31 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	}
 
 	wg := sync.WaitGroup{}
-	query := "create table test.pause_user_ddl_t(a int, b int)"
-	tk1.MustExec(query)
 	tc.OnBootstrapExported = func(s session.Session) {
-		query1 := "alter table test.pause_user_ddl_t add index idx(a)"
-		query2 := "alter table test.pause_user_ddl_t add column c int"
-		tc.Cnt++
+		var query string
+		switch tc.Cnt.Load() % 2 {
+		case 0:
+			query = fmt.Sprintf("alter table test.pause_user_ddl_t add index idx_%d(a)", tc.Cnt.Load())
+		case 1:
+			query = fmt.Sprintf("alter table test.pause_user_ddl_t add column c_%d int", tc.Cnt.Load())
+		}
+		tc.Cnt.Add(1)
 
 		ch := make(chan struct{})
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 000"))
 			ch <- struct{}{}
-			logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 111"))
-			switch tc.Cnt % 2 {
-			case 0:
-				tk1.MustExec(query1)
-			case 1:
-				tk1.MustExec(query2)
+			logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 111, query:%s", query))
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			_, err = tk.ExecWithContext(context.Background(), query)
+			if err != nil {
+				// Maybe the bootstrap domain is closed.
+				require.Equal(t, err.Error(), context.Canceled.Error())
 			}
 		}()
-		logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 222"))
 		<-ch
-		logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 333"))
 
 		rows, err := execute(context.Background(), s, sql)
 		require.NoError(t, err)
@@ -359,11 +364,16 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			err := runJob.Decode(jobBinary)
 			require.NoError(t, err)
 			if !tidb_util.IsSysDB(runJob.SchemaName) {
-				require.True(t, runJob.IsPausedBySystem())
+				// TODO: Replace it with IsPausedBySystem after support set JobStatePaused.
+				require.True(t, runJob.IsPausing(), fmt.Sprintf("job: %v", runJob))
+			} else {
+				require.False(t, !runJob.IsPausing(), fmt.Sprintf("job: %v", runJob))
 			}
 		}
+		logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 444: row len:%d, cnt:%d", len(rows), tc.Cnt.Load()))
 	}
 	tc.OnBootstrapAfterExported = func(s session.Session) {
+		logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- 555"))
 		rows, err := execute(context.Background(), s, sql)
 		require.NoError(t, err)
 
@@ -372,12 +382,20 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			runJob := model.Job{}
 			err := runJob.Decode(jobBinary)
 			require.NoError(t, err)
-			require.True(t, tidb_util.IsSysDB(runJob.SchemaName))
-			require.True(t, runJob.IsPausedBySystem())
+			if !tidb_util.IsSysDB(runJob.SchemaName) {
+				// TODO: Replace it with IsPausedBySystem after support set JobStatePaused.
+				require.True(t, runJob.IsPausing(), fmt.Sprintf("job: %v", runJob))
+			} else {
+				require.False(t, !runJob.IsPausing(), fmt.Sprintf("job: %v", runJob))
+			}
 		}
 	}
 	session.TestHook = tc
 
+	logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- xxx"))
+	logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- xxx"))
+	logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- xxx"))
+	*session.WithMockUpgrade = true
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -403,9 +421,56 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 
 	logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- xxxx"))
 	wg.Wait()
-	logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- zzzz"))
+	logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- yyyy"))
 
 	tk := testkit.NewTestKit(t, store)
+	var rows []chunk.Row
+
+	// Make sure all DDLs are done.
+	for i := 0; i < 50; i++ {
+		sql = fmt.Sprintf("select count(1) from mysql.tidb_ddl_job")
+		rows, err = execute(context.Background(), tk.Session(), sql)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		if rows[0].GetInt64(0) == 0 {
+			logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- yyy, len:%d", rows[0].GetInt64(0)))
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	require.Equal(t, int64(0), rows[0].GetInt64(0))
+	logutil.BgLogger().Info(fmt.Sprintf("-------------------------------------------- zzzz"))
+
+	// Check user DDLs are handled after system DDLs.
+	sql = fmt.Sprintf("select job_meta from mysql.tidb_ddl_history order by job_id desc limit %d", tc.Cnt.Load())
+	rows, err = execute(context.Background(), tk.Session(), sql)
+	require.NoError(t, err)
+	require.Len(t, rows, int(tc.Cnt.Load()))
+	type info struct {
+		ts  uint64
+		sql string
+	}
+	mysqlOpInfos := make([]info, 0, len(rows))
+	testOpInfos := make([]info, 0, len(rows))
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		runJob := model.Job{}
+		err := runJob.Decode(jobBinary)
+		require.NoError(t, err)
+		if strings.EqualFold(runJob.SchemaName, "mysql") {
+			mysqlOpInfos = append(mysqlOpInfos, info{runJob.BinlogInfo.FinishedTS, runJob.Query})
+		} else {
+			testOpInfos = append(testOpInfos, info{runJob.BinlogInfo.FinishedTS, runJob.Query})
+		}
+	}
+	for _, mysqlInfo := range mysqlOpInfos {
+		for _, testInfo := range testOpInfos {
+			cmt := fmt.Sprintf("test sql:%s, ts:%v, mysql sql:%s, ts:%v",
+				testInfo.sql, testInfo.ts, mysqlInfo.sql, mysqlInfo.ts)
+			require.Greater(t, testInfo.ts, mysqlInfo.ts, cmt)
+		}
+	}
+	// Check system schema in mock bootstrap.
 	tk.MustQuery("show create table mysql.mock_sys_t").Check(testkit.Rows(
 		"mock_sys_t CREATE TABLE `mock_sys_t` (\n" +
 			"  `c1` int(11) DEFAULT NULL,\n" +
