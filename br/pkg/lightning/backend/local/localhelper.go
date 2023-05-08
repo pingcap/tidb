@@ -30,6 +30,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -440,6 +441,10 @@ func (local *local) BatchSplitRegions(
 		log.FromContext(ctx).Warn("scatter region failed", zap.Int("regionCount", len(newRegions)),
 			zap.Int("failedCount", len(retryRegions)), zap.Error(failedErr))
 		scatterRegions = retryRegions
+		// also it's not PDBatchScanRegion, WaitRegionOnlineBackoffer will only
+		// check this error class so we simply reuse it. Will refine WaitRegionOnlineBackoffer
+		// later
+		failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scatter region failed")
 		return failedErr
 	}, backoffer)
 
