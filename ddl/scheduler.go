@@ -19,8 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"time"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -32,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -125,47 +124,27 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 	return nil
 }
 
-const retryInterval = 5 * time.Second
+func acquireLock(ctx context.Context, client *clientv3.Client, key string) error {
+	s, _ := concurrency.NewSession(client)
+	defer s.Close()
 
-func acquireLock(client *clientv3.Client, key string, maxRetries int, id string) error {
-	retryCount := 0
-	leaseResp, err := client.Lease.Grant(context.Background(), 10)
+	mu := concurrency.NewMutex(s, key)
+	err := mu.Lock(ctx)
 	if err != nil {
 		return err
 	}
-
-	for retryCount < maxRetries {
-		tx := client.Txn(context.Background()).
-			If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
-			Then(clientv3.OpPut(key, id, clientv3.WithLease(leaseResp.ID)))
-		_, err = tx.Commit()
-		if errors.ErrorEqual(err, context.Canceled) || errors.ErrorEqual(err, context.DeadlineExceeded) {
-			return err // Context error, don't retry
-		}
-
-		resp, err := client.Get(context.TODO(), key)
-		if err != nil {
-			return err
-		}
-		if resp.Count != 0 && string(resp.Kvs[0].Value) == id {
-			logutil.BgLogger().Info("[ddl] lightning acquire lock success", zap.String("id", id))
-			return nil
-		}
-
-		logutil.BgLogger().Info("[ddl] lightning acquire lock failed", zap.String("id", id))
-		retryCount++
-		time.Sleep(retryInterval)
-	}
-
-	return errors.New("failed to acquire lock after maximum retries")
+	return nil
 }
 
-func releaseLock(client *clientv3.Client, key string) error {
-	_, err := client.Delete(context.Background(), key)
+func releaseLock(ctx context.Context, client *clientv3.Client, key string) error {
+	s, _ := concurrency.NewSession(client)
+	defer s.Close()
+
+	mu := concurrency.NewMutex(s, key)
+	err := mu.Unlock(ctx)
 	if err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -250,15 +229,17 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	ingestScheduler.close(false)
 
 	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", b.job.ID, b.index.ID)
-	err = acquireLock(d.etcdCli, distLockKey, 10, d.uuid)
+	err = acquireLock(ctx, d.etcdCli, distLockKey)
 	if err != nil {
 		return nil, err
 	}
+	logutil.BgLogger().Info("[ddl] acquire lock success")
 	defer func() {
-		err = releaseLock(d.etcdCli, distLockKey)
+		err = releaseLock(ctx, d.etcdCli, distLockKey)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] release lock error", zap.Error(err))
 		}
+		logutil.BgLogger().Info("[ddl] release lock success")
 	}()
 
 	_, _, err = b.bc.Flush(b.index.ID, true)
