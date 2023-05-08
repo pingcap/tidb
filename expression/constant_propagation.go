@@ -88,9 +88,6 @@ func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft 
 	if !conOk {
 		return nil, nil
 	}
-	//if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
-	//	return nil, nil
-	//}
 	if col.GetType().GetCollate() != con.GetType().GetCollate() {
 		return nil, nil
 	}
@@ -303,9 +300,6 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 				continue
 			}
 			visited[i] = true
-			//if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
-			//	continue
-			//}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 			if err != nil {
 				terror.Log(err)
@@ -410,9 +404,6 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 				continue
 			}
 			visited[i+condsOffset] = true
-			//if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
-			//	continue
-			//}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 			if err != nil {
 				terror.Log(err)
