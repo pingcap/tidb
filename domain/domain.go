@@ -211,7 +211,6 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// fetch the commit timestamp of the schema diff
 	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion)
 	if err != nil {
-		// NOTICE: the log restore needs to increase schema version without `Diff:` key to full-reload the domain globally.
 		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
 		schemaTs = 0
 	}
@@ -418,12 +417,12 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
+		if diff.RegenerateSchemaMap {
+			return nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
+		}
 		IDs, err := builder.ApplyDiff(m, diff)
 		if err != nil {
 			return nil, nil, err
-		}
-		if diff.RegenerateSchemaMap {
-			return nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue
