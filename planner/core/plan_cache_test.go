@@ -188,6 +188,99 @@ func TestIssue40296(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unary operator '-' is not supported now.
 }
 
+func TestPreparedPlanCacheConstPropagation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int)`)
+
+	tk.MustExec(`prepare st1 from 'select * from t where a=? and a*a>0'`) // a=1 and a*a>10 --> 1*1>10
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: const propagation is triggered"))
+
+	tk.MustExec(`prepare st1 from 'select * from t where a=? and a=b'`) // a=1 and a=b --> b=1
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: const propagation is triggered"))
+
+	tk.MustExec(`prepare st1 from 'select * from t where a=? and b>1'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheConstPropagation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int)`)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
+
+	for _, sql := range []string{
+		"select * from t where a=1 and a*a>0", // 1*1>0
+		"select * from t where a=1 and a=b",   // b=1
+		"select * from t where a>1 and a=b",   // b>1
+		"select * from t where a*a>0 and a=b", // b*b>0
+	} {
+		tk.MustExec("explain format='plan_cache' " + sql)
+		tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: const propagation is triggered"))
+	}
+
+	for _, sql := range []string{
+		"select * from t where a=1",
+		"select * from t where a>1 and a*a>0",
+		"select * from t where a=b",
+		"select * from t where a=b and c>0",
+	} {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	}
+}
+
+func TestIssue43522(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE UK_SIGNED_19385 (
+  COL1 decimal(37,4) unsigned DEFAULT '101.0000' COMMENT 'WITH DEFAULT',
+  COL2 varchar(20) DEFAULT NULL,
+  COL4 datetime DEFAULT NULL,
+  COL3 bigint(20) DEFAULT NULL,
+  COL5 float DEFAULT NULL,
+  UNIQUE KEY UK_COL1 (COL1) /*!80000 INVISIBLE */)`)
+	tk.MustExec(`INSERT INTO UK_SIGNED_19385 VALUES (999999999999999999999999999999999.9999,'苊檷鞤寰抿逿詸叟艟俆錟什姂庋鴪鎅枀礰扚匝','8618-02-11 03:30:03',7016504421081900731,2.77465e38)`)
+	tk.MustQuery(`select * from UK_SIGNED_19385 where col1 = 999999999999999999999999999999999.9999 and
+    col1 * 999999999999999999999999999999999.9999 between 999999999999999999999999999999999.9999 and
+    999999999999999999999999999999999.9999`).Check(testkit.Rows()) // empty and no error
+}
+
+func TestIssue43520(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE IDT_20290 (
+  COL1 mediumtext DEFAULT NULL,
+  COL2 decimal(52,7) DEFAULT NULL,
+  COL3 datetime DEFAULT NULL,
+  KEY U_M_COL (COL1(10),COL2,COL3) /*!80000 INVISIBLE */)`)
+	tk.MustExec(`INSERT INTO IDT_20290 VALUES
+  ('',210255309400.4264137,'4273-04-17 17:26:51'),
+  (NULL,952470120213.2538798,'7087-08-19 21:38:49'),
+  ('俦',486763966102.1656494,'8846-06-12 12:02:13'),
+  ('憁',610644171405.5953911,'2529-07-19 17:24:49'),
+  ('顜',-359717183823.5275069,'2599-04-01 00:12:08'),
+  ('塼',466512908211.1135111,'1477-10-20 07:14:51'),
+  ('宻',-564216096745.0427987,'7071-11-20 13:38:24'),
+  ('網',-483373421083.4724254,'2910-02-19 18:29:17'),
+  ('顥',164020607693.9988781,'2820-10-12 17:38:44'),
+  ('谪',25949740494.3937876,'6527-05-30 22:58:37')`)
+	err := tk.QueryToErr(`select * from IDT_20290 where col2 * 049015787697063065230692384394107598316198958.1850509 >= 659971401668884663953087553591534913868320924.5040396 and col2 = 869042976700631943559871054704914143535627349.9659934`)
+	require.ErrorContains(t, err, "value is out of range in")
+}
+
 func TestNonPreparedPlanCacheDMLHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

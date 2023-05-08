@@ -15,6 +15,10 @@
 package expression
 
 import (
+	"bytes"
+	"errors"
+	"sort"
+
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -86,9 +90,6 @@ func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft 
 		con, conOk = eq.GetArgs()[0].(*Constant)
 	}
 	if !conOk {
-		return nil, nil
-	}
-	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
 		return nil, nil
 	}
 	if col.GetType().GetCollate() != con.GetType().GetCollate() {
@@ -303,9 +304,6 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 				continue
 			}
 			visited[i] = true
-			if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
-				continue
-			}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 			if err != nil {
 				terror.Log(err)
@@ -350,6 +348,29 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 		)
 		return conditions
 	}
+
+	// check whether these newly generated conditions are over-optimized for the plan cache.
+	originalConds := make([][]byte, 0, len(s.conditions))
+	for _, cond := range s.conditions {
+		originalConds = append(originalConds, cond.HashCode(s.ctx.GetSessionVars().StmtCtx))
+	}
+	sort.Slice(originalConds, func(i, j int) bool {
+		return bytes.Compare(originalConds[i], originalConds[j]) < 0
+	})
+	defer func() {
+		for _, cond := range s.conditions {
+			condHash := cond.HashCode(s.ctx.GetSessionVars().StmtCtx)
+			_, found := sort.Find(len(originalConds), func(i int) int {
+				return bytes.Compare(condHash, originalConds[i])
+			})
+			if !found && MaybeOverOptimized4PlanCache(s.ctx, []Expression{cond}) {
+				// if some newly generated conditions have any parameter, skip the plan cache for safety.
+				s.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("const propagation is triggered"))
+				break
+			}
+		}
+	}()
+
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
@@ -410,9 +431,6 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 				continue
 			}
 			visited[i+condsOffset] = true
-			if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
-				continue
-			}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 			if err != nil {
 				terror.Log(err)
