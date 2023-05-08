@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
@@ -124,11 +123,8 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 	return nil
 }
 
-func acquireLock(ctx context.Context, client *clientv3.Client, key string) error {
-	s, _ := concurrency.NewSession(client)
-	defer s.Close()
-
-	mu := concurrency.NewMutex(s, key)
+func acquireLock(se *concurrency.Session, ctx context.Context, key string) error {
+	mu := concurrency.NewMutex(se, key)
 	err := mu.Lock(ctx)
 	if err != nil {
 		return err
@@ -136,11 +132,8 @@ func acquireLock(ctx context.Context, client *clientv3.Client, key string) error
 	return nil
 }
 
-func releaseLock(ctx context.Context, client *clientv3.Client, key string) error {
-	s, _ := concurrency.NewSession(client)
-	defer s.Close()
-
-	mu := concurrency.NewMutex(s, key)
+func releaseLock(se *concurrency.Session, ctx context.Context, key string) error {
+	mu := concurrency.NewMutex(se, key)
 	err := mu.Unlock(ctx)
 	if err != nil {
 		return err
@@ -229,17 +222,22 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	ingestScheduler.close(false)
 
 	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", b.job.ID, b.index.ID)
-	err = acquireLock(ctx, d.etcdCli, distLockKey)
+	se, _ := concurrency.NewSession(d.etcdCli)
+	err = acquireLock(se, ctx, distLockKey)
 	if err != nil {
 		return nil, err
 	}
 	logutil.BgLogger().Info("[ddl] acquire lock success")
 	defer func() {
-		err = releaseLock(ctx, d.etcdCli, distLockKey)
+		err = releaseLock(se, ctx, distLockKey)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] release lock error", zap.Error(err))
 		}
 		logutil.BgLogger().Info("[ddl] release lock success")
+		err = se.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] close session error", zap.Error(err))
+		}
 	}()
 
 	_, _, err = b.bc.Flush(b.index.ID, true)
