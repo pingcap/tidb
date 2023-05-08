@@ -13,7 +13,6 @@ go_library(
         "//br/pkg/pdutil",
         "//br/pkg/task",
         "//br/pkg/utils",
-        "//util",
         "@com_github_pingcap_log//:log",
         "@com_github_spf13_pflag//:pflag",
         "@org_golang_x_sync//errgroup",
