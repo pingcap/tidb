@@ -125,6 +125,11 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	}
 
 	for {
+		if err = runCtx.Err(); err != nil {
+			s.onError(err)
+			break
+		}
+
 		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending)
 		if err != nil {
 			s.onError(err)
@@ -210,6 +215,25 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler rollback a step", zap.Any("step", task.Step))
+
+	// We should cancel all subtasks before rolling back
+	for {
+		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending, proto.TaskStateRunning)
+		if err != nil {
+			s.onError(err)
+			return s.getError()
+		}
+
+		if subtask == nil {
+			break
+		}
+
+		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
+		if err = s.getError(); err != nil {
+			return err
+		}
+	}
+
 	scheduler, err := createScheduler(task)
 	if err != nil {
 		s.onError(err)
