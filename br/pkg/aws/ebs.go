@@ -93,7 +93,6 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			if err != nil {
 				return snapIDMap, nil, errors.Trace(err)
 			}
-			log.Info("describe instance output is", zap.Any("result", resp1))
 			for j := range resp1.Reservations[0].Instances[0].BlockDeviceMappings {
 				device := resp1.Reservations[0].Instances[0].BlockDeviceMappings[j]
 				// skip root volume
