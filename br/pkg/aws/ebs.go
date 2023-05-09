@@ -99,19 +99,20 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				// skip root volume
 				if *device.DeviceName == *resp1.Reservations[0].Instances[0].RootDeviceName {
 					continue
-				} else {
-					toInclude := false
-					for k := range targetVolumeIDs {
-						tagertVolumeID := targetVolumeIDs[k]
-						if *tagertVolumeID == *device.Ebs.VolumeId {
-							toInclude = true
-							break
-						}
-					}
-					if !toInclude {
-						excludedVolumeIDs = append(excludedVolumeIDs, device.Ebs.VolumeId)
+				}
+
+				toInclude := false
+				for k := range targetVolumeIDs {
+					tagertVolumeID := targetVolumeIDs[k]
+					if *tagertVolumeID == *device.Ebs.VolumeId {
+						toInclude = true
+						break
 					}
 				}
+				if !toInclude {
+					excludedVolumeIDs = append(excludedVolumeIDs, device.Ebs.VolumeId)
+				}
+
 			}
 
 			log.Info("exclude volume list", zap.Any("exclude volume list", excludedVolumeIDs))
