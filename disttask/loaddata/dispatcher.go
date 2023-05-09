@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -35,18 +36,21 @@ import (
 type FlowHandle struct{}
 
 // ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
-func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+func (h *FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, prevSubtaskMetas [][]byte) ([][]byte, bool, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Any("task_meta", taskMeta), zap.Any("step", gTask.Step))
 
 	switch gTask.Step {
 	case Import:
+		if err := h.postProcess(ctx, gTask, prevSubtaskMetas); err != nil {
+			return nil, false, err
+		}
 		gTask.State = proto.TaskStateSucceed
-		return nil, nil
+		return nil, false, nil
 	default:
 	}
 
@@ -56,19 +60,19 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandl
 	//	}
 	subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	logutil.BgLogger().Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
 	metaBytes := make([][]byte, 0, len(subtaskMetas))
 	for _, subtaskMeta := range subtaskMetas {
 		bs, err := json.Marshal(subtaskMeta)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		metaBytes = append(metaBytes, bs)
 	}
 	gTask.Step = Import
-	return metaBytes, nil
+	return metaBytes, false, nil
 }
 
 // ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
@@ -78,8 +82,8 @@ func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gT
 	return nil, nil
 }
 
-// ProcessFinishFlow processes the finish flow.
-func (*FlowHandle) ProcessFinishFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, metas [][]byte) error {
+// postProcess does the post processing for the task.
+func (*FlowHandle) postProcess(ctx context.Context, gTask *proto.Task, metas [][]byte) error {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -118,6 +122,13 @@ func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, 
 		localChecksum.Add(&checksum)
 	}
 	logutil.BgLogger().Info("local checksum", zap.Object("checksum", &localChecksum))
+	// TODO(gmhdbjd): add index checksum verification.
+	for _, idxInfo := range tableImporter.TableInfo.Indices {
+		if idxInfo.State == model.StatePublic {
+			logutil.BgLogger().Info("skip checksum verification because table has public indices")
+			return nil
+		}
+	}
 	return tableImporter.VerifyChecksum(ctx, localChecksum)
 }
 

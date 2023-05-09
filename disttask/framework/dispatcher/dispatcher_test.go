@@ -293,7 +293,7 @@ const taskTypeExample = "task_example"
 type NumberExampleHandle struct {
 }
 
-func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ [][]byte) (metas [][]byte, retryable bool, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepInit
 	}
@@ -306,11 +306,11 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 		logutil.BgLogger().Info("progress step init")
 	case proto.StepOne:
 		logutil.BgLogger().Info("progress step one")
-		return nil, nil
+		return nil, false, nil
 	default:
-		return nil, errors.New("unknown step")
+		return nil, false, errors.New("unknown step")
 	}
-	return metas, nil
+	return metas, false, nil
 }
 
 func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
