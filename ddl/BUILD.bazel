@@ -223,6 +223,7 @@ go_test(
         "//config",
         "//ddl/ingest",
         "//ddl/internal/callback",
+        "//ddl/internal/session",
         "//ddl/placement",
         "//ddl/schematracker",
         "//ddl/testutil",

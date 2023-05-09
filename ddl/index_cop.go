@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -70,6 +71,7 @@ type copReqSenderPool struct {
 	tasksCh       chan *reorgBackfillTask
 	chunkSender   chunkSender
 	checkpointMgr *ingest.CheckpointManager
+	sessPool      *sess.Pool
 
 	ctx    context.Context
 	copCtx *copContext
@@ -96,6 +98,17 @@ func (c *copReqSender) run() {
 	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
 		p.chunkSender.AddTask(idxRecResult{id: curTaskID, err: dbterror.ErrReorgPanic})
 	}, false)
+	sessCtx, err := p.sessPool.Get()
+	if err != nil {
+		logutil.BgLogger().Error("[ddl-ingest] copReqSender get session from pool failed", zap.Error(err))
+		p.chunkSender.AddTask(idxRecResult{err: err})
+		return
+	}
+	se := sess.NewSession(sessCtx)
+	defer func() {
+		se.Rollback()
+		p.sessPool.Put(sessCtx)
+	}()
 	for {
 		if util.HasCancelled(c.ctx) {
 			return
@@ -113,12 +126,13 @@ func (c *copReqSender) run() {
 		curTaskID = task.id
 		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
 			zap.Int("id", task.id), zap.String("task", task.String()))
-		ver, err := p.store.CurrentVersion(kv.GlobalTxnScope)
+
+		startTS, err := calculateStartTS(se)
 		if err != nil {
 			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
 			return
 		}
-		rs, err := p.copCtx.buildTableScan(p.ctx, ver.Ver, task.startKey, task.excludedEndKey())
+		rs, err := p.copCtx.buildTableScan(p.ctx, startTS, task.startKey, task.excludedEndKey())
 		if err != nil {
 			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
 			return
@@ -155,7 +169,8 @@ func (c *copReqSender) run() {
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
-	taskCh chan *reorgBackfillTask, checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
+	taskCh chan *reorgBackfillTask, sessPool *sess.Pool,
+	checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
@@ -169,6 +184,7 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Stora
 		senders:       make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
 		wg:            sync.WaitGroup{},
 		srcChkPool:    srcChkPool,
+		sessPool:      sessPool,
 		checkpointMgr: checkpointMgr,
 	}
 }
@@ -495,4 +511,18 @@ type idxRecResult struct {
 	chunk *chunk.Chunk
 	err   error
 	done  bool
+}
+
+func calculateStartTS(se *sess.Session) (uint64, error) {
+	se.Rollback()
+	err := se.Begin()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	var startTS uint64
+	sessVars := se.GetSessionVars()
+	sessVars.TxnCtxMu.Lock()
+	startTS = sessVars.TxnCtx.StartTS
+	sessVars.TxnCtxMu.Unlock()
+	return startTS, nil
 }
