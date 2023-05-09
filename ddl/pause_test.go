@@ -122,11 +122,11 @@ var allPauseJobTestCase = []testPauseAndResumeJob{
 	{"alter table t_user drop primary key", false, model.StateDeleteOnly, false, true, []string{"alter table t_user add primary key idx_id (id)"}},
 
 	// Add unique key
-	{"alter table t_user add unique index idx_name (user)", true, model.StateNone, true, false, nil},
-	{"alter table t_user add unique index idx_name (user)", true, model.StateDeleteOnly, true, true, nil},
-	{"alter table t_user add unique index idx_name (user)", true, model.StateWriteOnly, true, true, nil},
-	{"alter table t_user add unique index idx_name (user)", true, model.StateWriteReorganization, true, true, nil},
-	{"alter table t_user add unique index idx_name (user)", false, model.StatePublic, false, true, nil},
+	{"alter table t_user add unique index idx_name (id)", true, model.StateNone, true, false, nil},
+	{"alter table t_user add unique index idx_name (id)", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t_user add unique index idx_name (id)", true, model.StateWriteOnly, true, true, nil},
+	{"alter table t_user add unique index idx_name (id)", true, model.StateWriteReorganization, true, true, nil},
+	{"alter table t_user add unique index idx_name (id)", false, model.StatePublic, false, true, nil},
 
 	{"alter table t_user add index idx_phone (phone)", true, model.StateNone, true, false, nil},
 	{"alter table t_user add index idx_phone (phone)", true, model.StateDeleteOnly, true, true, nil},
@@ -161,31 +161,31 @@ var allPauseJobTestCase = []testPauseAndResumeJob{
 	{"drop database test_create_db", false, model.StateNone, false, true, []string{"create database if not exists test_create_db"}},
 
 	// Drop column.
-	{"alter table t_user drop column c3", true, model.StatePublic, true, false, nil},
-	{"alter table t_user drop column c3", false, model.StateDeleteOnly, true, false, nil},
-	{"alter table t_user drop column c3", false, model.StateDeleteOnly, false, true, []string{"alter table t_user add column c3 bigint"}},
-	{"alter table t_user drop column c3", false, model.StateWriteOnly, true, true, []string{"alter table t_user add column c3 bigint"}},
-	{"alter table t_user drop column c3", false, model.StateDeleteReorganization, true, true, []string{"alter table t_user add column c3 bigint"}},
-	{"alter table t_user drop column c3", false, model.StateNone, false, true, []string{"alter table t_user add column c3 bigint"}},
+	{"alter table t_user drop column c3", true, model.StatePublic, true, false, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
+	{"alter table t_user drop column c3", false, model.StateDeleteOnly, true, false, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
+	{"alter table t_user drop column c3", false, model.StateDeleteOnly, false, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
+	{"alter table t_user drop column c3", false, model.StateWriteOnly, true, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
+	{"alter table t_user drop column c3", false, model.StateDeleteReorganization, true, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
+	{"alter table t_user drop column c3", false, model.StateNone, false, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
 
 	// Drop column with index.
-	{"alter table t_user drop column c3", true, model.StatePublic, true, false, []string{"alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
-	{"alter table t_user drop column c3", false, model.StateDeleteOnly, true, false, nil},
-	{"alter table t_user drop column c3", false, model.StateDeleteOnly, false, true, []string{"alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
-	{"alter table t_user drop column c3", false, model.StateWriteOnly, true, true, []string{"alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
-	{"alter table t_user drop column c3", false, model.StateDeleteReorganization, true, true, []string{"alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
-	{"alter table t_user drop column c3", false, model.StateNone, false, true, []string{"alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
+	{"alter table t_user drop column c3", true, model.StatePublic, true, false, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
+	{"alter table t_user drop column c3", false, model.StateDeleteOnly, true, false, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
+	{"alter table t_user drop column c3", false, model.StateDeleteOnly, false, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
+	{"alter table t_user drop column c3", false, model.StateWriteOnly, true, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
+	{"alter table t_user drop column c3", false, model.StateDeleteReorganization, true, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
+	{"alter table t_user drop column c3", false, model.StateNone, false, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint", "alter table t_user add index idx_c3(c3)"}},
 
 	// Modify column, no reorg.
-	{"alter table t_user modify column c11 mediumint", true, model.StateNone, true, false, nil},
-	{"alter table t_user modify column c11 int", false, model.StatePublic, false, true, nil},
+	{"alter table t_user modify column c3 mediumint", true, model.StateNone, true, false, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
+	{"alter table t_user modify column c3 int", false, model.StatePublic, false, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
 
 	// Modify column, reorg.
-	{"alter table t_user modify column c11 char(10)", true, model.StateNone, true, false, nil},
-	{"alter table t_user modify column c11 char(10)", true, model.StateDeleteOnly, true, true, nil},
-	{"alter table t_user modify column c11 char(10)", true, model.StateWriteOnly, true, true, nil},
-	{"alter table t_user modify column c11 char(10)", true, model.StateWriteReorganization, true, true, nil},
-	{"alter table t_user modify column c11 char(10)", false, model.StatePublic, false, true, nil},
+	{"alter table t_user modify column c3 char(10)", true, model.StateNone, true, false, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
+	{"alter table t_user modify column c3 char(10)", true, model.StateDeleteOnly, true, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
+	{"alter table t_user modify column c3 char(10)", true, model.StateWriteOnly, true, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
+	{"alter table t_user modify column c3 char(10)", true, model.StateWriteReorganization, true, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
+	{"alter table t_user modify column c3 char(10)", false, model.StatePublic, false, true, []string{"alter table t_user drop column if exists c3", "alter table t_user add column c3 bigint"}},
 }
 
 func isCommandSuccess(rs *testkit.Result) bool {
