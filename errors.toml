@@ -1761,6 +1761,11 @@ error = '''
 PreCheck failed: %s
 '''
 
+["executor:8174"]
+error = '''
+BRIE Job %d not found
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -3024,6 +3029,11 @@ invalid year format
 ["types:8033"]
 error = '''
 invalid year
+'''
+
+["types:8034"]
+error = '''
+Incorrect datetime value: '%s'
 '''
 
 ["types:8037"]

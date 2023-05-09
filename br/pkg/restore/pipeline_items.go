@@ -407,7 +407,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 					return e
 				}
 				log.Info("restore batch done", rtree.ZapRanges(r.result.Ranges))
-				e = appendRangesToCheckpoint(ctx, runner, r.result)
+				e = appendRangesToCheckpoint(ectx, runner, r.result)
 				if e != nil {
 					log.Error("restore batch meet error, caused by checkpoint", logutil.ShortError(e))
 					r.done()
