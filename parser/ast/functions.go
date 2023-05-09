@@ -265,6 +265,7 @@ const (
 	TiDBDecodePlan       = "tidb_decode_plan"
 	TiDBDecodeBinaryPlan = "tidb_decode_binary_plan"
 	TiDBDecodeSQLDigests = "tidb_decode_sql_digests"
+	TiDBEncodeSQLDigest  = "tidb_encode_sql_digest"
 	FormatBytes          = "format_bytes"
 	FormatNanoTime       = "format_nano_time"
 	CurrentResourceGroup = "current_resource_group"
