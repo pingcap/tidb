@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
@@ -229,44 +228,33 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	require.NoError(t, err)
 
 	data := map[string]struct {
-		StartKey string
-		EndKey   string
+		RangeKey string
 		Name     string
 		Name2    string
 	}{
 		"a": {
-			StartKey: "a",
-			EndKey:   "b",
+			RangeKey: "a",
 		},
 		"A": {
-			StartKey: "A",
-			EndKey:   "B",
+			RangeKey: "A",
 		},
 		"1": {
-			StartKey: "1",
-			EndKey:   "2",
+			RangeKey: "1",
 		},
 	}
 
 	data2 := map[string]struct {
-		StartKey string
-		EndKey   string
+		RangeKey string
 		Name     string
 		Name2    string
 	}{
 		"+": {
-			StartKey: "+",
-			EndKey:   "-",
+			RangeKey: "+",
 		},
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, []rtree.Range{
-			{
-				StartKey: []byte(d.StartKey),
-				EndKey:   []byte(d.EndKey),
-			},
-		})
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, d.RangeKey)
 		require.NoError(t, err)
 	}
 
@@ -276,12 +264,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, []rtree.Range{
-			{
-				StartKey: []byte(d.StartKey),
-				EndKey:   []byte(d.EndKey),
-			},
-		})
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, d.RangeKey)
 		require.NoError(t, err)
 	}
 
@@ -289,16 +272,15 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 
 	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
 		require.NotNil(t, resp)
-		d, ok := data[string(resp.StartKey)]
+		d, ok := data[resp.RangeKey]
 		if !ok {
-			d, ok = data2[string(resp.StartKey)]
+			d, ok = data2[resp.RangeKey]
 			require.Equal(t, tableID, int64(2))
 			require.True(t, ok)
 		} else {
 			require.Equal(t, tableID, int64(1))
 		}
-		require.Equal(t, d.StartKey, string(resp.StartKey))
-		require.Equal(t, d.EndKey, string(resp.EndKey))
+		require.Equal(t, d.RangeKey, string(resp.RangeKey))
 	}
 
 	_, err = checkpoint.WalkCheckpointFileForRestore(ctx, s, cipher, taskName, checker)
