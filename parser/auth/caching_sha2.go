@@ -170,7 +170,7 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 	buf := bytes.NewBuffer(make([]byte, 0, 100))
 	buf.Write([]byte{'$', 'A', '$'})
 	rounds := fmt.Sprintf("%03X", iterations/ITERATION_MULTIPLIER)
-	buf.Write([]byte(rounds))
+	buf.WriteString(rounds)
 	buf.Write([]byte{'$'})
 	buf.Write(salt)
 
