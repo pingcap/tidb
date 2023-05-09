@@ -19,15 +19,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
@@ -45,7 +46,7 @@ type backfillSchedulerHandle struct {
 	jc          *JobContext
 	eleTypeKey  []byte
 	totalRowCnt int64
-	done        <-chan struct{}
+	done        chan struct{}
 }
 
 // BackfillGlobalMeta is the global task meta for backfilling index.
@@ -105,9 +106,26 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, e
 	}
 	bh.index = indexInfo
 
-	bh.done = make(chan struct{})
-	go func() {
+	ser, err := infosync.GetServerInfo()
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("distAddIndex/%d/%s:%d", bh.job.ID, ser.IP, ser.Port)
+	response, err := d.etcdCli.Get(d.ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if len(response.Kvs) > 0 {
+		cnt, err := strconv.Atoi(string(response.Kvs[0].Value))
+		if err != nil {
+			return nil, err
+		}
+		bh.totalRowCnt = int64(cnt)
+	}
 
+	bh.done = make(chan struct{}, 0)
+	go func() {
+		bh.UpdateStatLoop()
 	}()
 
 	return bh, nil
@@ -115,8 +133,13 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, e
 
 // UpdateStatLoop updates the row count of adding index.
 func (b *backfillSchedulerHandle) UpdateStatLoop() {
-	tk := time.Tick(time.Second * 10)
-	path := fmt.Sprintf("distAddIndex/%d/%s", b.job.ID, b.d.uuid)
+	tk := time.Tick(time.Second * 5)
+	ser, err := infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] get server info failed", zap.Error(err))
+		return
+	}
+	path := fmt.Sprintf("distAddIndex/%d/%s:%d", b.job.ID, ser.IP, ser.Port)
 	for {
 		select {
 		case <-b.done:
@@ -236,6 +259,7 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
 
 	b.bc.Unregister(b.job.ID, b.index.ID)
+	close(b.done)
 	return nil
 }
 

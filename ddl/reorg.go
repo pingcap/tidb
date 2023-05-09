@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -242,8 +243,27 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount := rc.getRowCount()
-		job.SetRowCount(rowCount)
+		rowCount := int64(0)
+		if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+			path := fmt.Sprintf("distAddIndex/%d", job.ID)
+			resp, err := d.etcdCli.Get(d.ctx, path, clientv3.WithPrefix())
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] get row count from ETCD failed", zap.Error(err))
+			} else {
+				for _, kv := range resp.Kvs {
+					cnt, err := strconv.Atoi(string(kv.Value))
+					if err != nil {
+						logutil.BgLogger().Error("[ddl] parse row count from ETCD failed", zap.Error(err))
+						continue
+					}
+					rowCount += int64(cnt)
+				}
+				job.SetRowCount(rowCount)
+			}
+		} else {
+			rowCount = rc.getRowCount()
+			job.SetRowCount(rowCount)
+		}
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
