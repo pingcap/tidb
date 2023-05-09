@@ -111,6 +111,8 @@ var (
 
 	errorEngineClosed     = errors.New("engine is closed")
 	maxRetryBackoffSecond = 30
+
+	checkTiKVInterval = 1 * time.Minute
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -466,6 +468,11 @@ type Backend struct {
 	metrics      *metric.Metrics
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
+
+	mu struct {
+		sync.Mutex
+		lastTiKVCheckTime time.Time
+	}
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -1314,7 +1321,7 @@ func (local *Backend) executeJob(
 		failpoint.Return(
 			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
 	})
-	if local.ShouldCheckTiKV {
+	if local.needCheckTiKV() {
 		for _, peer := range job.region.Region.GetPeers() {
 			var (
 				store *pdtypes.StoreInfo
@@ -1778,4 +1785,18 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		log.FromContext(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
 	return 0, 0, errors.New("get region split size and keys failed")
+}
+
+func (local *Backend) needCheckTiKV() bool {
+	if !local.ShouldCheckTiKV {
+		return false
+	}
+	local.mu.Lock()
+	defer local.mu.Unlock()
+	now := time.Now()
+	if local.mu.lastTiKVCheckTime.Add(checkTiKVInterval).After(now) {
+		return false
+	}
+	local.mu.lastTiKVCheckTime = now
+	return true
 }

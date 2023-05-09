@@ -1835,3 +1835,23 @@ func TestDoImport(t *testing.T) {
 		}
 	}
 }
+
+func TestNeedCheckTiKV(t *testing.T) {
+	local := &Backend{
+		BackendConfig: BackendConfig{
+			ShouldCheckTiKV: false,
+		},
+	}
+	require.False(t, local.needCheckTiKV())
+
+	local.ShouldCheckTiKV = true
+	// first time
+	require.True(t, local.needCheckTiKV())
+	require.False(t, local.needCheckTiKV())
+	require.False(t, local.needCheckTiKV())
+
+	checkTiKVInterval = 10 * time.Millisecond
+	time.Sleep(time.Second)
+	require.True(t, local.needCheckTiKV())
+	require.False(t, local.needCheckTiKV())
+}
