@@ -18,13 +18,22 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 )
 
-type schedulerRegisterOptions struct{}
+type schedulerRegisterOptions struct {
+	ConcurrentSubtask bool
+}
 
 // Constructor is the constructor of Scheduler.
 type Constructor func(taskMeta []byte, step int64) (Scheduler, error)
 
 // RegisterOption is the register option of Scheduler.
 type RegisterOption func(opts *schedulerRegisterOptions)
+
+// WithConcurrentSubtask is the option of Scheduler to run subtasks concurrently.
+func WithConcurrentSubtask() RegisterOption {
+	return func(opts *schedulerRegisterOptions) {
+		opts.ConcurrentSubtask = true
+	}
+}
 
 // SubtaskExecutorConstructor is the constructor of SubtaskExecutor.
 type SubtaskExecutorConstructor func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error)
