@@ -401,6 +401,8 @@ type local struct {
 	regionSplitBatchSize   int
 	regionSplitConcurrency int
 
+	forcePauseSchedulerByRemove bool
+
 	dupeConcurrency int
 	maxOpenFiles    int
 
@@ -551,6 +553,8 @@ func NewLocalBackend(
 		maxOpenFiles:           mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
 		regionSplitBatchSize:   cfg.TikvImporter.RegionSplitBatchSize,
 		regionSplitConcurrency: cfg.TikvImporter.RegionSplitConcurrency,
+
+		forcePauseSchedulerByRemove: cfg.TikvImporter.ForcePauseSchedulerByRemove,
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
@@ -1290,7 +1294,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		return err
 	}
 
-	if len(ranges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
+	if len(ranges) > 0 && ShouldPauseSchedulerByKeyRange(local.forcePauseSchedulerByRemove, local.pdCtl) {
+		log.FromContext(ctx).Info("pause scheduler by key range")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
@@ -1779,4 +1784,12 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		log.FromContext(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
 	return 0, 0, errors.New("get region split size and keys failed")
+}
+
+// ShouldPauseSchedulerByKeyRange checks if the scheduler should be paused by key range.
+func ShouldPauseSchedulerByKeyRange(forcePauseByRemove bool, pdCtl *pdutil.PdController) bool {
+	if forcePauseByRemove {
+		return false
+	}
+	return pdCtl.CanPauseSchedulerByKeyRange()
 }

@@ -1025,8 +1025,7 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, star
 // CanPauseSchedulerByKeyRange returns whether the scheduler can be paused by key range.
 func (p *PdController) CanPauseSchedulerByKeyRange() bool {
 	// We need ttl feature to ensure scheduler can recover from pause automatically.
-	// todo: just for fast test, we can change it to config later
-	return false
+	return p.version.Compare(minVersionForRegionLabelTTL) >= 0
 }
 
 // Close close the connection to pd.
