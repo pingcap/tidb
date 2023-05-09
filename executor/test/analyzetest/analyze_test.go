@@ -2175,7 +2175,7 @@ func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, fail
 	if timeLimit <= 0 {
 		return
 	}
-	const layout = "2006-01-02 15:04:05"
+	const layout = time.DateTime
 	startTime, err := time.Parse(layout, rows[0][5].(string))
 	require.NoError(t, err, comment)
 	endTime, err := time.Parse(layout, rows[0][6].(string))
@@ -2369,7 +2369,7 @@ func TestAnalyzeJob(t *testing.T) {
 		checkTime := func(val interface{}) {
 			str, ok := val.(string)
 			require.True(t, ok)
-			_, err := time.Parse("2006-01-02 15:04:05", str)
+			_, err := time.Parse(time.DateTime, str)
 			require.NoError(t, err)
 		}
 		checkTime(rows[0][5])

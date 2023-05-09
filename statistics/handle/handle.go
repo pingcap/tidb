@@ -128,6 +128,8 @@ type Handle struct {
 	serverIDGetter func() uint64
 	// tableLocked used to store locked tables
 	tableLocked []int64
+
+	InitStatsDone chan struct{}
 }
 
 // GetTableLockedAndClearForTest for unit test only
@@ -483,6 +485,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 		pool:             pool,
 		sysProcTracker:   tracker,
 		serverIDGetter:   serverIDGetter,
+		InitStatsDone:    make(chan struct{}),
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)

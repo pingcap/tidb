@@ -52,7 +52,7 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 			return nil, errors.Trace(err)
 		}
 		id := openedEn.GetEngineUUID()
-		en = newEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, bc.MemRoot, bc.DiskRoot)
+		en = newEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, bc.MemRoot)
 		bc.Store(indexID, en)
 		bc.MemRoot.Consume(StructSizeEngineInfo)
 		bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
@@ -85,6 +85,7 @@ func (bc *litBackendCtx) Unregister(jobID, indexID int64) {
 
 	ei.Clean()
 	bc.Delete(indexID)
+	bc.checkpointMgr.Close()
 	bc.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
 	bc.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
 	bc.MemRoot.Release(StructSizeEngineInfo)

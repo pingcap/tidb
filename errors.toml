@@ -1761,6 +1761,11 @@ error = '''
 PreCheck failed: %s
 '''
 
+["executor:8174"]
+error = '''
+BRIE Job %d not found
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s

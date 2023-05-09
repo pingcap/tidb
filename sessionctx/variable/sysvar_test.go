@@ -1211,3 +1211,30 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 	require.Equal(t, On, val)
 	require.Equal(t, enable, true)
 }
+
+func TestTiDBEnableRowLevelChecksum(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// default to false
+	val, err := mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+
+	// enable
+	err = mock.SetGlobalSysVar(ctx, TiDBEnableRowLevelChecksum, On)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, On, val)
+
+	// disable
+	err = mock.SetGlobalSysVar(ctx, TiDBEnableRowLevelChecksum, Off)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+}
