@@ -74,11 +74,11 @@ func parseTime(s string) (time.Time, error) {
 	return time.Unix(0, i), nil
 }
 
-func (p *dumpFileGcChecker) gcDumpFiles(gcDurationForManual, gcDurationForCapture time.Duration) {
+func (p *dumpFileGcChecker) gcDumpFiles(gcDurationDefault, gcDurationForCapture time.Duration) {
 	p.Lock()
 	defer p.Unlock()
 	for _, path := range p.paths {
-		p.gcDumpFilesByPath(path, gcDurationForManual, gcDurationForCapture)
+		p.gcDumpFilesByPath(path, gcDurationDefault, gcDurationForCapture)
 	}
 }
 
@@ -86,7 +86,7 @@ func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
 	p.sctx = sctx
 }
 
-func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationForManual, gcDurationForCapture time.Duration) {
+func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gcDurationForCapture time.Duration) {
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -94,8 +94,8 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationForManual, 
 		}
 	}
 
+	gcTargetTimeDefault := time.Now().Add(-gcDurationDefault)
 	gcTargetTimeForCapture := time.Now().Add(-gcDurationForCapture)
-	gcTargetTimeForOthers := time.Now().Add(-gcDurationForManual)
 	for _, f := range files {
 		fileName := f.Name()
 		createTime, err := parseTime(fileName)
@@ -109,7 +109,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationForManual, 
 		if isPlanReplayer && isPlanReplayerCapture {
 			canGC = !createTime.After(gcTargetTimeForCapture)
 		} else {
-			canGC = !createTime.After(gcTargetTimeForOthers)
+			canGC = !createTime.After(gcTargetTimeDefault)
 		}
 		if canGC {
 			err := os.Remove(filepath.Join(path, f.Name()))
