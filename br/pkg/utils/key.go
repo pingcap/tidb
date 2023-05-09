@@ -37,7 +37,7 @@ func ParseKey(format, key string) ([]byte, error) {
 // Ref PD: https://github.com/pingcap/pd/blob/master/tools/pd-ctl/pdctl/command/region_command.go#L334
 func unescapedKey(text string) ([]byte, error) {
 	var buf []byte
-	r := bytes.NewBuffer([]byte(text))
+	r := bytes.NewBufferString(text)
 	for {
 		c, err := r.ReadByte()
 		if err != nil {
