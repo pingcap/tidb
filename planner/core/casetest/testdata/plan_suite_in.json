@@ -124,7 +124,7 @@
       "explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
       "explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"
     ]
-  }, 
+  },
   {
     "name": "TestMPPBCJModel",
     "cases": [
@@ -1316,7 +1316,8 @@
       "select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2",
       "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2",
       "select * from tcommon where a = 1 or b = 1 order by c limit 2",
-      "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2"
+      "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2",
+      "select * from thash use index(idx_ac, idx_bc) where a = 1 or b = 1 order by c limit 2"
     ]
   }
 ]

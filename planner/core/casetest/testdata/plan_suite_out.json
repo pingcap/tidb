@@ -8442,7 +8442,7 @@
       {
         "SQL": "select * from t where a = 1 or b = 1 order by c limit 2",
         "Plan": [
-          "Projection 2.00 root  test.t.a, test.t.b, test.t.c",
+          "Projection 19.99 root  test.t.a, test.t.b, test.t.c",
           "└─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
           "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
           "  │ └─IndexRangeScan 2.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:true, stats:pseudo",
@@ -8491,7 +8491,7 @@
       {
         "SQL": "select * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2",
         "Plan": [
-          "Projection 2.00 root  test.t.a, test.t.b, test.t.c",
+          "Projection 10.10 root  test.t.a, test.t.b, test.t.c",
           "└─IndexMerge 10.10 root  type: union, limit embedded(offset:0, count:2)",
           "  ├─Limit(Build) 0.10 cop[tikv]  offset:0, count:2",
           "  │ └─IndexRangeScan 0.10 cop[tikv] table:t, index:idx(a, c) range:[1 2,1 2], keep order:true, stats:pseudo",
@@ -8571,6 +8571,44 @@
           "└─TableRowIDScan(Probe) 11.00 cop[tikv] table:tcommon keep order:false, stats:pseudo"
         ],
         "Warning": null
+      },
+      {
+        "SQL": "select * from thash use index(idx_ac, idx_bc) where a = 1 or b = 1 order by c limit 2",
+        "Plan": [
+          "TopN 2.00 root  test.thash.c, offset:0, count:2",
+          "└─PartitionUnion 8.00 root  ",
+          "  ├─Projection 19.99 root  test.thash.a, test.thash.b, test.thash.c",
+          "  │ └─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p0, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p0, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   └─TableRowIDScan(Probe) 19.99 cop[tikv] table:thash, partition:p0 keep order:false, stats:pseudo",
+          "  ├─Projection 19.99 root  test.thash.a, test.thash.b, test.thash.c",
+          "  │ └─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p1, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p1, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   └─TableRowIDScan(Probe) 19.99 cop[tikv] table:thash, partition:p1 keep order:false, stats:pseudo",
+          "  ├─Projection 19.99 root  test.thash.a, test.thash.b, test.thash.c",
+          "  │ └─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p2, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p2, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   └─TableRowIDScan(Probe) 19.99 cop[tikv] table:thash, partition:p2 keep order:false, stats:pseudo",
+          "  └─Projection 19.99 root  test.thash.a, test.thash.b, test.thash.c",
+          "    └─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "      ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "      │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p3, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "      ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+          "      │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p3, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "      └─TableRowIDScan(Probe) 19.99 cop[tikv] table:thash, partition:p3 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 disable dynamic pruning due to thash has no global stats"
+        ]
       }
     ]
   }

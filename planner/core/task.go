@@ -1167,14 +1167,37 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 			if plan, ok := finalScan.(*PhysicalTableScan); ok {
 				plan.ByItems = p.ByItems
+<<<<<<< HEAD
 			}
 			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
 				plan.ByItems = p.ByItems
+=======
+				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
+					plan.schema.Append(&expression.Column{
+						RetType:  types.NewFieldType(mysql.TypeLonglong),
+						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+						ID:       model.ExtraPhysTblID,
+					})
+				}
+			}
+			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
+				plan.ByItems = p.ByItems
+				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() && !plan.Index.Global {
+					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
+					plan.schema.Append(&expression.Column{
+						RetType:  types.NewFieldType(mysql.TypeLonglong),
+						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+						ID:       model.ExtraPhysTblID,
+					})
+				}
+>>>>>>> ec03200fb10 (planner, executor: add extraProj for indexMerge with orderBy + limit (#43617))
 			}
 			partialScans = append(partialScans, finalScan)
 		}
 	}
 
+<<<<<<< HEAD
 	// Note that we only need to care about one Selection at most.
 	if selOnIdxScan != nil && idxScan.statsInfo().RowCount > 0 {
 		selSelectivity = selOnIdxScan.statsInfo().RowCount / idxScan.statsInfo().RowCount
@@ -1192,6 +1215,8 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 	for _, expr := range p.GetPartitionBy() {
 		newPartitionBy = append(newPartitionBy, expr.Clone())
 	}
+=======
+>>>>>>> ec03200fb10 (planner, executor: add extraProj for indexMerge with orderBy + limit (#43617))
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
 		if len(copTsk.idxMergePartPlans) > 0 {
@@ -1213,7 +1238,12 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				pkCol := expression.ColInfo2Col(tblScan.tblCols, pk)
 				if !clonedTblScan.Schema().Contains(pkCol) {
 					clonedTblScan.Schema().Append(pkCol)
+<<<<<<< HEAD
 					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, pk)
+=======
+					clonedTblScan.Columns = append(clonedTblScan.Columns, pk)
+					copTsk.needExtraProj = true
+>>>>>>> ec03200fb10 (planner, executor: add extraProj for indexMerge with orderBy + limit (#43617))
 				}
 			} else if tblInfo.IsCommonHandle {
 				idxInfo := tblInfo.GetPrimaryKey()
@@ -1221,6 +1251,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 					c := tblScan.tblCols[idxCol.Offset]
 					if !clonedTblScan.Schema().Contains(c) {
 						clonedTblScan.Schema().Append(c)
+<<<<<<< HEAD
 						clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, c.ToInfo())
 					}
 				}
@@ -1228,24 +1259,38 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				if !clonedTblScan.Schema().Contains(tblScan.HandleCols.GetCol(0)) {
 					clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(0))
 					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, model.NewExtraHandleColInfo())
+=======
+						clonedTblScan.Columns = append(clonedTblScan.Columns, c.ToInfo())
+						copTsk.needExtraProj = true
+					}
+				}
+			} else {
+				if !clonedTblScan.Schema().Contains(clonedTblScan.HandleCols.GetCol(0)) {
+					clonedTblScan.Schema().Append(clonedTblScan.HandleCols.GetCol(0))
+					clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraHandleColInfo())
+					copTsk.needExtraProj = true
+>>>>>>> ec03200fb10 (planner, executor: add extraProj for indexMerge with orderBy + limit (#43617))
 				}
 			}
 			clonedTblScan.(*PhysicalTableScan).HandleCols, err = tblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
 			if err != nil {
 				return nil, false
 			}
+			if copTsk.needExtraProj {
+				copTsk.originSchema = copTsk.tablePlan.Schema()
+			}
 			copTsk.tablePlan = clonedTblScan
 			copTsk.indexPlanFinished = true
 			rootTask := copTsk.convertToRootTask(p.ctx)
-			if indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader); ok {
-				indexMerge.PushedLimit = &PushedDownLimit{
-					Offset: p.Offset,
-					Count:  p.Count,
+			indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader)
+			if !ok {
+				// needExtraProj == true
+				indexMerge, ok = rootTask.p.Children()[0].(*PhysicalIndexMergeReader)
+				if !ok {
+					return nil, false
 				}
-				indexMerge.ByItems = p.ByItems
-				indexMerge.KeepOrder = true
-				return rootTask, true
 			}
+<<<<<<< HEAD
 		} else {
 			// The normal index scan cases.(single read and double read)
 			propMatched := p.checkOrderPropForSubIndexScan(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
@@ -1300,6 +1345,15 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 			rootLimit.SetSchema(rootTask.plan().Schema())
 			return attachPlan2Task(rootLimit, rootTask), true
+=======
+			indexMerge.PushedLimit = &PushedDownLimit{
+				Offset: p.Offset,
+				Count:  p.Count,
+			}
+			indexMerge.ByItems = p.ByItems
+			indexMerge.KeepOrder = true
+			return rootTask, true
+>>>>>>> ec03200fb10 (planner, executor: add extraProj for indexMerge with orderBy + limit (#43617))
 		}
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {
