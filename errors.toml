@@ -1406,6 +1406,21 @@ error = '''
 Ingest failed: %s
 '''
 
+["ddl:8260"]
+error = '''
+Job [%v] can't be paused now
+'''
+
+["ddl:8261"]
+error = '''
+Job [%v] can't be resumed
+'''
+
+["ddl:8262"]
+error = '''
+Job [%v] already paused
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV

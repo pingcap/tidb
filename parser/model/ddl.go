@@ -754,7 +754,7 @@ func (job *Job) IsPausing() bool {
 
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
-	return (job.NotStarted() || job.IsRunning()) && job.IsRollbackable()
+	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
 // IsResumable checks whether the job can be rollback.
