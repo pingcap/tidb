@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type kvEncoder interface {
@@ -44,7 +45,7 @@ type kvEncoder interface {
 type tableKVEncoder struct {
 	*kv.BaseKVEncoder
 	// see import.go
-	columnAssignments  []*ast.Assignment
+	columnAssignments  []expression.Expression
 	columnsAndUserVars []*ast.ColumnNameOrUserVar
 	fieldMappings      []*FieldMapping
 	insertColumns      []*table.Column
@@ -54,10 +55,7 @@ var _ kvEncoder = &tableKVEncoder{}
 
 func newTableKVEncoder(
 	config *encode.EncodingConfig,
-	columnAssignments []*ast.Assignment,
-	columnsAndUserVars []*ast.ColumnNameOrUserVar,
-	fieldMappings []*FieldMapping,
-	insertColumns []*table.Column,
+	ti *TableImporter,
 ) (*tableKVEncoder, error) {
 	baseKVEncoder, err := kv.NewBaseKVEncoder(config)
 	if err != nil {
@@ -65,13 +63,17 @@ func newTableKVEncoder(
 	}
 	// we need a non-nil TxnCtx to avoid panic when evaluating set clause
 	baseKVEncoder.SessionCtx.Vars.TxnCtx = new(variable.TransactionContext)
+	colAssignExprs, _, err := ti.CreateColAssignExprs(baseKVEncoder.SessionCtx)
+	if err != nil {
+		return nil, err
+	}
 
 	return &tableKVEncoder{
 		BaseKVEncoder:      baseKVEncoder,
-		columnAssignments:  columnAssignments,
-		columnsAndUserVars: columnsAndUserVars,
-		fieldMappings:      fieldMappings,
-		insertColumns:      insertColumns,
+		columnAssignments:  colAssignExprs,
+		columnsAndUserVars: ti.ColumnsAndUserVars,
+		fieldMappings:      ti.FieldMappings,
+		insertColumns:      ti.InsertColumns,
 	}, nil
 }
 
@@ -131,7 +133,7 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 	}
 	for i := 0; i < len(en.columnAssignments); i++ {
 		// eval expression of `SET` clause
-		d, err := expression.EvalAstExpr(en.SessionCtx, en.columnAssignments[i].Expr)
+		d, err := en.columnAssignments[i].Eval(chunk.Row{})
 		if err != nil {
 			return nil, err
 		}
