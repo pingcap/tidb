@@ -112,12 +112,10 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				}
 			}
 
-			log.Info("exclude volume list", zap.Any("exclude volume list", excludedVolumeIDs))
+			log.Info("exclude volume list", zap.Any("ec2", ec2InstanceId), zap.Any("exclude volume list", excludedVolumeIDs))
 
 			// create snapshots for volumes on this ec2 instance
 			workerPool.ApplyOnErrorGroup(eg, func() error {
-				log.Info("starts snapshot", zap.Any("ec2", ec2InstanceId))
-
 				// Prepare for aws requests
 				instanceSpecification := ec2.InstanceSpecification{}
 				createSnapshotInput := ec2.CreateSnapshotsInput{}
