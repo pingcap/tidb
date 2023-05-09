@@ -167,7 +167,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		}
 	}
 
-	// changind TiDB IP is OK
+	// changing TiDB IP is OK
 	cfg := newCfg()
 	cfg.TiDB.Host = "192.168.0.1"
 	err = verifyCheckpoint(cfg, taskCp)
