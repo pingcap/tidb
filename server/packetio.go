@@ -114,11 +114,10 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 		uncompressedLength := int(uint32(compressedHeader[4]) | uint32(compressedHeader[5])<<8 | uint32(compressedHeader[6])<<16)
 
 		if uncompressedLength > 0 {
-			var zr io.ReadCloser
 			switch p.compressionAlgorithm {
 			case mysql.CompressionZlib:
 				var err error
-				zr, err = zlib.NewReader(p.bufReadConn)
+				r, err = zlib.NewReader(p.bufReadConn)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -127,11 +126,10 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				zr = zstdReader.IOReadCloser()
+				r = zstdReader.IOReadCloser()
 			default:
 				return nil, errors.New("Unknown compression algorithm")
 			}
-			r = zr
 		}
 	}
 	if _, err := io.ReadFull(r, header[:]); err != nil {
@@ -309,6 +307,8 @@ func (cw *compressedWriter) Flush() error {
 	var w io.WriteCloser
 	var err error
 
+	// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_compression_packet.html
+	// suggests a MIN_COMPRESS_LENGTH of 50.
 	minCompressLength := 50
 	data := cw.buf.Bytes()
 	cw.buf.Reset()
