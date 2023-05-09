@@ -144,6 +144,7 @@ nogo(
                "//build:with_nogo": [
                    "//build/linter/allrevive",
                    "//build/linter/errcheck",
+                   "//build/linter/errorlint",
                    "//build/linter/filepermission",
                    "//build/linter/lll",
                    "//build/linter/revive",

@@ -65,6 +65,13 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "errorlint": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "printf": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",

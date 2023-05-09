@@ -3501,8 +3501,8 @@ def go_deps():
         name = "com_github_polyfloyd_go_errorlint",
         build_file_proto_mode = "disable",
         importpath = "github.com/polyfloyd/go-errorlint",
-        sum = "h1:b+sQ5HibPIAjEZwtuwU8Wz/u0dMZ7YL+bk+9yWyHVJk=",
-        version = "v1.4.0",
+        sum = "h1:r8ru5FhXSn34YU1GJDOuoJv2LdsQkPmK325EOpPMJlM=",
+        version = "v1.4.1",
     )
 
     go_repository(
@@ -6082,8 +6082,13 @@ def go_deps():
         name = "org_golang_x_tools",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/tools",
+<<<<<<< HEAD
         sum = "h1:8WMNJAz3zrtPmnYC7ISf5dEn3MT0gY7jBJfw27yrrLo=",
         version = "v0.9.1",
+=======
+        sum = "h1:CtBMYmb33qYal6XpayZzNXlyK/3FpZV8bDq4CZo57b8=",
+        version = "v0.9.0",
+>>>>>>> 2cfc11c1e3 (linter: enable errorlint)
     )
     go_repository(
         name = "org_golang_x_xerrors",
