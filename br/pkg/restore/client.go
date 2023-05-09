@@ -1259,11 +1259,6 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 }
 
 func getFileRangeKey(f string) string {
-	idx := getFileRangeKeyIndex(f)
-	return f[:idx]
-}
-
-func getFileRangeKeyIndex(f string) int {
 	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
 	// so we need to compare with out the `_{cf}.sst` suffix
 	idx := strings.LastIndex(f, "_")
@@ -1271,17 +1266,12 @@ func getFileRangeKeyIndex(f string) int {
 		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
 	}
 
-	return idx
+	return f[:idx]
 }
 
 // isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
 func isFilesBelongToSameRange(f1, f2 string) bool {
-	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
-	// so we need to compare with out the `_{cf}.sst` suffix
-	idx1 := getFileRangeKeyIndex(f1)
-	idx2 := getFileRangeKeyIndex(f2)
-
-	return f1[:idx1] == f2[:idx2]
+	return getFileRangeKey(f1) == getFileRangeKey(f2)
 }
 
 func drainFilesByRange(files []*backuppb.File) ([]*backuppb.File, []*backuppb.File) {
@@ -1407,6 +1397,7 @@ func (rc *Client) RestoreSSTFiles(
 
 	var rangeFiles []*backuppb.File
 	var leftFiles []*backuppb.File
+LOOPFORTABLE:
 	for _, tableIDWithFile := range tableIDWithFiles {
 		tableID := tableIDWithFile.TableID
 		files := tableIDWithFile.Files
@@ -1420,7 +1411,7 @@ func (rc *Client) RestoreSSTFiles(
 				// We will fetch the error from the errgroup then (If there were).
 				// Also note if the parent context has been canceled or something,
 				// breaking here directly is also a reasonable behavior.
-				break
+				break LOOPFORTABLE
 			}
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
@@ -1440,8 +1431,7 @@ func (rc *Client) RestoreSSTFiles(
 
 				// the data of this range has been import done
 				if runner != nil && len(filesReplica) > 0 {
-					rangeKeyIdx := getFileRangeKeyIndex(filesReplica[0].Name)
-					rangeKey := filesReplica[0].Name[:rangeKeyIdx]
+					rangeKey := getFileRangeKey(filesReplica[0].Name)
 					// The checkpoint range shows this ranges of kvs has been restored into
 					// the table corresponding to the table-id.
 					if err := checkpoint.AppendRangesForRestore(ectx, runner, tableID, rangeKey); err != nil {

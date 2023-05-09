@@ -280,7 +280,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		} else {
 			require.Equal(t, tableID, int64(1))
 		}
-		require.Equal(t, d.RangeKey, string(resp.RangeKey))
+		require.Equal(t, d.RangeKey, resp.RangeKey)
 	}
 
 	_, err = checkpoint.WalkCheckpointFileForRestore(ctx, s, cipher, taskName, checker)

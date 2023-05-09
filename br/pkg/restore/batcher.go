@@ -266,12 +266,12 @@ func newDrainResult() DrainResult {
 	}
 }
 
-// fileterOutRanges filter out the range from `drained-range` that is overlapped with ranges in the `range-tree`
+// fileterOutRanges filter out the files from `drained-range` that exists in the checkpoint set.
 func (b *Batcher) filterOutRanges(checkpointSet map[string]struct{}, drained []rtree.Range) []rtree.Range {
 	progress := int(0)
 	totalKVs := uint64(0)
 	totalBytes := uint64(0)
-	for _, rg := range drained {
+	for i, rg := range drained {
 		newFiles := make([]*backuppb.File, 0, len(rg.Files))
 		for _, f := range rg.Files {
 			rangeKey := getFileRangeKey(f.Name)
@@ -286,7 +286,7 @@ func (b *Batcher) filterOutRanges(checkpointSet map[string]struct{}, drained []r
 			}
 		}
 		// the newFiles may be empty
-		rg.Files = newFiles
+		drained[i].Files = newFiles
 	}
 	if progress > 0 {
 		// (split/scatter + download/ingest) / (default cf + write cf)
