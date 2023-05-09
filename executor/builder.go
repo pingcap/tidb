@@ -206,6 +206,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plannercore.CancelDDLJobs:
 		return b.buildCancelDDLJobs(v)
+	case *plannercore.PauseDDLJobs:
+		return b.buildPauseDDLJobs(v)
+	case *plannercore.ResumeDDLJobs:
+		return b.buildResumeDDLJobs(v)
 	case *plannercore.ShowNextRowID:
 		return b.buildShowNextRowID(v)
 	case *plannercore.ShowDDL:
@@ -310,8 +314,33 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 
 func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Executor {
 	e := &CancelDDLJobsExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		jobIDs:       v.JobIDs,
+		CommandDDLJobsExec: &CommandDDLJobsExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			jobIDs:       v.JobIDs,
+			execute:      ddl.CancelJobs,
+		},
+	}
+	return e
+}
+
+func (b *executorBuilder) buildPauseDDLJobs(v *plannercore.PauseDDLJobs) Executor {
+	e := &PauseDDLJobsExec{
+		CommandDDLJobsExec: &CommandDDLJobsExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			jobIDs:       v.JobIDs,
+			execute:      ddl.PauseJobs,
+		},
+	}
+	return e
+}
+
+func (b *executorBuilder) buildResumeDDLJobs(v *plannercore.ResumeDDLJobs) Executor {
+	e := &ResumeDDLJobsExec{
+		CommandDDLJobsExec: &CommandDDLJobsExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			jobIDs:       v.JobIDs,
+			execute:      ddl.ResumeJobs,
+		},
 	}
 	return e
 }

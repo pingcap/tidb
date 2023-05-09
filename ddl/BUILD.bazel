@@ -197,6 +197,7 @@ go_test(
         "mv_index_test.go",
         "options_test.go",
         "partition_test.go",
+        "pause_test.go",
         "placement_policy_ddl_test.go",
         "placement_policy_test.go",
         "placement_sql_test.go",
