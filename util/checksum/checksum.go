@@ -158,7 +158,7 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 	for len(p) > 0 && err == nil {
 		n, err = r.r.ReadAt(buf, cursor)
 		if err != nil {
-			if n == 0 || err != io.EOF {
+			if n == 0 || errors.Is(err, io.EOF) {
 				return nn, err
 			}
 			err = nil
