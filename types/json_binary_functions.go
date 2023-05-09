@@ -200,7 +200,7 @@ func quoteJSONString(s string) string {
 				i++
 			}
 		} else {
-			c, size := utf8.DecodeRune([]byte(s[i:]))
+			c, size := utf8.DecodeRuneInString(s[i:])
 			if c == utf8.RuneError && size == 1 { // refer to codes of `binary.jsonMarshalStringTo`
 				if start < i {
 					ret.WriteString(s[start:i])
