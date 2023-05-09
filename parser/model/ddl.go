@@ -737,6 +737,29 @@ func (job *Job) IsCancelling() bool {
 	return job.State == JobStateCancelling
 }
 
+<<<<<<< HEAD
+=======
+// IsPaused returns whether the job is paused.
+func (job *Job) IsPaused() bool {
+	return job.State == JobStatePaused
+}
+
+// IsPausing indicates whether the job is pausing.
+func (job *Job) IsPausing() bool {
+	return job.State == JobStatePausing
+}
+
+// IsPausable checks whether we can pause the job.
+func (job *Job) IsPausable() bool {
+	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
+}
+
+// IsResumable checks whether the job can be rollback.
+func (job *Job) IsResumable() bool {
+	return job.IsPaused()
+}
+
+>>>>>>> 0d3ad533863 (ddl, executor: executor change for pause/resume on ddl jobs (#43171))
 // IsSynced returns whether the DDL modification is synced among all TiDB servers.
 func (job *Job) IsSynced() bool {
 	return job.State == JobStateSynced
