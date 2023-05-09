@@ -1,3 +1,5 @@
+// Copyright 2023 PingCAP, Inc. Licensed under Apache-2.0.
+
 package operator
 
 import (
@@ -73,7 +75,7 @@ func pauseGCKeeper(ctx context.Context, cfg *PauseGcConfig, ctl *pdutil.PdContro
 	if err != nil {
 		return err
 	}
-	log.Info("GC is paused.", zap.String("ID", sp.ID), zap.Uint64("at", sp.BackupTS))
+	log.Info("GC is paused.", zap.Object("safepoint", sp))
 	// Note: in fact we can directly return here.
 	// But the name `keeper` implies once the function exits,
 	// the GC should be resume, so let's block here.
