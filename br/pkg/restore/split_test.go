@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -608,9 +609,10 @@ func TestRegionConsistency(t *testing.T) {
 type fakeRestorer struct {
 	mu sync.Mutex
 
-	errorInSplit  bool
-	splitRanges   []rtree.Range
-	restoredFiles []*backuppb.File
+	errorInSplit        bool
+	splitRanges         []rtree.Range
+	restoredFiles       []*backuppb.File
+	tableIDIsInsequence bool
 }
 
 func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, rewriteRules *restore.RewriteRules, updateCh glue.Progress, isRawKv bool) error {
@@ -637,7 +639,10 @@ func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithFiles []r
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	for _, tableIDWithFile := range tableIDWithFiles {
+	for i, tableIDWithFile := range tableIDWithFiles {
+		if int64(i) != tableIDWithFile.TableID {
+			f.tableIDIsInsequence = false
+		}
 		f.restoredFiles = append(f.restoredFiles, tableIDWithFile.Files...)
 	}
 	err := errors.Annotatef(berrors.ErrRestoreWriteAndIngest, "the files to restore are taken by a hijacker, meow :3")
@@ -654,6 +659,12 @@ func fakeRanges(keys ...string) (r restore.DrainResult) {
 			StartKey: []byte(keys[i]),
 			EndKey:   []byte(keys[i+1]),
 			Files:    []*backuppb.File{{Name: "fake.sst"}},
+		})
+		r.TableEndOffsetInRanges = append(r.TableEndOffsetInRanges, len(r.Ranges))
+		r.TablesToSend = append(r.TablesToSend, restore.CreatedTable{
+			Table: &model.TableInfo{
+				ID: int64(i),
+			},
 		})
 	}
 	return
@@ -697,7 +708,9 @@ func TestRestoreFailed(t *testing.T) {
 		fakeRanges("abz", "bbz", "bcy"),
 		fakeRanges("bcy", "cad", "xxy"),
 	}
-	r := &fakeRestorer{}
+	r := &fakeRestorer{
+		tableIDIsInsequence: true,
+	}
 	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -711,6 +724,7 @@ func TestRestoreFailed(t *testing.T) {
 	sink.Close()
 	sender.Close()
 	require.GreaterOrEqual(t, len(r.restoredFiles), 1)
+	require.True(t, r.tableIDIsInsequence)
 }
 
 func TestSplitFailed(t *testing.T) {
@@ -719,7 +733,7 @@ func TestSplitFailed(t *testing.T) {
 		fakeRanges("abz", "bbz", "bcy"),
 		fakeRanges("bcy", "cad", "xxy"),
 	}
-	r := &fakeRestorer{errorInSplit: true}
+	r := &fakeRestorer{errorInSplit: true, tableIDIsInsequence: true}
 	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -733,6 +747,7 @@ func TestSplitFailed(t *testing.T) {
 	sender.Close()
 	require.GreaterOrEqual(t, len(r.splitRanges), 2)
 	require.Len(t, r.restoredFiles, 0)
+	require.True(t, r.tableIDIsInsequence)
 }
 
 func keyWithTablePrefix(tableID int64, key string) []byte {
