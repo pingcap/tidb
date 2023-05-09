@@ -225,7 +225,7 @@ func (r *CheckpointRunner[K, V]) FlushChecksumItem(
 			r.errLock.RLock()
 			err = r.err
 			r.errLock.RUnlock()
-			return errors.Errorf("[checkpoint] Checksum: failed to append checkpoint checksum item", zap.Error(err))
+			return errors.Annotate(err, "[checkpoint] Checksum: failed to append checkpoint checksum item")
 		}
 		return err
 	case r.checksumCh <- checksumItem:
@@ -245,7 +245,7 @@ func (r *CheckpointRunner[K, V]) Append(
 			r.errLock.RLock()
 			err = r.err
 			r.errLock.RUnlock()
-			return errors.Errorf("[checkpoint] Append: failed to append checkpoint message", zap.Error(err))
+			return errors.Annotate(err, "[checkpoint] Append: failed to append checkpoint message")
 		}
 		return err
 	case r.appendCh <- message:
