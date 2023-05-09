@@ -630,14 +630,16 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, re
 	return nil
 }
 
-func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, files []*backuppb.File, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
+func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithFiles []restore.TableIDWithFiles, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	f.restoredFiles = append(f.restoredFiles, files...)
+	for _, tableIDWithFile := range tableIDWithFiles {
+		f.restoredFiles = append(f.restoredFiles, tableIDWithFile.Files...)
+	}
 	err := errors.Annotatef(berrors.ErrRestoreWriteAndIngest, "the files to restore are taken by a hijacker, meow :3")
 	log.Error("error happens :3", logutil.ShortError(err))
 	return err
@@ -696,7 +698,7 @@ func TestRestoreFailed(t *testing.T) {
 		fakeRanges("bcy", "cad", "xxy"),
 	}
 	r := &fakeRestorer{}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, nil)
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -718,7 +720,7 @@ func TestSplitFailed(t *testing.T) {
 		fakeRanges("bcy", "cad", "xxy"),
 	}
 	r := &fakeRestorer{errorInSplit: true}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, nil)
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

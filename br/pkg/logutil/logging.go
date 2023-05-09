@@ -63,6 +63,10 @@ func (file zapFileMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 
 type zapFilesMarshaler []*backuppb.File
 
+func MarshalLogObjectForFiles(files []*backuppb.File, encoder zapcore.ObjectEncoder) error {
+	return zapFilesMarshaler(files).MarshalLogObject(encoder)
+}
+
 func (fs zapFilesMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
 	total := len(fs)
 	encoder.AddInt("total", total)
