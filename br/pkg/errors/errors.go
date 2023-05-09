@@ -12,9 +12,8 @@ import (
 // Is tests whether the specificated error causes the error `err`.
 func Is(err error, is *errors.Error) bool {
 	errorFound := errors.Find(err, func(e error) bool {
-		var err errors.Error
-		var normalizedErr *errors.Error
-		return stderrors.As(normalizedErr, &err) && normalizedErr.ID() == is.ID()
+		var normalizedErr errors.Error
+		return stderrors.As(e, &normalizedErr) && normalizedErr.ID() == is.ID()
 	})
 	return errorFound != nil
 }
