@@ -202,7 +202,7 @@ func (d *Detector) getRangeBounds(ctx context.Context) (startKey, endKey interna
 		if err := decodeInternalKey(it.UnsafeKey(), &endKey); err != nil {
 			return internalKey{}, internalKey{}, err
 		}
-		endKey.keyID = append(endKey.keyID, 0) // Make the end key exclusive.
+		endKey.key = append(endKey.key, 0) // Make the end key exclusive.
 	} else if err := it.Error(); err != nil {
 		return internalKey{}, internalKey{}, err
 	}

@@ -59,7 +59,7 @@ func TestDetector(t *testing.T) {
 
 			adder, err := d.KeyAdder(ctx)
 			require.NoError(t, err)
-			for j := 0; j < len(keys); j++ {
+			for j := range keys {
 				if j%numAdders == i {
 					var keyID [8]byte
 					binary.BigEndian.PutUint64(keyID[:], uint64(j))

@@ -128,10 +128,8 @@ func (w *worker) runTask(ctx context.Context, t task) (retErr error) {
 		// Try to split the task and send the new task to the task channel
 		// so that other idle workers can process it.
 		if numIterations%checkInterval == 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 			if len(w.taskCh) == 0 {
 				userSplitKey := genSplitKey(curKey.key, t.endKey.key)
@@ -147,6 +145,9 @@ func (w *worker) runTask(ctx context.Context, t task) (retErr error) {
 				}
 			}
 		}
+		// prevKey and curKey are reused in the loop to avoid memory allocation.
+		// In next iteration, curKey will be the prevKey and prevKey will be reused
+		// as the new curKey.
 		prevKey, curKey = curKey, prevKey
 	}
 	if err := it.Error(); err != nil {
