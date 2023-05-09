@@ -12,8 +12,9 @@ import (
 // Is tests whether the specificated error causes the error `err`.
 func Is(err error, is *errors.Error) bool {
 	errorFound := errors.Find(err, func(e error) bool {
-		normalizedErr, ok := e.(*errors.Error)
-		return ok && normalizedErr.ID() == is.ID()
+		var err errors.Error
+		var normalizedErr *errors.Error
+		return stderrors.As(normalizedErr, &err) && normalizedErr.ID() == is.ID()
 	})
 	return errorFound != nil
 }
@@ -23,9 +24,6 @@ func Is(err error, is *errors.Error) bool {
 // So we need to call stderrors.Is to unwrap the error.
 func IsContextCanceled(err error) bool {
 	err = errors.Cause(err)
-	if err == context.Canceled || err == context.DeadlineExceeded {
-		return true
-	}
 	return stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded)
 }
 
