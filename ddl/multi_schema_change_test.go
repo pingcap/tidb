@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1258,6 +1259,27 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		"alter index idx_visible invisible, modify column c_3 decimal(10, 2);")
 	require.NoError(t, checkErr)
 	dom.DDL().SetHook(originHook)
+}
+
+func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	orig := variable.EnableRowLevelChecksum.Load()
+	defer variable.EnableRowLevelChecksum.Store(orig)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c int)")
+
+	variable.EnableRowLevelChecksum.Store(true)
+	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
+	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
+
+	variable.EnableRowLevelChecksum.Store(false)
+	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
+	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
 }
 
 type cancelOnceHook struct {
