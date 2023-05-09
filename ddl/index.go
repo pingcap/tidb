@@ -815,18 +815,6 @@ func IngestJobsNotExisted(ctx sessionctx.Context) bool {
 	return true
 }
 
-// tryFallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.
-func tryFallbackToTxnMerge(job *model.Job, err error) error {
-	if job.State != model.JobStateRollingback {
-		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process", zap.Error(err))
-		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
-		job.SnapshotVer = 0
-		job.RowCount = 0
-		return nil
-	}
-	return err
-}
-
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
@@ -919,7 +907,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	}
 	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID)
 	if err != nil {
-		err = tryFallbackToTxnMerge(job, err)
+		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 		return false, ver, errors.Trace(err)
 	}
 	if bc.GetCheckpointManager() == nil {
@@ -931,8 +919,10 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	}
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	if err != nil {
-		ingest.LitBackCtxMgr.Unregister(job.ID)
-		err = tryFallbackToTxnMerge(job, err)
+		if !errorIsRetryable(err, job) {
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+			ingest.LitBackCtxMgr.Unregister(job.ID)
+		}
 		return false, ver, errors.Trace(err)
 	}
 	if !done {
@@ -948,13 +938,20 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 		} else {
 			logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
-			err = tryFallbackToTxnMerge(job, err)
+			if !errorIsRetryable(err, job) {
+				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+				ingest.LitBackCtxMgr.Unregister(job.ID)
+			}
 		}
-		ingest.LitBackCtxMgr.Unregister(job.ID)
 		return false, ver, errors.Trace(err)
 	}
 	bc.SetDone()
 	return true, ver, nil
+}
+
+func errorIsRetryable(err error, job *model.Job) bool {
+	return !errors.ErrorEqual(err, dbterror.ErrReorgPanic) &&
+		job.ErrorCount+1 < variable.GetDDLErrorCountLimit()
 }
 
 func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
