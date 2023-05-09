@@ -17,6 +17,7 @@ package executor
 import (
 	"bufio"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -858,7 +859,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	prefix := logFilePath[:len(logFilePath)-len(ext)]
 	handleErr := func(err error) error {
 		// Ignore the error and append warning for usability.
-		if err != io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		return nil

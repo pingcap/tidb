@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	goerros "errors"
 	"fmt"
 	"io"
 	"os"
@@ -443,7 +444,7 @@ func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
 		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, count)
 	}
 	n, err = resp.Body(azblob.RetryReaderOptions{}).Read(p)
-	if err != nil && err != io.EOF {
+	if err != nil && goerros.Is(err, io.EOF) {
 		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, count)
 	}
 	r.pos += int64(n)

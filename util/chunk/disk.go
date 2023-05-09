@@ -15,6 +15,7 @@
 package chunk
 
 import (
+	goerrors "errors"
 	"io"
 	"os"
 	"strconv"
@@ -427,7 +428,7 @@ func NewReaderWithCache(r io.ReaderAt, cache []byte, cacheOff int64) *ReaderWith
 // ReadAt implements the ReadAt interface.
 func (r *ReaderWithCache) ReadAt(p []byte, off int64) (readCnt int, err error) {
 	readCnt, err = r.r.ReadAt(p, off)
-	if err != io.EOF {
+	if goerrors.Is(err, io.EOF) {
 		return readCnt, err
 	}
 

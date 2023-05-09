@@ -192,7 +192,7 @@ func (r *Reader) ReadAt(p []byte, off int64) (n int, err error) {
 	for len(p) > 0 && err == nil {
 		readNum, err = r.r.ReadAt(buf, cursor)
 		if err != nil {
-			if readNum == 0 || err != io.EOF {
+			if readNum == 0 || errors.Is(err, io.EOF) {
 				return n, err
 			}
 			err = nil

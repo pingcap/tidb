@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"os"
@@ -460,7 +461,7 @@ func openStmtFile(path string) (*stmtFile, error) {
 	}
 	begin, err := parseBeginTsAndReseek(file)
 	if err != nil {
-		if err != io.EOF {
+		if errors.Is(err, io.EOF) {
 			_ = file.Close()
 			return nil, err
 		}
