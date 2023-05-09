@@ -18,6 +18,10 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -41,6 +45,7 @@ type backfillSchedulerHandle struct {
 	jc          *JobContext
 	eleTypeKey  []byte
 	totalRowCnt int64
+	done        <-chan struct{}
 }
 
 // BackfillGlobalMeta is the global task meta for backfilling index.
@@ -100,7 +105,29 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, e
 	}
 	bh.index = indexInfo
 
+	bh.done = make(chan struct{})
+	go func() {
+
+	}()
+
 	return bh, nil
+}
+
+// UpdateStatLoop updates the row count of adding index.
+func (b *backfillSchedulerHandle) UpdateStatLoop() {
+	tk := time.Tick(time.Second * 10)
+	path := fmt.Sprintf("distAddIndex/%d/%s", b.job.ID, b.d.uuid)
+	for {
+		select {
+		case <-b.done:
+			return
+		case <-tk:
+			err := ddlutil.PutKVToEtcd(b.d.ctx, b.d.etcdCli, 3, path, strconv.Itoa(int(b.totalRowCnt)))
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] update row count for distributed add index failed", zap.Error(err))
+			}
+		}
+	}
 }
 
 // InitSubtaskExecEnv implements the Scheduler interface.
