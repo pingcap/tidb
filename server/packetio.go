@@ -79,6 +79,7 @@ func newPacketIO(bufReadConn *bufferedReadConn) *packetIO {
 func (p *packetIO) SetCompressionAlgorithm(ca int) {
 	p.compressionAlgorithm = ca
 	p.compressedWriter = newCompressedWriter(p.bufReadConn, ca)
+	p.compressedWriter.zstdLevel = p.zstdLevel
 	p.bufWriter.Flush()
 }
 
