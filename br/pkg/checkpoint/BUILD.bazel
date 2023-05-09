@@ -40,7 +40,6 @@ go_test(
     deps = [
         ":checkpoint",
         "//br/pkg/pdutil",
-        "//br/pkg/rtree",
         "//br/pkg/storage",
         "//parser/model",
         "@com_github_pingcap_kvproto//pkg/brpb",

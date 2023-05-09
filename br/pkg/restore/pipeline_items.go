@@ -10,7 +10,6 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -161,6 +160,12 @@ type TableWithRange struct {
 	Range []rtree.Range
 }
 
+type TableIDWithFiles struct {
+	TableID int64
+
+	Files []*backuppb.File
+}
+
 // Exhaust drains all remaining errors in the channel, into a slice of errors.
 func Exhaust(ec <-chan error) []error {
 	out := make([]error, 0, len(ec))
@@ -199,7 +204,7 @@ type TiKVRestorer interface {
 		isRawKv bool) error
 	// RestoreSSTFiles import the files to the TiKV.
 	RestoreSSTFiles(ctx context.Context,
-		files []*backuppb.File,
+		tableIDWithFiles []TableIDWithFiles,
 		rewriteRules *RewriteRules,
 		updateCh glue.Progress) error
 }
@@ -234,7 +239,6 @@ func NewTiKVSender(
 	cli TiKVRestorer,
 	updateCh glue.Progress,
 	splitConcurrency uint,
-	runner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 ) (BatchSender, error) {
 	inCh := make(chan DrainResult, defaultChannelSize)
 	midCh := make(chan drainResultAndDone, defaultChannelSize)
@@ -249,7 +253,7 @@ func NewTiKVSender(
 
 	sender.wg.Add(2)
 	go sender.splitWorker(ctx, inCh, midCh, splitConcurrency)
-	go sender.restoreWorker(ctx, midCh, runner)
+	go sender.restoreWorker(ctx, midCh)
 	return sender, nil
 }
 
@@ -358,26 +362,7 @@ func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
 	}
 }
 
-func appendRangesToCheckpoint(ctx context.Context, runner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType], result DrainResult) error {
-	if runner == nil {
-		return nil
-	}
-	var startOffset int = 0
-	for i, endOffset := range result.TableEndOffsetInRanges {
-		table := result.TablesToSend[i]
-		ranges := result.Ranges[startOffset:endOffset]
-		// The checkpoint range shows this ranges of kvs has been restored into
-		// the table corresponding to the table-id.
-		if err := checkpoint.AppendRangesForRestore(ctx, runner, table.Table.ID, ranges); err != nil {
-			return errors.Trace(err)
-		}
-		// update start offset
-		startOffset = endOffset
-	}
-	return nil
-}
-
-func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone, runner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) {
+func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone) {
 	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
 		log.Info("TiKV Sender: restore worker prepare to close.")
@@ -402,17 +387,11 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			eg.Go(func() error {
 				e := b.client.RestoreSSTFiles(ectx, files, r.result.RewriteRules, b.updateCh)
 				if e != nil {
-					log.Error("restore batch meet error", logutil.ShortError(e), logutil.Files(files))
+					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithFiles(files))
 					r.done()
 					return e
 				}
 				log.Info("restore batch done", rtree.ZapRanges(r.result.Ranges))
-				e = appendRangesToCheckpoint(ectx, runner, r.result)
-				if e != nil {
-					log.Error("restore batch meet error, caused by checkpoint", logutil.ShortError(e))
-					r.done()
-					return errors.Annotate(e, "restore batch meet error, caused by checkpoint")
-				}
 				r.done()
 				b.waitTablesDone(r.result.BlankTablesAfterSend)
 				b.sink.EmitTables(r.result.BlankTablesAfterSend...)

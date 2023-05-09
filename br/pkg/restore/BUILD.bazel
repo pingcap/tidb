@@ -10,6 +10,7 @@ go_library(
         "import.go",
         "import_retry.go",
         "log_client.go",
+        "logutil.go",
         "merge.go",
         "pipeline_items.go",
         "range.go",

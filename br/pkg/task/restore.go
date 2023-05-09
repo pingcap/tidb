@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -733,17 +732,17 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		log.Info("finish removing pd scheduler")
 	}()
 
-	var checkpointTrees map[int64]rtree.RangeTree
+	var checkpointSetWithTableID map[int64]map[string]struct{}
 	if cfg.UseCheckpoint {
 		taskName := cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
-		trees, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, s, taskName, schedulersConfig, cfg.UseCheckpoint)
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, s, taskName, schedulersConfig, cfg.UseCheckpoint)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if restoreSchedulersConfigFromCheckpoint != nil {
 			restoreSchedulers = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
 		}
-		checkpointTrees = trees
+		checkpointSetWithTableID = sets
 
 		defer func() {
 			// need to flush the whole checkpoint data so that br can quickly jump to
@@ -922,13 +921,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		int64(rangeSize+len(files)+len(tables)),
 		!cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency, client.GetCheckpointRunner())
+	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
 	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
-	batcher.SetCheckpoint(checkpointTrees)
+	batcher.SetCheckpoint(checkpointSetWithTableID)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
 	go restoreTableStream(ctx, rangeStream, batcher, errCh)
@@ -1096,13 +1095,12 @@ func restoreTableStream(
 	batcher *restore.Batcher,
 	errCh chan<- error,
 ) {
-	// We cache old tables so that we can 'batch' recover TiFlash and tables.
-	oldTables := []*metautil.Table{}
+	oldTableCount := 0
 	defer func() {
 		// when things done, we must clean pending requests.
 		batcher.Close()
 		log.Info("doing postwork",
-			zap.Int("table count", len(oldTables)),
+			zap.Int("table count", oldTableCount),
 		)
 	}()
 
@@ -1115,7 +1113,7 @@ func restoreTableStream(
 			if !ok {
 				return
 			}
-			oldTables = append(oldTables, t.OldTable)
+			oldTableCount += 1
 
 			batcher.Add(t)
 		}

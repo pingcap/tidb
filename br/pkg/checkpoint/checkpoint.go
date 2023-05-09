@@ -163,6 +163,8 @@ type CheckpointRunner[K KeyType, V ValueType] struct {
 	checksumMetaCh chan ChecksumItems
 	lockCh         chan struct{}
 	errCh          chan error
+	err            error
+	errLock        sync.RWMutex
 
 	wg sync.WaitGroup
 }
@@ -191,6 +193,7 @@ func newCheckpointRunner[K KeyType, V ValueType](
 		checksumMetaCh: make(chan ChecksumItems),
 		lockCh:         make(chan struct{}),
 		errCh:          make(chan error, 1),
+		err:            nil,
 	}
 }
 
@@ -219,7 +222,10 @@ func (r *CheckpointRunner[K, V]) FlushChecksumItem(
 		return errors.Annotatef(ctx.Err(), "failed to append checkpoint checksum item")
 	case err, ok := <-r.errCh:
 		if !ok {
-			return errors.Errorf("[checkpoint] Checksum: there is another goroutine has get the checkpoint error")
+			r.errLock.RLock()
+			err = r.err
+			r.errLock.RUnlock()
+			return errors.Annotate(err, "[checkpoint] Checksum: failed to append checkpoint checksum item")
 		}
 		return err
 	case r.checksumCh <- checksumItem:
@@ -236,7 +242,10 @@ func (r *CheckpointRunner[K, V]) Append(
 		return errors.Annotatef(ctx.Err(), "failed to append checkpoint message")
 	case err, ok := <-r.errCh:
 		if !ok {
-			return errors.Errorf("[checkpoint] Append: there is another goroutine has get the checkpoint error")
+			r.errLock.RLock()
+			err = r.err
+			r.errLock.RUnlock()
+			return errors.Annotate(err, "[checkpoint] Append: failed to append checkpoint message")
 		}
 		return err
 	case r.appendCh <- message:
@@ -360,6 +369,9 @@ func (r *CheckpointRunner[K, V]) sendError(err error) {
 	select {
 	case r.errCh <- err:
 		log.Error("[checkpoint] send the error", zap.Error(err))
+		r.errLock.Lock()
+		r.err = err
+		r.errLock.Unlock()
 		close(r.errCh)
 	default:
 		log.Error("errCh is blocked", logutil.ShortError(err))

@@ -21,12 +21,18 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 type RestoreKeyType = int64
-type RestoreValueType = RangeType
+type RestoreValueType struct {
+	// the file key of a range
+	RangeKey string
+}
+
+func (rv RestoreValueType) IdentKey() []byte {
+	return []byte(rv.RangeKey)
+}
 
 const (
 	CheckpointRestoreDirFormat            = CheckpointDir + "/restore-%s"
@@ -87,21 +93,13 @@ func AppendRangesForRestore(
 	ctx context.Context,
 	r *CheckpointRunner[RestoreKeyType, RestoreValueType],
 	tableID RestoreKeyType,
-	ranges []rtree.Range,
+	rangeKey string,
 ) error {
-	// no need to persist the file information
-	group := make([]RestoreValueType, 0, len(ranges))
-	for _, rg := range ranges {
-		group = append(group, RestoreValueType{
-			Range: &rtree.Range{
-				StartKey: rg.StartKey,
-				EndKey:   rg.EndKey,
-			},
-		})
-	}
 	return r.Append(ctx, &CheckpointMessage[RestoreKeyType, RestoreValueType]{
 		GroupKey: tableID,
-		Group:    group,
+		Group: []RestoreValueType{
+			{RangeKey: rangeKey},
+		},
 	})
 }
 
