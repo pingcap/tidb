@@ -47,6 +47,7 @@ type backfillSchedulerHandle struct {
 	eleTypeKey  []byte
 	totalRowCnt int64
 	done        chan struct{}
+	ctx         context.Context
 }
 
 // BackfillGlobalMeta is the global task meta for backfilling index.
@@ -106,28 +107,6 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, e
 	}
 	bh.index = indexInfo
 
-	ser, err := infosync.GetServerInfo()
-	if err != nil {
-		return nil, err
-	}
-	path := fmt.Sprintf("distAddIndex/%d/%s:%d", bh.job.ID, ser.IP, ser.Port)
-	response, err := d.etcdCli.Get(d.ctx, path)
-	if err != nil {
-		return nil, err
-	}
-	if len(response.Kvs) > 0 {
-		cnt, err := strconv.Atoi(string(response.Kvs[0].Value))
-		if err != nil {
-			return nil, err
-		}
-		bh.totalRowCnt = int64(cnt)
-	}
-
-	bh.done = make(chan struct{})
-	go func() {
-		bh.UpdateStatLoop()
-	}()
-
 	return bh, nil
 }
 
@@ -145,7 +124,7 @@ func (b *backfillSchedulerHandle) UpdateStatLoop() {
 		case <-b.done:
 			return
 		case <-tk:
-			err := ddlutil.PutKVToEtcd(b.d.ctx, b.d.etcdCli, 3, path, strconv.Itoa(int(b.totalRowCnt)))
+			err := ddlutil.PutKVToEtcd(b.ctx, b.d.etcdCli, 3, path, strconv.Itoa(int(b.totalRowCnt)))
 			if err != nil {
 				logutil.BgLogger().Warn("[ddl] update row count for distributed add index failed", zap.Error(err))
 			}
@@ -154,16 +133,38 @@ func (b *backfillSchedulerHandle) UpdateStatLoop() {
 }
 
 // InitSubtaskExecEnv implements the Scheduler interface.
-func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
+func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning init subtask exec env")
 	d := b.d
 
-	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID)
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, b.index.Unique, b.job.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
 		return err
 	}
 	b.bc = bc
+	b.ctx = ctx
+
+	ser, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("distAddIndex/%d/%s:%d", b.job.ID, ser.IP, ser.Port)
+	response, err := d.etcdCli.Get(ctx, path)
+	if err != nil {
+		return err
+	}
+	if len(response.Kvs) > 0 {
+		cnt, err := strconv.Atoi(string(response.Kvs[0].Value))
+		if err != nil {
+			return err
+		}
+		b.totalRowCnt = int64(cnt)
+	}
+
+	b.done = make(chan struct{})
+	go b.UpdateStatLoop()
+
 	return nil
 }
 
