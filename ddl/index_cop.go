@@ -127,7 +127,7 @@ func (c *copReqSender) run() {
 		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
 			zap.Int("id", task.id), zap.String("task", task.String()))
 
-		startTS, err := calculateStartTS(se)
+		startTS, err := beginAndGetStartTS(se)
 		if err != nil {
 			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
 			return
@@ -513,7 +513,7 @@ type idxRecResult struct {
 	done  bool
 }
 
-func calculateStartTS(se *sess.Session) (uint64, error) {
+func beginAndGetStartTS(se *sess.Session) (uint64, error) {
 	se.Rollback()
 	err := se.Begin()
 	if err != nil {
