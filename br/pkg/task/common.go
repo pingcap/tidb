@@ -138,15 +138,6 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// Convert the TLS config to the PD security option.
-func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
-	securityOption := pd.SecurityOption{}
-	securityOption.CAPath = tls.CA
-	securityOption.CertPath = tls.Cert
-	securityOption.KeyPath = tls.Key
-	return securityOption
-}
-
 // ParseFromFlags parses the TLS config from the flag set.
 func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 	tls.CA, tls.Cert, tls.Key, err = ParseTLSTripleFromFlags(flags)

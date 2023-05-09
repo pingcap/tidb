@@ -427,6 +427,14 @@ def go_deps():
         version = "v0.1.1",
     )
     go_repository(
+        name = "com_github_butuzov_mirror",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/butuzov/mirror",
+        sum = "h1:AOFqNeGL+3znnsBptNI4PNKT1IpzTD+95vY7bsMM1pg=",
+        version = "v0.1.2",
+    )
+
+    go_repository(
         name = "com_github_cakturk_go_netstat",
         build_file_proto_mode = "disable",
         importpath = "github.com/cakturk/go-netstat",
@@ -1372,8 +1380,8 @@ def go_deps():
         name = "com_github_go_sql_driver_mysql",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-sql-driver/mysql",
-        sum = "h1:ueSltNNllEqE3qcWBTD0iQd3IpL/6U+mJxLkazJ7YPc=",
-        version = "v1.7.0",
+        sum = "h1:lUIinVbN1DY0xBg0eMOzmmtGoHwWBbvnWubQUrtU8EI=",
+        version = "v1.7.1",
     )
     go_repository(
         name = "com_github_go_stack_stack",
