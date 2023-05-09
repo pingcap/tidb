@@ -1170,7 +1170,6 @@ func TestPauseJobWriteConflict(t *testing.T) {
 	}
 	tk1.MustExec("alter table t add index (id)")
 	require.EqualError(t, pauseErr, "mock commit error")
-	tk2.ResultSetToResultWithCtx(context.Background(), pauseRS[0], "cancel ddl job fails")
 
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -1192,7 +1191,7 @@ func TestPauseJobWriteConflict(t *testing.T) {
 	require.NoError(t, pauseErr)
 	require.NoError(t, resumeErr)
 	require.NoError(t, cancelErr)
-	var result = tk2.ResultSetToResultWithCtx(context.Background(), pauseRS[0], "pause ddl job successfully")
+	result := tk2.ResultSetToResultWithCtx(context.Background(), pauseRS[0], "pause ddl job successfully")
 	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
 	result = tk2.ResultSetToResultWithCtx(context.Background(), resumeRS[0], "resume ddl job successfully")
 	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
