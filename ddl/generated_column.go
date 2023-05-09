@@ -383,7 +383,9 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 
 func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
 	if oldCol.GeneratedExprString == newCol.GeneratedExprString {
-		return nil
+		if oldCol.FieldType.Equal(&newCol.FieldType) {
+			return nil
+		}
 	}
 
 	if newCol.GeneratedStored {

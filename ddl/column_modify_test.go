@@ -751,16 +751,27 @@ func TestModifyGeneratedColumn(t *testing.T) {
 	tk.MustExec("drop table t1;")
 	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
 	tk.MustExec("insert into t1 set a=1;")
-	tk.MustExec("alter table t1 modify column b bigint as (a+1) stored;")
-	tk.MustExec("alter table t1 modify column b bigint as (a + 1) stored;")
+	tk.MustExec("alter table t1 modify column b int as (a+1) stored;")
+	// Forbit this to workaround issue https://github.com/pingcap/tidb/issues/37611
+	// If we don't forbit it, a similiar issue would be:
+	//    tk.MustExec("set @@sql_mode = '';")
+	//    tk.MustExec("create table t1 (a int, b tinyint as (a+255) stored);")
+	//    tk.MustExec("insert into t1 set a=128;")
+	//    tk.MustExec("alter table t1 modify column b int as (a+255) stored;")
+	//    tk.MustQuery("select * from t1").Check(testkit.Rows("128 383"))
+
+	// tk.MustExec("alter table t1 modify column b bigint as (a+1) stored;")
+	// tk.MustExec("alter table t1 modify column b bigint as (a + 1) stored;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
 
 	// Modify column with index to the same expression.
 	tk.MustExec("drop table t1;")
 	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
 	tk.MustExec("insert into t1 set a=1;")
-	tk.MustExec("alter table t1 modify column b bigint as (a+1);")
-	tk.MustExec("alter table t1 modify column b bigint as (a + 1);")
+	// Forbit this to workaround issue https://github.com/pingcap/tidb/issues/37611
+	// tk.MustExec("alter table t1 modify column b bigint as (a+1);")
+	// tk.MustExec("alter table t1 modify column b bigint as (a + 1);")
+	tk.MustExec("alter table t1 modify column b int as (a + 1);")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
 
 	// Modify column from non-generated to stored generated.
@@ -1030,4 +1041,19 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	require.Equal(t, 3, tbl.Meta().Columns[3].Offset)
 
 	tk.MustExec("drop table if exists t")
+}
+
+func TestIssue37611(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a char(5), b char(6) as (concat(a, a)), index idx(b));")
+	tk.MustExec("set @@sql_mode='';")
+	tk.MustExec("insert into t (a) values ('aaa');")
+	tk.MustExec("insert into t (a) values ('aaaa');")
+	tk.MustGetErrCode("alter table t modify b char(10) as (concat(a, a));", errno.ErrUnsupportedOnGeneratedColumn)
+	tk.MustExec("set @@sql_mode=default;")
+	tk.MustQuery("select * from t ignore index(idx) where b = 'aaaaaa';").Check(testkit.Rows("aaa aaaaaa", "aaaa aaaaaa"))
+	tk.MustQuery("select * from t force index(idx) where b = 'aaaaaa';").Check(testkit.Rows("aaa aaaaaa", "aaaa aaaaaa"))
 }
