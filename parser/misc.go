@@ -654,6 +654,7 @@ var tokenMap = map[string]int{
 	"RLIKE":                    rlike,
 	"ROLE":                     role,
 	"ROLLBACK":                 rollback,
+	"ROLLUP":                   rollup,
 	"ROUTINE":                  routine,
 	"ROW_COUNT":                rowCount,
 	"ROW_FORMAT":               rowFormat,

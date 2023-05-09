@@ -1630,6 +1630,61 @@
     ]
   },
   {
+    "Name": "TestMPPRightOuterJoin",
+    "Cases": [
+      {
+        "SQL": "set @@session.tidb_allow_mpp=true",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
+        "Plan": [
+          "TableReader_30 3.00 root  MppVersion: 1, data:ExchangeSender_29",
+          "└─ExchangeSender_29 3.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_28 3.00 mpp[tiflash]  right outer join, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
+          "    ├─ExchangeReceiver_14(Build) 5.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_13 5.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_12 5.00 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+          "    │     └─TableFullScan_11 5.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    └─TableFullScan_15(Probe) 3.00 mpp[tiflash] table:t2 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_broadcast_join_threshold_size=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_broadcast_join_threshold_count=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
+        "Plan": [
+          "TableReader_32 3.00 root  MppVersion: 1, data:ExchangeSender_31",
+          "└─ExchangeSender_31 3.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_30 3.00 mpp[tiflash]  right outer join, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
+          "    ├─ExchangeReceiver_17(Build) 3.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_16 3.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.b, collate: binary]",
+          "    │   └─TableFullScan_15 3.00 mpp[tiflash] table:t2 keep order:false",
+          "    └─ExchangeReceiver_14(Probe) 5.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_13 5.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.a, collate: binary]",
+          "        └─Selection_12 5.00 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+          "          └─TableFullScan_11 5.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
     "Name": "TestIssue37520",
     "Cases": [
       {

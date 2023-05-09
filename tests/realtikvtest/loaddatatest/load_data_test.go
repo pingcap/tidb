@@ -141,7 +141,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 	}
 
 	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
-		INTO TABLE t %%s with import_mode='physical'`, gcsEndpoint)
+		INTO TABLE t %%s with thread=1, import_mode='physical'`, gcsEndpoint)
 	for _, c := range cases {
 		s.tk.MustExec("drop table if exists t;")
 		s.tk.MustExec(c.createTableSQL)
@@ -203,7 +203,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.Equal("Records: 9  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	s.Equal(uint64(9), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
@@ -214,7 +214,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	}...))
 	s.tk.MustExec("truncate table t")
 	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' ignore 1 lines with import_mode='physical'`, gcsEndpoint)
+		INTO TABLE t fields terminated by ',' ignore 1 lines with thread=1, import_mode='physical'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.Equal("Records: 7  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	s.Equal(uint64(7), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
@@ -225,7 +225,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	}...))
 	s.tk.MustExec("truncate table t")
 	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' ignore 3 lines with import_mode='physical'`, gcsEndpoint)
+		INTO TABLE t fields terminated by ',' ignore 3 lines with thread=1, import_mode='physical'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.Equal("Records: 3  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	s.Equal(uint64(3), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
@@ -795,7 +795,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
 	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical'`, gcsEndpoint)
 	err := s.tk.ExecToErr(loadDataSQL)
 	require.ErrorIs(s.T(), err, common.ErrChecksumMismatch)
 	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
@@ -805,7 +805,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 
 	s.tk.MustExec("truncate table t;")
 	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with import_mode='physical', checksum_table='off'`, gcsEndpoint)
+		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical', checksum_table='off'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
@@ -814,7 +814,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 
 	s.tk.MustExec("truncate table t;")
 	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with import_mode='physical', checksum_table='optional'`, gcsEndpoint)
+		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical', checksum_table='optional'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
@@ -829,28 +829,34 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 }
 
 func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed bool) {
-	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	withOptions := fmt.Sprintf("WITH thread=2, import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
 	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
-	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT);`)
+	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT, c int);`)
 
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-load",
-			Name:       "cols_and_vars.tsv",
-		},
-		Content: []byte("1\n2\n3\n4\n5\n"),
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "cols_and_vars-1.tsv"},
+		Content:     []byte("1,11,111\n2,22,222\n3,33,333\n4,44,444\n5,55,555\n"),
 	})
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/cols_and_vars.tsv?endpoint=%s'
-		INTO TABLE load_data.cols_and_vars(@V1) set a=@V1, b=@V1*100 %s`, gcsEndpoint, withOptions)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "cols_and_vars-2.tsv"},
+		Content:     []byte("6,66,666\n7,77,777\n8,88,888\n9,99,999\n"),
+	})
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/cols_and_vars-*.tsv?endpoint=%s'
+		INTO TABLE load_data.cols_and_vars fields terminated by ','
+		(@V1, @v2, @v3) set a=@V1, b=@V2*10, c=123 %s`, gcsEndpoint, withOptions)
 	s.tk.MustExec(sql)
-	s.tk.MustQuery("SELECT * FROM load_data.cols_and_vars;").Check(testkit.Rows(
-		"1 100",
-		"2 200",
-		"3 300",
-		"4 400",
-		"5 500",
+	s.tk.MustQuery("SELECT * FROM load_data.cols_and_vars;").Sort().Check(testkit.Rows(
+		"1 110 123",
+		"2 220 123",
+		"3 330 123",
+		"4 440 123",
+		"5 550 123",
+		"6 660 123",
+		"7 770 123",
+		"8 880 123",
+		"9 990 123",
 	))
 }

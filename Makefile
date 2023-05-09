@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive
 
-precheck: fmt tidy bazel_prepare
+precheck: fmt bazel_prepare
 
 check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
 
@@ -282,7 +282,7 @@ endif
 bench-daily:
 	go test github.com/pingcap/tidb/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/executor/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json

@@ -557,7 +557,7 @@ func (importer *FileImporter) ImportSSTFiles(
 						continue regionLoop
 					}
 				}
-				log.Error("download file failed",
+				log.Warn("download file failed, retry later",
 					logutil.Files(files),
 					logutil.Region(info.Region),
 					logutil.Key("startKey", startKey),
@@ -569,7 +569,7 @@ func (importer *FileImporter) ImportSSTFiles(
 				zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)),
 				logutil.Key("start", files[0].StartKey), logutil.Key("end", files[0].EndKey))
 			if errIngest := importer.ingest(ctx, info, downloadMetas); errIngest != nil {
-				log.Error("ingest file failed",
+				log.Warn("ingest file failed, retry later",
 					logutil.Files(files),
 					logutil.SSTMetas(downloadMetas),
 					logutil.Region(info.Region),
@@ -585,7 +585,11 @@ func (importer *FileImporter) ImportSSTFiles(
 		}
 		return nil
 	}, utils.NewImportSSTBackoffer())
-	return errors.Trace(err)
+	if err != nil {
+		log.Error("import sst file failed after retry, stop the whole progress", logutil.Files(files), zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (importer *FileImporter) setDownloadSpeedLimit(ctx context.Context, storeID, rateLimit uint64) error {

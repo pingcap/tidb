@@ -571,6 +571,7 @@ import (
 	reverse               "REVERSE"
 	role                  "ROLE"
 	rollback              "ROLLBACK"
+	rollup                "ROLLUP"
 	routine               "ROUTINE"
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
@@ -1385,6 +1386,7 @@ import (
 	WindowNameOrSpec                       "WINDOW name or spec"
 	WindowSpec                             "WINDOW spec"
 	WindowSpecDetails                      "WINDOW spec details"
+	WithRollupClause                       "With rollup clause"
 	BetweenOrNotOp                         "Between predicate"
 	IsOrNotOp                              "Is predicate"
 	InOrNotOp                              "In predicate"
@@ -1557,6 +1559,8 @@ import (
 %precedence next
 %precedence lowerThanValueKeyword
 %precedence value
+%precedence lowerThanWith
+%precedence with
 %precedence lowerThanStringLitToken
 %precedence stringLit
 %precedence lowerThanSetKeyword
@@ -6056,10 +6060,20 @@ FieldList:
 		$$ = append(fl, field)
 	}
 
-GroupByClause:
-	"GROUP" "BY" ByList
+WithRollupClause:
+	%prec lowerThanWith
 	{
-		$$ = &ast.GroupByClause{Items: $3.([]*ast.ByItem)}
+		$$ = false
+	}
+|	"WITH" "ROLLUP"
+	{
+		$$ = true
+	}
+
+GroupByClause:
+	"GROUP" "BY" ByList WithRollupClause
+	{
+		$$ = &ast.GroupByClause{Items: $3.([]*ast.ByItem), Rollup: $4.(bool)}
 	}
 
 HavingClause:
@@ -6368,6 +6382,7 @@ UnReservedKeyword:
 |	"RESTART"
 |	"ROLE"
 |	"ROLLBACK"
+|	"ROLLUP"
 |	"SESSION"
 |	"SIGNED"
 |	"SHARD_ROW_ID_BITS"
@@ -10711,6 +10726,20 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp:     ast.AdminCancelDDLJobs,
+			JobIDs: $5.([]int64),
+		}
+	}
+|	"ADMIN" "PAUSE" "DDL" "JOBS" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp:     ast.AdminPauseDDLJobs,
+			JobIDs: $5.([]int64),
+		}
+	}
+|	"ADMIN" "RESUME" "DDL" "JOBS" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp:     ast.AdminResumeDDLJobs,
 			JobIDs: $5.([]int64),
 		}
 	}
@@ -15584,5 +15613,4 @@ CalibrateResourceWorkloadOption:
 	{
 		$$ = ast.OLTPWRITEONLY
 	}
-
 %%

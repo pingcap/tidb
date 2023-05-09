@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -55,7 +56,7 @@ func (info *binaryParamInfo) MarshalJSON() ([]byte, error) {
 	type binaryParamInfoForMarshal binaryParamInfo
 	infoForMarshal := new(binaryParamInfoForMarshal)
 	quote := `"`
-	// We only need the escape functionality of %q, the quoting is not needed,
+	// We only need the escape functionality of strconv.Quote, the quoting is not needed,
 	// so we trim the \" prefix and suffix here.
 	infoForMarshal.Type = strings.TrimSuffix(
 		strings.TrimPrefix(
@@ -193,7 +194,28 @@ func debugTraceGetStatsTbl(
 		Outdated:          outdated,
 		StatsTblInfo:      statistics.TraceStatsTbl(statsTbl),
 	}
+	failpoint.Inject("DebugTraceStableStatsTbl", func(val failpoint.Value) {
+		if val.(bool) {
+			stabilizeGetStatsTblInfo(traceInfo)
+		}
+	})
 	root.AppendStepToCurrentContext(traceInfo)
+}
+
+func stabilizeGetStatsTblInfo(info *getStatsTblInfo) {
+	info.InputPhysicalID = 100
+	tbl := info.StatsTblInfo
+	if tbl == nil {
+		return
+	}
+	tbl.PhysicalID = 100
+	tbl.Version = 440930000000000000
+	for _, col := range tbl.Columns {
+		col.LastUpdateVersion = 440930000000000000
+	}
+	for _, idx := range tbl.Indexes {
+		idx.LastUpdateVersion = 440930000000000000
+	}
 }
 
 /*
