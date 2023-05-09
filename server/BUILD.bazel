@@ -206,6 +206,7 @@ go_test(
         "//util/deadlockhistory",
         "//util/mock",
         "//util/plancodec",
+        "//util/replayer",
         "//util/resourcegrouptag",
         "//util/rowcodec",
         "//util/stmtsummary/v2:stmtsummary",
