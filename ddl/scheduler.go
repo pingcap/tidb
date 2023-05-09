@@ -123,7 +123,7 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, e
 		bh.totalRowCnt = int64(cnt)
 	}
 
-	bh.done = make(chan struct{}, 0)
+	bh.done = make(chan struct{})
 	go func() {
 		bh.UpdateStatLoop()
 	}()

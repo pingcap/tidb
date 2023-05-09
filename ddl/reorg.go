@@ -133,7 +133,7 @@ func (rc *reorgCtx) getRowCount() int64 {
 	return row
 }
 
-func getDistAddIndexRowCntAndSetJobRowCnt(reorgInfo *reorgInfo, rc *reorgCtx, job *model.Job, ctx context.Context, client *clientv3.Client) int64 {
+func getDistAddIndexRowCntAndSetJobRowCnt(ctx context.Context, reorgInfo *reorgInfo, rc *reorgCtx, job *model.Job, client *clientv3.Client) int64 {
 	rowCount := int64(0)
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		path := fmt.Sprintf("distAddIndex/%d", job.ID)
@@ -141,20 +141,19 @@ func getDistAddIndexRowCntAndSetJobRowCnt(reorgInfo *reorgInfo, rc *reorgCtx, jo
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] get row count from ETCD failed", zap.Error(err))
 			return 0
-		} else {
-			if len(resp.Kvs) == 0 {
-				return 0
-			}
-			for _, kv := range resp.Kvs {
-				cnt, err := strconv.Atoi(string(kv.Value))
-				if err != nil {
-					logutil.BgLogger().Error("[ddl] parse row count from ETCD failed", zap.Error(err))
-					continue
-				}
-				rowCount += int64(cnt)
-			}
-			job.SetRowCount(rowCount)
 		}
+		if len(resp.Kvs) == 0 {
+			return 0
+		}
+		for _, kv := range resp.Kvs {
+			cnt, err := strconv.Atoi(string(kv.Value))
+			if err != nil {
+				logutil.BgLogger().Error("[ddl] parse row count from ETCD failed", zap.Error(err))
+				continue
+			}
+			rowCount += int64(cnt)
+		}
+		job.SetRowCount(rowCount)
 	} else {
 		rowCount = rc.getRowCount()
 		job.SetRowCount(rowCount)
@@ -162,7 +161,7 @@ func getDistAddIndexRowCntAndSetJobRowCnt(reorgInfo *reorgInfo, rc *reorgCtx, jo
 	return rowCount
 }
 
-func gcETCDRowCntStatIfNecessary(reorgInfo *reorgInfo, job *model.Job, ctx context.Context, client *clientv3.Client) {
+func gcETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, job *model.Job, client *clientv3.Client) {
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		path := fmt.Sprintf("distAddIndex/%d", job.ID)
 		_, err := client.Delete(ctx, path, clientv3.WithPrefix())
@@ -257,14 +256,14 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			d.removeReorgCtx(job.ID)
 			return dbterror.ErrCancelledDDLJob
 		}
-		rowCount := getDistAddIndexRowCntAndSetJobRowCnt(reorgInfo, rc, job, w.ctx, d.etcdCli)
+		rowCount := getDistAddIndexRowCntAndSetJobRowCnt(w.ctx, reorgInfo, rc, job, d.etcdCli)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
 		} else {
 			logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		}
 
-		gcETCDRowCntStatIfNecessary(reorgInfo, job, w.ctx, d.etcdCli)
+		gcETCDRowCntStatIfNecessary(w.ctx, reorgInfo, job, d.etcdCli)
 
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
@@ -283,7 +282,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount := getDistAddIndexRowCntAndSetJobRowCnt(reorgInfo, rc, job, w.ctx, d.etcdCli)
+		rowCount := getDistAddIndexRowCntAndSetJobRowCnt(w.ctx, reorgInfo, rc, job, d.etcdCli)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
