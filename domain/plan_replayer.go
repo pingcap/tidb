@@ -537,7 +537,7 @@ type PlanReplayerDumpTask struct {
 	replayer.PlanReplayerTaskKey
 
 	// tmp variables stored during the query
-	TblStats      map[int64]interface{}
+	TblStats map[int64]interface{}
 
 	// variables used to dump the plan
 	StartTS         uint64
