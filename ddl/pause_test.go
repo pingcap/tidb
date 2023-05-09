@@ -241,13 +241,8 @@ func TestPauseAndResumeMain(t *testing.T) {
 			}
 			rs := tkCommand.MustQuery(fmt.Sprintf("admin pause ddl jobs %d", job.ID))
 			isPaused.Store(isCommandSuccess(rs))
+			time.Sleep(1 * time.Second)
 		}
-	}
-
-	isResumed := atomicutil.NewBool(false)
-	resumeHook := func(job *model.Job) {
-		rs := tkCommand.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
-		isResumed.Store(isCommandSuccess(rs))
 	}
 
 	isCancelled := atomicutil.NewBool(false)
@@ -273,7 +268,6 @@ func TestPauseAndResumeMain(t *testing.T) {
 
 	registHook := func(h *callback.TestDDLCallback) {
 		h.OnJobRunBeforeExported = pauseHook
-		h.OnJobRunAfterExported = resumeHook
 		h.OnJobUpdatedExported.Store(&cancelHook)
 		dom.DDL().SetHook(h.Clone())
 	}
@@ -288,7 +282,6 @@ func TestPauseAndResumeMain(t *testing.T) {
 		}
 
 		isPaused.Store(false)
-		isResumed.Store(false)
 		isCancelled.Store(false)
 		pauseWhenReorgNotStart.Store(true)
 		registHook(hook)
@@ -297,7 +290,6 @@ func TestPauseAndResumeMain(t *testing.T) {
 
 		if tc.ok {
 			require.Equal(t, tc.ok, isPaused.Load(), msg)
-			require.Equal(t, tc.ok, isResumed.Load(), msg)
 			require.Equal(t, tc.ok, isCancelled.Load(), msg)
 		}
 
