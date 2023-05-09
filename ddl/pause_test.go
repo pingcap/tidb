@@ -16,8 +16,6 @@ package ddl_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/util/logutil"
 	"math/rand"
 	"strings"
 	"testing"
@@ -26,8 +24,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
 )
