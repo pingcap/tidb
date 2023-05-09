@@ -426,6 +426,7 @@
       "parser/parser.go": "parser/parser.go code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
+      "tools/": "ignore tools code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },

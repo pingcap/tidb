@@ -78,9 +78,7 @@ func getPackageInfo(dir string) string {
 	if err != nil {
 		os.Exit(-2)
 	}
-	//nolint:mirror
 	start := strings.IndexByte(string(line), ' ')
-	//nolint:mirror
 	end := strings.IndexByte(string(line), '=')
 	pkg := string(line[start+1 : end])
 	return pkg
