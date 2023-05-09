@@ -4064,7 +4064,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
 			handleLen := ts.HandleCols.NumCols()
-			if len(is.ByItems) != 0 && is.Table.Partition != nil {
+			if len(is.ByItems) != 0 && is.Table.Partition != nil && b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				handleLen += 1
 			}
 			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.PartialPlans[i])
