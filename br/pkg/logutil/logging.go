@@ -63,6 +63,7 @@ func (file zapFileMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 
 type zapFilesMarshaler []*backuppb.File
 
+// MarshalLogObjectForFiles is an internal util function to zap something having `Files` field.
 func MarshalLogObjectForFiles(files []*backuppb.File, encoder zapcore.ObjectEncoder) error {
 	return zapFilesMarshaler(files).MarshalLogObject(encoder)
 }
