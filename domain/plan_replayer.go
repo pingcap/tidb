@@ -74,11 +74,11 @@ func parseTime(s string) (time.Time, error) {
 	return time.Unix(0, i), nil
 }
 
-func (p *dumpFileGcChecker) gcDumpFiles(t time.Duration) {
+func (p *dumpFileGcChecker) gcDumpFiles(gcDurationForManual, gcDurationForCapture time.Duration) {
 	p.Lock()
 	defer p.Unlock()
 	for _, path := range p.paths {
-		p.gcDumpFilesByPath(path, t)
+		p.gcDumpFilesByPath(path, gcDurationForManual, gcDurationForCapture)
 	}
 }
 
@@ -86,7 +86,7 @@ func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
 	p.sctx = sctx
 }
 
-func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
+func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationForManual, gcDurationForCapture time.Duration) {
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -94,7 +94,8 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 		}
 	}
 
-	gcTime := time.Now().Add(-t)
+	gcTargetTimeForCapture := time.Now().Add(-gcDurationForCapture)
+	gcTargetTimeForOthers := time.Now().Add(-gcDurationForManual)
 	for _, f := range files {
 		fileName := f.Name()
 		createTime, err := parseTime(fileName)
@@ -103,7 +104,14 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 			continue
 		}
 		isPlanReplayer := strings.Contains(fileName, "replayer")
-		if !createTime.After(gcTime) {
+		isPlanReplayerCapture := strings.Contains(fileName, "capture")
+		canGC := false
+		if isPlanReplayer && isPlanReplayerCapture {
+			canGC = !createTime.After(gcTargetTimeForCapture)
+		} else {
+			canGC = !createTime.After(gcTargetTimeForOthers)
+		}
+		if canGC {
 			err := os.Remove(filepath.Join(path, f.Name()))
 			if err != nil {
 				logutil.BgLogger().Warn("[dumpFileGcChecker] remove file failed", zap.Error(err), zap.String("filename", fileName))
