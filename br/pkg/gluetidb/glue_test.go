@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -274,4 +275,27 @@ func TestTheSessionIsoation(t *testing.T) {
 	req.NoError(session.(glue.BatchCreateTableSession).CreateTables(ctx, map[string][]*model.TableInfo{
 		"test": infos,
 	}))
+}
+
+func TestXxx(t *testing.T) {
+	drained := []rtree.Range{
+		{
+			StartKey: []byte("1"),
+		},
+		{
+			StartKey: []byte("1"),
+		},
+		{
+			StartKey: []byte("1"),
+		},
+		{
+			StartKey: []byte("1"),
+		},
+	}
+	for _, rg := range drained {
+		rg.StartKey = []byte("3")
+	}
+
+	t.Log(drained)
+	require.True(t, false)
 }
