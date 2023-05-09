@@ -244,7 +244,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		first := true
 		for tblID := range relatedTableIDs {
 			if !first {
-				str.Write([]byte(","))
+				str.WriteString(",")
 			} else {
 				first = false
 			}

@@ -2577,12 +2577,15 @@ func TestIndexMergeOrderPushDown(t *testing.T) {
 	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table t (a int, b int, c int, index idx(a, c), index idx2(b, c))")
 	tk.MustExec("create table tcommon (a int, b int, c int, primary key(a, c), index idx2(b, c))")
+	tk.MustExec("create table thash(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c)) PARTITION BY HASH (`a`) PARTITIONS 4")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }
