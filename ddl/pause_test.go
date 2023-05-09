@@ -16,6 +16,8 @@ package ddl_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/logutil"
 	"math/rand"
 	"strings"
 	"testing"
@@ -205,8 +207,7 @@ func TestPauseAndResumeMain(t *testing.T) {
         city varchar(32) NOT NULL DEFAULT '',
         phone varchar(16) NOT NULL DEFAULT '',
         created_time datetime NOT NULL,
-        updated_time datetime NOT NULL,
-        PRIMARY KEY (id)
+        updated_time datetime NOT NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`)
 
 	idx := 0
@@ -219,6 +220,7 @@ func TestPauseAndResumeMain(t *testing.T) {
 		idx += 1
 	}
 
+	logger := logutil.BgLogger()
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 2")
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
@@ -234,25 +236,23 @@ func TestPauseAndResumeMain(t *testing.T) {
 
 	isPaused := atomicutil.NewBool(false)
 	pauseWhenReorgNotStart := atomicutil.NewBool(false)
-	pauseHook := func(job *model.Job) {
+	isCancelled := atomicutil.NewBool(false)
+	cancelWhenReorgNotStart := atomicutil.NewBool(false)
+	commandHook := func(job *model.Job) {
+		logger.Info("allPauseJobTestCase commandHook: " + job.String())
 		if testMatchCancelState(t, job, allPauseJobTestCase[i.Load()].jobState, allPauseJobTestCase[i.Load()].sql) && !isPaused.Load() {
+			logger.Info("allPauseJobTestCase commandHook: pass the check")
 			if !pauseWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
+				logger.Info("allPauseJobTestCase commandHook: reorg, return")
 				return
 			}
 			rs := tkCommand.MustQuery(fmt.Sprintf("admin pause ddl jobs %d", job.ID))
+			logger.Info("allPauseJobTestCase commandHook: " + rs.Rows()[0][1].(string))
 			isPaused.Store(isCommandSuccess(rs))
 			time.Sleep(1 * time.Second)
-		}
-	}
 
-	isCancelled := atomicutil.NewBool(false)
-	cancelWhenReorgNotStart := atomicutil.NewBool(false)
-	cancelHook := func(job *model.Job) {
-		if testMatchCancelState(t, job, allPauseJobTestCase[i.Load()].jobState, allPauseJobTestCase[i.Load()].sql) && !isCancelled.Load() {
-			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
-				return
-			}
-			rs := tkCommand.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+			rs = tkCommand.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+			logger.Info("allPauseJobTestCase cancelHook: " + rs.Rows()[0][1].(string))
 			isCancelled.Store(isCommandSuccess(rs))
 		}
 	}
@@ -262,13 +262,11 @@ func TestPauseAndResumeMain(t *testing.T) {
 	restHook := func(h *callback.TestDDLCallback) {
 		h.OnJobRunBeforeExported = nil
 		h.OnJobRunAfterExported = nil
-		h.OnJobUpdatedExported.Store(nil)
 		dom.DDL().SetHook(h.Clone())
 	}
 
 	registHook := func(h *callback.TestDDLCallback) {
-		h.OnJobRunBeforeExported = pauseHook
-		h.OnJobUpdatedExported.Store(&cancelHook)
+		h.OnJobRunBeforeExported = commandHook
 		dom.DDL().SetHook(h.Clone())
 	}
 
@@ -276,21 +274,26 @@ func TestPauseAndResumeMain(t *testing.T) {
 		i.Store(int64(idx))
 		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.jobState)
 
+		logger.Info("allPauseJobTestCase: " + msg)
+
 		restHook(hook)
 		for _, prepareSQL := range tc.prepareSQL {
+			logger.Info("Prepare SQL:" + prepareSQL)
 			tk.MustExec(prepareSQL)
 		}
 
 		isPaused.Store(false)
 		isCancelled.Store(false)
-		pauseWhenReorgNotStart.Store(true)
+		pauseWhenReorgNotStart.Store(false)
+		cancelWhenReorgNotStart.Store(false)
 		registHook(hook)
 
-		tk.MustExec(tc.sql)
-
 		if tc.ok {
+			tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			require.Equal(t, tc.ok, isPaused.Load(), msg)
 			require.Equal(t, tc.ok, isCancelled.Load(), msg)
+		} else {
+			tk.MustExec(tc.sql)
 		}
 
 		// TODO: should add some check on Job during reorganization
