@@ -299,8 +299,28 @@ type compressedWriter struct {
 	zstdLevel            zstd.EncoderLevel
 }
 
-func (cw *compressedWriter) Write(data []byte) (int, error) {
-	return cw.buf.Write(data)
+func (cw *compressedWriter) Write(data []byte) (n int, err error) {
+	// MySQL seems to start with 16384 and larger packets after that.
+	// Must fit in the 3 byte field in the header.
+	maxCompressedSize := 1048576 // 1024*1024
+
+	for {
+		remainingLen := maxCompressedSize - cw.buf.Len()
+		if len(data) <= remainingLen {
+			written, err := cw.buf.Write(data)
+			if err != nil {
+				return 0, err
+			}
+			return n + written, nil
+		}
+		written, err := cw.buf.Write(data[:remainingLen])
+		if err != nil {
+			return 0, err
+		}
+		n += written
+		data = data[remainingLen:]
+		cw.Flush()
+	}
 }
 
 func (cw *compressedWriter) Flush() error {
