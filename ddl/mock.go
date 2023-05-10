@@ -19,7 +19,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -141,7 +140,7 @@ func NewMockStateSyncer() syncer.StateSyncer {
 
 // MockStateSyncer is a mock state syncer, it is exported for testing.
 type MockStateSyncer struct {
-	clusterState *atomicutil.UnsafePointer
+	clusterState *atomicutil.Pointer[syncer.StateInfo]
 	globalVerCh  chan clientv3.WatchResponse
 	mockSession  chan struct{}
 }
@@ -151,25 +150,25 @@ func (s *MockStateSyncer) Init(context.Context) error {
 	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
 	s.mockSession = make(chan struct{}, 1)
 	state := syncer.NewStateInfo(syncer.StateNormalRunning)
-	s.clusterState = atomicutil.NewUnsafePointer(unsafe.Pointer(state))
+	s.clusterState = atomicutil.NewPointer(state)
 	return nil
 }
 
 // UpdateGlobalState implements StateSyncer.UpdateGlobalState interface.
 func (s *MockStateSyncer) UpdateGlobalState(_ context.Context, stateInfo *syncer.StateInfo) error {
 	s.globalVerCh <- clientv3.WatchResponse{}
-	s.clusterState.Store(unsafe.Pointer(stateInfo))
+	s.clusterState.Store(stateInfo)
 	return nil
 }
 
 // GetGlobalState implements StateSyncer.GetGlobalState interface.
 func (s *MockStateSyncer) GetGlobalState(context.Context) (*syncer.StateInfo, error) {
-	return (*syncer.StateInfo)(s.clusterState.Load()), nil
+	return s.clusterState.Load(), nil
 }
 
 // IsUpgradingState implements StateSyncer.IsUpgradingState interface.
 func (s *MockStateSyncer) IsUpgradingState() bool {
-	return (*syncer.StateInfo)(s.clusterState.Load()).State == syncer.StateUpgrading
+	return s.clusterState.Load().State == syncer.StateUpgrading
 }
 
 // WatchChan implements StateSyncer.WatchChan interface.

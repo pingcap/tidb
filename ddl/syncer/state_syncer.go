@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
@@ -88,7 +87,7 @@ type serverStateSyncer struct {
 	prompt             string
 	etcdCli            *clientv3.Client
 	session            *concurrency.Session
-	clusterState       *atomicutil.UnsafePointer
+	clusterState       *atomicutil.Pointer[StateInfo]
 	globalStateWatcher watcher
 }
 
@@ -97,7 +96,7 @@ func NewStateSyncer(etcdCli *clientv3.Client, etcdPath string) StateSyncer {
 	return &serverStateSyncer{
 		etcdCli:      etcdCli,
 		etcdPath:     etcdPath,
-		clusterState: atomicutil.NewUnsafePointer(unsafe.Pointer(NewStateInfo(StateNormalRunning))),
+		clusterState: atomicutil.NewPointer(NewStateInfo(StateNormalRunning)),
 		prompt:       statePrompt,
 	}
 }
@@ -120,7 +119,7 @@ func (s *serverStateSyncer) Init(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.clusterState.Store(unsafe.Pointer(clusterState))
+	s.clusterState.Store(clusterState)
 	s.globalStateWatcher.Watch(ctx, s.etcdCli, s.etcdPath)
 
 	return errors.Trace(err)
@@ -138,7 +137,7 @@ func (s *serverStateSyncer) Rewatch(ctx context.Context) {
 
 // IsUpgradingState implements StateSyncer.IsUpgradingState interface.
 func (s *serverStateSyncer) IsUpgradingState() bool {
-	return (*StateInfo)(s.clusterState.Load()).State == StateUpgrading
+	return s.clusterState.Load().State == StateUpgrading
 }
 
 func (*serverStateSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) ([]*mvccpb.KeyValue, error) {
@@ -180,7 +179,7 @@ func (s *serverStateSyncer) GetGlobalState(ctx context.Context) (*StateInfo, err
 		if len(kvs) > 0 {
 			return nil, errors.Errorf("get key value count:%d wrong", len(kvs))
 		}
-		s.clusterState.Store(unsafe.Pointer(state))
+		s.clusterState.Store(state)
 		return state, nil
 	}
 	err = state.Unmarshal(kvs[0].Value)
@@ -188,7 +187,7 @@ func (s *serverStateSyncer) GetGlobalState(ctx context.Context) (*StateInfo, err
 		logutil.BgLogger().Warn("get global state failed", zap.String("key", s.etcdPath), zap.ByteString("value", kvs[0].Value), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
-	s.clusterState.Store(unsafe.Pointer(state))
+	s.clusterState.Store(state)
 	metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.UpdateGlobalState, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return state, nil
 }
