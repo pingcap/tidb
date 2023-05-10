@@ -258,6 +258,21 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 	return task
 }
 
+// AddNewSubTask adds a new task to subtask table.
+func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step int64, designatedTiDBID string, meta []byte, tp string, isRevert bool) error {
+	st := proto.TaskStatePending
+	if isRevert {
+		st = proto.TaskStateRevertPending
+	}
+
+	_, err := stm.executeSQLWithNewSession(stm.ctx, "insert into mysql.tidb_background_subtask(task_key, step, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?)", globalTaskID, step, designatedTiDBID, meta, st, proto.Type2Int(tp), []byte{})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // GetSubtaskInStates gets the subtask in the states.
 func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID}
