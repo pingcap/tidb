@@ -37,12 +37,8 @@ require (
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.15.0
 	github.com/fsouza/fake-gcs-server v1.44.0
-<<<<<<< HEAD
-	github.com/go-sql-driver/mysql v1.7.0
-=======
 	github.com/go-ldap/ldap/v3 v3.4.4
 	github.com/go-sql-driver/mysql v1.7.1
->>>>>>> 7caffd9ba42 (privilege, server: support LDAP authentication (#43582))
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.3
