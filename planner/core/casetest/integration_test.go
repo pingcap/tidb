@@ -65,6 +65,25 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 	}
 }
 
+func TestHintInWrongPos(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+
+	tk.MustExec("select /*+ stream_agg() */ count(*) from t where a > 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("select count(*) /*+ stream_agg() */ from t where a > 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc."))
+
+	tk.MustExec("select count(*) from (select count(*) as a /*+ stream_agg() */ from t where b > 1 group by b) t1 where a > 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc."))
+}
+
 func TestAggColumnPrune(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -929,6 +948,8 @@ func TestKeepOrderHint(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, primary key(a));")
 	tk.MustExec("create table t1(a int, b int, index idx_a(a));")
 	tk.MustExec("create table th (a int, key(a)) partition by hash(a) partitions 4;")
+	tk.MustExec("create table thp (a int, primary key(a)) partition by hash(a) partitions 4;")
+	tk.MustExec("create table thh (a int, b int, key(a)) partition by hash(a) partitions 4;")
 	tk.MustExec("create definer='root'@'localhost' view v as select * from t1 where a<10 order by a limit 1;")
 	tk.MustExec("create definer='root'@'localhost' view v1 as select * from t where a<10 order by a limit 1;")
 
@@ -939,13 +960,14 @@ func TestKeepOrderHint(t *testing.T) {
 	err = tk.ExecToErr("explain select /*+ order_index(t, primary) */ * from t where a<10 limit 1;")
 	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 
-	// The partition table can not keep order
 	tk.MustExec("analyze table th;")
+	tk.MustExec("analyze table thp;")
+	tk.MustExec("analyze table thh;")
 	err = tk.ExecToErr("select a from th where a<1 order by a limit 1;")
 	require.NoError(t, err)
 
-	err = tk.ExecToErr("select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1;")
-	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	err = tk.ExecToErr("select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1;")
+	require.NoError(t, err)
 
 	var input []string
 	var output []struct {
@@ -3186,8 +3208,8 @@ func TestIssue32632(t *testing.T) {
 		"`S_ACCTBAL` decimal(15,2) NOT NULL," +
 		"`S_COMMENT` varchar(101) NOT NULL," +
 		"PRIMARY KEY (`S_SUPPKEY`) /*T![clustered_index] CLUSTERED */)")
-	tk.MustExec("analyze table partsupp;")
-	tk.MustExec("analyze table supplier;")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("set @@tidb_enforce_mpp = 1")
 
 	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "partsupp", L: "partsupp"})
@@ -3198,11 +3220,10 @@ func TestIssue32632(t *testing.T) {
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	h := dom.StatsHandle()
 	statsTbl1 := h.GetTableStats(tbl1.Meta())
-	statsTbl1.Count = 800000
+	statsTbl1.RealtimeCount = 800000
 	statsTbl2 := h.GetTableStats(tbl2.Meta())
-	statsTbl2.Count = 10000
+	statsTbl2.RealtimeCount = 10000
 	var input []string
 	var output []struct {
 		SQL  string
@@ -3453,5 +3474,42 @@ func TestIndexJoinRangeFallback(t *testing.T) {
 			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
+	}
+}
+
+func TestFixControl(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	s := tk.Session()
+	var input []string
+	var output []struct {
+		SQL        string
+		FixControl map[uint64]string
+		Error      string
+		Warnings   [][]interface{}
+		Variable   []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		err := tk.ExecToErr(tt)
+		var errStr string
+		if err != nil {
+			errStr = err.Error()
+		}
+		warning := tk.MustQuery("show warnings").Sort().Rows()
+		rows := testdata.ConvertRowsToStrings(tk.MustQuery("select @@tidb_opt_fix_control").Sort().Rows())
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].FixControl = s.GetSessionVars().OptimizerFixControl
+			output[i].Error = errStr
+			output[i].Warnings = warning
+			output[i].Variable = rows
+		})
+		require.Equal(t, output[i].FixControl, s.GetSessionVars().OptimizerFixControl)
+		require.Equal(t, output[i].Error, errStr)
+		require.Equal(t, output[i].Warnings, warning)
+		require.Equal(t, output[i].Variable, rows)
 	}
 }

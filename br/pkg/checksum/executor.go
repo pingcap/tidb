@@ -229,8 +229,10 @@ func buildIndexRequest(
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: append(append([]byte{}, oldKeyspace...), tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
-			NewPrefix: append(append([]byte{}, newKeyspace...), tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
+			OldPrefix: append(append([]byte{}, oldKeyspace...),
+				tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
+			NewPrefix: append(append([]byte{}, newKeyspace...),
+				tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
 		}
 	}
 	checksum := &tipb.ChecksumRequest{
@@ -332,7 +334,8 @@ func (exec *Executor) Execute(
 	updateFn func(),
 ) (*tipb.ChecksumResponse, error) {
 	checksumResp := &tipb.ChecksumResponse{}
-	checksumBackoffer := utils.InitialRetryState(utils.ChecksumRetryTime, utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval)
+	checksumBackoffer := utils.InitialRetryState(utils.ChecksumRetryTime,
+		utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval)
 	for _, req := range exec.reqs {
 		// Pointer to SessionVars.Killed
 		// Killed is a flag to indicate that this query is killed.

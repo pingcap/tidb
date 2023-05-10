@@ -344,6 +344,9 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
+		Charset:         parentJob.Charset,
+		Collate:         parentJob.Collate,
+		AdminOperator:   parentJob.AdminOperator,
 	}
 }
 
@@ -423,6 +426,15 @@ type Job struct {
 
 	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
 	SeqNum uint64 `json:"seq_num"`
+
+	// Charset is the charset when the DDL Job is created.
+	Charset string `json:"charset"`
+	// Collate is the collation the DDL Job is created.
+	Collate string `json:"collate"`
+
+	// AdminOperator indicates where the Admin command comes, by the TiDB
+	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
+	AdminOperator AdminCommandOperator `json:"admin_operator"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -730,6 +742,26 @@ func (job *Job) IsCancelling() bool {
 	return job.State == JobStateCancelling
 }
 
+// IsPaused returns whether the job is paused.
+func (job *Job) IsPaused() bool {
+	return job.State == JobStatePaused
+}
+
+// IsPausing indicates whether the job is pausing.
+func (job *Job) IsPausing() bool {
+	return job.State == JobStatePausing
+}
+
+// IsPausable checks whether we can pause the job.
+func (job *Job) IsPausable() bool {
+	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
+}
+
+// IsResumable checks whether the job can be rollback.
+func (job *Job) IsResumable() bool {
+	return job.IsPaused()
+}
+
 // IsSynced returns whether the DDL modification is synced among all TiDB servers.
 func (job *Job) IsSynced() bool {
 	return job.State == JobStateSynced
@@ -758,7 +790,7 @@ func (job *Job) NotStarted() bool {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey:
+	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition:
 		return true
 	case ActionModifyColumn:
 		if len(job.CtxVars) > 0 {
@@ -799,7 +831,7 @@ func (job *Job) IsRollbackable() bool {
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
 	case ActionRebaseAutoID, ActionShardRowID,
-		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
+		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
 		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
@@ -816,7 +848,7 @@ func (job *Job) IsRollbackable() bool {
 }
 
 // JobState is for job state.
-type JobState byte
+type JobState int32
 
 // List job states.
 const (
@@ -836,6 +868,9 @@ const (
 	JobStateCancelling JobState = 7
 	// JobStateQueueing means the job has not yet been started.
 	JobStateQueueing JobState = 8
+
+	JobStatePaused  JobState = 9
+	JobStatePausing JobState = 10
 )
 
 // String implements fmt.Stringer interface.
@@ -857,6 +892,10 @@ func (s JobState) String() string {
 		return "synced"
 	case JobStateQueueing:
 		return "queueing"
+	case JobStatePaused:
+		return "paused"
+	case JobStatePausing:
+		return "pausing"
 	default:
 		return "none"
 	}
@@ -881,10 +920,30 @@ func StrToJobState(s string) JobState {
 		return JobStateSynced
 	case "queueing":
 		return JobStateQueueing
+	case "paused":
+		return JobStatePaused
+	case "pausing":
+		return JobStatePausing
 	default:
 		return JobStateNone
 	}
 }
+
+// AdminCommandOperator indicates where the Cancel/Pause/Resume command on DDL
+// jobs comes from.
+type AdminCommandOperator int
+
+const (
+	// AdminCommandByNotKnown indicates that unknow calling of the
+	// Cancel/Pause/Resume on DDL job.
+	AdminCommandByNotKnown AdminCommandOperator = iota
+	// AdminCommandByEndUser indicates that the Cancel/Pause/Resume command on
+	// DDL job is issued by the end user.
+	AdminCommandByEndUser
+	// AdminCommandBySystem indicates that the Cancel/Pause/Resume command on
+	// DDL job is issued by TiDB itself, such as Upgrade(bootstrap).
+	AdminCommandBySystem
+)
 
 // SchemaDiff contains the schema modification at a particular schema version.
 // It is used to reduce schema reload cost.

@@ -36,13 +36,16 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
+// CheckpointStatus is the status of a checkpoint.
 type CheckpointStatus uint8
 
+// CheckpointStatus values.
 const (
 	CheckpointStatusMissing         CheckpointStatus = 0
 	CheckpointStatusMaxInvalid      CheckpointStatus = 25
@@ -54,28 +57,33 @@ const (
 	CheckpointStatusAlteredAutoInc  CheckpointStatus = 150
 	CheckpointStatusChecksumSkipped CheckpointStatus = 170
 	CheckpointStatusChecksummed     CheckpointStatus = 180
+	CheckpointStatusIndexAdded      CheckpointStatus = 190
 	CheckpointStatusAnalyzeSkipped  CheckpointStatus = 200
 	CheckpointStatusAnalyzed        CheckpointStatus = 210
 )
 
+// WholeTableEngineID is the engine ID used for the whole table engine.
 const WholeTableEngineID = math.MaxInt32
 
+// the table names to store each kind of checkpoint in the checkpoint database
+// remember to increase the version number in case of incompatible change.
 const (
-	// the table names to store each kind of checkpoint in the checkpoint database
-	// remember to increase the version number in case of incompatible change.
 	CheckpointTableNameTask   = "task_v2"
-	CheckpointTableNameTable  = "table_v7"
+	CheckpointTableNameTable  = "table_v8"
 	CheckpointTableNameEngine = "engine_v5"
 	CheckpointTableNameChunk  = "chunk_v5"
+)
 
+const (
 	// Some frequently used table name or constants.
 	allTables       = "all"
 	stringLitAll    = "'all'"
 	columnTableName = "table_name"
 )
 
+// some frequently used SQL statement templates.
+// shared by MySQLCheckpointsDB and GlueCheckpointsDB
 const (
-	// shared by MySQLCheckpointsDB and GlueCheckpointsDB
 	CreateDBTemplate        = "CREATE DATABASE IF NOT EXISTS %s;"
 	CreateTaskTableTemplate = `
 		CREATE TABLE IF NOT EXISTS %s.%s (
@@ -98,6 +106,7 @@ const (
 			status tinyint unsigned DEFAULT 30,
 			alloc_base bigint NOT NULL DEFAULT 0,
 			table_id bigint NOT NULL DEFAULT 0,
+		    table_info text NOT NULL,
 			create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			kv_bytes bigint unsigned NOT NULL DEFAULT 0,
@@ -141,7 +150,7 @@ const (
 		REPLACE INTO %s.%s (id, task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir, lightning_ver)
 			VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?);`
 	InitTableTemplate = `
-		INSERT INTO %s.%s (task_id, table_name, hash, table_id) VALUES (?, ?, ?, ?)
+		INSERT INTO %s.%s (task_id, table_name, hash, table_id, table_info) VALUES (?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE task_id = CASE
 				WHEN hash = VALUES(hash)
 				THEN VALUES(task_id)
@@ -158,7 +167,7 @@ const (
 		FROM %s.%s WHERE table_name = ?
 		ORDER BY engine_id, path, offset;`
 	ReadTableRemainTemplate = `
-		SELECT status, alloc_base, table_id, kv_bytes, kv_kvs, kv_checksum FROM %s.%s WHERE table_name = ?;`
+		SELECT status, alloc_base, table_id, table_info, kv_bytes, kv_kvs, kv_checksum FROM %s.%s WHERE table_name = ?;`
 	ReplaceEngineTemplate = `
 		REPLACE INTO %s.%s (table_name, engine_id, status) VALUES (?, ?, ?);`
 	ReplaceChunkTemplate = `
@@ -186,6 +195,7 @@ const (
 	DeleteCheckpointRecordTemplate = "DELETE FROM %s.%s WHERE table_name = ?;"
 )
 
+// IsCheckpointTable checks if the table name is a checkpoint table.
 func IsCheckpointTable(name string) bool {
 	switch name {
 	case CheckpointTableNameTask, CheckpointTableNameTable, CheckpointTableNameEngine, CheckpointTableNameChunk:
@@ -195,6 +205,7 @@ func IsCheckpointTable(name string) bool {
 	}
 }
 
+// MetricName returns the metric name for the checkpoint status.
 func (status CheckpointStatus) MetricName() string {
 	switch status {
 	case CheckpointStatusLoaded:
@@ -211,6 +222,8 @@ func (status CheckpointStatus) MetricName() string {
 		return "altered_auto_inc"
 	case CheckpointStatusChecksummed, CheckpointStatusChecksumSkipped:
 		return "checksum"
+	case CheckpointStatusIndexAdded:
+		return "index_added"
 	case CheckpointStatusAnalyzed, CheckpointStatusAnalyzeSkipped:
 		return "analyzed"
 	case CheckpointStatusMissing:
@@ -220,11 +233,13 @@ func (status CheckpointStatus) MetricName() string {
 	}
 }
 
+// ChunkCheckpointKey is the key of a chunk checkpoint.
 type ChunkCheckpointKey struct {
 	Path   string
 	Offset int64
 }
 
+// String implements fmt.Stringer.
 func (key *ChunkCheckpointKey) String() string {
 	return fmt.Sprintf("%s:%d", key.Path, key.Offset)
 }
@@ -240,6 +255,7 @@ func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) bool {
 	}
 }
 
+// ChunkCheckpoint is the checkpoint for a chunk.
 type ChunkCheckpoint struct {
 	Key               ChunkCheckpointKey
 	FileMeta          mydump.SourceFileMeta
@@ -249,6 +265,7 @@ type ChunkCheckpoint struct {
 	Timestamp         int64
 }
 
+// DeepCopy returns a deep copy of the chunk checkpoint.
 func (ccp *ChunkCheckpoint) DeepCopy() *ChunkCheckpoint {
 	colPerm := make([]int, 0, len(ccp.ColumnPermutation))
 	colPerm = append(colPerm, ccp.ColumnPermutation...)
@@ -262,6 +279,7 @@ func (ccp *ChunkCheckpoint) DeepCopy() *ChunkCheckpoint {
 	}
 }
 
+// UnfinishedSize returns the size of the unfinished part of the chunk.
 func (ccp *ChunkCheckpoint) UnfinishedSize() int64 {
 	if ccp.FileMeta.Compression == mydump.CompressionNone {
 		return ccp.Chunk.EndOffset - ccp.Chunk.Offset
@@ -269,6 +287,7 @@ func (ccp *ChunkCheckpoint) UnfinishedSize() int64 {
 	return ccp.FileMeta.FileSize - ccp.Chunk.RealOffset
 }
 
+// TotalSize returns the total size of the chunk.
 func (ccp *ChunkCheckpoint) TotalSize() int64 {
 	if ccp.FileMeta.Compression == mydump.CompressionNone {
 		return ccp.Chunk.EndOffset - ccp.Key.Offset
@@ -278,6 +297,7 @@ func (ccp *ChunkCheckpoint) TotalSize() int64 {
 	return ccp.FileMeta.FileSize
 }
 
+// FinishedSize returns the size of the finished part of the chunk.
 func (ccp *ChunkCheckpoint) FinishedSize() int64 {
 	if ccp.FileMeta.Compression == mydump.CompressionNone {
 		return ccp.Chunk.Offset - ccp.Key.Offset
@@ -285,15 +305,18 @@ func (ccp *ChunkCheckpoint) FinishedSize() int64 {
 	return ccp.Chunk.RealOffset - ccp.Key.Offset
 }
 
+// GetKey returns the key of the chunk checkpoint.
 func (ccp *ChunkCheckpoint) GetKey() string {
 	return ccp.Key.String()
 }
 
+// EngineCheckpoint is the checkpoint for an engine.
 type EngineCheckpoint struct {
 	Status CheckpointStatus
 	Chunks []*ChunkCheckpoint // a sorted array
 }
 
+// DeepCopy returns a deep copy of the engine checkpoint.
 func (engine *EngineCheckpoint) DeepCopy() *EngineCheckpoint {
 	chunks := make([]*ChunkCheckpoint, 0, len(engine.Chunks))
 	for _, chunk := range engine.Chunks {
@@ -305,15 +328,21 @@ func (engine *EngineCheckpoint) DeepCopy() *EngineCheckpoint {
 	}
 }
 
+// TableCheckpoint is the checkpoint for a table.
 type TableCheckpoint struct {
 	Status    CheckpointStatus
 	AllocBase int64
 	Engines   map[int32]*EngineCheckpoint
 	TableID   int64
+	// TableInfo is desired table info what we want to restore. When add-index-by-sql is enabled,
+	// we will first drop indexes from target table, then restore data, then add indexes back. In case
+	// of crash, this field will be used to save the dropped indexes, so we can add them back.
+	TableInfo *model.TableInfo
 	// remote checksum before restore
 	Checksum verify.KVChecksum
 }
 
+// DeepCopy returns a deep copy of the table checkpoint.
 func (cp *TableCheckpoint) DeepCopy() *TableCheckpoint {
 	engines := make(map[int32]*EngineCheckpoint, len(cp.Engines))
 	for engineID, engine := range cp.Engines {
@@ -328,6 +357,7 @@ func (cp *TableCheckpoint) DeepCopy() *TableCheckpoint {
 	}
 }
 
+// CountChunks returns the number of chunks in the table checkpoint.
 func (cp *TableCheckpoint) CountChunks() int {
 	result := 0
 	for _, engine := range cp.Engines {
@@ -349,6 +379,7 @@ type engineCheckpointDiff struct {
 	chunks    map[ChunkCheckpointKey]chunkCheckpointDiff
 }
 
+// TableCheckpointDiff is the difference between two table checkpoints.
 type TableCheckpointDiff struct {
 	hasStatus   bool
 	hasRebase   bool
@@ -359,6 +390,7 @@ type TableCheckpointDiff struct {
 	checksum    verify.KVChecksum
 }
 
+// NewTableCheckpointDiff returns a new TableCheckpointDiff.
 func NewTableCheckpointDiff() *TableCheckpointDiff {
 	return &TableCheckpointDiff{
 		engines: make(map[int32]engineCheckpointDiff),
@@ -379,6 +411,7 @@ func (cpd *TableCheckpointDiff) insertEngineCheckpointDiff(engineID int32, newDi
 	cpd.engines[engineID] = newDiff
 }
 
+// String implements fmt.Stringer interface.
 func (cpd *TableCheckpointDiff) String() string {
 	return fmt.Sprintf(
 		"{hasStatus:%v, hasRebase:%v, status:%d, allocBase:%d, engines:[%d]}",
@@ -421,6 +454,7 @@ func (cp *TableCheckpoint) Apply(cpd *TableCheckpointDiff) {
 	}
 }
 
+// TableCheckpointMerger is the interface for merging table checkpoint diffs.
 type TableCheckpointMerger interface {
 	// MergeInto the table checkpoint diff from a status update or chunk update.
 	// If there are multiple updates to the same table, only the last one will
@@ -430,15 +464,18 @@ type TableCheckpointMerger interface {
 	MergeInto(cpd *TableCheckpointDiff)
 }
 
+// StatusCheckpointMerger is the merger for status updates.
 type StatusCheckpointMerger struct {
 	EngineID int32 // WholeTableEngineID == apply to whole table.
 	Status   CheckpointStatus
 }
 
+// SetInvalid sets the status to an invalid value.
 func (merger *StatusCheckpointMerger) SetInvalid() {
 	merger.Status /= 10
 }
 
+// MergeInto implements TableCheckpointMerger.MergeInto.
 func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	if merger.EngineID == WholeTableEngineID || merger.Status <= CheckpointStatusMaxInvalid {
 		cpd.status = merger.Status
@@ -453,6 +490,7 @@ func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	}
 }
 
+// ChunkCheckpointMerger is the merger for chunk updates.
 type ChunkCheckpointMerger struct {
 	EngineID          int32
 	Key               ChunkCheckpointKey
@@ -463,6 +501,7 @@ type ChunkCheckpointMerger struct {
 	EndOffset         int64 // For test only.
 }
 
+// MergeInto implements TableCheckpointMerger.MergeInto.
 func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.insertEngineCheckpointDiff(merger.EngineID, engineCheckpointDiff{
 		chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
@@ -476,30 +515,36 @@ func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	})
 }
 
+// TableChecksumMerger is the merger for table checksums.
 type TableChecksumMerger struct {
 	Checksum verify.KVChecksum
 }
 
+// MergeInto implements TableCheckpointMerger.MergeInto.
 func (m *TableChecksumMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.hasChecksum = true
 	cpd.checksum = m.Checksum
 }
 
+// RebaseCheckpointMerger is the merger for rebasing the auto-increment ID.
 type RebaseCheckpointMerger struct {
 	AllocBase int64
 }
 
+// MergeInto implements TableCheckpointMerger.MergeInto.
 func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.hasRebase = true
 	cpd.allocBase = mathutil.Max(cpd.allocBase, merger.AllocBase)
 }
 
+// DestroyedTableCheckpoint is the checkpoint for a table that has been
 type DestroyedTableCheckpoint struct {
 	TableName   string
 	MinEngineID int32
 	MaxEngineID int32
 }
 
+// TaskCheckpoint is the checkpoint for a task.
 type TaskCheckpoint struct {
 	TaskID       int64
 	SourceDir    string
@@ -512,6 +557,7 @@ type TaskCheckpoint struct {
 	LightningVer string
 }
 
+// DB is the interface for a checkpoint database.
 type DB interface {
 	Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error
 	TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error)
@@ -537,6 +583,7 @@ type DB interface {
 	DumpChunks(ctx context.Context, csv io.Writer) error
 }
 
+// OpenCheckpointsDB opens a checkpoints DB according to the given config.
 func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 	if !cfg.Checkpoint.Enable {
 		return NewNullCheckpointsDB(), nil
@@ -575,6 +622,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 	}
 }
 
+// IsCheckpointsDBExists checks if the checkpoints DB exists.
 func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error) {
 	if !cfg.Checkpoint.Enable {
 		return false, nil
@@ -627,22 +675,27 @@ func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error
 // NullCheckpointsDB is a checkpoints database with no checkpoints.
 type NullCheckpointsDB struct{}
 
+// NewNullCheckpointsDB creates a new NullCheckpointsDB.
 func NewNullCheckpointsDB() *NullCheckpointsDB {
 	return &NullCheckpointsDB{}
 }
 
+// Initialize implements the DB interface.
 func (*NullCheckpointsDB) Initialize(context.Context, *config.Config, map[string]*TidbDBInfo) error {
 	return nil
 }
 
-func (*NullCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
+// TaskCheckpoint implements the DB interface.
+func (*NullCheckpointsDB) TaskCheckpoint(context.Context) (*TaskCheckpoint, error) {
 	return nil, nil
 }
 
+// Close implements the DB interface.
 func (*NullCheckpointsDB) Close() error {
 	return nil
 }
 
+// Get implements the DB interface.
 func (*NullCheckpointsDB) Get(_ context.Context, _ string) (*TableCheckpoint, error) {
 	return &TableCheckpoint{
 		Status:  CheckpointStatusLoaded,
@@ -650,19 +703,23 @@ func (*NullCheckpointsDB) Get(_ context.Context, _ string) (*TableCheckpoint, er
 	}, nil
 }
 
+// InsertEngineCheckpoints implements the DB interface.
 func (*NullCheckpointsDB) InsertEngineCheckpoints(_ context.Context, _ string, _ map[int32]*EngineCheckpoint) error {
 	return nil
 }
 
+// Update implements the DB interface.
 func (*NullCheckpointsDB) Update(context.Context, map[string]*TableCheckpointDiff) error {
 	return nil
 }
 
+// MySQLCheckpointsDB is a checkpoints database for MySQL.
 type MySQLCheckpointsDB struct {
 	db     *sql.DB
 	schema string
 }
 
+// NewMySQLCheckpointsDB creates a new MySQLCheckpointsDB.
 func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (*MySQLCheckpointsDB, error) {
 	schema := common.EscapeIdentifier(schemaName)
 	sql := common.SQLWithRetry{
@@ -701,6 +758,7 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 	}, nil
 }
 
+// Initialize implements the DB interface.
 func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
 	// We can have at most 65535 placeholders https://stackoverflow.com/q/4922345/
 	// Since this step is not performance critical, we just insert the rows one-by-one.
@@ -735,7 +793,11 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 		for _, db := range dbInfo {
 			for _, table := range db.Tables {
 				tableName := common.UniqueTable(db.Name, table.Name)
-				_, err = stmt.ExecContext(c, cfg.TaskID, tableName, CheckpointStatusLoaded, table.ID)
+				tableInfo, err := json.Marshal(table.Desired)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				_, err = stmt.ExecContext(c, cfg.TaskID, tableName, CheckpointStatusLoaded, table.ID, tableInfo)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -751,6 +813,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 	return nil
 }
 
+// TaskCheckpoint implements the DB interface.
 func (cpdb *MySQLCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
@@ -772,10 +835,12 @@ func (cpdb *MySQLCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckp
 	return taskCp, nil
 }
 
+// Close implements the DB interface.
 func (cpdb *MySQLCheckpointsDB) Close() error {
 	return errors.Trace(cpdb.db.Close())
 }
 
+// Get implements the DB interface.
 func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*TableCheckpoint, error) {
 	cp := &TableCheckpoint{
 		Engines: map[int32]*EngineCheckpoint{},
@@ -855,10 +920,14 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 
 		var status uint8
 		var kvs, bytes, checksum uint64
-		if err := tableRow.Scan(&status, &cp.AllocBase, &cp.TableID, &bytes, &kvs, &checksum); err != nil {
+		var rawTableInfo []byte
+		if err := tableRow.Scan(&status, &cp.AllocBase, &cp.TableID, &rawTableInfo, &bytes, &kvs, &checksum); err != nil {
 			if err == sql.ErrNoRows {
 				return errors.NotFoundf("checkpoint for table %s", tableName)
 			}
+		}
+		if err := json.Unmarshal(rawTableInfo, &cp.TableInfo); err != nil {
+			return errors.Trace(err)
 		}
 		cp.Checksum = verify.MakeKVChecksum(bytes, kvs, checksum)
 		cp.Status = CheckpointStatus(status)
@@ -871,6 +940,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 	return cp, nil
 }
 
+// InsertEngineCheckpoints implements the DB interface.
 func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints map[int32]*EngineCheckpoint) error {
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
@@ -922,6 +992,7 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 	return nil
 }
 
+// Update implements the DB interface.
 func (cpdb *MySQLCheckpointsDB) Update(taskCtx context.Context, checkpointDiffs map[string]*TableCheckpointDiff) error {
 	chunkQuery := fmt.Sprintf(UpdateChunkTemplate, cpdb.schema, CheckpointTableNameChunk)
 	rebaseQuery := fmt.Sprintf(UpdateTableRebaseTemplate, cpdb.schema, CheckpointTableNameTable)
@@ -1003,6 +1074,7 @@ func (cpdb *MySQLCheckpointsDB) Update(taskCtx context.Context, checkpointDiffs 
 	})
 }
 
+// FileCheckpointsDB is a file based checkpoints DB
 type FileCheckpointsDB struct {
 	lock        sync.Mutex // we need to ensure only a thread can access to `checkpoints` at a time
 	checkpoints checkpointspb.CheckpointsModel
@@ -1070,6 +1142,7 @@ func newFileCheckpointsDB(
 	return cpdb, nil
 }
 
+// NewFileCheckpointsDB creates a new FileCheckpointsDB
 func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB, error) {
 	// init ExternalStorage
 	s, fileName, err := createExstorageByCompletePath(ctx, path)
@@ -1079,6 +1152,7 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 	return newFileCheckpointsDB(ctx, path, s, fileName)
 }
 
+// NewFileCheckpointsDBWithExstorageFileName creates a new FileCheckpointsDB with external storage and file name
 func NewFileCheckpointsDBWithExstorageFileName(
 	ctx context.Context,
 	path string,
@@ -1109,11 +1183,10 @@ func createExstorageByCompletePath(ctx context.Context, completePath string) (st
 }
 
 // separateCompletePath separates fileName from completePath, returns fileName and newPath.
-func separateCompletePath(completePath string) (string, string, error) {
+func separateCompletePath(completePath string) (fileName string, newPath string, err error) {
 	if completePath == "" {
 		return "", "", nil
 	}
-	var fileName, newPath string
 	purl, err := storage.ParseRawURL(completePath)
 	if err != nil {
 		return "", "", errors.Trace(err)
@@ -1145,7 +1218,8 @@ func (cpdb *FileCheckpointsDB) save() error {
 	return cpdb.exStorage.WriteFile(cpdb.ctx, cpdb.fileName, serialized)
 }
 
-func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
+// Initialize implements CheckpointsDB.Initialize.
+func (cpdb *FileCheckpointsDB) Initialize(_ context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
@@ -1169,10 +1243,15 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Confi
 		for _, table := range db.Tables {
 			tableName := common.UniqueTable(db.Name, table.Name)
 			if _, ok := cpdb.checkpoints.Checkpoints[tableName]; !ok {
+				tableInfo, err := json.Marshal(table.Desired)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				cpdb.checkpoints.Checkpoints[tableName] = &checkpointspb.TableCheckpointModel{
-					Status:  uint32(CheckpointStatusLoaded),
-					Engines: map[int32]*checkpointspb.EngineCheckpointModel{},
-					TableID: table.ID,
+					Status:    uint32(CheckpointStatusLoaded),
+					Engines:   map[int32]*checkpointspb.EngineCheckpointModel{},
+					TableID:   table.ID,
+					TableInfo: tableInfo,
 				}
 			}
 			// TODO check if hash matches
@@ -1182,6 +1261,7 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Confi
 	return errors.Trace(cpdb.save())
 }
 
+// TaskCheckpoint implements CheckpointsDB.TaskCheckpoint.
 func (cpdb *FileCheckpointsDB) TaskCheckpoint(_ context.Context) (*TaskCheckpoint, error) {
 	// this method is always called in lock
 	cp := cpdb.checkpoints.TaskCheckpoint
@@ -1202,6 +1282,7 @@ func (cpdb *FileCheckpointsDB) TaskCheckpoint(_ context.Context) (*TaskCheckpoin
 	}, nil
 }
 
+// Close implements CheckpointsDB.Close.
 func (cpdb *FileCheckpointsDB) Close() error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
@@ -1209,6 +1290,7 @@ func (cpdb *FileCheckpointsDB) Close() error {
 	return errors.Trace(cpdb.save())
 }
 
+// Get implements CheckpointsDB.Get.
 func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableCheckpoint, error) {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
@@ -1218,11 +1300,17 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 		return nil, errors.NotFoundf("checkpoint for table %s", tableName)
 	}
 
+	var tableInfo *model.TableInfo
+	if err := json.Unmarshal(tableModel.TableInfo, &tableInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	cp := &TableCheckpoint{
 		Status:    CheckpointStatus(tableModel.Status),
 		AllocBase: tableModel.AllocBase,
 		Engines:   make(map[int32]*EngineCheckpoint, len(tableModel.Engines)),
 		TableID:   tableModel.TableID,
+		TableInfo: tableInfo,
 		Checksum:  verify.MakeKVChecksum(tableModel.KvBytes, tableModel.KvKvs, tableModel.KvChecksum),
 	}
 
@@ -1271,6 +1359,7 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 	return cp, nil
 }
 
+// InsertEngineCheckpoints implements CheckpointsDB.InsertEngineCheckpoints.
 func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableName string, checkpoints map[int32]*EngineCheckpoint) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
@@ -1310,6 +1399,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 	return errors.Trace(cpdb.save())
 }
 
+// Update implements CheckpointsDB.Update.
 func (cpdb *FileCheckpointsDB) Update(_ context.Context, checkpointDiffs map[string]*TableCheckpointDiff) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
@@ -1352,38 +1442,47 @@ func (cpdb *FileCheckpointsDB) Update(_ context.Context, checkpointDiffs map[str
 
 var errCannotManageNullDB = errors.New("cannot perform this function while checkpoints is disabled")
 
+// RemoveCheckpoint implements CheckpointsDB.RemoveCheckpoint.
 func (*NullCheckpointsDB) RemoveCheckpoint(context.Context, string) error {
 	return errors.Trace(errCannotManageNullDB)
 }
 
+// MoveCheckpoints implements CheckpointsDB.MoveCheckpoints.
 func (*NullCheckpointsDB) MoveCheckpoints(context.Context, int64) error {
 	return errors.Trace(errCannotManageNullDB)
 }
 
+// GetLocalStoringTables implements CheckpointsDB.GetLocalStoringTables.
 func (*NullCheckpointsDB) GetLocalStoringTables(context.Context) (map[string][]int32, error) {
 	return nil, nil
 }
 
+// IgnoreErrorCheckpoint implements CheckpointsDB.IgnoreErrorCheckpoint.
 func (*NullCheckpointsDB) IgnoreErrorCheckpoint(context.Context, string) error {
 	return errors.Trace(errCannotManageNullDB)
 }
 
+// DestroyErrorCheckpoint implements CheckpointsDB.DestroyErrorCheckpoint.
 func (*NullCheckpointsDB) DestroyErrorCheckpoint(context.Context, string) ([]DestroyedTableCheckpoint, error) {
 	return nil, errors.Trace(errCannotManageNullDB)
 }
 
+// DumpTables implements CheckpointsDB.DumpTables.
 func (*NullCheckpointsDB) DumpTables(context.Context, io.Writer) error {
 	return errors.Trace(errCannotManageNullDB)
 }
 
+// DumpEngines implements CheckpointsDB.DumpEngines.
 func (*NullCheckpointsDB) DumpEngines(context.Context, io.Writer) error {
 	return errors.Trace(errCannotManageNullDB)
 }
 
+// DumpChunks implements CheckpointsDB.DumpChunks.
 func (*NullCheckpointsDB) DumpChunks(context.Context, io.Writer) error {
 	return errors.Trace(errCannotManageNullDB)
 }
 
+// RemoveCheckpoint implements CheckpointsDB.RemoveCheckpoint.
 func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName string) error {
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
@@ -1412,6 +1511,7 @@ func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName 
 	})
 }
 
+// MoveCheckpoints implements CheckpointsDB.MoveCheckpoints.
 func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) error {
 	// The "cpdb.schema" is an escaped schema name of the form "`foo`".
 	// We use "x[1:len(x)-1]" instead of unescaping it to keep the
@@ -1439,6 +1539,7 @@ func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int6
 	return nil
 }
 
+// GetLocalStoringTables implements CheckpointsDB.GetLocalStoringTables.
 func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[string][]int32, error) {
 	var targetTables map[string][]int32
 
@@ -1489,6 +1590,7 @@ func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[
 	return targetTables, err
 }
 
+// IgnoreErrorCheckpoint implements CheckpointsDB.IgnoreErrorCheckpoint.
 func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
 	var colName string
 	if tableName == allTables {
@@ -1525,6 +1627,7 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 	return errors.Trace(err)
 }
 
+// DestroyErrorCheckpoint implements CheckpointsDB.DestroyErrorCheckpoint.
 func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error) {
 	var colName, aliasedColName string
 
@@ -1609,6 +1712,8 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	return targetTables, nil
 }
 
+// DumpTables implements CheckpointsDB.DumpTables.
+//
 //nolint:rowserrcheck // sqltocsv.Write will check this.
 func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer) error {
 	//nolint: rowserrcheck
@@ -1632,6 +1737,8 @@ func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer
 	return errors.Trace(sqltocsv.Write(writer, rows))
 }
 
+// DumpEngines implements CheckpointsDB.DumpEngines.
+//
 //nolint:rowserrcheck // sqltocsv.Write will check this.
 func (cpdb *MySQLCheckpointsDB) DumpEngines(ctx context.Context, writer io.Writer) error {
 	//nolint: rowserrcheck
@@ -1653,6 +1760,8 @@ func (cpdb *MySQLCheckpointsDB) DumpEngines(ctx context.Context, writer io.Write
 	return errors.Trace(sqltocsv.Write(writer, rows))
 }
 
+// DumpChunks implements CheckpointsDB.DumpChunks.
+//
 //nolint:rowserrcheck // sqltocsv.Write will check this.
 func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer) error {
 	//nolint: rowserrcheck
@@ -1686,6 +1795,7 @@ func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer
 	return errors.Trace(sqltocsv.Write(writer, rows))
 }
 
+// RemoveCheckpoint implements CheckpointsDB.RemoveCheckpoint.
 func (cpdb *FileCheckpointsDB) RemoveCheckpoint(_ context.Context, tableName string) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
@@ -1699,7 +1809,8 @@ func (cpdb *FileCheckpointsDB) RemoveCheckpoint(_ context.Context, tableName str
 	return errors.Trace(cpdb.save())
 }
 
-func (cpdb *FileCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) error {
+// MoveCheckpoints implements CheckpointsDB.MoveCheckpoints.
+func (cpdb *FileCheckpointsDB) MoveCheckpoints(_ context.Context, taskID int64) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
@@ -1707,6 +1818,7 @@ func (cpdb *FileCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64
 	return cpdb.exStorage.Rename(cpdb.ctx, cpdb.fileName, newFileName)
 }
 
+// GetLocalStoringTables implements CheckpointsDB.GetLocalStoringTables.
 func (cpdb *FileCheckpointsDB) GetLocalStoringTables(_ context.Context) (map[string][]int32, error) {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
@@ -1736,6 +1848,7 @@ func (cpdb *FileCheckpointsDB) GetLocalStoringTables(_ context.Context) (map[str
 	return targetTables, nil
 }
 
+// IgnoreErrorCheckpoint implements CheckpointsDB.IgnoreErrorCheckpoint.
 func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTableName string) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
@@ -1756,6 +1869,7 @@ func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTa
 	return errors.Trace(cpdb.save())
 }
 
+// DestroyErrorCheckpoint implements CheckpointsDB.DestroyErrorCheckpoint.
 func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetTableName string) ([]DestroyedTableCheckpoint, error) {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
@@ -1797,14 +1911,17 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 	return targetTables, nil
 }
 
+// DumpTables implements CheckpointsDB.DumpTables.
 func (cpdb *FileCheckpointsDB) DumpTables(context.Context, io.Writer) error {
 	return errors.Errorf("dumping file checkpoint into CSV not unsupported, you may copy %s instead", cpdb.path)
 }
 
+// DumpEngines implements CheckpointsDB.DumpEngines.
 func (cpdb *FileCheckpointsDB) DumpEngines(context.Context, io.Writer) error {
 	return errors.Errorf("dumping file checkpoint into CSV not unsupported, you may copy %s instead", cpdb.path)
 }
 
+// DumpChunks implements CheckpointsDB.DumpChunks.
 func (cpdb *FileCheckpointsDB) DumpChunks(context.Context, io.Writer) error {
 	return errors.Errorf("dumping file checkpoint into CSV not unsupported, you may copy %s instead", cpdb.path)
 }

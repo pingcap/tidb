@@ -32,8 +32,16 @@ func SetBatchInsertDeleteRangeSize(i int) {
 
 var NewCopContext4Test = newCopContext
 
-func FetchRowsFromCop4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
-	batchSize int) (*chunk.Chunk, bool, error) {
+type resultChanForTest struct {
+	ch chan idxRecResult
+}
+
+func (r *resultChanForTest) AddTask(rs idxRecResult) {
+	r.ch <- rs
+}
+
+func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
+	batchSize int) *chunk.Chunk {
 	variable.SetDDLReorgBatchSize(int32(batchSize))
 	task := &reorgBackfillTask{
 		id:            1,
@@ -41,12 +49,16 @@ func FetchRowsFromCop4Test(copCtx *copContext, tbl table.PhysicalTable, startKey
 		endKey:        endKey,
 		physicalTable: tbl,
 	}
-	pool := newCopReqSenderPool(context.Background(), copCtx, store)
+	taskCh := make(chan *reorgBackfillTask, 5)
+	resultCh := make(chan idxRecResult, 5)
+	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, nil)
+	pool.chunkSender = &resultChanForTest{ch: resultCh}
 	pool.adjustSize(1)
 	pool.tasksCh <- task
-	copChunk, _, done, err := pool.fetchRowColValsFromCop(*task)
-	pool.close()
-	return copChunk, done, err
+	rs := <-resultCh
+	close(taskCh)
+	pool.close(false)
+	return rs.chunk
 }
 
 func ConvertRowToHandleAndIndexDatum(row chunk.Row, copCtx *copContext) (kv.Handle, []types.Datum, error) {

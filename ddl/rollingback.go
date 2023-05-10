@@ -115,7 +115,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 	if needNotifyAndStopReorgWorker(job) {
 		// column type change workers are started. we have to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
-		d.notifyReorgCancel(job)
+		d.notifyReorgWorkerJobStateChange(job)
 		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(d, t, job)
 	}
@@ -231,7 +231,7 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 	if needNotifyAndStopReorgWorker(job) {
 		// add index workers are started. need to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
-		d.notifyReorgCancel(job)
+		d.notifyReorgWorkerJobStateChange(job)
 		ver, err = w.onCreateIndex(d, t, job, isPK)
 	} else {
 		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
@@ -355,6 +355,32 @@ func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err erro
 	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
+func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
+	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
+}
+
+func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
+	job.State = model.JobStatePaused
+
+	if needNotifyAndStopReorgWorker(job) {
+		logutil.Logger(w.logCtx).Info("[DDL] pausing the DDL job", zap.String("job", job.String()))
+		d.notifyReorgWorkerJobStateChange(job)
+	}
+
+	return dbterror.ErrPausedDDLJob
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -365,6 +391,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddIndex(w, d, t, job, true)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(d, t, job)
+	case model.ActionReorganizePartition:
+		ver, err = rollingbackReorganizePartition(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(d, t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:

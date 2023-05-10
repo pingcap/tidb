@@ -334,14 +334,14 @@ func (helper extractHelper) extractLikePattern(
 	var colName string
 	var datums []types.Datum
 	switch fn.FuncName.L {
-	case ast.EQ, ast.Like, ast.Regexp, ast.RegexpLike:
+	case ast.EQ, ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 		colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 	}
 	if colName == extractColName {
 		switch fn.FuncName.L {
 		case ast.EQ:
 			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
-		case ast.Like:
+		case ast.Like, ast.Ilike:
 			if needLike2Regexp {
 				return true, stringutil.CompileLike2Regexp(datums[0].GetString())
 			}
@@ -847,11 +847,11 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.UnixMilli(st)
-		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05")))
+		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(time.DateTime)))
 	}
 	if et > 0 {
 		et := time.UnixMilli(et)
-		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05")))
+		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(time.DateTime)))
 	}
 	if len(e.RegionIDs) > 0 {
 		r.WriteString(fmt.Sprintf("region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs)))

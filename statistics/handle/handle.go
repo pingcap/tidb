@@ -128,6 +128,8 @@ type Handle struct {
 	serverIDGetter func() uint64
 	// tableLocked used to store locked tables
 	tableLocked []int64
+
+	InitStatsDone chan struct{}
 }
 
 // GetTableLockedAndClearForTest for unit test only
@@ -483,6 +485,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 		pool:             pool,
 		sysProcTracker:   tracker,
 		serverIDGetter:   serverIDGetter,
+		InitStatsDone:    make(chan struct{}),
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
@@ -611,7 +614,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 			continue
 		}
 		tbl.Version = version
-		tbl.Count = count
+		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
@@ -750,7 +753,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			allPartitionStats[partitionID] = partitionStats
 		}
 		for i := 0; i < globalStats.Num; i++ {
-			_, hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			if !analyzed {
 				var errMsg string
 				if isIndex == 0 {
@@ -762,7 +765,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 				return
 			}
 			// partition stats is not empty but column stats(hist, topn) is missing
-			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
+			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				var errMsg string
 				if isIndex == 0 {
 					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
@@ -774,7 +777,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			}
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
-				globalStats.Count += partitionStats.Count
+				globalStats.Count += partitionStats.RealtimeCount
 				globalStats.ModifyCount += partitionStats.ModifyCount
 			}
 			allHg[i] = append(allHg[i], hg)
@@ -1095,11 +1098,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 		IsHandle:   c.IsHandle,
 		StatsVer:   statsVer,
 	}
-	// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
-	colHist.Count = int64(colHist.TotalRowCount())
-	// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-	// So we need add colHist.Count > 0 here.
-	if statsVer != statistics.Version0 || colHist.Count > 0 {
+	if colHist.StatsAvailable() {
 		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions

@@ -55,7 +55,8 @@ func GetPlacementRules(ctx context.Context, pdAddr string, tlsConf *tls.Config) 
 		return []pdtypes.Rule{}, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, errors.Annotatef(berrors.ErrPDInvalidResponse, "get placement rules failed: resp=%v, err=%v, code=%d", buf.String(), err, resp.StatusCode)
+		return nil, errors.Annotatef(berrors.ErrPDInvalidResponse,
+			"get placement rules failed: resp=%v, err=%v, code=%d", buf.String(), err, resp.StatusCode)
 	}
 	var rules []pdtypes.Rule
 	err = json.Unmarshal(buf.Bytes(), &rules)

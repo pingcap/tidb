@@ -6,6 +6,7 @@ header:
     - "docs/"
     - "br/"
     - ".gitignore"
+    - ".gitmodules"
     - ".dockerignore"
     - ".gitattributes"
     - ".cilinter.yaml"
@@ -39,6 +40,9 @@ header:
     - "tidb-binlog/driver/example"
     - "tidb-binlog/proto/go-binlog/secondary_binlog.pb.go"
     - "**/*.sql"
+    - "**/*.csv"
+    - "**/*.parquet"
+    - "**/*.zst"
     - ".bazelversion"
     - "build/image/.ci_bazel"
   comment: on-failure

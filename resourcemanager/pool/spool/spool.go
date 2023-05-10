@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/resourcemanager/pool"
-	"github.com/pingcap/tidb/resourcemanager/pooltask"
+	"github.com/pingcap/tidb/resourcemanager/poolmanager"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -31,6 +31,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const waitInterval = 5 * time.Millisecond
+
 // Pool is a single goroutine pool. it can not reuse the goroutine.
 type Pool struct {
 	wg                 sync.WaitGroup
@@ -38,9 +40,12 @@ type Pool struct {
 	options            *Options
 	capacity           int32
 	running            atomic.Int32
+	waiting            atomic.Int32
 	isStop             atomic.Bool
+	condMu             sync.Mutex
+	cond               sync.Cond
 	concurrencyMetrics prometheus.Gauge
-	taskManager        pooltask.TaskManager[any, any, any, any, pooltask.NilContext]
+	taskManager        poolmanager.TaskManager
 	pool.BasePool
 }
 
@@ -50,8 +55,9 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 	result := &Pool{
 		options:            opts,
 		concurrencyMetrics: metrics.PoolConcurrencyCounter.WithLabelValues(name),
-		taskManager:        pooltask.NewTaskManager[any, any, any, any, pooltask.NilContext](size), // TODO: this general type
+		taskManager:        poolmanager.NewTaskManager(size),
 	}
+	result.cond = *sync.NewCond(&result.condMu)
 	if size == 0 {
 		return nil, pool.ErrPoolParamsInvalid
 	}
@@ -73,12 +79,32 @@ func (p *Pool) Tune(size int32) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.SetLastTuneTs(time.Now())
+	old := p.capacity
 	p.capacity = size
 	p.concurrencyMetrics.Set(float64(size))
+	if old == size {
+		return
+	}
+	if old < size && p.running.Load() < size {
+		_, task := p.taskManager.Overclock()
+		if task != nil {
+			p.running.Add(1)
+			p.run(func() {
+				runTask(task)
+			})
+		}
+		return
+	}
+	if p.running.Load() > size {
+		p.taskManager.Downclock()
+	}
 }
 
 // Run runs a function in the pool.
 func (p *Pool) Run(fn func()) error {
+	p.waiting.Add(1)
+	defer p.cond.Signal()
+	defer p.waiting.Add(-1)
 	if p.isStop.Load() {
 		return pool.ErrPoolClosed
 	}
@@ -86,7 +112,6 @@ func (p *Pool) Run(fn func()) error {
 	if !run {
 		return pool.ErrPoolOverload
 	}
-	p.taskManager.RegisterTask(p.GenTaskID(), 1)
 	p.run(fn)
 	return nil
 }
@@ -121,6 +146,9 @@ func (p *Pool) run(fn func()) {
 
 // RunWithConcurrency runs a function in the pool with concurrency.
 func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
+	p.waiting.Add(1)
+	defer p.cond.Signal()
+	defer p.waiting.Add(-1)
 	if p.isStop.Load() {
 		return pool.ErrPoolClosed
 	}
@@ -128,13 +156,12 @@ func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
 	if !run {
 		return pool.ErrPoolOverload
 	}
-	// TODO: taskManager need to refactor
-	p.taskManager.RegisterTask(p.GenTaskID(), conc)
+	exitCh := make(chan struct{}, 1)
+	meta := poolmanager.NewMeta(p.GenTaskID(), exitCh, fns, int32(concurrency))
+	p.taskManager.RegisterTask(meta)
 	for n := int32(0); n < conc; n++ {
 		p.run(func() {
-			for fn := range fns {
-				fn()
-			}
+			runTask(meta)
 		})
 	}
 	return nil
@@ -143,6 +170,9 @@ func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
 // checkAndAddRunning is to check if a task can run. If can, add the running number.
 func (p *Pool) checkAndAddRunning(concurrency uint32) (conc int32, run bool) {
 	for {
+		if p.isStop.Load() {
+			return 0, false
+		}
 		p.mu.Lock()
 		value, run := p.checkAndAddRunningInternal(int32(concurrency))
 		if run {
@@ -154,7 +184,7 @@ func (p *Pool) checkAndAddRunning(concurrency uint32) (conc int32, run bool) {
 			return 0, false
 		}
 		p.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(waitInterval)
 	}
 }
 
@@ -173,6 +203,30 @@ func (p *Pool) checkAndAddRunningInternal(concurrency int32) (conc int32, run bo
 // ReleaseAndWait releases the pool and waits for all tasks to be completed.
 func (p *Pool) ReleaseAndWait() {
 	p.isStop.Store(true)
+	// wait for all the task in the pending to exit
+	p.cond.L.Lock()
+	for p.waiting.Load() > 0 {
+		p.cond.Wait()
+	}
+	p.cond.L.Unlock()
 	p.wg.Wait()
 	resourcemanager.InstanceResourceManager.Unregister(p.Name())
+}
+
+func runTask(task *poolmanager.Meta) {
+	taskCh := task.GetTaskCh()
+	exitCh := task.GetExitCh()
+	task.IncTask()
+	defer task.DecTask()
+	for {
+		select {
+		case f, ok := <-taskCh:
+			if !ok {
+				return
+			}
+			f()
+		case <-exitCh:
+			return
+		}
+	}
 }

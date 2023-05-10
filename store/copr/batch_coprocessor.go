@@ -36,12 +36,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tiflashcompute"
-	"github.com/stathat/consistent"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -587,23 +588,21 @@ func filterAliveStoresHelper(ctx context.Context, stores []string, ttl time.Dura
 }
 
 func getTiFlashComputeRPCContextByConsistentHash(ids []tikv.RegionVerID, storesStr []string) (res []*tikv.RPCContext, err error) {
-	hasher := consistent.New()
-	hasher.NumberOfReplicas = 200
-	for _, addr := range storesStr {
-		hasher.Add(addr)
-	}
-
+	// Use RendezvousHash
 	for _, id := range ids {
-		addr, err := hasher.Get(strconv.Itoa(int(id.GetID())))
-		if err != nil {
-			return nil, err
+		var maxHash uint32 = 0
+		var maxHashStore string = ""
+		for _, store := range storesStr {
+			h := murmur3.StringSum32(fmt.Sprintf("%s-%d", store, id.GetID()))
+			if h > maxHash {
+				maxHash = h
+				maxHashStore = store
+			}
 		}
-
 		rpcCtx := &tikv.RPCContext{
 			Region: id,
-			Addr:   addr,
+			Addr:   maxHashStore,
 		}
-
 		res = append(res, rpcCtx)
 	}
 	return res, nil
@@ -681,6 +680,9 @@ func buildBatchCopTasksConsistentHash(
 		if len(storesStr) == 0 {
 			retErr := errors.New("Cannot find proper topo from AutoScaler")
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because FetchAndGetTopo return empty topo", zap.Int("retryNum", retryNum))
+			if intest.InTest && retryNum > 3 {
+				return nil, retErr
+			}
 			err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), retErr)
 			if err != nil {
 				return nil, retErr

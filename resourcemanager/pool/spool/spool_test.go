@@ -67,23 +67,20 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 
 func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	c := make(chan struct{})
-	p, _ := NewPool("TestPoolTuneScaleUp", 2, util.UNKNOWN, WithBlocking(false))
+	p, _ := NewPool("TestPoolTuneScaleUp", 2, util.UNKNOWN, WithBlocking(true))
 	for i := 0; i < 2; i++ {
 		_ = p.Run(func() {
 			<-c
 		})
 	}
-	if n := p.Running(); n != 2 {
-		t.Errorf("expect 2 workers running, but got %d", n)
-	}
+	require.Equal(t, int32(2), p.Running())
 	// test pool tune scale up one
 	p.Tune(3)
 	_ = p.Run(func() {
 		<-c
 	})
-	if n := p.Running(); n != 3 {
-		t.Errorf("expect 3 workers running, but got %d", n)
-	}
+	require.Equal(t, int32(3), p.Running())
+
 	// test pool tune scale up multiple
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
@@ -96,22 +93,18 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 		}()
 	}
 	p.Tune(8)
-	time.Sleep(500 * time.Millisecond)
-	if n := p.Running(); n != 8 {
-		t.Errorf("expect 8 workers running, but got %d", n)
-	}
+	wg.Wait()
+	require.Eventually(t, func() bool { return p.Running() == 8 }, 1*time.Second, 200*time.Millisecond)
 	// test pool tune scale down
 	p.Tune(2)
 	for i := 0; i < 6; i++ {
 		c <- struct{}{}
 	}
-	time.Sleep(200 * time.Millisecond)
-	require.Equal(t, int32(2), p.Running())
+	require.Eventually(t, func() bool { return p.Running() == 2 }, 1*time.Second, 200*time.Millisecond)
 	for i := 0; i < 2; i++ {
 		c <- struct{}{}
 	}
-	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, int32(0), p.Running())
+	require.Eventually(t, func() bool { return p.Running() == 0 }, 1*time.Second, 200*time.Millisecond)
 
 	// test with RunWithConcurrency
 	var cnt atomic.Int32
@@ -126,12 +119,10 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		fnChan <- workerFn
 	}
-	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, int32(10), cnt.Load())
+	require.Eventually(t, func() bool { return cnt.Load() == 10 }, 1*time.Second, 200*time.Millisecond)
 	require.Equal(t, int32(2), p.Running())
 	close(fnChan)
-	time.Sleep(100 * time.Microsecond)
-	require.Equal(t, int32(0), p.Running())
+	require.Eventually(t, func() bool { return p.Running() == 0 }, 1*time.Second, 200*time.Millisecond)
 	p.ReleaseAndWait()
 }
 
@@ -196,4 +187,28 @@ func TestRunWithNotEnough2(t *testing.T) {
 	time.Sleep(100 * time.Microsecond)
 	require.Equal(t, int32(0), p.Running())
 	require.Equal(t, int32(100), cnt.Load())
+}
+
+func TestWithTaskManager(t *testing.T) {
+	p, err := NewPool("TestWithTaskManager", int32(1), util.UNKNOWN, WithBlocking(false))
+	require.NoError(t, err)
+	defer p.ReleaseAndWait()
+	fnChan := make(chan func(), 10)
+	require.NoError(t, p.RunWithConcurrency(fnChan, 2), "submit when pool is not full shouldn't return error")
+	time.Sleep(100 * time.Microsecond)
+	require.Equal(t, int32(1), p.Running())
+
+	// increase the concurrency
+	p.Tune(2)
+	time.Sleep(100 * time.Microsecond)
+	require.Equal(t, int32(2), p.Running())
+	p.Tune(3)
+	require.Eventually(t, func() bool { return p.Running() == 3 }, 1*time.Second, 200*time.Millisecond)
+
+	// decrease the concurrency
+	p.Tune(2)
+	require.Eventually(t, func() bool { return p.Running() == 2 }, 1*time.Second, 200*time.Millisecond)
+	p.Tune(1)
+	require.Eventually(t, func() bool { return p.Running() == 1 }, 1*time.Second, 200*time.Millisecond)
+	close(fnChan)
 }

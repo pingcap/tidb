@@ -38,12 +38,12 @@ var (
 	_ ShowPredicateExtractor = &ShowBaseExtractor{}
 )
 
-// ShowPredicateExtractor is used to extract some predicates from `PatternLikeExpr` clause
+// ShowPredicateExtractor is used to extract some predicates from `PatternLikeOrIlikeExpr` clause
 // and push the predicates down to the data retrieving on reading memory table stage when use ShowStmt.
 //
 // e.g:
 // SHOW COLUMNS FROM t LIKE '%abc%'
-// We must request all components from the memory table, and filter the result by the PatternLikeExpr predicate.
+// We must request all components from the memory table, and filter the result by the PatternLikeOrIlikeExpr predicate.
 //
 // it is a way to fix https://github.com/pingcap/tidb/issues/29910.
 type ShowPredicateExtractor interface {

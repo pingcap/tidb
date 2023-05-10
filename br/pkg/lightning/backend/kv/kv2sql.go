@@ -17,6 +17,7 @@ package kv
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -26,23 +27,27 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// TableKVDecoder is a KVDecoder that decodes the key-value pairs of a table.
 type TableKVDecoder struct {
 	tbl table.Table
-	se  *session
+	se  *Session
 	// tableName is the unique table name in the form "`db`.`tbl`".
 	tableName string
-	genCols   []genCol
+	genCols   []GeneratedCol
 }
 
+// Name implements KVDecoder.Name.
 func (t *TableKVDecoder) Name() string {
 	return t.tableName
 }
 
-func (t *TableKVDecoder) DecodeHandleFromRowKey(key []byte) (kv.Handle, error) {
+// DecodeHandleFromRowKey implements KVDecoder.DecodeHandleFromRowKey.
+func (*TableKVDecoder) DecodeHandleFromRowKey(key []byte) (kv.Handle, error) {
 	return tablecodec.DecodeRowKey(key)
 }
 
-func (t *TableKVDecoder) DecodeHandleFromIndex(indexInfo *model.IndexInfo, key []byte, value []byte) (kv.Handle, error) {
+// DecodeHandleFromIndex implements KVDecoder.DecodeHandleFromIndex.
+func (t *TableKVDecoder) DecodeHandleFromIndex(indexInfo *model.IndexInfo, key, value []byte) (kv.Handle, error) {
 	cols := tables.BuildRowcodecColInfoForIndexColumns(indexInfo, t.tbl.Meta())
 	return tablecodec.DecodeIndexHandle(key, value, len(cols))
 }
@@ -52,6 +57,7 @@ func (t *TableKVDecoder) DecodeRawRowData(h kv.Handle, value []byte) ([]types.Da
 	return tables.DecodeRawRowData(t.se, t.tbl.Meta(), h, t.tbl.Cols(), value)
 }
 
+// DecodeRawRowDataAsStr decodes raw row data into a string.
 func (t *TableKVDecoder) DecodeRawRowDataAsStr(h kv.Handle, value []byte) (res string) {
 	row, _, err := t.DecodeRawRowData(h, value)
 	if err == nil {
@@ -76,7 +82,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 				row[i] = types.GetMinValue(&col.FieldType)
 			}
 		}
-		if _, err := evaluateGeneratedColumns(t.se, row, t.tbl.Cols(), t.genCols); err != nil {
+		if _, err := evalGeneratedColumns(t.se, row, t.tbl.Cols(), t.genCols); err != nil {
 			return err
 		}
 	}
@@ -90,7 +96,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 		if err != nil {
 			return err
 		}
-		iter := index.GenIndexKVIter(t.se.vars.StmtCtx, indexValues, h, nil)
+		iter := index.GenIndexKVIter(t.se.Vars.StmtCtx, indexValues, h, nil)
 		for iter.Valid() {
 			indexKey, _, _, err := iter.Next(indexBuffer)
 			if err != nil {
@@ -108,19 +114,20 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 	return nil
 }
 
+// NewTableKVDecoder creates a new TableKVDecoder.
 func NewTableKVDecoder(
 	tbl table.Table,
 	tableName string,
-	options *SessionOptions,
+	options *encode.SessionOptions,
 	logger log.Logger,
 ) (*TableKVDecoder, error) {
-	se := newSession(options, logger)
+	se := NewSession(options, logger)
 	cols := tbl.Cols()
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
 	recordCtx := tables.NewCommonAddRecordCtx(len(cols))
 	tables.SetAddRecordCtx(se, recordCtx)
 
-	genCols, err := collectGeneratedColumns(se, tbl.Meta(), cols)
+	genCols, err := CollectGeneratedColumns(se, tbl.Meta(), cols)
 	if err != nil {
 		return nil, err
 	}
