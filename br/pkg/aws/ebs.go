@@ -59,7 +59,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		defer mutex.Unlock()
 		for j := range createOutput.Snapshots {
 			snapshot := createOutput.Snapshots[j]
-			snapIDMap[*snapshot.VolumeId] = *snapshot.SnapshotId
+			snapIDMap[aws.StringValue(snapshot.VolumeId)] = aws.StringValue(snapshot.SnapshotId)
 		}
 	}
 
