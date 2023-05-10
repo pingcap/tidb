@@ -2405,7 +2405,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 	// build the SQL query string
 	var sb strings.Builder
-	sb.WriteString("md5(concat(")
+	sb.WriteString("bit_xor(md5(concat(")
 	for _, col := range pkCols {
 		sb.WriteString(col)
 		sb.WriteString(", ")
@@ -2421,7 +2421,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	}
 	sb.WriteString("))")
 
-	groupStr := fmt.Sprintf("md5(%s)", pkCols[0])
+	groupStr := fmt.Sprintf("md5(%s))", pkCols[0])
 
 	tableRowCnt := w.e.rowCnt
 
