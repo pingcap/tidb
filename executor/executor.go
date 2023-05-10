@@ -2353,7 +2353,12 @@ func getCheckSum(se sessionctx.Context, sql string) ([]uint64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rs.Close()
+	defer func(rs sqlexec.RecordSet) {
+		err := rs.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close record set failed", zap.Error(err))
+		}
+	}(rs)
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, 256)
 	if err != nil {
 		return nil, err
@@ -2474,6 +2479,14 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	// If there is an error, we use indexLookup to get the detailed information.
 	if meetError || !checkCheckSum {
 		sql := fmt.Sprintf("select * from %s.%s use index(%s) where (%s - %d) %% %d = 0", w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupStr, offset, mod)
+
+		// for index which contains all the table's column, we can't use indexLookup to check.
+		if len(indexCols) == len(w.e.table.Cols()) {
+			err := admin.ErrAdminCheckTable.GenWithStackByArgs(fmt.Sprintf("index is not consistent with table data, location hint: '%s', compare the result with the sql that using table scan", sql))
+			trySaveErr(err)
+			return
+		}
+
 		save := se.GetSessionVars().FastCheckTable
 		defer func() {
 			se.GetSessionVars().FastCheckTable = save
