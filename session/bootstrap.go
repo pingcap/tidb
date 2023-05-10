@@ -881,11 +881,13 @@ const (
 	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
 	// if it's upgraded from an existing old version cluster.
 	version144 = 144
+	// version 145 add column `step` to `mysql.tidb_background_subtask`
+	version145 = 145
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version144
+var currentBootstrapVersion int64 = version145
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1018,6 +1020,7 @@ var (
 		upgradeToVer142,
 		upgradeToVer143,
 		upgradeToVer144,
+		upgradeToVer145,
 	}
 )
 
@@ -2543,6 +2546,13 @@ func upgradeToVer144(s Session, ver int64) {
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
+}
+
+func upgradeToVer145(s Session, ver int64) {
+	if ver >= version145 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {
