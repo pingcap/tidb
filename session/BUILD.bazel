@@ -46,6 +46,7 @@ go_library(
         "//planner/core",
         "//plugin",
         "//privilege",
+        "//privilege/conn",
         "//privilege/privileges",
         "//session/metrics",
         "//session/txninfo",

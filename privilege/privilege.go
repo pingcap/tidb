@@ -17,6 +17,7 @@ package privilege
 import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/privilege/conn"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -75,7 +76,7 @@ type Manager interface {
 
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.
-	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, sessionVars *variable.SessionVars) (VerificationInfo, error)
+	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, sessionVars *variable.SessionVars, authConn conn.AuthConn) (VerificationInfo, error)
 
 	// AuthSuccess records auth success state
 	AuthSuccess(authUser, authHost string)

@@ -95,7 +95,7 @@ func TestIssue9111(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "user_admin", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "user_admin", Hostname: "localhost"}, nil, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `create user test_create_user`)
@@ -147,7 +147,7 @@ func TestExtendedStatsPrivileges(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ func TestIssue17247(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil, nil))
 	tk1.MustExec("ALTER USER USER() IDENTIFIED BY 'xxx'")
 	tk1.MustExec("ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy'")
 	tk1.MustExec("ALTER USER CURRENT_USER IDENTIFIED BY 'zzz'")
@@ -217,10 +217,10 @@ func TestSetCurrentUserPwd(t *testing.T) {
 		tk.MustExec("DROP USER IF EXISTS issue28534;")
 	}()
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec(`SET PASSWORD FOR CURRENT_USER() = "43582eussi"`)
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
 	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
 }
@@ -235,7 +235,7 @@ func TestShowGrantsAfterDropRole(t *testing.T) {
 	tk.MustExec("GRANT r29473 TO u29473")
 	tk.MustExec("GRANT CREATE USER ON *.* TO u29473")
 
-	tk.Session().Auth(&auth.UserIdentity{Username: "u29473", Hostname: "%"}, nil, nil)
+	tk.Session().Auth(&auth.UserIdentity{Username: "u29473", Hostname: "%"}, nil, nil, nil)
 	tk.MustExec("SET ROLE r29473")
 	tk.MustExec("DROP ROLE r29473")
 	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CREATE USER ON *.* TO 'u29473'@'%'"))
@@ -260,7 +260,7 @@ func TestPrivilegesAfterDropUser(t *testing.T) {
 	tk.MustQuery("SELECT COUNT(1) FROM mysql.global_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT COUNT(1) FROM mysql.tables_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT COUNT(1) FROM mysql.columns_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'u1'@'%'",
 		"GRANT CREATE ON test.* TO 'u1'@'%'",
@@ -283,7 +283,7 @@ func TestDropRoleAfterRevoke(t *testing.T) {
 	// issue 29781
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 
 	tk.MustExec("create role r1, r2, r3;")
 	defer tk.MustExec("drop role if exists r1, r2, r3;")
@@ -375,7 +375,7 @@ func TestSetRoleAllCorner(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "set_role_all", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "set_role_all", Hostname: "localhost"}, nil, nil, nil))
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `set role all`)
 	require.NoError(t, err)
@@ -391,7 +391,7 @@ func TestCreateRole(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `create role test_create_role;`)
@@ -416,7 +416,7 @@ func TestDropRole(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `drop role test_create_role;`)
@@ -598,7 +598,7 @@ func TestRoleAdmin(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
@@ -672,7 +672,7 @@ func TestSetDefaultRoleAll(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "set default role all to test_all;")
@@ -930,7 +930,7 @@ func TestFlushPrivileges(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil, nil))
 
 	ctx := context.Background()
 	// Before flush.
@@ -1104,4 +1104,33 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.True(t, statsTbl2.Pseudo)
 	h.SetLease(0)
+}
+
+func TestCreateUserWithLDAP(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com'")
+	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob'").Check(testkit.Rows("localhost bob uid=bob,ou=People,dc=example,dc=com authentication_ldap_simple"))
+
+	tk.MustExec("CREATE USER 'bob2'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob2,ou=People,dc=example,dc=com'")
+	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob2'").Check(testkit.Rows("localhost bob2 uid=bob2,ou=People,dc=example,dc=com authentication_ldap_sasl"))
+}
+
+func TestAlterUserWithLDAP(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// case 1: alter from a LDAP user to LDAP user
+	tk.MustExec("CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com'")
+	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob'").Check(testkit.Rows("localhost bob uid=bob,ou=People,dc=example,dc=com authentication_ldap_simple"))
+	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
+	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob'").Check(testkit.Rows("localhost bob uid=bob,ou=Manager,dc=example,dc=com authentication_ldap_sasl"))
+
+	// case 2: should ignore the password history
+	tk.MustExec("ALTER USER 'bob'@'localhost' PASSWORD HISTORY 5\n")
+	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com'")
+	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
+	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com'")
+	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
 }

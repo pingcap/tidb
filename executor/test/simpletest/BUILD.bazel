@@ -10,7 +10,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 33,
+    shard_count = 35,
     deps = [
         "//config",
         "//parser/auth",

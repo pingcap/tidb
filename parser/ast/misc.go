@@ -1397,6 +1397,16 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 		}
 	}
 
+	// store the LDAP dn directly in the password field
+	switch opt.AuthPlugin {
+	case mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
+		// TODO: validate the HashString to be a `dn` for LDAP
+		// It seems fine to not validate here, and LDAP server will give an error when the client'll try to login this user.
+		// The percona server implementation doesn't have a validation for this HashString.
+		// However, returning an error for obvious wrong format is more friendly.
+		return opt.HashString, true
+	}
+
 	// In case we have 'IDENTIFIED WITH <plugin>' but no 'BY <password>' to set an empty password.
 	if opt.HashString == "" {
 		return opt.HashString, true

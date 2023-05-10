@@ -241,7 +241,7 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	result = tk1.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
 	// Ordinary users can not see others' records
@@ -299,7 +299,7 @@ func TestCapturePrivilege(t *testing.T) {
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	rows = tk1.MustQuery("show global bindings").Rows()
 	// Ordinary users can not see others' records
@@ -535,7 +535,7 @@ func newTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := newTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }
 
@@ -547,7 +547,7 @@ func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }
 

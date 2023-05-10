@@ -711,7 +711,7 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 func TestViewColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
@@ -768,7 +768,7 @@ func TestTxnAssertion(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	se.SetConnectionID(1)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
 

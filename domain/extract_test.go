@@ -104,6 +104,6 @@ func newTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := newTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }

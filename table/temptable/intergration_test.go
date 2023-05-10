@@ -26,7 +26,7 @@ func TestSelectTemporaryTableUnionView(t *testing.T) {
 	// see the issue: https://github.com/pingcap/tidb/issues/42563
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
