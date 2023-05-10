@@ -115,26 +115,26 @@ func TestGetInstance(t *testing.T) {
 	subtask := &proto.Subtask{
 		Type:        proto.TaskTypeExample,
 		TaskID:      gTaskID,
-		SchedulerID: uuids[1],
+		SchedulerID: serverIDs[1],
 	}
 	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
-	require.Equal(t, []string{uuids[1]}, instanceIDs)
+	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid0, uuid1
 	subtask = &proto.Subtask{
 		Type:        proto.TaskTypeExample,
 		TaskID:      gTaskID,
-		SchedulerID: uuids[0],
+		SchedulerID: serverIDs[0],
 	}
 	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
-	require.Len(t, instanceIDs, len(uuids))
-	require.ElementsMatch(t, instanceIDs, uuids)
+	require.Len(t, instanceIDs, len(serverIDs))
+	require.ElementsMatch(t, instanceIDs, serverIDs)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo"))
 }
