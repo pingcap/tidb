@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
@@ -510,7 +511,7 @@ type taskMetaMgr interface {
 	// Note that action may be executed multiple times due to transaction retry, caller should make sure it's idempotent.
 	CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error
 	// CanPauseSchedulerByKeyRange returns whether the scheduler can pause by the key range.
-	CanPauseSchedulerByKeyRange() bool
+	CanPauseSchedulerByKeyRange(forcePauseByRemove bool) bool
 	CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error)
 	// CheckAndFinishRestore check task meta and return whether to switch cluster to normal state and clean up the metadata
 	// Return values: first boolean indicates whether switch back tidb cluster to normal state (restore schedulers, switch tikv to normal)
@@ -827,8 +828,8 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 	}, nil
 }
 
-func (m *dbTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
-	return m.pd.CanPauseSchedulerByKeyRange()
+func (m *dbTaskMetaMgr) CanPauseSchedulerByKeyRange(forcePauseByRemove bool) bool {
+	return local.ShouldPauseSchedulerByKeyRange(forcePauseByRemove, m.pd)
 }
 
 // CheckAndFinishRestore check task meta and return whether to switch cluster to normal state and clean up the metadata
@@ -1023,7 +1024,7 @@ func (m noopTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.
 	}, nil
 }
 
-func (m noopTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
+func (m noopTaskMetaMgr) CanPauseSchedulerByKeyRange(forcePauseByRemove bool) bool {
 	return false
 }
 
@@ -1138,8 +1139,8 @@ func (m *singleTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdut
 	return m.pd.RemoveSchedulers(ctx)
 }
 
-func (m *singleTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
-	return m.pd.CanPauseSchedulerByKeyRange()
+func (m *singleTaskMetaMgr) CanPauseSchedulerByKeyRange(forcePauseByRemove bool) bool {
+	return local.ShouldPauseSchedulerByKeyRange(forcePauseByRemove, m.pd)
 }
 
 func (m *singleTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {

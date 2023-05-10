@@ -70,6 +70,7 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 	defer ts.Close()
 
 	cfg := config.NewConfig()
+	require.True(t, cfg.TikvImporter.ForcePauseSchedulerByRemove)
 	cfg.TiDB.Host = host
 	cfg.TiDB.StatusPort = port
 	cfg.Mydumper.SourceDir = "."

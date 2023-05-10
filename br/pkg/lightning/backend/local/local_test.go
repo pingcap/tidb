@@ -1418,3 +1418,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	// store 12 has a follower busy, so it will break the workflow for region (11, 12, 13)
 	require.Equal(t, []uint64{1, 2, 3, 1, 11, 12, 13, 11}, apiInvokeRecorder["MultiIngest"])
 }
+
+func TestShouldPauseSchedulerByKeyRange(t *testing.T) {
+	require.False(t, ShouldPauseSchedulerByKeyRange(true, nil))
+}

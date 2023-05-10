@@ -1492,7 +1492,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			err       error
 		)
 
-		if !rc.taskMgr.CanPauseSchedulerByKeyRange() {
+		if !rc.taskMgr.CanPauseSchedulerByKeyRange(rc.cfg.TikvImporter.ForcePauseSchedulerByRemove) {
 			logTask.Info("removing PD leader&region schedulers")
 
 			restoreFn, err = rc.taskMgr.CheckAndPausePdSchedulers(ctx)

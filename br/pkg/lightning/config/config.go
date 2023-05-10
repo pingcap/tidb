@@ -687,6 +687,8 @@ type TikvImporter struct {
 	KeyspaceName            string                       `toml:"keyspace-name" json:"keyspace-name"`
 	AddIndexBySQL           bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
+	ForcePauseSchedulerByRemove bool `toml:"force-pause-scheduler-by-remove" json:"force-pause-scheduler-by-remove"`
+
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
@@ -867,6 +869,8 @@ func NewConfig() *Config {
 			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
 			DiskQuota:               ByteSize(math.MaxInt64),
 			DuplicateResolution:     DupeResAlgNone,
+			// default to true for this fix, so there's no need to change config files
+			ForcePauseSchedulerByRemove: true,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
