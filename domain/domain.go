@@ -1964,6 +1964,11 @@ func (do *Domain) GetExtractHandle() *ExtractHandle {
 	return do.extractTaskHandle
 }
 
+// GetDumpFileGCChecker returns dump file GC checker for plan replayer and plan trace
+func (do *Domain) GetDumpFileGCChecker() *dumpFileGcChecker {
+	return do.dumpFileGcChecker
+}
+
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Run(func() {
@@ -1979,7 +1984,7 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.gcDumpFiles(time.Hour, time.Hour*24*7)
+				do.dumpFileGcChecker.GCDumpFiles(time.Hour, time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")
