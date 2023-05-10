@@ -1705,6 +1705,7 @@ type LogicalLimit struct {
 	Offset      uint64
 	Count       uint64
 	limitHints  limitHintInfo
+	IsPartial   bool
 }
 
 // GetPartitionBy returns partition by fields

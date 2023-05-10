@@ -1896,9 +1896,19 @@ func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
 func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
+	newGbyItems := make([]expression.Expression, len(la.GroupByItems))
+	copy(newGbyItems, la.GroupByItems)
+	newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
+	// There's some places that rewrites the aggFunc in-place.
+	// I clone it first.
+	// It needs a well refactor to make sure that the physical optimize should not change the things of logical plan.
+	// It's bad for cascades
+	for i, aggFunc := range la.AggFuncs {
+		newAggFuncs[i] = aggFunc.Clone()
+	}
 	agg := basePhysicalAgg{
-		GroupByItems: la.GroupByItems,
-		AggFuncs:     la.AggFuncs,
+		GroupByItems: newGbyItems,
+		AggFuncs:     newAggFuncs,
 	}.initForHash(la.ctx, newStats, la.blockOffset, prop)
 	return agg
 }

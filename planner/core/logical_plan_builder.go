@@ -4247,7 +4247,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 		proj.names = p.OutputNames()[:oldLen]
 		proj.SetSchema(schema)
-		return proj, nil
+		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
 	}
 
 	return b.tryToBuildSequence(currentLayerCTEs, p), nil

@@ -2981,9 +2981,14 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 		copiedChildProperty.TaskTp = taskTp
 
+		newGbyItems := make([]expression.Expression, len(la.GroupByItems))
+		copy(newGbyItems, la.GroupByItems)
+		newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
+		copy(newAggFuncs, la.AggFuncs)
+
 		agg := basePhysicalAgg{
-			GroupByItems: la.GroupByItems,
-			AggFuncs:     la.AggFuncs,
+			GroupByItems: newGbyItems,
+			AggFuncs:     newAggFuncs,
 		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, copiedChildProperty)
 		agg.SetSchema(la.schema.Clone())
 		enforcedAggs = append(enforcedAggs, agg)
@@ -3060,9 +3065,14 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 			copiedChildProperty.TaskTp = taskTp
 
+			newGbyItems := make([]expression.Expression, len(la.GroupByItems))
+			copy(newGbyItems, la.GroupByItems)
+			newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
+			copy(newAggFuncs, la.AggFuncs)
+
 			agg := basePhysicalAgg{
-				GroupByItems: la.GroupByItems,
-				AggFuncs:     la.AggFuncs,
+				GroupByItems: newGbyItems,
+				AggFuncs:     newAggFuncs,
 			}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, copiedChildProperty)
 			agg.SetSchema(la.schema.Clone())
 			streamAggs = append(streamAggs, agg)
@@ -3423,9 +3433,9 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		chReqProps = make([]*property.PhysicalProperty, 0, len(p.children))
 		for range p.children {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
-				ExpectedCnt: prop.ExpectedCnt,
-				TaskTp:      property.MppTaskType,
-				RejectSort:  true,
+				ExpectedCnt:       prop.ExpectedCnt,
+				TaskTp:            property.MppTaskType,
+				RejectSort:        true,
 				CTEProducerStatus: prop.CTEProducerStatus,
 			})
 		}

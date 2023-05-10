@@ -28,6 +28,15 @@ func (pdss *pushDownSequenceSolver) optimize(_ context.Context, lp LogicalPlan, 
 }
 
 func (pdss *pushDownSequenceSolver) recursiveOptimize(pushedSequence *LogicalSequence, lp LogicalPlan) LogicalPlan {
+	_, ok := lp.(*LogicalSequence)
+	if !ok && pushedSequence == nil {
+		newChildren := make([]LogicalPlan, 0, len(lp.Children()))
+		for _, child := range lp.Children() {
+			newChildren = append(newChildren, pdss.recursiveOptimize(nil, child))
+		}
+		lp.SetChildren(newChildren...)
+		return lp
+	}
 	switch x := lp.(type) {
 	case *LogicalSequence:
 		if pushedSequence == nil {
