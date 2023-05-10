@@ -262,8 +262,9 @@ type DDL interface {
 }
 
 type limitJobTask struct {
-	job *model.Job
-	err chan error
+	job      *model.Job
+	err      chan error
+	cacheErr error
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -627,6 +628,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(ctx, id)
 		schemaSyncer = NewMockSchemaSyncer()
+		stateSyncer = NewMockStateSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
@@ -758,6 +760,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+
+	if err := d.stateSyncer.Init(d.ctx); err != nil {
+		logutil.BgLogger().Warn("[ddl] start DDL init state syncer failed", zap.Error(err))
+		return errors.Trace(err)
+	}
 
 	d.prepareWorkers4ConcurrencyDDL()
 
@@ -1017,7 +1024,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-	task := &limitJobTask{job, make(chan error)}
+	task := &limitJobTask{job, make(chan error), nil}
 	d.limitJobCh <- task
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
@@ -1025,7 +1032,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			<-task.err
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			task1 := &limitJobTask{job, make(chan error)}
+			task1 := &limitJobTask{job, make(chan error), nil}
 			d.limitJobCh <- task1
 			// The second job result is used for test.
 			task = task1
@@ -1430,9 +1437,53 @@ func CancelJobs(se sessionctx.Context, ids []int64) (errs []error, err error) {
 	return cancelConcurrencyJobs(se, ids)
 }
 
+<<<<<<< HEAD
 // cancelConcurrencyJobs cancels the DDL jobs that are in the concurrent state.
 func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) {
 	failpoint.Inject("mockCancelConcurencyDDL", func(val failpoint.Value) {
+=======
+// pauseRunningJob check and pause the running Job
+func pauseRunningJob(sess *sess.Session, job *model.Job,
+	byWho model.AdminCommandOperator) (err error) {
+	// It would be much better doing this filter during `getJobsBySQL`, but not now.
+	if !job.IsPausable() {
+		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID)
+		if err != nil {
+			return err
+		}
+	}
+
+	job.State = model.JobStatePausing
+	job.AdminOperator = byWho
+
+	if job.RawArgs == nil {
+		return nil
+	}
+
+	return json.Unmarshal(job.RawArgs, &job.Args)
+}
+
+// resumePausedJob check and resume the Paused Job
+func resumePausedJob(se *sess.Session, job *model.Job,
+	byWho model.AdminCommandOperator) (err error) {
+	if !job.IsResumable() ||
+		// The Paused job should only be resumed by who paused it
+		job.AdminOperator != byWho {
+		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID)
+	}
+
+	job.State = model.JobStateQueueing
+
+	return json.Unmarshal(job.RawArgs, &job.Args)
+}
+
+// processJobs command on the Job according to the process
+func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+	sessCtx sessionctx.Context,
+	ids []int64,
+	byWho model.AdminCommandOperator) ([]error, error) {
+	failpoint.Inject("mockFailedCommandOnConcurencyDDL", func(val failpoint.Value) {
+>>>>>>> 43146873058 (*: Update bootstrap and support pause user DDL when upgrading TiDB (#43666))
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock commit error"))
 		}
@@ -1506,6 +1557,109 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 	return errs, nil
 }
 
+<<<<<<< HEAD
+=======
+// CancelJobs cancels the DDL jobs according to user command.
+func CancelJobs(se sessionctx.Context, ids []int64) (errs []error, err error) {
+	return processJobs(cancelRunningJob, se, ids, model.AdminCommandByEndUser)
+}
+
+// PauseJobs pause all the DDL jobs according to user command.
+func PauseJobs(se sessionctx.Context, ids []int64) ([]error, error) {
+	return processJobs(pauseRunningJob, se, ids, model.AdminCommandByEndUser)
+}
+
+// ResumeJobs resume all the DDL jobs according to user command.
+func ResumeJobs(se sessionctx.Context, ids []int64) ([]error, error) {
+	return processJobs(resumePausedJob, se, ids, model.AdminCommandByEndUser)
+}
+
+// CancelJobsBySystem cancels Jobs because of internal reasons.
+func CancelJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
+	return processJobs(cancelRunningJob, se, ids, model.AdminCommandBySystem)
+}
+
+// PauseJobsBySystem pauses Jobs because of internal reasons.
+func PauseJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
+	return processJobs(pauseRunningJob, se, ids, model.AdminCommandBySystem)
+}
+
+// ResumeJobsBySystem resumes Jobs that are paused by TiDB itself.
+func ResumeJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
+	return processJobs(resumePausedJob, se, ids, model.AdminCommandBySystem)
+}
+
+// pprocessAllJobs processes all the jobs in the job table, 100 jobs at a time in case of high memory usage.
+func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+	se sessionctx.Context, byWho model.AdminCommandOperator) (map[int64]error, error) {
+	var err error
+	var jobErrs = make(map[int64]error)
+
+	ns := sess.NewSession(se)
+	err = ns.Begin()
+	if err != nil {
+		return nil, err
+	}
+
+	var jobID int64 = 0
+	var jobIDMax int64 = 0
+	var limit int = 100
+	for {
+		var jobs []*model.Job
+		jobs, err = getJobsBySQL(ns, JobTable,
+			fmt.Sprintf("job_id >= %s order by job_id asc limit %s",
+				strconv.FormatInt(jobID, 10),
+				strconv.FormatInt(int64(limit), 10)))
+		if err != nil {
+			ns.Rollback()
+			return nil, err
+		}
+
+		for _, job := range jobs {
+			err = process(ns, job, byWho)
+			if err != nil {
+				jobErrs[job.ID] = err
+				ns.Rollback()
+				return jobErrs, err
+			}
+			err = updateDDLJob2Table(ns, job, true)
+			if err != nil {
+				ns.Rollback()
+				return jobErrs, err
+			}
+		}
+
+		// Just in case the job ID is not sequential
+		if len(jobs) > 0 && jobs[len(jobs)-1].ID > jobIDMax {
+			jobIDMax = jobs[len(jobs)-1].ID
+		}
+
+		// If rows returned is smaller than $limit, then there is no more records
+		if len(jobs) < limit {
+			break
+		}
+
+		jobID = jobIDMax + 1
+	}
+
+	err = ns.Commit()
+	if err != nil {
+		return nil, err
+	}
+	return jobErrs, nil
+}
+
+// PauseAllJobsBySystem pauses all running Jobs because of internal reasons.
+func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
+	return processAllJobs(pauseRunningJob, se, model.AdminCommandBySystem)
+}
+
+// ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.
+func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
+	return processAllJobs(resumePausedJob, se, model.AdminCommandBySystem)
+}
+
+>>>>>>> 43146873058 (*: Update bootstrap and support pause user DDL when upgrading TiDB (#43666))
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(se sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
 	return getJobsBySQL(sess.NewSession(se), JobTable, "1 order by job_id")

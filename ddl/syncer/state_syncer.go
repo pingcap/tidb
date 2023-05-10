@@ -28,6 +28,7 @@ import (
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -62,6 +63,11 @@ type StateInfo struct {
 	State string `json:"state"`
 }
 
+// NewStateInfo is new a StateInfo.
+func NewStateInfo(state string) *StateInfo {
+	return &StateInfo{State: state}
+}
+
 // Marshal `StateInfo` into bytes.
 func (info *StateInfo) Marshal() ([]byte, error) {
 	infoBuf, err := json.Marshal(info)
@@ -81,16 +87,17 @@ type serverStateSyncer struct {
 	prompt             string
 	etcdCli            *clientv3.Client
 	session            *concurrency.Session
-	clusterState       *StateInfo
+	clusterState       *atomicutil.Pointer[StateInfo]
 	globalStateWatcher watcher
 }
 
 // NewStateSyncer creates a new StateSyncer.
 func NewStateSyncer(etcdCli *clientv3.Client, etcdPath string) StateSyncer {
 	return &serverStateSyncer{
-		etcdCli:  etcdCli,
-		etcdPath: etcdPath,
-		prompt:   statePrompt,
+		etcdCli:      etcdCli,
+		etcdPath:     etcdPath,
+		clusterState: atomicutil.NewPointer(NewStateInfo(StateNormalRunning)),
+		prompt:       statePrompt,
 	}
 }
 
@@ -108,10 +115,11 @@ func (s *serverStateSyncer) Init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	s.clusterState, err = s.GetGlobalState(ctx)
+	clusterState, err := s.GetGlobalState(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.clusterState.Store(clusterState)
 	s.globalStateWatcher.Watch(ctx, s.etcdCli, s.etcdPath)
 
 	return errors.Trace(err)
@@ -129,7 +137,7 @@ func (s *serverStateSyncer) Rewatch(ctx context.Context) {
 
 // IsUpgradingState implements StateSyncer.IsUpgradingState interface.
 func (s *serverStateSyncer) IsUpgradingState() bool {
-	return s.clusterState.State == StateUpgrading
+	return s.clusterState.Load().State == StateUpgrading
 }
 
 func (s *serverStateSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) ([]*mvccpb.KeyValue, error) {
@@ -171,7 +179,7 @@ func (s *serverStateSyncer) GetGlobalState(ctx context.Context) (*StateInfo, err
 		if len(kvs) > 0 {
 			return nil, errors.Errorf("get key value count:%d wrong", len(kvs))
 		}
-		s.clusterState = state
+		s.clusterState.Store(state)
 		return state, nil
 	}
 	err = state.Unmarshal(kvs[0].Value)
@@ -179,7 +187,7 @@ func (s *serverStateSyncer) GetGlobalState(ctx context.Context) (*StateInfo, err
 		logutil.BgLogger().Warn("get global state failed", zap.String("key", s.etcdPath), zap.ByteString("value", kvs[0].Value), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
-	s.clusterState = state
+	s.clusterState.Store(state)
 	metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.UpdateGlobalState, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return state, nil
 }
