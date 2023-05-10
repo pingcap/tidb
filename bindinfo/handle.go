@@ -597,7 +597,7 @@ func (h *BindHandle) lockBindInfoTable() error {
 }
 
 // LockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
-func (h *BindHandle) LockBindInfoSQL() string {
+func (*BindHandle) LockBindInfoSQL() string {
 	sql, err := sqlexec.EscapeSQL("UPDATE mysql.bind_info SET source= %? WHERE original_sql= %?", Builtin, BuiltinPseudoSQL4BindLock)
 	if err != nil {
 		return ""
@@ -795,8 +795,7 @@ type captureFilter struct {
 }
 
 func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch x := in.(type) {
-	case *ast.TableName:
+	if x, ok := in.(*ast.TableName); ok {
 		tblEntry := stmtctx.TableEntry{
 			DB:    x.Schema.L,
 			Table: x.Name.L,
@@ -813,7 +812,7 @@ func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, cf.fail
 }
 
-func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
@@ -1060,15 +1059,15 @@ func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
+func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
 // AddEvolvePlanTask adds the evolve plan task into memory cache. It would be flushed to store periodically.
-func (h *BindHandle) AddEvolvePlanTask(originalSQL, DB string, binding Binding) {
+func (h *BindHandle) AddEvolvePlanTask(originalSQL, db string, binding Binding) {
 	br := &BindRecord{
 		OriginalSQL: originalSQL,
-		Db:          DB,
+		Db:          db,
 		Bindings:    []Binding{binding},
 	}
 	h.pendingVerifyBindRecordMap.Add(br)
@@ -1129,7 +1128,7 @@ const (
 	nextVerifyDuration = 7 * 24 * time.Hour
 )
 
-func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
+func (h *BindHandle) getOnePendingVerifyJob() (originalSQL, db string, binding Binding) {
 	cache := h.bindInfo.Value.Load().(*bindCache)
 	for _, bindRecord := range cache.GetAllBindRecords() {
 		for _, bind := range bindRecord.Bindings {
@@ -1153,7 +1152,7 @@ func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 	return "", "", Binding{}
 }
 
-func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, maxTime time.Duration) (time.Duration, error) {
+func (*BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, maxTime time.Duration) (time.Duration, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	if db != "" {
 		_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "use %n", db)

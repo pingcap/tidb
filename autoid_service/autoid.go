@@ -293,11 +293,11 @@ type mockClient struct {
 	Service
 }
 
-func (m *mockClient) AllocAutoID(ctx context.Context, in *autoid.AutoIDRequest, opts ...grpc.CallOption) (*autoid.AutoIDResponse, error) {
+func (m *mockClient) AllocAutoID(ctx context.Context, in *autoid.AutoIDRequest, _ ...grpc.CallOption) (*autoid.AutoIDResponse, error) {
 	return m.Service.AllocAutoID(ctx, in)
 }
 
-func (m *mockClient) Rebase(ctx context.Context, in *autoid.RebaseRequest, opts ...grpc.CallOption) (*autoid.RebaseResponse, error) {
+func (m *mockClient) Rebase(ctx context.Context, in *autoid.RebaseRequest, _ ...grpc.CallOption) (*autoid.RebaseResponse, error) {
 	return m.Service.Rebase(ctx, in)
 }
 
