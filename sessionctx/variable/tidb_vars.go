@@ -866,6 +866,9 @@ const (
 
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
+
+	// TiDBFastCheckTable enables fast check table.
+	TiDBFastCheckTable = "tidb_fast_check_table"
 )
 
 // TiDB vars that have only global scope
@@ -1268,6 +1271,7 @@ const (
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 	DefTiDBPlanCacheInvalidationOnFreshStats         = true
 	DefTiDBEnableRowLevelChecksum                    = false
+	DefTiDBEnableFastCheckTable                      = true
 )
 
 // Process global variables.

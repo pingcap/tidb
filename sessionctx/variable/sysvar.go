@@ -2518,6 +2518,10 @@ var defaultSysVars = []*SysVar{
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBFastCheckTable, Value: BoolToOnOff(DefTiDBEnableFastCheckTable), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.FastCheckTable = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

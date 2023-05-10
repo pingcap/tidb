@@ -46,6 +46,8 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
+	poolutil "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -66,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -101,6 +104,7 @@ var (
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
+	_ Executor = &FastCheckTableExec{}
 
 	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker and GlobalMemory Tracker
 	GlobalMemoryUsageTracker *memory.Tracker
@@ -2296,4 +2300,258 @@ func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
 		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
+}
+
+// FastCheckTableExec represents a check table executor.
+// It is built from the "admin check table" statement, and it checks if the
+// index matches the records in the table.
+// It uses a new algorithms to check table data, which is faster than the old one(CheckTableExec).
+type FastCheckTableExec struct {
+	baseExecutor
+
+	dbName     string
+	table      table.Table
+	indexInfos []*model.IndexInfo
+	done       bool
+	is         infoschema.InfoSchema
+	err        error
+	hasError   *atomic.Bool
+	wg         sync.WaitGroup
+	rowCnt     int64
+}
+
+// Open implements the Executor Open interface.
+func (e *FastCheckTableExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+
+	e.done = false
+	return nil
+}
+
+type checkIndexTask struct {
+	indexOffset int
+}
+
+type checkIndexWorker struct {
+	sctx       sessionctx.Context
+	dbName     string
+	table      table.Table
+	indexInfos []*model.IndexInfo
+	rowCnt     int64
+	e          *FastCheckTableExec
+}
+
+func getCheckSum(se sessionctx.Context, sql string) ([]uint64, error) {
+	ctx := kv.WithInternalSourceType(context.TODO(), kv.InternalTxnAdmin)
+	_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+	if err != nil {
+		return nil, err
+	}
+	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 256)
+	if err != nil {
+		return nil, err
+	}
+	checkSum := make([]uint64, len(rows))
+	for i, row := range rows {
+		checkSum[i] = row.GetUint64(0)
+	}
+	return checkSum, nil
+}
+
+// HandleTask implements the Worker interface.
+func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
+	defer w.e.wg.Done()
+	idxInfo := w.indexInfos[task.indexOffset]
+
+	ctx := kv.WithInternalSourceType(context.TODO(), kv.InternalTxnAdmin)
+
+	trySaveErr := func(err error) {
+		if setNewErr := w.e.hasError.CompareAndSwap(false, true); setNewErr {
+			w.e.err = err
+		}
+	}
+
+	se, err := w.e.base().getSysSession()
+	if err != nil {
+		trySaveErr(err)
+		return
+	}
+	defer w.e.base().releaseSysSession(ctx, se)
+
+	var pkCols []string
+	switch {
+	case w.e.table.Meta().IsCommonHandle:
+		pkColsInfo := w.e.table.Meta().GetPrimaryKey().Columns
+		for _, colInfo := range pkColsInfo {
+			pkCols = append(pkCols, colInfo.Name.O)
+		}
+	case w.e.table.Meta().PKIsHandle:
+		pkCols = append(pkCols, w.e.table.Meta().GetPkName().O)
+	default: // support decoding _tidb_rowid.
+		pkCols = append(pkCols, model.ExtraHandleName.O)
+	}
+
+	var indexCols []string
+	for _, col := range idxInfo.Columns {
+		indexCols = append(indexCols, col.Name.O)
+	}
+
+	// build the SQL query string
+	var sb strings.Builder
+	sb.WriteString("md5(concat(")
+	for _, col := range pkCols {
+		sb.WriteString(col)
+		sb.WriteString(", ")
+	}
+	for offset, col := range indexCols {
+		sb.WriteString("ifnull(")
+		sb.WriteString(col)
+		sb.WriteString(", 0x1")
+		sb.WriteString(")")
+		if offset != len(indexCols)-1 {
+			sb.WriteString(", ")
+		}
+	}
+	sb.WriteString("))")
+
+	groupStr := fmt.Sprintf("md5(%s)", pkCols[0])
+
+	tableRowCnt := w.e.rowCnt
+
+	offset := 0
+	mod := 1
+	meetError := false
+
+	lookupCheckThreshold := int64(10000)
+	checkCheckSum := w.rowCnt > lookupCheckThreshold
+
+	for tableRowCnt > lookupCheckThreshold {
+		// compute table side checksum.
+		sql := fmt.Sprintf("select %s from %s.%s use index() group by ((%s - %d) %% 256) order by %s", sb.String(), w.e.dbName, w.e.table.Meta().Name, groupStr, offset, groupStr)
+		logutil.BgLogger().Info("check table index on table side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
+		tableCheckSum, err := getCheckSum(se, sql)
+		if err != nil {
+			trySaveErr(err)
+			return
+		}
+
+		// compute index side checksum.
+		sql = fmt.Sprintf("select %s from %s.%s use index(%s) group by ((%s - %d) %% 256) order by %s", sb.String(), w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupStr, offset, groupStr)
+		logutil.BgLogger().Info("check table index on index side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
+		indexCheckSum, err := getCheckSum(se, sql)
+		if err != nil {
+			trySaveErr(err)
+			return
+		}
+
+		// compare checksum.
+		if len(tableCheckSum) != len(indexCheckSum) {
+			meetError = true
+			break
+		}
+
+		for i, v := range tableCheckSum {
+			if v != indexCheckSum[i] {
+				offset += i * mod
+				mod *= 256
+				meetError = true
+				tableRowCnt /= 256
+				break
+			}
+		}
+		if !meetError {
+			break
+		}
+	}
+
+	// If there is an error, we use indexLookup to get the detailed information.
+	if meetError || !checkCheckSum {
+		sql := fmt.Sprintf("select * from %s.%s use index(%s) where (%s - %d) %% %d = 0", w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupStr, offset, mod)
+		save := se.GetSessionVars().FastCheckTable
+		defer func() {
+			se.GetSessionVars().FastCheckTable = save
+		}()
+		se.GetSessionVars().FastCheckTable = true
+		rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+		if err != nil {
+			trySaveErr(err)
+			return
+		}
+		defer func() {
+			err = rs.Close()
+			if err != nil {
+				logutil.BgLogger().Warn("close result set failed", zap.Error(err))
+			}
+		}()
+		_, err = sqlexec.DrainRecordSet(ctx, rs, 4096)
+		if err != nil {
+			trySaveErr(err)
+			return
+		}
+	}
+}
+
+// Close implements the Worker interface.
+func (w *checkIndexWorker) Close() {
+
+}
+
+func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask] {
+	return &checkIndexWorker{sctx: e.ctx, dbName: e.dbName, table: e.table, indexInfos: e.indexInfos, rowCnt: e.rowCnt, e: e}
+}
+
+// Next implements the Executor Next interface.
+func (e *FastCheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.done || len(e.indexInfos) == 0 {
+		return nil
+	}
+	defer func() { e.done = true }()
+
+	internalSe, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	rs, err := internalSe.(sqlexec.SQLExecutor).ExecuteInternal(ctx, fmt.Sprintf("select count(*) from %s.%s", e.dbName, e.table.Meta().Name.O))
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(ctx, internalSe)
+	row, err := sqlexec.DrainRecordSet(ctx, rs, 8)
+	if err != nil {
+		return err
+	}
+	err = rs.Close()
+	if err != nil {
+		return err
+	}
+	e.rowCnt = row[0].GetInt64(0)
+
+	// Here we need check all indexes, includes invisible index
+	e.ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
+	defer func() {
+		e.ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
+	}()
+
+	workerPool, err := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
+		poolutil.CheckTable, 3, e.createWorker, workerpool.OptionSkipRegister[checkIndexTask]{})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	e.wg.Add(len(e.indexInfos))
+	for i := range e.indexInfos {
+		workerPool.AddTask(checkIndexTask{indexOffset: i})
+	}
+
+	e.wg.Wait()
+	workerPool.ReleaseAndWait()
+
+	return e.err
 }

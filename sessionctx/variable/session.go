@@ -1436,6 +1436,9 @@ type SessionVars struct {
 
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
+
+	// FastCheckTable is used to control whether fast check table is enabled.
+	FastCheckTable bool
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session

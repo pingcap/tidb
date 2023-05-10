@@ -115,9 +115,9 @@ func TestAdminCheckTableCorrupted(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int, v int, UNIQUE KEY i1(id, v))")
+	tk.MustExec("create table t(id int, v int, c int, UNIQUE KEY i1(id, v))")
 	tk.MustExec("begin")
-	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("insert into t values (1, 1, 1)")
 
 	txn, err := tk.Session().Txn(false)
 	require.NoError(t, err)
