@@ -29,13 +29,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	atomicutil "go.uber.org/atomic"
 )
 
 var _ syncer.SchemaSyncer = &MockSchemaSyncer{}
 
 const mockCheckVersInterval = 2 * time.Millisecond
 
-// MockSchemaSyncer is a mock schema syncer, it is exported for tesing.
+// MockSchemaSyncer is a mock schema syncer, it is exported for testing.
 type MockSchemaSyncer struct {
 	selfSchemaVersion int64
 	mdlSchemaVersions sync.Map
@@ -131,6 +132,52 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int6
 
 // Close implements SchemaSyncer.Close interface.
 func (*MockSchemaSyncer) Close() {}
+
+// NewMockStateSyncer creates a new mock StateSyncer.
+func NewMockStateSyncer() syncer.StateSyncer {
+	return &MockStateSyncer{}
+}
+
+// MockStateSyncer is a mock state syncer, it is exported for testing.
+type MockStateSyncer struct {
+	clusterState *atomicutil.Pointer[syncer.StateInfo]
+	globalVerCh  chan clientv3.WatchResponse
+	mockSession  chan struct{}
+}
+
+// Init implements StateSyncer.Init interface.
+func (s *MockStateSyncer) Init(context.Context) error {
+	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
+	s.mockSession = make(chan struct{}, 1)
+	state := syncer.NewStateInfo(syncer.StateNormalRunning)
+	s.clusterState = atomicutil.NewPointer(state)
+	return nil
+}
+
+// UpdateGlobalState implements StateSyncer.UpdateGlobalState interface.
+func (s *MockStateSyncer) UpdateGlobalState(_ context.Context, stateInfo *syncer.StateInfo) error {
+	s.globalVerCh <- clientv3.WatchResponse{}
+	s.clusterState.Store(stateInfo)
+	return nil
+}
+
+// GetGlobalState implements StateSyncer.GetGlobalState interface.
+func (s *MockStateSyncer) GetGlobalState(context.Context) (*syncer.StateInfo, error) {
+	return s.clusterState.Load(), nil
+}
+
+// IsUpgradingState implements StateSyncer.IsUpgradingState interface.
+func (s *MockStateSyncer) IsUpgradingState() bool {
+	return s.clusterState.Load().State == syncer.StateUpgrading
+}
+
+// WatchChan implements StateSyncer.WatchChan interface.
+func (s *MockStateSyncer) WatchChan() clientv3.WatchChan {
+	return s.globalVerCh
+}
+
+// Rewatch implements StateSyncer.Rewatch interface.
+func (*MockStateSyncer) Rewatch(context.Context) {}
 
 type mockDelRange struct {
 }
