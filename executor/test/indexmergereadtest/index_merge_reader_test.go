@@ -843,7 +843,7 @@ func TestIndexMergeProcessWorkerHang(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerIntersectionHang"))
 }
 
-func TestIndexMergePanic(t *testing.T) {
+func TestIndexMergePanic1(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -855,55 +855,109 @@ func TestIndexMergePanic(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly", "return(true)"))
 	tk.MustExec("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c1 < 100 or c2 < 100")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly"))
+}
 
-	setupPartitionTableHelper(tk)
-
+var indexMergePanicRunSQL = func(t *testing.T, tk *testkit.TestKit, fp string) {
 	minV := 200
 	maxV := 1000
-	runSQL := func(fp string) {
-		var sql string
-		v1 := rand.Intn(maxV-minV) + minV
-		v2 := rand.Intn(maxV-minV) + minV
-		if !strings.Contains(fp, "Intersection") {
-			sql = fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d;", v1, v2)
-		} else {
-			sql = fmt.Sprintf("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c3 < %d and c2 < %d", v1, v2)
-		}
-		res := tk.MustQuery("explain " + sql).Rows()
-		require.Contains(t, res[1][0], "IndexMerge")
-		err := tk.QueryToErr(sql)
-		require.Contains(t, err.Error(), fp)
+	var sql string
+	v1 := rand.Intn(maxV-minV) + minV
+	v2 := rand.Intn(maxV-minV) + minV
+	if !strings.Contains(fp, "Intersection") {
+		sql = fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d;", v1, v2)
+	} else {
+		sql = fmt.Sprintf("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c3 < %d and c2 < %d", v1, v2)
 	}
+	res := tk.MustQuery("explain " + sql).Rows()
+	require.Contains(t, res[1][0], "IndexMerge")
+	err := tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), fp)
+}
+
+func TestIndexMergePanicPartialIndexWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicPartialIndexWorker"
+	for i := 0; i < 1000; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
+	}
+}
+
+func TestIndexMergePanicPartialTableWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicPartialTableWorker"
+	for i := 0; i < 1000; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
+	}
+}
+
+func TestIndexMergePanicPartialProcessWorkerUnion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicProcessWorkerUnion"
+	for i := 0; i < 1000; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
+	}
+}
+
+func TestIndexMergePanicPartialProcessWorkerIntersection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicProcessWorkerIntersection"
+	for i := 0; i < 1000; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
+	}
+}
+
+func TestIndexMergePanicPartitionTableIntersectionWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicPartitionTableIntersectionWorker"
+	for i := 0; i < 1000; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
+	}
+}
+
+func TestIndexMergePanicTableScanWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicTableScanWorker"
+	for i := 0; i < 1000; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
+	}
+}
+
+func TestIndexMergeError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
 
 	packagePath := "github.com/pingcap/tidb/executor/"
-	panicFPPaths := []string{
-		packagePath + "testIndexMergePanicPartialIndexWorker",
-		packagePath + "testIndexMergePanicPartialTableWorker",
-
-		packagePath + "testIndexMergePanicProcessWorkerUnion",
-		packagePath + "testIndexMergePanicProcessWorkerIntersection",
-		packagePath + "testIndexMergePanicPartitionTableIntersectionWorker",
-
-		packagePath + "testIndexMergePanicTableScanWorker",
-	}
-	for _, fp := range panicFPPaths {
-		fmt.Println("handling failpoint: ", fp)
-		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
-			// When mockSleepBeforeStartTableReader is enabled, will not read real data. This is to avoid leaking goroutines in coprocessor.
-			// But should disable mockSleepBeforeStartTableReader for testIndexMergePanicTableScanWorker.
-			// Because finalTableScanWorker need task.doneCh to pass error, so need partialIndexWorker/partialTableWorker runs normally.
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
-		}
-		for i := 0; i < 1000; i++ {
-			require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-			runSQL(fp)
-			require.NoError(t, failpoint.Disable(fp))
-		}
-		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
-		}
-	}
-
 	errFPPaths := []string{
 		packagePath + "testIndexMergeErrorPartialIndexWorker",
 		packagePath + "testIndexMergeErrorPartialTableWorker",
@@ -912,7 +966,7 @@ func TestIndexMergePanic(t *testing.T) {
 		fmt.Println("handling failpoint: ", fp)
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`return("%s")`, fp)))
 		for i := 0; i < 100; i++ {
-			runSQL(fp)
+			indexMergePanicRunSQL(t, tk, fp)
 		}
 		require.NoError(t, failpoint.Disable(fp))
 	}
@@ -1005,6 +1059,11 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("insert into tpkhash(a,b,c) values %s", valInserted))
 
 	for i := 0; i < 100; i++ {
+		if i%2 == 0 {
+			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
+		} else {
+			tk.MustExec("set tidb_partition_prune_mode = `dynamic-only`")
+		}
 		a := rand.Intn(32)
 		b := rand.Intn(32)
 		limit := rand.Intn(10) + 1
@@ -1032,17 +1091,23 @@ func TestOrderByWithLimit(t *testing.T) {
 		queryHash := fmt.Sprintf("select /*+ use_index_merge(thash, idx_ac, idx_bc) */ * from thash where a = %v or b = %v order by c limit %v", a, b, limit)
 		resHash := tk.MustQuery(queryHash).Rows()
 		require.True(t, tk.HasPlan(queryHash, "IndexMerge"))
-		require.False(t, tk.HasPlan(queryHash, "TopN"))
+		if i%2 == 1 {
+			require.False(t, tk.HasPlan(queryHash, "TopN"))
+		}
 
 		queryCommonHash := fmt.Sprintf("select /*+ use_index_merge(tcommonhash, primary, idx_bc) */ * from tcommonhash where a = %v or b = %v order by c limit %v", a, b, limit)
 		resCommonHash := tk.MustQuery(queryCommonHash).Rows()
 		require.True(t, tk.HasPlan(queryCommonHash, "IndexMerge"))
-		require.False(t, tk.HasPlan(queryCommonHash, "TopN"))
+		if i%2 == 1 {
+			require.False(t, tk.HasPlan(queryCommonHash, "TopN"))
+		}
 
 		queryPKHash := fmt.Sprintf("select /*+ use_index_merge(tpkhash, idx_ac, idx_bc) */ * from tpkhash where a = %v or b = %v order by c limit %v", a, b, limit)
 		resPKHash := tk.MustQuery(queryPKHash).Rows()
 		require.True(t, tk.HasPlan(queryPKHash, "IndexMerge"))
-		require.False(t, tk.HasPlan(queryPKHash, "TopN"))
+		if i%2 == 1 {
+			require.False(t, tk.HasPlan(queryPKHash, "TopN"))
+		}
 
 		sliceRes := getResult(valueSlice, a, b, limit, false)
 

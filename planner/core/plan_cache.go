@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -64,6 +65,14 @@ func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers
 			param.InExecute = true
 		}
 		vars.PlanCacheParams.Append(val)
+	}
+	if vars.StmtCtx.EnableOptimizerDebugTrace && len(vars.PlanCacheParams.AllParamValues()) > 0 {
+		vals := vars.PlanCacheParams.AllParamValues()
+		valStrs := make([]string, len(vals))
+		for i, val := range vals {
+			valStrs[i] = val.String()
+		}
+		debugtrace.RecordAnyValuesWithNames(sctx, "Parameter datums for EXECUTE", valStrs)
 	}
 	vars.PlanCacheParams.SetForNonPrepCache(isNonPrep)
 	return nil
