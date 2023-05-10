@@ -61,6 +61,7 @@ func Register(name string, driver kv.Driver) error {
 func New(path string) (kv.Storage, error) {
 	fmt.Println(gin.DebugMode)
 	fmt.Println(nosurf.MaxAge)
+	fmt.Println("test")
 	return newStoreWithRetry(path, util.DefaultMaxRetries)
 }
 
