@@ -121,6 +121,20 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 func (b *backfillSchedulerHandle) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
+<<<<<<< HEAD
+=======
+	fnCtx, fnCancel := context.WithCancel(context.Background())
+	defer fnCancel()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			b.d.notifyReorgWorkerJobStateChange(b.job)
+		case <-fnCtx.Done():
+		}
+	}()
+
+>>>>>>> 5c31e169446 (ddl: background reorganization change for `admin pause/resume ...` (#43297))
 	d := b.d
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask, sm)
