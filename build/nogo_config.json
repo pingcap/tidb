@@ -129,7 +129,7 @@
   "errorlint": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
+      "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_test\\.go$": "ignore generated code",
       "/rules_go_work-*": "ignore generated code",
