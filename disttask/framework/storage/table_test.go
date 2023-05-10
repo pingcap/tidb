@@ -204,6 +204,15 @@ func TestSubTaskTable(t *testing.T) {
 	cnt, err = sm.GetSubtaskInStatesCnt(2, proto.TaskStateRevertPending)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cnt)
+
+	subtasks, err := sm.GetSucceedSubtasksByStep(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 0)
+	err = sm.FinishSubtask(2, []byte{})
+	require.NoError(t, err)
+	subtasks, err = sm.GetSucceedSubtasksByStep(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 1)
 }
 
 func TestBothGlobalAndSubTaskTable(t *testing.T) {
