@@ -10175,7 +10175,7 @@ SetOpr:
 SetOprOpt:
 	DefaultTrueDistinctOpt
 
-/xxx ********************Change Statement*******************************/
+/********************Change Statement*******************************/
 ChangeStmt:
 	"CHANGE" "PUMP" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
 	{
@@ -10194,7 +10194,7 @@ ChangeStmt:
 		}
 	}
 
-/xxx ********************Set Statement*******************************/
+/********************Set Statement*******************************/
 SetStmt:
 	"SET" VariableAssignmentList
 	{

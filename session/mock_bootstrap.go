@@ -20,7 +20,6 @@ package session
 
 import (
 	"flag"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
@@ -109,13 +108,13 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 	TestHook.OnBootstrapAfter(s)
 }
 
+// TestHook is exported for testing.
 var TestHook = TestCallback{}
 
 func addMockBootstrapVersionForTest(s Session) {
 	if !*WithMockUpgrade {
 		return
 	}
-	logutil.BgLogger().Info(fmt.Sprintf("================================================== xxx mock"))
 
 	TestHook.OnBootstrapBefore(s)
 	bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
@@ -136,13 +135,13 @@ type Callback interface {
 type BaseCallback struct{}
 
 // OnBootstrapBefore implements Callback interface.
-func (bc *BaseCallback) OnBootstrapBefore(Session) {}
+func (*BaseCallback) OnBootstrapBefore(Session) {}
 
 // OnBootstrap implements Callback interface.
-func (bc *BaseCallback) OnBootstrap(Session) {}
+func (*BaseCallback) OnBootstrap(Session) {}
 
 // OnBootstrapAfter implements Callback interface.
-func (bc *BaseCallback) OnBootstrapAfter(Session) {}
+func (*BaseCallback) OnBootstrapAfter(Session) {}
 
 // TestCallback is used to customize user callback themselves.
 type TestCallback struct {

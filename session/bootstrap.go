@@ -1117,7 +1117,6 @@ func upgrade(s Session) {
 	// It is only used in test.
 	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
-		logutil.BgLogger().Info(fmt.Sprintf("================================================== xxx 111"))
 		upgrade(s, ver)
 	}
 	if isNull {
@@ -1153,7 +1152,7 @@ func upgrade(s Session) {
 	}
 }
 
-func syncUpgradeState(s Session) error {
+func syncUpgradeState(s Session) {
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
@@ -1187,13 +1186,10 @@ func syncUpgradeState(s Session) error {
 		logutil.BgLogger().Warn("upgrade pause all jobs failed", zap.Error(err))
 		time.Sleep(interval)
 	}
-	logutil.BgLogger().Info("xxx ******************** upgrade update global state to upgrading", zap.String("state", syncer.StateUpgrading))
-	// logutil.BgLogger().Info("upgrade update global state to upgrading", zap.String("state", syncer.StateUpgrading))
-
-	return nil
+	logutil.BgLogger().Info("upgrade update global state to upgrading", zap.String("state", syncer.StateUpgrading))
 }
 
-func syncNormalRunning(s Session) error {
+func syncNormalRunning(s Session) {
 	_, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgrade pause all jobs failed", zap.Error(err))
@@ -1206,12 +1202,7 @@ func syncNormalRunning(s Session) error {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgrade update global state failed", zap.String("state", syncer.StateNormalRunning), zap.Error(err))
 	}
-	logutil.BgLogger().Info("xxx ******************** upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
-	logutil.BgLogger().Info("xxx ******************** upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
-	logutil.BgLogger().Info("xxx ******************** upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
-	// logutil.BgLogger().Info("upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
-
-	return nil
+	logutil.BgLogger().Info("upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.

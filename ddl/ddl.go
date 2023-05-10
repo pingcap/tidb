@@ -1479,7 +1479,7 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 // resumePausedJob check and resume the Paused Job
 func resumePausedJob(se *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
-	// TODO: Remove job.IsPausing().
+	// TODO: Remove job.IsPausing() after merging https://github.com/pingcap/tidb/pull/43297.
 	if !(job.IsResumable() || job.IsPausing()) ||
 		// The Paused job should only be resumed by who paused it
 		job.AdminOperator != byWho {
@@ -1642,7 +1642,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 		}
 
 		// Just in case the job ID is not sequential
-		if jobs[len(jobs)-1].ID > jobIDMax {
+		if len(jobs) > 0 && jobs[len(jobs)-1].ID > jobIDMax {
 			jobIDMax = jobs[len(jobs)-1].ID
 		}
 

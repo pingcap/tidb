@@ -168,32 +168,24 @@ func hasSysDB(job *model.Job) bool {
 func (d *ddl) filterEndUserDDL(se *sess.Session, job *model.Job) (bool, error) {
 	if !d.stateSyncer.IsUpgradingState() {
 		if !job.IsPausedBySystem() || hasSysDB(job) {
-			logutil.BgLogger().Info("[ddl] xxx ******************** ---------------------------------------------- normal, paused sys or sys",
-				zap.Stringer("job", job), zap.String("query", job.Query))
 			return false, nil
 		}
 		_, err := ResumeJobsBySystem(se.Session(), []int64{job.ID})
 		if err != nil {
-			logutil.BgLogger().Info("[ddl] xxx ******************** resume user DDL by system", zap.Stringer("job", job), zap.Error(err))
-			// logutil.BgLogger().Info("[ddl] resume user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
+			logutil.BgLogger().Info("[ddl] resume user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 			return false, err
 		}
-		logutil.BgLogger().Info("[ddl] xxx ******************** resume user DDL by system", zap.Stringer("job", job), zap.Error(err))
-		// logutil.BgLogger().Info("[ddl] resume user DDL by system successful", zap.Stringer("job", job))
+		logutil.BgLogger().Info("[ddl] resume user DDL by system successful", zap.Stringer("job", job))
 		return false, nil
 	}
 	if job.IsPausing() {
-		logutil.BgLogger().Info("[ddl] xxx zzz ******************** ----------------------------------------------upgrading, pausing",
-			zap.Int64("id", job.ID), zap.String("query", job.Query))
 		return true, nil
 	}
 	if hasSysDB(job) {
-		logutil.BgLogger().Info("[ddl] xxx ******************** ----------------------------------------------upgrading, sys", zap.Int64("id", job.ID), zap.String("query", job.Query))
 		return false, nil
 	}
 	_, err := PauseJobsBySystem(se.Session(), []int64{job.ID})
-	// logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job), zap.Error(err))
-	logutil.BgLogger().Info("[ddl] xxx zzz ******************** pause user DDL by system", zap.Stringer("job", job), zap.Error(err))
+	logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job), zap.Error(err))
 	return true, err
 }
 
@@ -250,7 +242,9 @@ func (d *ddl) startDispatchLoop() {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
-		d.needCheckClusterState(isFirst || d.once.Load())
+		if err := d.needCheckClusterState(isFirst || d.once.Load()); err != nil {
+			continue
+		}
 		if !d.isOwner() {
 			d.once.Store(true)
 			time.Sleep(dispatchLoopWaitingDuration)
@@ -267,7 +261,9 @@ func (d *ddl) startDispatchLoop() {
 				continue
 			}
 		case _, ok := <-d.stateSyncer.WatchChan():
-			d.doCheckClusterState(!ok)
+			if err := d.doCheckClusterState(!ok); err != nil {
+				continue
+			}
 		case <-d.ctx.Done():
 			return
 		}
@@ -280,11 +276,10 @@ func (d *ddl) startDispatchLoop() {
 func (d *ddl) needCheckClusterState(mustCheck bool) error {
 	select {
 	case _, ok := <-d.stateSyncer.WatchChan():
-		logutil.BgLogger().Info("[ddl] xxx ******************** ---------------------------------------------, watch chan 000", zap.Bool("new rewatch", ok))
-		d.doCheckClusterState(!ok)
+		return d.doCheckClusterState(!ok)
 	default:
 		if mustCheck {
-			d.doCheckClusterState(false)
+			return d.doCheckClusterState(false)
 		}
 	}
 	return nil
