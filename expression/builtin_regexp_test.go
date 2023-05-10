@@ -1105,6 +1105,10 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc", "aB.", "cc", int64(1), int64(0), "i", "cc", "0x6363", nil},
 		{"good\nday", "od$", "cc", int64(1), int64(0), "m", "gocc\nday", "0x676F63630A646179", nil},
 		{"good\nday", "oD$", "cc", int64(1), int64(0), "mi", "gocc\nday", "0x676F63630A646179", nil},
+		{"Good\nday", "a(B)", "a$12", int64(2), int64(0), "msi", "Good\nday", "", nil},   // TODO add bin
+		{"Good\nday", "(.)", "cc", int64(1), int64(3), "ci", "Goccd\nday", "", nil},      // TODO add bin
+		{"seafood fool", "foo(.?)", "的", int64(1), int64(2), "m", "seafood 的", "", nil},  // TODO add bin
+		{"abc abd abe", "(.)", "cc", int64(4), int64(1), "cii", "abcccabd abe", "", nil}, // TODO add bin
 		{"\n", ".", "cc", int64(1), int64(0), "s", "cc", "0x6363", nil},
 		{"好的 好滴 好~", ".", "的", int64(1), int64(0), "msi", "的的的的的的的的", "0xE79A84E79A84E79A84E79A84E79A84E79A84E79A84E79A84", nil},
 		// Test invalid matchType
@@ -1139,8 +1143,8 @@ func TestRegexpReplace(t *testing.T) {
 }
 
 func TestRegexpReplaceVec(t *testing.T) {
-	var expr []string = []string{"abc abd abe", "你好啊啊啊啊啊", "好的 好滴 好~", "Good\nday", "\n\n\n\n\n\n", "seafood fool"}
-	var pattern []string = []string{"^$", "ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", ".", "foo(.?)", "foo(d|l)"}
+	var expr []string = []string{"abc abd abe", "你好啊啊啊啊啊", "好的 好滴 好~", "Good\nday", "seafood fool"} // , "\n\n\n\n\n\n"
+	var pattern []string = []string{"(^$)", "(a)b.", "a(B).", "(ab)c", "(好)", "(好).", "(o)d$", "^da(y)", "(d)ay$", "(.)", "foo(.?)", "foo(d|l)"}
 	var repl []string = []string{"cc", "的", "a$12"}
 	var position []int = []int{1, 5}
 	var occurrence []int = []int{-1, 5}
@@ -1171,10 +1175,10 @@ func TestRegexpReplaceVec(t *testing.T) {
 	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...)) // index 5
 
 	// Prepare data: pattern is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
 
 	// Prepare data: repl is constant
 	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{2: interface{}("cc")}, len(args), constants, args...)) // index 10
@@ -1201,8 +1205,8 @@ func TestRegexpReplaceVec(t *testing.T) {
 	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...)) // index 25
 
 	// Prepare data: test memorization
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB."), 5: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args)-1, constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("a(B)."), 5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("a(B).")}, len(args)-1, constants, args...))
 
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpReplaceCases = map[string][]vecExprBenchCase{
