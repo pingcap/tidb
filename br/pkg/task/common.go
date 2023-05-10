@@ -78,10 +78,10 @@ const (
 	flagSkipCheckPath     = "skip-check-path"
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
-	flagSkipAWS             = "skip-aws"
-	flagCloudAPIConcurrency = "cloud-api-concurrency"
-	flagWithSysTable        = "with-sys-table"
-    flagOperatorPausedGCAndSchedulers = "operator-paused-gc-and-scheduler"
+	flagSkipAWS                       = "skip-aws"
+	flagCloudAPIConcurrency           = "cloud-api-concurrency"
+	flagWithSysTable                  = "with-sys-table"
+	flagOperatorPausedGCAndSchedulers = "operator-paused-gc-and-scheduler"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
