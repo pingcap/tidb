@@ -1020,7 +1020,7 @@ func (n *ColumnDef) Validate() error {
 		}
 	}
 	if generatedCol && illegalOpt4gc != "" {
-		return ErrWrongUsage.GenWithStackByArgs(illegalOpt4gc , "generated column")
+		return ErrWrongUsage.GenWithStackByArgs(illegalOpt4gc, "generated column")
 	}
 	return nil
 }
@@ -3694,7 +3694,7 @@ var (
 	ErrWrongPartitionTypeExpectedSystemTime = terror.ClassDDL.NewStd(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 	ErrUnknownCharacterSet                  = terror.ClassDDL.NewStd(mysql.ErrUnknownCharacterSet)
 	ErrCoalescePartitionNoPartition         = terror.ClassDDL.NewStd(mysql.ErrCoalescePartitionNoPartition)
-	ErrWrongUsage                                   = terror.ClassDDL.NewStd(mysql.ErrWrongUsage)
+	ErrWrongUsage                           = terror.ClassDDL.NewStd(mysql.ErrWrongUsage)
 )
 
 type SubPartitionDefinition struct {
