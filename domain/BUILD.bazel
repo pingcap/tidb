@@ -42,7 +42,6 @@ go_library(
         "//meta",
         "//metrics",
         "//owner",
-        "//parser",
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
