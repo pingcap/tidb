@@ -879,14 +879,12 @@ func TestIndexMergePanicPartialIndexWorker(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	setupPartitionTableHelper(tk)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicPartialIndexWorker"
 	for i := 0; i < 1000; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
 }
 
 func TestIndexMergePanicPartialTableWorker(t *testing.T) {
@@ -894,14 +892,12 @@ func TestIndexMergePanicPartialTableWorker(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	setupPartitionTableHelper(tk)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicPartialTableWorker"
 	for i := 0; i < 1000; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
 }
 
 func TestIndexMergePanicPartialProcessWorkerUnion(t *testing.T) {
@@ -909,14 +905,12 @@ func TestIndexMergePanicPartialProcessWorkerUnion(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	setupPartitionTableHelper(tk)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicProcessWorkerUnion"
 	for i := 0; i < 1000; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
 }
 
 func TestIndexMergePanicPartialProcessWorkerIntersection(t *testing.T) {
@@ -924,14 +918,12 @@ func TestIndexMergePanicPartialProcessWorkerIntersection(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	setupPartitionTableHelper(tk)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicProcessWorkerIntersection"
 	for i := 0; i < 1000; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
 }
 
 func TestIndexMergePanicPartitionTableIntersectionWorker(t *testing.T) {
@@ -939,14 +931,12 @@ func TestIndexMergePanicPartitionTableIntersectionWorker(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	setupPartitionTableHelper(tk)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
 	fp := "github.com/pingcap/tidb/executor/testIndexMergePanicPartitionTableIntersectionWorker"
 	for i := 0; i < 1000; i++ {
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
 		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
 }
 
 func TestIndexMergePanicTableScanWorker(t *testing.T) {
@@ -981,56 +971,6 @@ func TestIndexMergeError(t *testing.T) {
 		require.NoError(t, failpoint.Disable(fp))
 	}
 }
-
-// func TestIndexMergePanic(t *testing.T) {
-// 	store := testkit.CreateMockStore(t)
-// 	tk := testkit.NewTestKit(t, store)
-// 
-// 	setupPartitionTableHelper(tk)
-// 
-// 
-// 	packagePath := "github.com/pingcap/tidb/executor/"
-// 	panicFPPaths := []string{
-// 		packagePath + "testIndexMergePanicPartialIndexWorker",
-// 		packagePath + "testIndexMergePanicPartialTableWorker",
-// 
-// 		packagePath + "testIndexMergePanicProcessWorkerUnion",
-// 		packagePath + "testIndexMergePanicProcessWorkerIntersection",
-// 		packagePath + "testIndexMergePanicPartitionTableIntersectionWorker",
-// 
-// 		packagePath + "testIndexMergePanicTableScanWorker",
-// 	}
-// 	for _, fp := range panicFPPaths {
-// 		fmt.Println("handling failpoint: ", fp)
-// 		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
-// 			// When mockSleepBeforeStartTableReader is enabled, will not read real data. This is to avoid leaking goroutines in coprocessor.
-// 			// But should disable mockSleepBeforeStartTableReader for testIndexMergePanicTableScanWorker.
-// 			// Because finalTableScanWorker need task.doneCh to pass error, so need partialIndexWorker/partialTableWorker runs normally.
-// 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
-// 		}
-// 		for i := 0; i < 1000; i++ {
-// 			require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-// 			runSQL(fp)
-// 			require.NoError(t, failpoint.Disable(fp))
-// 		}
-// 		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
-// 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
-// 		}
-// 	}
-// 
-// 	errFPPaths := []string{
-// 		packagePath + "testIndexMergeErrorPartialIndexWorker",
-// 		packagePath + "testIndexMergeErrorPartialTableWorker",
-// 	}
-// 	for _, fp := range errFPPaths {
-// 		fmt.Println("handling failpoint: ", fp)
-// 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`return("%s")`, fp)))
-// 		for i := 0; i < 100; i++ {
-// 			runSQL(fp)
-// 		}
-// 		require.NoError(t, failpoint.Disable(fp))
-// 	}
-// }
 
 func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
 	store := testkit.CreateMockStore(t)
