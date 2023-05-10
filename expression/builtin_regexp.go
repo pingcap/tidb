@@ -1086,6 +1086,7 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 
 const maxSubExprNum int = 10
 
+// Instruction contains content that used to replace the origin string
 type Instruction struct {
 	// If not negative, perform substitution of n-th subpattern from the regexp match.
 	SubstitutionNum int
@@ -1133,7 +1134,7 @@ func (re *builtinRegexpReplaceFuncSig) processEmptyStr(reg *regexp.Regexp, instr
 				}
 				replacedBStr = append(replacedBStr, capturedStr...)
 			} else {
-				replacedBStr = append(replacedBStr, []byte(instruction.Literal)...)
+				replacedBStr = append(replacedBStr, instruction.Literal...)
 			}
 		}
 		return replacedBStr, nil
@@ -1144,7 +1145,7 @@ func (re *builtinRegexpReplaceFuncSig) processEmptyStr(reg *regexp.Regexp, instr
 func (re *builtinRegexpReplaceFuncSig) replaceAllMatchedBinStr(reg *regexp.Regexp, bexpr []byte, trimmedBexpr []byte, instructions []Instruction, pos int64) ([]byte, error) {
 	replacedBStr := make([]byte, 0)
 	for {
-		res := reg.FindSubmatchIndex([]byte(trimmedBexpr))
+		res := reg.FindSubmatchIndex(trimmedBexpr)
 		if len(res) == 0 {
 			break
 		}
@@ -1160,7 +1161,7 @@ func (re *builtinRegexpReplaceFuncSig) replaceAllMatchedBinStr(reg *regexp.Regex
 				}
 				replacedBStr = append(replacedBStr, capturedStr...)
 			} else {
-				replacedBStr = append(replacedBStr, []byte(instruction.Literal)...)
+				replacedBStr = append(replacedBStr, instruction.Literal...)
 			}
 		}
 
@@ -1177,7 +1178,7 @@ func (re *builtinRegexpReplaceFuncSig) replaceAllMatchedBinStr(reg *regexp.Regex
 func (re *builtinRegexpReplaceFuncSig) replaceOneMatchedBinStr(reg *regexp.Regexp, bexpr []byte, trimmedBexpr []byte, instructions []Instruction, pos int64, occurrence int64) ([]byte, error) {
 	replacedBStr := make([]byte, 0)
 	for {
-		res := reg.FindSubmatchIndex([]byte(trimmedBexpr))
+		res := reg.FindSubmatchIndex(trimmedBexpr)
 		if len(res) == 0 {
 			replacedBStr = append(replacedBStr, trimmedBexpr...) // Copy suffix
 			break
@@ -1199,7 +1200,7 @@ func (re *builtinRegexpReplaceFuncSig) replaceOneMatchedBinStr(reg *regexp.Regex
 					}
 					replacedBStr = append(replacedBStr, capturedStr...)
 				} else {
-					replacedBStr = append(replacedBStr, []byte(instruction.Literal)...)
+					replacedBStr = append(replacedBStr, instruction.Literal...)
 				}
 			}
 			trimmedBexpr = trimmedBexpr[res[1]:]
@@ -1242,13 +1243,13 @@ func (re *builtinRegexpReplaceFuncSig) getReplacedBinStr(reg *regexp.Regexp, bex
 			return "", false, err
 		}
 		return fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(replacedStr))), false, nil
-	} else {
-		replacedStr, err := re.replaceOneMatchedBinStr(reg, bexpr, trimmedBexpr, instructions, pos, occurrence)
-		if err != nil {
-			return "", false, err
-		}
-		return fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(replacedStr))), false, nil
 	}
+
+	replacedStr, err := re.replaceOneMatchedBinStr(reg, bexpr, trimmedBexpr, instructions, pos, occurrence)
+	if err != nil {
+		return "", false, err
+	}
+	return fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(replacedStr))), false, nil
 }
 
 func (re *builtinRegexpReplaceFuncSig) getReplacedStr(reg *regexp.Regexp, expr string, trimmedExpr string, instructions []Instruction, trimmedLen int64, occurrence int64) (string, bool, error) {
@@ -1262,9 +1263,9 @@ func (re *builtinRegexpReplaceFuncSig) getReplacedStr(reg *regexp.Regexp, expr s
 
 	if occurrence == 0 {
 		return re.replaceAllMatchedStr(reg, expr, trimmedExpr, instructions, trimmedLen)
-	} else {
-		return re.replaceOneMatchedStr(reg, expr, trimmedExpr, instructions, trimmedLen, occurrence)
 	}
+
+	return re.replaceOneMatchedStr(reg, expr, trimmedExpr, instructions, trimmedLen, occurrence)
 }
 
 func getInstructions(repl []byte) ([]Instruction, error) {
@@ -1422,7 +1423,6 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 	return re.getReplacedStr(re.memorizedRegexp, expr, trimmedExpr, instructions, trimmedLen+1, occurrence)
 }
 
-// TODO replace with instructions
 // REGEXP_REPLACE(expr, pat, repl[, pos[, occurrence[, match_type]]])
 func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
