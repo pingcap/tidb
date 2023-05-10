@@ -363,10 +363,9 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			require.NoError(t, err)
 			cmt := fmt.Sprintf("job: %s", runJob.String())
 			if !tidb_util.IsSysDB(runJob.SchemaName) {
-				// TODO: Replace it with IsPausedBySystem after support set JobStatePaused.
-				require.True(t, runJob.IsPausing(), cmt)
+				require.True(t, runJob.IsPausedBySystem(), cmt)
 			} else {
-				require.False(t, !runJob.IsPausing(), cmt)
+				require.False(t, !runJob.IsPausedBySystem(), cmt)
 			}
 		}
 	}
@@ -381,10 +380,9 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			require.NoError(t, err)
 			cmt := fmt.Sprintf("job: %s", runJob.String())
 			if !tidb_util.IsSysDB(runJob.SchemaName) {
-				// TODO: Replace it with IsPausedBySystem after support set JobStatePaused.
-				require.True(t, runJob.IsPausing(), cmt)
+				require.True(t, runJob.IsPausedBySystem(), cmt)
 			} else {
-				require.False(t, !runJob.IsPausing(), cmt)
+				require.False(t, !runJob.IsPausedBySystem(), cmt)
 			}
 		}
 	}

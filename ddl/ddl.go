@@ -548,12 +548,12 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	}
 }
 
-func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
+func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
 		return
 	}
-	rc.notifyReorgCancel()
+	rc.notifyJobState(job.State)
 }
 
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
@@ -1479,8 +1479,7 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 // resumePausedJob check and resume the Paused Job
 func resumePausedJob(se *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
-	// TODO: Remove job.IsPausing() after merging https://github.com/pingcap/tidb/pull/43297.
-	if !(job.IsResumable() || job.IsPausing()) ||
+	if !job.IsResumable() ||
 		// The Paused job should only be resumed by who paused it
 		job.AdminOperator != byWho {
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID)

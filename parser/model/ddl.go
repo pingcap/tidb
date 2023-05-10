@@ -749,8 +749,7 @@ func (job *Job) IsPaused() bool {
 
 // IsPausedBySystem returns whether the job is paused by system.
 func (job *Job) IsPausedBySystem() bool {
-	// TODO: Replace JobStatePausing with JobStatePaused after merging https://github.com/pingcap/tidb/pull/43297..
-	return job.State == JobStatePausing && job.AdminOperator == AdminCommandBySystem
+	return job.State == JobStatePaused && job.AdminOperator == AdminCommandBySystem
 }
 
 // IsPausing indicates whether the job is pausing.

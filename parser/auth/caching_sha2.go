@@ -169,7 +169,7 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 	// 22
 	buf := bytes.NewBuffer(make([]byte, 0, 100))
 	buf.Write([]byte{'$', 'A', '$'})
-	rounds := fmt.Sprintf("%03d", iterations/ITERATION_MULTIPLIER)
+	rounds := fmt.Sprintf("%03X", iterations/ITERATION_MULTIPLIER)
 	buf.WriteString(rounds)
 	buf.Write([]byte{'$'})
 	buf.Write(salt)
@@ -201,7 +201,7 @@ func CheckHashingPassword(pwhash []byte, password string, hash string) (bool, er
 		return false, errors.New("digest type is incompatible")
 	}
 
-	iterations, err := strconv.Atoi(string(pwhashParts[2]))
+	iterations, err := strconv.ParseInt(string(pwhashParts[2]), 16, 64)
 	if err != nil {
 		return false, errors.New("failed to decode iterations")
 	}
@@ -211,9 +211,9 @@ func CheckHashingPassword(pwhash []byte, password string, hash string) (bool, er
 	var newHash string
 	switch hash {
 	case mysql.AuthCachingSha2Password:
-		newHash = hashCrypt(password, salt, iterations, Sha256Hash)
+		newHash = hashCrypt(password, salt, int(iterations), Sha256Hash)
 	case mysql.AuthTiDBSM3Password:
-		newHash = hashCrypt(password, salt, iterations, Sm3Hash)
+		newHash = hashCrypt(password, salt, int(iterations), Sm3Hash)
 	}
 
 	return bytes.Equal(pwhash, []byte(newHash)), nil
