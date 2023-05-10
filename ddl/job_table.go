@@ -238,14 +238,17 @@ func (d *ddl) startDispatchLoop() {
 	}
 	defer ticker.Stop()
 	isFirst := true
+	isOnce := false
 	for {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
-		if err := d.needCheckClusterState(isFirst || d.once.Load()); err != nil {
+		if err := d.needCheckClusterState(isFirst || isOnce); err != nil {
 			continue
 		}
+		isFirst = false
 		if !d.isOwner() {
+			isOnce = true
 			d.once.Store(true)
 			time.Sleep(dispatchLoopWaitingDuration)
 			continue
@@ -267,9 +270,9 @@ func (d *ddl) startDispatchLoop() {
 		case <-d.ctx.Done():
 			return
 		}
+		isOnce = false
 		d.loadDDLJobAndRun(se, d.generalDDLWorkerPool, d.getGeneralJob)
 		d.loadDDLJobAndRun(se, d.reorgWorkerPool, d.getReorgJob)
-		isFirst = false
 	}
 }
 
@@ -297,7 +300,7 @@ func (d *ddl) doCheckClusterState(needRewatch bool) error {
 		logutil.BgLogger().Warn("[ddl] get global state failed", zap.Error(err))
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("[ddl] get global state, and global state change",
+	logutil.BgLogger().Info("[ddl] get global state and global state change",
 		zap.Bool("oldState", oldState), zap.Bool("currState", d.stateSyncer.IsUpgradingState()))
 	if !d.isOwner() {
 		return nil
