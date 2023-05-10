@@ -300,9 +300,10 @@ type compressedWriter struct {
 }
 
 func (cw *compressedWriter) Write(data []byte) (n int, err error) {
-	// MySQL seems to start with 16384 and larger packets after that.
-	// Must fit in the 3 byte field in the header.
-	maxCompressedSize := 1048576 // 1024*1024
+	// MySQL starts with `net_buffer_length` (default 16384) and larger packets after that.
+	// The length itself must fit in the 3 byte field in the header.
+	// Can't be bigger then the max value for `net_buffer_length` (1048576)
+	maxCompressedSize := 1048576 // 1 MiB
 
 	for {
 		remainingLen := maxCompressedSize - cw.buf.Len()
