@@ -373,9 +373,21 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
-	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
+	prevSubtasks, err := d.taskMgr.GetSucceedSubtasksByStep(gTask.ID, gTask.Step)
+	if err != nil {
+		logutil.BgLogger().Warn("get previous succeed subtasks failed", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type), zap.Error(err))
+		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
+	}
+	prevSubtaskMetas := make([][]byte, 0, len(prevSubtasks))
+	for _, subtask := range prevSubtasks {
+		prevSubtaskMetas = append(prevSubtaskMetas, subtask.Meta)
+	}
+	metas, retryable, err := handle.ProcessNormalFlow(d.ctx, d, gTask, prevSubtaskMetas)
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
+		if !retryable {
+			return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
+		}
 		return err
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),

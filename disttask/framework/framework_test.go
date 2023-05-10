@@ -31,19 +31,24 @@ import (
 type testFlowHandle struct {
 }
 
-func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ [][]byte) (metas [][]byte, retryable bool, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepOne
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
-		}, nil
+		}, false, nil
 	}
-	return nil, nil
+	return nil, false, nil
 }
 
 func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	return nil, nil
+}
+
+// ProcessFinishFlow processes the finish flow.
+func (*testFlowHandle) ProcessFinishFlow(context.Context, dispatcher.TaskHandle, *proto.Task, [][]byte) (err error) {
+	return nil
 }
 
 type testMiniTask struct{}
@@ -66,8 +71,8 @@ func (t *testScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto
 	}, nil
 }
 
-func (t *testScheduler) OnSubtaskFinished(_ context.Context, _ []byte) error {
-	return nil
+func (t *testScheduler) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+	return meta, nil
 }
 
 type testSubtaskExecutor struct {

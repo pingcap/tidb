@@ -109,7 +109,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID:      gTaskID,
 		SchedulerID: uuids[1],
 	}
-	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
@@ -121,7 +121,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID:      gTaskID,
 		SchedulerID: uuids[0],
 	}
-	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
@@ -293,7 +293,7 @@ const taskTypeExample = "task_example"
 type NumberExampleHandle struct {
 }
 
-func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ [][]byte) (metas [][]byte, retryable bool, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepInit
 	}
@@ -306,14 +306,19 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 		logutil.BgLogger().Info("progress step init")
 	case proto.StepOne:
 		logutil.BgLogger().Info("progress step one")
-		return nil, nil
+		return nil, false, nil
 	default:
-		return nil, errors.New("unknown step")
+		return nil, false, errors.New("unknown step")
 	}
-	return metas, nil
+	return metas, false, nil
 }
 
 func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
+}
+
+// ProcessFinishFlow processes the finish flow.
+func (n NumberExampleHandle) ProcessFinishFlow(context.Context, dispatcher.TaskHandle, *proto.Task, [][]byte) (err error) {
+	return nil
 }
