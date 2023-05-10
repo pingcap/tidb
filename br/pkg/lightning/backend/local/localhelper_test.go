@@ -28,11 +28,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
@@ -457,10 +455,10 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 
 	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	client := initTestSplitClient(keys, hook)
-	local := &local{
-		splitCli: client,
-		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
-		logger:   log.L(),
+	local := &Backend{
+		splitCli:         client,
+		regionSizeGetter: &TableRegionSizeGetterImpl{},
+		logger:           log.L(),
 	}
 
 	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
@@ -556,6 +554,11 @@ func (h *scanRegionEmptyHook) AfterScanRegions(res []*split.RegionInfo, err erro
 }
 
 func TestBatchSplitRegionByRangesScanFailed(t *testing.T) {
+	backup := split.ScanRegionAttemptTimes
+	split.ScanRegionAttemptTimes = 3
+	defer func() {
+		split.ScanRegionAttemptTimes = backup
+	}()
 	doTestBatchSplitRegionByRanges(context.Background(), t, &scanRegionEmptyHook{}, "scan region return empty result", defaultHook{})
 }
 
@@ -626,10 +629,10 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
 	client := initTestSplitClient(keys, nil)
-	local := &local{
-		splitCli: client,
-		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
-		logger:   log.L(),
+	local := &Backend{
+		splitCli:         client,
+		regionSizeGetter: &TableRegionSizeGetterImpl{},
+		logger:           log.L(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -713,10 +716,10 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	}
 	keys = append(keys, tableEndKey, []byte(""))
 	client := initTestSplitClient(keys, hook)
-	local := &local{
-		splitCli: client,
-		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
-		logger:   log.L(),
+	local := &Backend{
+		splitCli:         client,
+		regionSizeGetter: &TableRegionSizeGetterImpl{},
+		logger:           log.L(),
 	}
 	ctx := context.Background()
 

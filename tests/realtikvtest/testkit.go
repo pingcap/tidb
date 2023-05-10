@@ -41,8 +41,17 @@ import (
 	"go.uber.org/goleak"
 )
 
-// WithRealTiKV is a flag identify whether tests run with real TiKV
-var WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
+var (
+	// WithRealTiKV is a flag identify whether tests run with real TiKV
+	WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
+
+	// TiKVPath is the path of the TiKV Storage.
+	TiKVPath = flag.String("tikv-path", "tikv://127.0.0.1:2379?disableGC=true", "TiKV addr")
+
+	// KeyspaceName is an option to specify the name of keyspace that the tests run on,
+	// this option is only valid while the flag WithRealTiKV is set.
+	KeyspaceName = flag.String("keyspace-name", "", "the name of keyspace that the tests run on")
+)
 
 // RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
@@ -98,8 +107,9 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
+			conf.KeyspaceName = *KeyspaceName
 		})
-		store, err = d.Open("tikv://127.0.0.1:2379?disableGC=true")
+		store, err = d.Open(*TiKVPath)
 		require.NoError(t, err)
 
 		dom, err = session.BootstrapSession(store)

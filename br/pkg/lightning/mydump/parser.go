@@ -30,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -87,17 +89,25 @@ func makeBlockParser(
 type ChunkParser struct {
 	blockParser
 
-	escFlavor backslashEscapeFlavor
+	escFlavor escapeFlavor
 }
 
 // Chunk represents a portion of the data file.
 type Chunk struct {
-	Offset       int64
-	EndOffset    int64
-	RealOffset   int64
+	Offset int64
+	// for parquet file, it's the total row count
+	// see makeParquetFileRegion
+	EndOffset  int64
+	RealOffset int64
+	// we estimate row-id range of the chunk using file-size divided by some factor(depends on column count)
+	// after estimation, we will rebase them for all chunks of this table in this instance,
+	// then it's rebased again based on all instances of parallel import.
+	// allocatable row-id is in range [PrevRowIDMax, RowIDMax).
+	// PrevRowIDMax will be increased during local encoding
 	PrevRowIDMax int64
 	RowIDMax     int64
-	Columns      []string
+	// only assigned when using strict-mode for CSV files and the file contains header
+	Columns []string
 }
 
 // Row is the content of a row.
@@ -115,19 +125,25 @@ func (row Row) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 	return nil
 }
 
-type backslashEscapeFlavor uint8
+type escapeFlavor uint8
 
 const (
-	backslashEscapeFlavorNone backslashEscapeFlavor = iota
-	backslashEscapeFlavorMySQL
-	backslashEscapeFlavorMySQLWithNull
+	escapeFlavorNone escapeFlavor = iota
+	escapeFlavorMySQL
+	escapeFlavorMySQLWithNull
 )
 
 // Parser provides some methods to parse a source data file.
 type Parser interface {
+	// Pos returns means the position that parser have already handled. It's mainly used for checkpoint.
+	// For normal files it's the file offset we handled.
+	// For parquet files it's the row count we handled.
+	// For compressed files it's the uncompressed file offset we handled.
+	// TODO: replace pos with a new structure to specify position offset and rows offset
 	Pos() (pos int64, rowID int64)
 	SetPos(pos int64, rowID int64) error
-	RealPos() (int64, error)
+	// ScannedPos always returns the current file reader pointer's location
+	ScannedPos() (int64, error)
 	Close() error
 	ReadRow() error
 	LastRow() Row
@@ -152,9 +168,9 @@ func NewChunkParser(
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 ) *ChunkParser {
-	escFlavor := backslashEscapeFlavorMySQL
+	escFlavor := escapeFlavorMySQL
 	if sqlMode.HasNoBackslashEscapesMode() {
-		escFlavor = backslashEscapeFlavorNone
+		escFlavor = escapeFlavorNone
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &ChunkParser{
@@ -177,8 +193,8 @@ func (parser *blockParser) SetPos(pos int64, rowID int64) error {
 	return nil
 }
 
-// RealPos gets the read position of current reader.
-func (parser *blockParser) RealPos() (int64, error) {
+// ScannedPos gets the read position of current reader.
+func (parser *blockParser) ScannedPos() (int64, error) {
 	return parser.reader.Seek(0, io.SeekCurrent)
 }
 
@@ -285,7 +301,13 @@ func (parser *blockParser) readBlock() error {
 		parser.remainBuf.Write(parser.buf)
 		parser.appendBuf.Reset()
 		parser.appendBuf.Write(parser.remainBuf.Bytes())
-		parser.appendBuf.Write(parser.blockBuf[:n])
+		blockData := parser.blockBuf[:n]
+		if parser.pos == 0 {
+			bomCleanedData := bom.Clean(blockData)
+			parser.pos += int64(n - len(bomCleanedData))
+			blockData = bomCleanedData
+		}
+		parser.appendBuf.Write(blockData)
 		parser.buf = parser.appendBuf.Bytes()
 		if parser.metrics != nil {
 			parser.metrics.ChunkParserReadBlockSecondsHistogram.Observe(time.Since(startTime).Seconds())
@@ -296,12 +318,14 @@ func (parser *blockParser) readBlock() error {
 	}
 }
 
-var unescapeRegexp = regexp.MustCompile(`(?s)\\.`)
+var chunkParserUnescapeRegexp = regexp.MustCompile(`(?s)\\.`)
 
 func unescape(
 	input string,
 	delim string,
-	escFlavor backslashEscapeFlavor,
+	escFlavor escapeFlavor,
+	escChar byte,
+	unescapeRegexp *regexp.Regexp,
 ) string {
 	if len(delim) > 0 {
 		delim2 := delim + delim
@@ -309,7 +333,7 @@ func unescape(
 			input = strings.ReplaceAll(input, delim2, delim)
 		}
 	}
-	if escFlavor != backslashEscapeFlavorNone && strings.IndexByte(input, '\\') != -1 {
+	if escFlavor != escapeFlavorNone && strings.IndexByte(input, escChar) != -1 {
 		input = unescapeRegexp.ReplaceAllStringFunc(input, func(substr string) string {
 			switch substr[1] {
 			case '0':
@@ -336,9 +360,9 @@ func (parser *ChunkParser) unescapeString(input string) string {
 	if len(input) >= 2 {
 		switch input[0] {
 		case '\'', '"':
-			return unescape(input[1:len(input)-1], input[:1], parser.escFlavor)
+			return unescape(input[1:len(input)-1], input[:1], parser.escFlavor, '\\', chunkParserUnescapeRegexp)
 		case '`':
-			return unescape(input[1:len(input)-1], "`", backslashEscapeFlavorNone)
+			return unescape(input[1:len(input)-1], "`", escapeFlavorNone, '\\', chunkParserUnescapeRegexp)
 		}
 	}
 	return input
@@ -625,4 +649,25 @@ func ReadUntil(parser Parser, pos int64) error {
 		}
 	}
 	return nil
+}
+
+// OpenReader opens a reader for the given file and storage.
+func OpenReader(
+	ctx context.Context,
+	fileMeta *SourceFileMeta,
+	store storage.ExternalStorage,
+) (reader storage.ReadSeekCloser, err error) {
+	switch {
+	case fileMeta.Type == SourceTypeParquet:
+		reader, err = OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
+	case fileMeta.Compression != CompressionNone:
+		compressType, err2 := ToStorageCompressType(fileMeta.Compression)
+		if err2 != nil {
+			return nil, err2
+		}
+		reader, err = storage.WithCompression(store, compressType).Open(ctx, fileMeta.Path)
+	default:
+		reader, err = store.Open(ctx, fileMeta.Path)
+	}
+	return
 }

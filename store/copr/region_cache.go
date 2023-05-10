@@ -16,7 +16,9 @@ package copr
 
 import (
 	"bytes"
+	"math"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -42,10 +44,10 @@ func NewRegionCache(rc *tikv.RegionCache) *RegionCache {
 }
 
 // SplitRegionRanges gets the split ranges from pd region.
-func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange) ([]kv.KeyRange, error) {
+func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange, limit int) ([]kv.KeyRange, error) {
 	ranges := NewKeyRanges(keyRanges)
 
-	locations, err := c.SplitKeyRangesByLocations(bo, ranges)
+	locations, err := c.SplitKeyRangesByLocations(bo, ranges, limit)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
@@ -122,10 +124,16 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 	return res
 }
 
+// UnspecifiedLimit means no limit.
+const UnspecifiedLimit = -1
+
 // SplitKeyRangesByLocations splits the KeyRanges by logical info in the cache.
-func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
+func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges, limit int) ([]*LocationKeyRanges, error) {
 	res := make([]*LocationKeyRanges, 0)
 	for ranges.Len() > 0 {
+		if limit != UnspecifiedLimit && len(res) >= limit {
+			break
+		}
 		loc, err := c.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
 		if err != nil {
 			return res, derr.ToTiDBErr(err)
@@ -176,7 +184,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 //
 // TODO(youjiali1995): Try to do it in one round and reduce allocations if bucket is not enabled.
 func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
-	locs, err := c.SplitKeyRangesByLocations(bo, ranges)
+	locs, err := c.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
@@ -204,11 +212,54 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store
 }
 
 // BuildBatchTask fetches store and peer info for cop task, wrap it as `batchedCopTask`.
-func (c *RegionCache) BuildBatchTask(bo *Backoffer, task *copTask, replicaRead kv.ReplicaReadType) (*batchedCopTask, error) {
-	rpcContext, err := c.GetTiKVRPCContext(bo.TiKVBackoffer(), task.region, options.GetTiKVReplicaReadType(replicaRead), 0)
-	if err != nil {
-		return nil, err
+func (c *RegionCache) BuildBatchTask(bo *Backoffer, req *kv.Request, task *copTask, replicaRead kv.ReplicaReadType) (*batchedCopTask, error) {
+	var (
+		rpcContext *tikv.RPCContext
+		err        error
+	)
+	if replicaRead == kv.ReplicaReadFollower {
+		followerStoreSeed := uint32(0)
+		leastEstWaitTime := time.Duration(math.MaxInt64)
+		var (
+			firstFollowerPeer *uint64
+			followerContext   *tikv.RPCContext
+		)
+		for {
+			followerContext, err = c.GetTiKVRPCContext(bo.TiKVBackoffer(), task.region, options.GetTiKVReplicaReadType(replicaRead), followerStoreSeed)
+			if err != nil {
+				return nil, err
+			}
+			if firstFollowerPeer == nil {
+				firstFollowerPeer = &rpcContext.Peer.Id
+			} else if *firstFollowerPeer == rpcContext.Peer.Id {
+				break
+			}
+			estWaitTime := followerContext.Store.EstimatedWaitTime()
+			// the wait time of this follower is under given threshold, choose it.
+			if estWaitTime > req.StoreBusyThreshold {
+				continue
+			}
+			if rpcContext == nil {
+				rpcContext = followerContext
+			} else if estWaitTime < leastEstWaitTime {
+				leastEstWaitTime = estWaitTime
+				rpcContext = followerContext
+			}
+			followerStoreSeed++
+		}
+		// all replicas are busy, fallback to leader.
+		if rpcContext == nil {
+			replicaRead = kv.ReplicaReadLeader
+		}
 	}
+
+	if replicaRead == kv.ReplicaReadLeader {
+		rpcContext, err = c.GetTiKVRPCContext(bo.TiKVBackoffer(), task.region, options.GetTiKVReplicaReadType(replicaRead), 0)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// fallback to non-batch path
 	if rpcContext == nil {
 		return nil, nil
@@ -223,7 +274,8 @@ func (c *RegionCache) BuildBatchTask(bo *Backoffer, task *copTask, replicaRead k
 			},
 			Ranges: task.ranges.ToPBRanges(),
 		},
-		storeID: rpcContext.Store.StoreID(),
-		peer:    rpcContext.Peer,
+		storeID:               rpcContext.Store.StoreID(),
+		peer:                  rpcContext.Peer,
+		loadBasedReplicaRetry: replicaRead != kv.ReplicaReadLeader,
 	}, nil
 }

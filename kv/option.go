@@ -15,6 +15,9 @@
 package kv
 
 import (
+	"context"
+
+	"github.com/pingcap/errors"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -94,7 +97,15 @@ const (
 	// ScanBatchSize set the iter scan batch size.
 	ScanBatchSize
 	// TxnSource set the source of this transaction.
+	// We use an uint64 to represent the source of a transaction.
+	// The first 8 bits are reserved for TiCDC to implement BDR synchronization,
+	// and the next 8 bits are reserved for Lossy DDL reorg Backfill job.
+	// The remaining 48 bits are reserved for extendability.
 	TxnSource
+	// ResourceGroupName set the bind resource group name.
+	ResourceGroupName
+	// LoadBasedReplicaReadThreshold sets the TiKV wait duration threshold of enabling replica read automatically.
+	LoadBasedReplicaReadThreshold
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -111,6 +122,10 @@ const (
 	ReplicaReadClosest
 	// ReplicaReadClosestAdaptive stands for 'read from follower which locates in the same zone if the response size exceeds certain threshold'
 	ReplicaReadClosestAdaptive
+	// ReplicaReadLearner stands for 'read from learner'.
+	ReplicaReadLearner
+	// ReplicaReadPreferLeader stands for 'read from leader and auto-turn to followers if leader is abnormal'.
+	ReplicaReadPreferLeader
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.
@@ -131,6 +146,15 @@ type RequestSource = util.RequestSource
 
 // WithInternalSourceType create context with internal source.
 var WithInternalSourceType = util.WithInternalSourceType
+
+// GetInternalSourceType get internal source
+func GetInternalSourceType(ctx context.Context) string {
+	v := ctx.Value(util.RequestSourceKey)
+	if v == nil {
+		return ""
+	}
+	return v.(util.RequestSource).RequestSourceType
+}
 
 const (
 	// InternalTxnOthers is the type of requests that consume low resources.
@@ -169,4 +193,64 @@ const (
 	InternalTxnTrace = "Trace"
 	// InternalTxnTTL is the type of TTL usage
 	InternalTxnTTL = "TTL"
+	// InternalLoadData is the type of LOAD DATA usage
+	InternalLoadData = "LoadData"
+	// InternalDistTask is the type of distributed task.
+	InternalDistTask = "DistTask"
 )
+
+// The bitmap:
+// |RESERVED|LOSSY_DDL_REORG_SOURCE_BITS|CDC_WRITE_SOURCE_BITS|
+// |  48    |             8             | 4(RESERVED) |  4    |
+const (
+	// TiCDC uses 1 - 255 to indicate the source of TiDB.
+	// For now, 1 - 15 are reserved for TiCDC to implement BDR synchronization.
+	// 16 - 255 are reserved for extendability.
+	cdcWriteSourceBits = 8
+	cdcWriteSourceMax  = (1 << cdcWriteSourceBits) - 1
+
+	// TiCDC uses 1-255 to indicate the change from a lossy DDL reorg Backfill job.
+	// For now, we only use 1 for column reorg backfill job.
+	lossyDDLReorgSourceBits   = 8
+	LossyDDLColumnReorgSource = 1
+	lossyDDLReorgSourceMax    = (1 << lossyDDLReorgSourceBits) - 1
+	lossyDDLReorgSourceShift  = cdcWriteSourceBits
+)
+
+// SetCDCWriteSource sets the TiCDC write source in the txnSource.
+func SetCDCWriteSource(txnSource *uint64, value uint64) error {
+	if value > cdcWriteSourceBits {
+		return errors.Errorf("value %d is out of TiCDC write source range, should be in [1, 15]",
+			value)
+	}
+	*txnSource |= value
+
+	return nil
+}
+
+func getCDCWriteSource(txnSource uint64) uint64 {
+	return txnSource & cdcWriteSourceMax
+}
+
+func isCDCWriteSourceSet(txnSource uint64) bool {
+	return (txnSource & cdcWriteSourceMax) != 0
+}
+
+// SetLossyDDLReorgSource sets the lossy DDL reorg source in the txnSource.
+func SetLossyDDLReorgSource(txnSource *uint64, value uint64) error {
+	if value > lossyDDLReorgSourceMax {
+		return errors.Errorf("value %d is out of lossy DDL reorg source range, should be in [1, %d]",
+			value, lossyDDLReorgSourceMax)
+	}
+	*txnSource |= value << lossyDDLReorgSourceShift
+
+	return nil
+}
+
+func getLossyDDLReorgSource(txnSource uint64) uint64 {
+	return (txnSource >> lossyDDLReorgSourceShift) & lossyDDLReorgSourceMax
+}
+
+func isLossyDDLReorgSourceSet(txnSource uint64) bool {
+	return (txnSource >> lossyDDLReorgSourceShift) != 0
+}

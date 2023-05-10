@@ -17,12 +17,17 @@ package unistore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
+	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -31,39 +36,67 @@ var _ pd.Client = new(pdClient)
 type pdClient struct {
 	*us.MockPD
 
-	serviceSafePoints map[string]uint64
-	gcSafePointMu     sync.Mutex
-	globalConfig      map[string]string
+	serviceSafePoints    map[string]uint64
+	gcSafePointMu        sync.Mutex
+	globalConfig         map[string]string
+	externalTimestamp    atomic.Uint64
+	resourceGroupManager *resourceGroupManager
+}
+
+type resourceGroupManager struct {
+	sync.RWMutex
+	groups map[string]*rmpb.ResourceGroup
+}
+
+func newResourceGroupManager() *resourceGroupManager {
+	mgr := &resourceGroupManager{
+		groups: make(map[string]*rmpb.ResourceGroup),
+	}
+	mgr.groups["default"] = &rmpb.ResourceGroup{
+		Name: "default",
+		Mode: rmpb.GroupMode_RUMode,
+		RUSettings: &rmpb.GroupRequestUnitSettings{
+			RU: &rmpb.TokenBucket{
+				Settings: &rmpb.TokenLimitSettings{
+					FillRate:   math.MaxInt32,
+					BurstLimit: -1,
+				},
+			},
+		},
+		Priority: 8,
+	}
+	return mgr
 }
 
 func newPDClient(pd *us.MockPD) *pdClient {
 	return &pdClient{
-		MockPD:            pd,
-		serviceSafePoints: make(map[string]uint64),
-		globalConfig:      make(map[string]string),
+		MockPD:               pd,
+		serviceSafePoints:    make(map[string]uint64),
+		globalConfig:         make(map[string]string),
+		resourceGroupManager: newResourceGroupManager(),
 	}
 }
 
-func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string) ([]pd.GlobalConfigItem, error) {
+func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {
 	ret := make([]pd.GlobalConfigItem, len(names))
 	for i, name := range names {
 		if r, ok := c.globalConfig["/global/config/"+name]; ok {
-			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Value: r}
+			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Value: r, EventType: pdpb.EventType_PUT}
 		} else {
-			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Error: errors.New("not found")}
+			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Value: ""}
 		}
 	}
-	return ret, nil
+	return ret, 0, nil
 }
 
-func (c *pdClient) StoreGlobalConfig(ctx context.Context, items []pd.GlobalConfigItem) error {
+func (c *pdClient) StoreGlobalConfig(ctx context.Context, configPath string, items []pd.GlobalConfigItem) error {
 	for _, item := range items {
 		c.globalConfig["/global/config/"+item.Name] = item.Value
 	}
 	return nil
 }
 
-func (c *pdClient) WatchGlobalConfig(ctx context.Context) (chan []pd.GlobalConfigItem, error) {
+func (c *pdClient) WatchGlobalConfig(ctx context.Context, configPath string, revision int64) (chan []pd.GlobalConfigItem, error) {
 	globalConfigWatcherCh := make(chan []pd.GlobalConfigItem, 16)
 	go func() {
 		defer func() {
@@ -175,5 +208,117 @@ func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.K
 // The first message in stream contains all current keyspaceMeta,
 // all subsequent messages contains new put events for all keyspaces.
 func (c *pdClient) WatchKeyspaces(ctx context.Context) (chan []*keyspacepb.KeyspaceMeta, error) {
+	return nil, nil
+}
+
+func (c *pdClient) UpdateKeyspaceState(ctx context.Context, id uint32, state keyspacepb.KeyspaceState) (*keyspacepb.KeyspaceMeta, error) {
+	return nil, nil
+}
+
+func (c *pdClient) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
+	c.resourceGroupManager.RLock()
+	defer c.resourceGroupManager.RUnlock()
+	groups := make([]*rmpb.ResourceGroup, 0, len(c.resourceGroupManager.groups))
+	for _, group := range c.resourceGroupManager.groups {
+		groups = append(groups, group)
+	}
+	return groups, nil
+}
+
+func (c *pdClient) GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
+	c.resourceGroupManager.RLock()
+	defer c.resourceGroupManager.RUnlock()
+	group, ok := c.resourceGroupManager.groups[name]
+	if !ok {
+		return nil, nil
+	}
+	return group, nil
+}
+
+func (c *pdClient) AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
+	c.resourceGroupManager.Lock()
+	defer c.resourceGroupManager.Unlock()
+	if _, ok := c.resourceGroupManager.groups[group.Name]; ok {
+		return "", fmt.Errorf("the group %s already exists", group.Name)
+	}
+	c.resourceGroupManager.groups[group.Name] = group
+	return "Success!", nil
+}
+
+func (c *pdClient) ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
+	c.resourceGroupManager.Lock()
+	defer c.resourceGroupManager.Unlock()
+	c.resourceGroupManager.groups[group.Name] = group
+	return "Success!", nil
+}
+
+func (c *pdClient) DeleteResourceGroup(ctx context.Context, name string) (string, error) {
+	c.resourceGroupManager.Lock()
+	defer c.resourceGroupManager.Unlock()
+	delete(c.resourceGroupManager.groups, name)
+	return "Success!", nil
+}
+
+func (c *pdClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
+	return nil, nil
+}
+
+func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
+	return nil, nil
+}
+
+func (c *pdClient) SetExternalTimestamp(ctx context.Context, newTimestamp uint64) error {
+	p, l, err := c.GetTS(ctx)
+	if err != nil {
+		return err
+	}
+
+	currentTSO := oracle.ComposeTS(p, l)
+	if newTimestamp > currentTSO {
+		return errors.New("external timestamp is greater than global tso")
+	}
+	for {
+		externalTimestamp := c.externalTimestamp.Load()
+		if externalTimestamp > newTimestamp {
+			return errors.New("cannot decrease the external timestamp")
+		} else if externalTimestamp == newTimestamp {
+			return nil
+		}
+
+		if c.externalTimestamp.CompareAndSwap(externalTimestamp, newTimestamp) {
+			return nil
+		}
+	}
+}
+
+func (c *pdClient) GetExternalTimestamp(ctx context.Context) (uint64, error) {
+	return c.externalTimestamp.Load(), nil
+}
+
+func (c *pdClient) GetTSWithinKeyspace(ctx context.Context, keyspaceID uint32) (int64, int64, error) {
+	return 0, 0, nil
+}
+
+func (c *pdClient) GetTSWithinKeyspaceAsync(ctx context.Context, keyspaceID uint32) pd.TSFuture {
+	return nil
+}
+
+func (c *pdClient) GetLocalTSWithinKeyspace(ctx context.Context, dcLocation string, keyspaceID uint32) (int64, int64, error) {
+	return 0, 0, nil
+}
+
+func (c *pdClient) GetLocalTSWithinKeyspaceAsync(ctx context.Context, dcLocation string, keyspaceID uint32) pd.TSFuture {
+	return nil
+}
+
+func (c *pdClient) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
+	return nil, nil
+}
+
+func (c *pdClient) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
+	return nil, nil
+}
+
+func (c *pdClient) Put(ctx context.Context, key []byte, value []byte, opts ...pd.OpOption) (*meta_storagepb.PutResponse, error) {
 	return nil, nil
 }

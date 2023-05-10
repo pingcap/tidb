@@ -103,8 +103,8 @@ import (
 	hintSwapJoinInputs        "SWAP_JOIN_INPUTS"
 	hintUseIndexMerge         "USE_INDEX_MERGE"
 	hintUseIndex              "USE_INDEX"
-	hintKeepOrder             "KEEP_ORDER"
-	hintNoKeepOrder           "NO_KEEP_ORDER"
+	hintOrderIndex            "ORDER_INDEX"
+	hintNoOrderIndex          "NO_ORDER_INDEX"
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
@@ -279,8 +279,10 @@ TableOptimizerHintOpt:
 	}
 |	"RESOURCE_GROUP" '(' Identifier ')'
 	{
-		parser.warnUnsupportedHint($1)
-		$$ = nil
+		$$ = &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
+			HintData: $3,
+		}
 	}
 |	"QB_NAME" '(' Identifier ')'
 	{
@@ -609,8 +611,8 @@ SupportedIndexLevelOptimizerHintName:
 |	"IGNORE_INDEX"
 |	"USE_INDEX_MERGE"
 |	"FORCE_INDEX"
-|	"KEEP_ORDER"
-|	"NO_KEEP_ORDER"
+|	"ORDER_INDEX"
+|	"NO_ORDER_INDEX"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -703,8 +705,8 @@ Identifier:
 |	"SWAP_JOIN_INPUTS"
 |	"USE_INDEX_MERGE"
 |	"USE_INDEX"
-|	"KEEP_ORDER"
-|	"NO_KEEP_ORDER"
+|	"ORDER_INDEX"
+|	"NO_ORDER_INDEX"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"

@@ -56,8 +56,7 @@ func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100,
-		0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session())})
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session(), false)})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
@@ -162,7 +161,8 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `DIGEST` varchar(64) DEFAULT '',\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `DISK` bigint(21) unsigned DEFAULT NULL,\n" +
-			"  `TxnStart` varchar(64) NOT NULL DEFAULT ''\n" +
+			"  `TxnStart` varchar(64) NOT NULL DEFAULT '',\n" +
+			"  `RESOURCE_GROUP` varchar(32) NOT NULL DEFAULT ''\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table information_schema.cluster_log").Check(
 		testkit.Rows("" +
@@ -304,47 +304,50 @@ func TestSomeTables(t *testing.T) {
 	tk.SetSession(se)
 	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      1,
-		User:    "user-1",
-		Host:    "localhost",
-		Port:    "",
-		DB:      "information_schema",
-		Command: byte(1),
-		Digest:  "abc1",
-		State:   1,
-		Info:    "do something",
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                1,
+		User:              "user-1",
+		Host:              "localhost",
+		Port:              "",
+		DB:                "information_schema",
+		Command:           byte(1),
+		Digest:            "abc1",
+		State:             1,
+		Info:              "do something",
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		ResourceGroupName: "rg1",
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      2,
-		User:    "user-2",
-		Host:    "localhost",
-		Port:    "",
-		DB:      "test",
-		Command: byte(2),
-		Digest:  "abc2",
-		State:   2,
-		Info:    strings.Repeat("x", 101),
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                2,
+		User:              "user-2",
+		Host:              "localhost",
+		Port:              "",
+		DB:                "test",
+		Command:           byte(2),
+		Digest:            "abc2",
+		State:             2,
+		Info:              strings.Repeat("x", 101),
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		ResourceGroupName: "rg2",
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      3,
-		User:    "user-3",
-		Host:    "127.0.0.1",
-		Port:    "12345",
-		DB:      "test",
-		Command: byte(2),
-		Digest:  "abc3",
-		State:   1,
-		Info:    "check port",
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                3,
+		User:              "user-3",
+		Host:              "127.0.0.1",
+		Port:              "12345",
+		DB:                "test",
+		Command:           byte(2),
+		Digest:            "abc3",
+		State:             1,
+		Info:              "check port",
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		ResourceGroupName: "rg3",
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0 ", "autocommit", strings.Repeat("x", 101)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0 ", "in transaction", "check port"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0  rg1", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0  rg2", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0  rg3", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -361,30 +364,32 @@ func TestSomeTables(t *testing.T) {
 
 	sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      1,
-		User:    "user-1",
-		Host:    "localhost",
-		DB:      "information_schema",
-		Command: byte(1),
-		Digest:  "abc1",
-		State:   1,
+		ID:                1,
+		User:              "user-1",
+		Host:              "localhost",
+		DB:                "information_schema",
+		Command:           byte(1),
+		Digest:            "abc1",
+		State:             1,
+		ResourceGroupName: "rg1",
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:            2,
-		User:          "user-2",
-		Host:          "localhost",
-		Command:       byte(2),
-		Digest:        "abc2",
-		State:         2,
-		Info:          strings.Repeat("x", 101),
-		CurTxnStartTS: 410090409861578752,
+		ID:                2,
+		User:              "user-2",
+		Host:              "localhost",
+		Command:           byte(2),
+		Digest:            "abc2",
+		State:             2,
+		Info:              strings.Repeat("x", 101),
+		CurTxnStartTS:     410090409861578752,
+		ResourceGroupName: "rg2",
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0  rg1", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752) rg2", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -398,11 +403,11 @@ func TestSomeTables(t *testing.T) {
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752) rg2", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "<nil>"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0  rg1", "in transaction", "<nil>"),
 		))
 }
 
@@ -728,7 +733,11 @@ func TestColumnStatistics(t *testing.T) {
 func TestTableIfHasColumn(t *testing.T) {
 	columnName := variable.SlowLogHasMoreResults
 	store := testkit.CreateMockStore(t)
-	slowLogFileName := "tidb-slow.log"
+	slowLogFileName := "tidb-table-has-column-slow.log"
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFileName
+	})
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	require.NoError(t, err)
 	_, err = f.Write([]byte(`# Time: 2019-02-12T19:33:56.571953+08:00
@@ -864,6 +873,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
@@ -884,6 +894,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test.
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -980,6 +991,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
@@ -1317,8 +1329,8 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustQuery("select * from `information_schema`.`STATEMENTS_SUMMARY_EVICTED`;").
 		Check(testkit.Rows(
 			fmt.Sprintf("%s %s %v",
-				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05"),
-				time.Unix(beginTimeForCurInterval+interval, 0).Format("2006-01-02 15:04:05"),
+				time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime),
+				time.Unix(beginTimeForCurInterval+interval, 0).Format(time.DateTime),
 				int64(2)),
 		))
 
@@ -1360,8 +1372,8 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").Check(testkit.Rows("2"))
 	tk.MustQuery("select BEGIN_TIME from information_schema.statements_summary_evicted;").
 		Check(testkit.
-			Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format("2006-01-02 15:04:05"),
-				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05")))
+			Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format(time.DateTime),
+				time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime)))
 	require.NoError(t, failpoint.Disable(fpPath))
 	// TODO: Add more tests.
 }
@@ -1711,6 +1723,7 @@ func TestVariablesInfo(t *testing.T) {
 		"tidb_enable_collect_execution_info ON OFF", // for test stability
 		"tidb_enable_mutation_checker OFF ON",       // for new installs
 		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
+		"tidb_pessimistic_txn_fair_locking OFF ON",  // for new instances
 		"tidb_row_format_version 1 2",               // for new installs
 		"tidb_txn_assertion_level OFF FAST",         // for new installs
 		"timestamp 0 123456789",                     // always dynamic

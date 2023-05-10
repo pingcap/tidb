@@ -25,12 +25,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -61,17 +64,19 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -81,16 +86,17 @@ var etcdDialTimeout = 5 * time.Second
 type ShowExec struct {
 	baseExecutor
 
-	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName    model.CIStr
-	Table     *ast.TableName       // Used for showing columns.
-	Partition model.CIStr          // Used for showing partition
-	Column    *ast.ColumnName      // Used for `desc table column`.
-	IndexName model.CIStr          // Used for show table regions.
-	Flag      int                  // Some flag parsed from sql, such as FULL.
-	Roles     []*auth.RoleIdentity // Used for show grants.
-	User      *auth.UserIdentity   // Used by show grants, show create user.
-	Extractor plannercore.ShowPredicateExtractor
+	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName            model.CIStr
+	Table             *ast.TableName       // Used for showing columns.
+	Partition         model.CIStr          // Used for showing partition
+	Column            *ast.ColumnName      // Used for `desc table column`.
+	IndexName         model.CIStr          // Used for show table regions.
+	ResourceGroupName model.CIStr          // Used for showing resource group
+	Flag              int                  // Some flag parsed from sql, such as FULL.
+	Roles             []*auth.RoleIdentity // Used for show grants.
+	User              *auth.UserIdentity   // Used by show grants, show create user.
+	Extractor         plannercore.ShowPredicateExtractor
 
 	is infoschema.InfoSchema
 
@@ -103,6 +109,8 @@ type ShowExec struct {
 	IfNotExists bool // Used for `show create database if not exists`
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
+
+	LoadDataJobID *int64
 }
 
 type showTableRegionRowItem struct {
@@ -182,6 +190,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateDatabase()
 	case ast.ShowCreatePlacementPolicy:
 		return e.fetchShowCreatePlacementPolicy()
+	case ast.ShowCreateResourceGroup:
+		return e.fetchShowCreateResourceGroup()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowDrainerStatus:
@@ -270,6 +280,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementForPartition(ctx)
 	case ast.ShowSessionStates:
 		return e.fetchShowSessionStates(ctx)
+	case ast.ShowLoadDataJobs:
+		return e.fetchShowLoadDataJobs(ctx)
 	}
 	return nil
 }
@@ -314,7 +326,10 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		tmp = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
-	bindRecords := slice.Copy(tmp)
+	bindRecords := make([]*bindinfo.BindRecord, 0)
+	for _, bindRecord := range tmp {
+		bindRecords = append(bindRecords, bindRecord.Copy())
+	}
 	// Remove the invalid bindRecord.
 	ind := 0
 	for _, bindData := range bindRecords {
@@ -509,7 +524,7 @@ func (e *ShowExec) fetchShowTables() error {
 		}
 	}
 	if !e.is.SchemaExists(e.DBName) {
-		return ErrBadDB.GenWithStackByArgs(e.DBName)
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 	// sort for tables
 	schemaTables := e.is.SchemaTables(e.DBName)
@@ -565,7 +580,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 		}
 	}
 	if !e.is.SchemaExists(e.DBName) {
-		return ErrBadDB.GenWithStackByArgs(e.DBName)
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
@@ -705,10 +720,15 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowIndex() error {
+	do := domain.GetDomain(e.ctx)
+	h := do.StatsHandle()
+
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	statsTbl := h.GetTableStats(tb.Meta())
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
@@ -724,6 +744,11 @@ func (e *ShowExec) fetchShowIndex() error {
 				break
 			}
 		}
+		colStats, ok := statsTbl.Columns[pkCol.ID]
+		var ndv int64
+		if ok {
+			ndv = colStats.NDV
+		}
 		e.appendRow([]interface{}{
 			tb.Meta().Name.O, // Table
 			0,                // Non_unique
@@ -731,7 +756,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			1,                // Seq_in_index
 			pkCol.Name.O,     // Column_name
 			"A",              // Collation
-			0,                // Cardinality
+			ndv,              // Cardinality
 			nil,              // Sub_part
 			nil,              // Packed
 			"",               // Null
@@ -781,6 +806,12 @@ func (e *ShowExec) fetchShowIndex() error {
 				expression = tblCol.GeneratedExprString
 			}
 
+			colStats, ok := statsTbl.Columns[tblCol.ID]
+			var ndv int64
+			if ok {
+				ndv = colStats.NDV
+			}
+
 			e.appendRow([]interface{}{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
@@ -788,7 +819,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				i + 1,                  // Seq_in_index
 				colName,                // Column_name
 				"A",                    // Collation
-				0,                      // Cardinality
+				ndv,                    // Cardinality
 				subPart,                // Sub_part
 				nil,                    // Packed
 				nullVal,                // Null
@@ -1269,7 +1300,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
 			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
 			restoreCtx.WritePlain("=")
-			restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval.String())
+			if len(tableInfo.TTLInfo.JobInterval) == 0 {
+				restoreCtx.WriteString(model.DefaultJobInterval.String())
+			} else {
+				restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
+			}
 			return nil
 		})
 
@@ -1312,7 +1347,7 @@ func (e *ShowExec) fetchShowCreateSequence() error {
 	}
 	tableInfo := tbl.Meta()
 	if !tableInfo.IsSequence() {
-		return ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
 	}
 	var buf bytes.Buffer
 	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
@@ -1381,7 +1416,7 @@ func (e *ShowExec) fetchShowCreateView() error {
 	}
 
 	if !tb.Meta().IsView() {
-		return ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "VIEW")
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "VIEW")
 	}
 
 	var buf bytes.Buffer
@@ -1452,6 +1487,11 @@ func ConstructResultOfShowCreatePlacementPolicy(policyInfo *model.PolicyInfo) st
 	return fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", policyInfo.Name.O, policyInfo.PlacementSettings.String())
 }
 
+// constructResultOfShowCreateResourceGroup constructs the result for show create resource group.
+func constructResultOfShowCreateResourceGroup(resourceGroup *model.ResourceGroupInfo) string {
+	return fmt.Sprintf("CREATE RESOURCE GROUP `%s` %s", resourceGroup.Name.O, resourceGroup.ResourceGroupSettings.String())
+}
+
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -1482,6 +1522,17 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 	}
 	showCreate := ConstructResultOfShowCreatePlacementPolicy(policy)
 	e.appendRow([]interface{}{e.DBName.O, showCreate})
+	return nil
+}
+
+// fetchShowCreateResourceGroup composes show create resource group result.
+func (e *ShowExec) fetchShowCreateResourceGroup() error {
+	group, found := e.is.ResourceGroupByName(e.ResourceGroupName)
+	if !found {
+		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(e.ResourceGroupName.O)
+	}
+	showCreate := constructResultOfShowCreateResourceGroup(group)
+	e.appendRow([]interface{}{e.ResourceGroupName.O, showCreate})
 	return nil
 }
 
@@ -1555,7 +1606,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	if len(rows) == 0 {
 		// FIXME: the error returned is not escaped safely
-		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
+		return exeerrors.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
 
@@ -1670,7 +1721,7 @@ func (e *ShowExec) fetchShowGrants() error {
 		// Ref https://dev.mysql.com/doc/refman/8.0/en/show-grants.html
 		if userName != e.User.Username || hostName != e.User.Hostname {
 			if !checker.RequestVerification(vars.ActiveRoles, mysql.SystemDB, "", "", mysql.SelectPriv) {
-				return ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
+				return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
 			}
 		}
 	}
@@ -1680,7 +1731,7 @@ func (e *ShowExec) fetchShowGrants() error {
 			r.Hostname = "%"
 		}
 		if !checker.FindEdge(e.ctx, r, e.User) {
-			return ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
+			return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
 		}
 	}
 	gs, err := checker.ShowGrants(e.ctx, e.User, e.Roles)
@@ -1696,13 +1747,16 @@ func (e *ShowExec) fetchShowGrants() error {
 func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
 	e.appendRow([]interface{}{"Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"})
+	e.appendRow([]interface{}{"Config", "Server Admin", "To use SHOW CONFIG and SET CONFIG statements"})
 	e.appendRow([]interface{}{"Create", "Databases,Tables,Indexes", "To create new databases and tables"})
 	e.appendRow([]interface{}{"Create routine", "Databases", "To use CREATE FUNCTION/PROCEDURE"})
+	e.appendRow([]interface{}{"Create role", "Server Admin", "To create new roles"})
 	e.appendRow([]interface{}{"Create temporary tables", "Databases", "To use CREATE TEMPORARY TABLE"})
 	e.appendRow([]interface{}{"Create view", "Tables", "To create new views"})
 	e.appendRow([]interface{}{"Create user", "Server Admin", "To create new users"})
 	e.appendRow([]interface{}{"Delete", "Tables", "To delete existing rows"})
 	e.appendRow([]interface{}{"Drop", "Databases,Tables", "To drop databases, tables, and views"})
+	e.appendRow([]interface{}{"Drop role", "Server Admin", "To drop roles"})
 	e.appendRow([]interface{}{"Event", "Server Admin", "To create, alter, drop and execute events"})
 	e.appendRow([]interface{}{"Execute", "Functions,Procedures", "To execute stored routines"})
 	e.appendRow([]interface{}{"File", "File access on server", "To read and write files on the server"})
@@ -1836,7 +1890,7 @@ func (e *ShowExec) dbAccessDenied() error {
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	return ErrDBaccessDenied.GenWithStackByArgs(u, h, e.DBName)
+	return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(u, h, e.DBName)
 }
 
 func (e *ShowExec) tableAccessDenied(access string, table string) error {
@@ -1847,7 +1901,7 @@ func (e *ShowExec) tableAccessDenied(access string, table string) error {
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	return ErrTableaccessDenied.GenWithStackByArgs(access, u, h, table)
+	return exeerrors.ErrTableaccessDenied.GenWithStackByArgs(access, u, h, table)
 }
 
 func (e *ShowExec) appendRow(row []interface{}) {
@@ -2102,6 +2156,73 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 		return err
 	}
 	e.appendRow([]interface{}{stateJSON, tokenJSON})
+	return nil
+}
+
+// fetchShowLoadDataJobs fills the result with the schema
+// {"Job_ID", "Create_Time", "Start_Time", "End_Time",
+// "Data_Source", "Target_Table", "Import_Mode", "Created_By",
+// "Job_State", "Job_Status", "Source_File_Size", "Imported_rows",
+// "Result_Code", "Result_Message"}.
+func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
+	exec := e.ctx.(sqlexec.SQLExecutor)
+	handleOneInfo := func(info *asyncloaddata.JobInfo) {
+		e.result.AppendInt64(0, info.JobID)
+		e.result.AppendTime(1, info.CreateTime)
+		e.result.AppendTime(2, info.StartTime)
+		e.result.AppendTime(3, info.EndTime)
+		e.result.AppendString(4, info.DataSource)
+		table := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
+		e.result.AppendString(5, table)
+		e.result.AppendString(6, info.ImportMode)
+		e.result.AppendString(7, info.User)
+		e.result.AppendString(8, "loading")
+		status := info.Status
+		e.result.AppendString(9, status.String())
+		progress, err2 := asyncloaddata.ProgressFromJSON([]byte(info.Progress))
+		if err2 != nil {
+			// maybe empty progress
+			if info.Progress != "" {
+				logutil.Logger(ctx).Warn("invalid progress", zap.String("progress", info.Progress))
+			}
+			e.result.AppendNull(10)
+			e.result.AppendNull(11)
+		} else {
+			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
+			e.result.AppendUint64(11, progress.LoadedRowCnt.Load())
+		}
+		terr := new(terror.Error)
+		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))
+		if err2 == nil {
+			e.result.AppendInt64(12, int64(terr.Code()))
+			e.result.AppendString(13, terr.GetMsg())
+			return
+		}
+		if status == asyncloaddata.JobFinished {
+			e.result.AppendInt64(12, 0)
+		} else {
+			e.result.AppendNull(12)
+		}
+		e.result.AppendString(13, info.StatusMessage)
+	}
+
+	if e.LoadDataJobID != nil {
+		job := asyncloaddata.NewJob(*e.LoadDataJobID, exec, e.ctx.GetSessionVars().User.String())
+		info, err := job.GetJobInfo(ctx)
+		if err != nil {
+			return err
+		}
+		handleOneInfo(info)
+		return nil
+	}
+	infos, err := asyncloaddata.GetAllJobInfo(ctx, exec, e.ctx.GetSessionVars().User.String())
+	if err != nil {
+		return err
+	}
+	for _, info := range infos {
+		handleOneInfo(info)
+	}
+	// TODO: does not support filtering for now
 	return nil
 }
 

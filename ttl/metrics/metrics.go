@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
@@ -37,18 +38,91 @@ var (
 
 // TTL metrics
 var (
-	SelectSuccessDuration = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblOK})
-	SelectErrorDuration   = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblError})
-	DeleteSuccessDuration = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblOK})
-	DeleteErrorDuration   = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
+	SelectSuccessDuration prometheus.Observer
+	SelectErrorDuration   prometheus.Observer
+	DeleteSuccessDuration prometheus.Observer
+	DeleteErrorDuration   prometheus.Observer
 
-	ScannedExpiredRows       = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblOK})
-	DeleteSuccessExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblOK})
-	DeleteErrorExpiredRows   = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
+	ScannedExpiredRows       prometheus.Counter
+	DeleteSuccessExpiredRows prometheus.Counter
+	DeleteErrorExpiredRows   prometheus.Counter
 
-	RunningJobsCnt    = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "running"})
-	CancellingJobsCnt = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "cancelling"})
+	RunningJobsCnt    prometheus.Gauge
+	CancellingJobsCnt prometheus.Gauge
+
+	ScanningTaskCnt prometheus.Gauge
+	DeletingTaskCnt prometheus.Gauge
+
+	WaterMarkScheduleDelayNames = []struct {
+		Name  string
+		Delay time.Duration
+	}{
+		{
+			Name:  "01 hour",
+			Delay: time.Hour,
+		},
+		{
+			Name:  "02 hour",
+			Delay: time.Hour,
+		},
+		{
+			Name:  "06 hour",
+			Delay: 6 * time.Hour,
+		},
+		{
+			Name:  "12 hour",
+			Delay: 12 * time.Hour,
+		},
+		{
+			Name:  "24 hour",
+			Delay: 24 * time.Hour,
+		},
+		{
+			Name:  "72 hour",
+			Delay: 72 * time.Hour,
+		},
+		{
+			Name:  "one week",
+			Delay: 72 * time.Hour,
+		},
+		{
+			Name:  "others",
+			Delay: math.MaxInt64,
+		},
+	}
 )
+
+func init() {
+	InitMetricsVars()
+}
+
+// InitMetricsVars init ttl metrics vars vars.
+func InitMetricsVars() {
+	SelectSuccessDuration = metrics.TTLQueryDuration.With(
+		prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblOK})
+	SelectErrorDuration = metrics.TTLQueryDuration.With(
+		prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblError})
+	DeleteSuccessDuration = metrics.TTLQueryDuration.With(
+		prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblOK})
+	DeleteErrorDuration = metrics.TTLQueryDuration.With(
+		prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
+
+	ScannedExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(
+		prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblOK})
+	DeleteSuccessExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(
+		prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblOK})
+	DeleteErrorExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(
+		prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
+
+	RunningJobsCnt = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "running"})
+	CancellingJobsCnt = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "cancelling"})
+
+	ScanningTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "scanning"})
+	DeletingTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "deleting"})
+
+	scanWorkerPhases = initWorkerPhases("scan_worker")
+	deleteWorkerPhases = initWorkerPhases("delete_worker")
+}
 
 func initWorkerPhases(workerType string) map[string]prometheus.Counter {
 	return map[string]prometheus.Counter{
@@ -64,8 +138,8 @@ func initWorkerPhases(workerType string) map[string]prometheus.Counter {
 	}
 }
 
-var scanWorkerPhases = initWorkerPhases("scan_worker")
-var deleteWorkerPhases = initWorkerPhases("delete_worker")
+var scanWorkerPhases map[string]prometheus.Counter
+var deleteWorkerPhases map[string]prometheus.Counter
 
 // PhaseTracer is used to tracer the phases duration
 type PhaseTracer struct {
@@ -133,17 +207,51 @@ func (t *PhaseTracer) EndPhase() {
 	t.EnterPhase("")
 }
 
-const ttlPhaseTraceKey = "ttlPhaseTraceKey"
+type ttlPhaseTraceKey struct{}
 
 // CtxWithPhaseTracer create a new context with tracer
 func CtxWithPhaseTracer(ctx context.Context, tracer *PhaseTracer) context.Context {
-	return context.WithValue(ctx, ttlPhaseTraceKey, tracer)
+	return context.WithValue(ctx, ttlPhaseTraceKey{}, tracer)
 }
 
 // PhaseTracerFromCtx returns a tracer from a given context
 func PhaseTracerFromCtx(ctx context.Context) *PhaseTracer {
-	if tracer, ok := ctx.Value(ttlPhaseTraceKey).(*PhaseTracer); ok {
+	if tracer, ok := ctx.Value(ttlPhaseTraceKey{}).(*PhaseTracer); ok {
 		return tracer
 	}
 	return nil
+}
+
+// DelayMetricsRecord is the delay metric record for a table
+type DelayMetricsRecord struct {
+	TableID               int64
+	LastJobTime           time.Time
+	AbsoluteDelay         time.Duration
+	ScheduleRelativeDelay time.Duration
+}
+
+func getWaterMarkScheduleDelayName(t time.Duration) string {
+	for _, l := range WaterMarkScheduleDelayNames {
+		if t <= l.Delay {
+			return l.Name
+		}
+	}
+	return WaterMarkScheduleDelayNames[len(WaterMarkScheduleDelayNames)-1].Name
+}
+
+// UpdateDelayMetrics updates the metrics of TTL delay
+func UpdateDelayMetrics(records map[int64]*DelayMetricsRecord) {
+	scheduleMetrics := make(map[string]float64, len(WaterMarkScheduleDelayNames))
+	for _, l := range WaterMarkScheduleDelayNames {
+		scheduleMetrics[l.Name] = 0
+	}
+
+	for _, r := range records {
+		name := getWaterMarkScheduleDelayName(r.ScheduleRelativeDelay)
+		scheduleMetrics[name] = scheduleMetrics[name] + 1
+	}
+
+	for delay, v := range scheduleMetrics {
+		metrics.TTLWatermarkDelay.With(prometheus.Labels{metrics.LblType: "schedule", metrics.LblName: delay}).Set(v)
+	}
 }

@@ -2025,6 +2025,7 @@ const (
 	PlacementOptionLearnerConstraints
 	PlacementOptionFollowerConstraints
 	PlacementOptionVoterConstraints
+	PlacementOptionSurvivalPreferences
 	PlacementOptionPolicy
 )
 
@@ -2089,6 +2090,10 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("PLACEMENT POLICY ")
 			ctx.WritePlain("= ")
 			ctx.WriteName(n.StrValue)
+		case PlacementOptionSurvivalPreferences:
+			ctx.WriteKeyWord("SURVIVAL_PREFERENCES ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
 		default:
 			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
 		}
@@ -2103,33 +2108,35 @@ type ResourceGroupOption struct {
 	Tp        ResourceUnitType
 	StrValue  string
 	UintValue uint64
+	BoolValue bool
 }
 
 type ResourceUnitType int
 
 const (
-	ResourceRRURate ResourceUnitType = iota
-	ResourceWRURate
-	// Native mode
+	// RU mode
+	ResourceRURate ResourceUnitType = iota
+	ResourcePriority
+	// Raw mode
 	ResourceUnitCPU
 	ResourceUnitIOReadBandwidth
 	ResourceUnitIOWriteBandwidth
+
+	// Options
+	ResourceBurstableOpiton
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
-	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
-		return nil
-	}
 	fn := func() error {
 		switch n.Tp {
-		case ResourceRRURate:
-			ctx.WriteKeyWord("RRU_PER_SEC ")
+		case ResourceRURate:
+			ctx.WriteKeyWord("RU_PER_SEC ")
 			ctx.WritePlain("= ")
 			ctx.WritePlainf("%d", n.UintValue)
-		case ResourceWRURate:
-			ctx.WriteKeyWord("WRU_PER_SEC ")
+		case ResourcePriority:
+			ctx.WriteKeyWord("PRIORITY ")
 			ctx.WritePlain("= ")
-			ctx.WritePlainf("%d", n.UintValue)
+			ctx.WriteKeyWord(model.PriorityValueToName(n.UintValue))
 		case ResourceUnitCPU:
 			ctx.WriteKeyWord("CPU ")
 			ctx.WritePlain("= ")
@@ -2142,6 +2149,8 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
+		case ResourceBurstableOpiton:
+			ctx.WriteKeyWord("BURSTABLE")
 		default:
 			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
 		}
@@ -3679,6 +3688,7 @@ var (
 	ErrTooManyValues                        = terror.ClassDDL.NewStd(mysql.ErrTooManyValues)
 	ErrWrongPartitionTypeExpectedSystemTime = terror.ClassDDL.NewStd(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 	ErrUnknownCharacterSet                  = terror.ClassDDL.NewStd(mysql.ErrUnknownCharacterSet)
+	ErrCoalescePartitionNoPartition         = terror.ClassDDL.NewStd(mysql.ErrCoalescePartitionNoPartition)
 )
 
 type SubPartitionDefinition struct {

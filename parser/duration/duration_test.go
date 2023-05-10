@@ -15,6 +15,7 @@ package duration
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -22,23 +23,35 @@ import (
 func TestParseDuration(t *testing.T) {
 	cases := []struct {
 		str      string
-		duration Duration
+		duration time.Duration
 	}{
 		{
 			"1h",
-			Duration{Hour: 1},
+			time.Hour,
 		},
 		{
 			"1h100m",
-			Duration{Hour: 2, Minute: 40},
+			time.Hour + 100*time.Minute,
 		},
 		{
 			"1d10000m",
-			Duration{Day: 7, Hour: 22, Minute: 40},
+			24*time.Hour + 10000*time.Minute,
 		},
 		{
 			"1d100h",
-			Duration{Day: 5, Hour: 4},
+			24*time.Hour + 100*time.Hour,
+		},
+		{
+			"1.5d",
+			36 * time.Hour,
+		},
+		{
+			"1d1.5h",
+			24*time.Hour + time.Hour + 30*time.Minute,
+		},
+		{
+			"1d3.555h",
+			24*time.Hour + time.Duration(3.555*float64(time.Hour)),
 		},
 	}
 
@@ -47,41 +60,6 @@ func TestParseDuration(t *testing.T) {
 			d, err := ParseDuration(c.str)
 			require.NoError(t, err)
 			require.Equal(t, c.duration, d)
-		})
-	}
-}
-
-func TestFormatDuration(t *testing.T) {
-	cases := []struct {
-		str      string
-		duration Duration
-	}{
-		{
-			"1h",
-			Duration{Hour: 1},
-		},
-		{
-			"1h30m",
-			Duration{Hour: 1, Minute: 30},
-		},
-		{
-			"1d12h",
-			Duration{Day: 1, Hour: 12},
-		},
-		{
-			"5d1h40m",
-			Duration{Day: 5, Minute: 100},
-		},
-		{
-			"0m",
-			Duration{Minute: 0},
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.str, func(t *testing.T) {
-			str := c.duration.String()
-			require.Equal(t, c.str, str)
 		})
 	}
 }

@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type mockBinlogPump struct {
@@ -100,7 +101,7 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite) {
 	opt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientCon, err := grpc.Dial(unixFile, opt, grpc.WithInsecure())
+	clientCon, err := grpc.Dial(unixFile, opt, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	require.NotNil(t, clientCon)
 

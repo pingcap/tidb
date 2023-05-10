@@ -97,7 +97,7 @@ skip-register-to-dashboard = false
 # When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
 # If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
 # See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
-enable-telemetry = true
+enable-telemetry = false
 
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
@@ -114,6 +114,24 @@ enable-enum-length-limit = true
 # command can be forwarded to the right TiDB instance to execute.
 enable-global-kill = true
 
+# disaggregated-tiflash indicates whether TiDB is in disaggregated tiflash mode, if true, MPP will runs on tiflash_compute nodes.
+disaggregated-tiflash = false
+
+# autoscaler-type indicates which type of AutoScaler will be used. Possible values are: mock, aws, gcp.
+# Only meaningful when disaggregated-tiflash is true.
+autoscaler-type = "aws"
+
+# autoscaler-addr is the host of AutoScaler, Only meaningful when disaggregated-tiflash is true.
+# Only meaningful when disaggregated-tiflash is true.
+autoscaler-addr = "tiflash-autoscale-lb.tiflash-autoscale.svc.cluster.local:8081"
+
+# autoscaler-cluster-id is the unique id for each TiDB cluster, which will used by AutoScaler.
+# Only meaningful when disaggregated-tiflash is true.
+autoscaler-cluster-id = ""
+
+# use-autoscaler indicates whether use AutoScaler or PD for tiflash_compute nodes, only meaningful when disaggregated-tiflash is true.
+use-autoscaler = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -129,6 +147,9 @@ format = "text"
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
+
+# Make tidb panic if the write log operation hang for 15s
+# timeout = 15
 
 # File logging.
 [log.file]
@@ -204,6 +225,9 @@ metrics-interval = 15
 # Record statements qps by database name if it is enabled.
 record-db-qps = false
 
+# Record database name label if it is enabled.
+record-db-label = false
+
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
@@ -254,6 +278,12 @@ max-txn-ttl = 3600000
 # If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
 # If you find the CPU used by GC is too high or GC is too frequent and impact your business you can increase this value.
 gogc = 100
+
+# Whether to use the lite mode of init stats.
+lite-init-stats = false
+
+# Whether to wait for init stats to finish before providing service during startup
+force-init-stats = false
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.

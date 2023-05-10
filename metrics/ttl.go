@@ -18,7 +18,24 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // TTL metrics
 var (
-	TTLQueryDuration = prometheus.NewHistogramVec(
+	TTLQueryDuration *prometheus.HistogramVec
+
+	TTLProcessedExpiredRowsCounter *prometheus.CounterVec
+
+	TTLJobStatus *prometheus.GaugeVec
+
+	TTLTaskStatus *prometheus.GaugeVec
+
+	TTLPhaseTime *prometheus.CounterVec
+
+	TTLInsertRowsCount prometheus.Counter
+
+	TTLWatermarkDelay *prometheus.GaugeVec
+)
+
+// InitTTLMetrics initializes ttl metrics.
+func InitTTLMetrics() {
+	TTLQueryDuration = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -27,7 +44,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20), // 10ms ~ 1.45hour
 		}, []string{LblSQLType, LblResult})
 
-	TTLProcessedExpiredRowsCounter = prometheus.NewCounterVec(
+	TTLProcessedExpiredRowsCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -35,7 +52,7 @@ var (
 			Help:      "The count of expired rows processed in TTL jobs",
 		}, []string{LblSQLType, LblResult})
 
-	TTLJobStatus = prometheus.NewGaugeVec(
+	TTLJobStatus = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -43,11 +60,35 @@ var (
 			Help:      "The jobs count in the specified status",
 		}, []string{LblType})
 
-	TTLPhaseTime = prometheus.NewCounterVec(
+	TTLTaskStatus = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ttl_task_status",
+			Help:      "The tasks count in the specified status",
+		}, []string{LblType})
+
+	TTLPhaseTime = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "ttl_phase_time",
 			Help:      "The time spent in each phase",
 		}, []string{LblType, LblPhase})
-)
+
+	TTLInsertRowsCount = NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ttl_insert_rows",
+			Help:      "The count of TTL rows inserted",
+		})
+
+	TTLWatermarkDelay = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ttl_watermark_delay",
+			Help:      "Bucketed delay time in seconds for TTL tables.",
+		}, []string{LblType, LblName})
+}

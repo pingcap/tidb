@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -543,9 +543,7 @@ func TestErrnoErrorCode(t *testing.T) {
 	tk.MustGetErrCode(sql, errno.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int null, age int, primary key(id));"
 	tk.MustGetErrCode(sql, errno.ErrPrimaryCantHaveNull)
-	sql = "create table t2 (id int auto_increment);"
-	tk.MustGetErrCode(sql, errno.ErrWrongAutoKey)
-	sql = "create table t2 (id int auto_increment, a int key);"
+	sql = "create table t2 (id int auto_increment, c int auto_increment);"
 	tk.MustGetErrCode(sql, errno.ErrWrongAutoKey)
 	sql = "create table t2 (a datetime(2) default current_timestamp(3));"
 	tk.MustGetErrCode(sql, errno.ErrInvalidDefault)
@@ -687,7 +685,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk2.MustExec("use test")
 
 	d := dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
@@ -2263,12 +2261,12 @@ func TestDropAutoIncrementIndex(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
 	dropIndexSQL := "alter table t1 drop index a"
-	tk.MustGetErrCode(dropIndexSQL, errno.ErrWrongAutoKey)
+	tk.MustExec(dropIndexSQL)
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
 	dropIndexSQL = "alter table t1 drop index a"
-	tk.MustGetErrCode(dropIndexSQL, errno.ErrWrongAutoKey)
+	tk.MustExec(dropIndexSQL)
 }
 
 func TestInsertIntoGeneratedColumnWithDefaultExpr(t *testing.T) {
@@ -4385,4 +4383,28 @@ PARTITION BY LIST (level) (
 	tk.MustContainErrMsg(`ALTER TABLE members REORGANIZE PARTITION p2000 INTO (PARTITION p2000 VALUES LESS THAN (2020))`, "[table:1526]Table has no partition for value 2022")
 	tk.MustExec(`INSERT INTO member_level (id, level) values (313, 6)`)
 	tk.MustContainErrMsg(`ALTER TABLE member_level REORGANIZE PARTITION lEven INTO (PARTITION lEven VALUES IN (2,4))`, "[table:1526]Table has no partition for value 6")
+}
+
+func TestDisableDDL(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/41277
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select @@global.tidb_enable_ddl").Check(testkit.Rows("1"))
+	tk.MustGetErrCode("set @@global.tidb_enable_ddl=false;", errno.ErrDDLSetting)
+	tk.MustGetErrCode("set @@global.tidb_enable_ddl=false;", errno.ErrDDLSetting)
+	tk.MustQuery("select @@global.tidb_enable_ddl").Check(testkit.Rows("1"))
+}
+
+func TestReorganizePartitionWarning(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/42183
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id bigint, b varchar(20), index idxb(b)) partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));")
+	tk.MustExec("alter table t reorganize partition p0 into (partition p01 values less than (10), partition p02 values less than (20));")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
 }

@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/common",
+        "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/pdutil",
         "//br/pkg/version",
@@ -28,6 +29,7 @@ go_test(
     timeout = "short",
     srcs = ["tikv_test.go"],
     flaky = True,
+    shard_count = 4,
     deps = [
         ":tikv",
         "//br/pkg/lightning/common",

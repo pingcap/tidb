@@ -45,11 +45,14 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -79,7 +82,7 @@ type GCWorker struct {
 		batchResolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safepoint uint64) (ok bool, err error)
 		resolveLocks      func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
 	}
-	logBackupEnabled bool
+	logBackupEnabled bool // check log-backup task existed.
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -301,6 +304,85 @@ func (w *GCWorker) tick(ctx context.Context) {
 	}
 }
 
+// getGCSafePoint returns the current gc safe point.
+func getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint64, error) {
+	// If there is try to set gc safepoint is 0, the interface will not set gc safepoint to 0,
+	// it will return current gc safepoint.
+	safePoint, err := pdClient.UpdateGCSafePoint(ctx, 0)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return safePoint, nil
+}
+
+func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint64) error {
+	now, err := w.getOracleTime()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	checkTs := oracle.GoTimeToTS(now.Add(-gcDefaultLifeTime * 2))
+	if checkTs > safePoint {
+		logutil.Logger(ctx).Info("[gc worker] gc safepoint is too early. " +
+			"Maybe there is a bit BR/Lightning/CDC task, " +
+			"or a long transaction is running " +
+			"or need a tidb without setting keyspace-name to calculate and update gc safe point.")
+	}
+	return nil
+}
+
+func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) error {
+	// Get safe point from PD.
+	// The GC safe point is updated only after the global GC have done resolveLocks phase globally.
+	// So, in the following code, resolveLocks must have been done by the global GC on the ranges to be deleted,
+	// so its safe to delete the ranges.
+	safePoint, err := getGCSafePoint(ctx, w.pdClient)
+	if err != nil {
+		logutil.Logger(ctx).Info("[gc worker] get gc safe point error", zap.Error(errors.Trace(err)))
+		return nil
+	}
+
+	if safePoint == 0 {
+		logutil.Logger(ctx).Info("[gc worker] skip keyspace delete range, because gc safe point is 0")
+		return nil
+	}
+
+	err = w.logIsGCSafePointTooEarly(ctx, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Info("[gc worker] log is gc safe point is too early error", zap.Error(errors.Trace(err)))
+		return nil
+	}
+
+	keyspaceID := w.store.GetCodec().GetKeyspaceID()
+	logutil.Logger(ctx).Info("[gc worker] start keyspace delete range",
+		zap.String("uuid", w.uuid),
+		zap.Int("concurrency", concurrency),
+		zap.Uint32("keyspaceID", uint32(keyspaceID)),
+		zap.Uint64("GCSafepoint", safePoint))
+
+	// Do deleteRanges.
+	err = w.deleteRanges(ctx, safePoint, concurrency)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] delete range returns an error",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		metrics.GCJobFailureCounter.WithLabelValues("delete_range").Inc()
+		return errors.Trace(err)
+	}
+
+	// Do redoDeleteRanges.
+	err = w.redoDeleteRanges(ctx, safePoint, concurrency)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] redo-delete range returns an error",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		metrics.GCJobFailureCounter.WithLabelValues("redo_delete_range").Inc()
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
 // leaderTick of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx context.Context) error {
 	if w.gcIsRunning {
@@ -315,6 +397,19 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 			zap.String("uuid", w.uuid),
 			zap.Error(err))
 		return errors.Trace(err)
+	}
+
+	// Gc safe point is not separated by keyspace now. The whole cluster has only one global gc safe point.
+	// So at least one TiDB with `keyspace-name` not set is required in the whole cluster to calculate and update gc safe point.
+	// If `keyspace-name` is set, the TiDB node will only do its own delete range, and will not calculate gc safe point and resolve locks.
+	// Note that when `keyspace-name` is set, `checkLeader` will be done within the key space.
+	// Therefore only one TiDB node in each key space will be responsible to do delete range.
+	if w.store.GetCodec().GetKeyspace() != nil {
+		err = w.runKeyspaceGCJob(ctx, concurrency)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return nil
 	}
 
 	ok, safePoint, err := w.prepare(ctx)
@@ -351,6 +446,36 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	go func() {
 		w.done <- w.runGCJob(ctx, safePoint, concurrency)
 	}()
+	return nil
+}
+
+func (w *GCWorker) runKeyspaceGCJob(ctx context.Context, concurrency int) error {
+	// When the worker is just started, or an old GC job has just finished,
+	// wait a while before starting a new job.
+	if time.Since(w.lastFinish) < gcWaitTime {
+		logutil.Logger(ctx).Info("[gc worker] another keyspace gc job has just finished, skipped.",
+			zap.String("leaderTick on ", w.uuid))
+		return nil
+	}
+
+	now, err := w.getOracleTime()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ok, err := w.checkGCInterval(now)
+	if err != nil || !ok {
+		return errors.Trace(err)
+	}
+
+	go func() {
+		w.done <- w.runKeyspaceDeleteRange(ctx, concurrency)
+	}()
+
+	err = w.saveTime(gcLastRunTimeKey, now)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -703,6 +828,44 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 	return nil
 }
 
+const (
+	getRaftKvVersionSQL = "show config where type = 'tikv' && name = 'storage.engine'"
+	raftKv2             = "raft-kv2"
+)
+
+// IsRaftKv2 checks whether the raft-kv2 is enabled
+func isRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
+	// Mock store does not support `show config` now, so we  use failpoint here
+	// to control whether we are in raft-kv2
+	failpoint.Inject("isRaftKv2", func(v failpoint.Value) (bool, error) {
+		v2, _ := v.(bool)
+		return v2, nil
+	})
+
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, getRaftKvVersionSQL)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	req := rs.NewChunk(nil)
+	it := chunk.NewIterator4Chunk(req)
+	err = rs.Next(context.TODO(), req)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	row := it.Begin()
+
+	if row.IsEmpty() {
+		return false, nil
+	}
+
+	// All nodes should have the same type of engine
+	raftVersion := row.GetString(3)
+	return raftVersion == raftKv2, nil
+}
+
 // deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`
 // `concurrency` specifies the concurrency to send NotifyDeleteRange.
 func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurrency int) error {
@@ -715,6 +878,10 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		return errors.Trace(err)
 	}
 
+	v2, err := isRaftKv2(ctx, se)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// Cache table ids on which placement rules have been GC-ed, to avoid redundantly GC the same table id multiple times.
 	gcPlacementRuleCache := make(map[int64]interface{}, len(ranges))
 
@@ -724,11 +891,17 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 	startTime := time.Now()
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
-
-		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
+		if v2 {
+			// In raftstore-v2, we use delete range instead to avoid deletion omission
+			task := rangetask.NewDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
+			err = task.Execute(ctx)
+		} else {
+			err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
+		}
 		failpoint.Inject("ignoreDeleteRangeFailed", func() {
 			err = nil
 		})
+
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] delete range failed on range",
 				zap.String("uuid", w.uuid),
@@ -738,7 +911,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			continue
 		}
 
-		err = util.CompleteDeleteRange(se, r)
+		err = util.CompleteDeleteRange(se, r, !v2)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
 				zap.String("uuid", w.uuid),
@@ -1198,6 +1371,7 @@ func (w *GCWorker) resolveLocksForRange(
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 		sleep := v.(int)
 		// cooperate with github.com/tikv/client-go/v2/locate/invalidCacheAndRetry
+		//nolint: SA1029
 		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
 		bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
 	})
@@ -1794,7 +1968,7 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	se := createSession(w.store)
 	defer se.Close()
 
-	w.logBackupEnabled = utils.CheckLogBackupEnabled(se)
+	w.logBackupEnabled = utils.IsLogBackupInUse(se)
 	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -2034,7 +2208,7 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 		failpoint.Inject("gcDeletePlacementRuleCounter", func() {})
 		logutil.BgLogger().Info("try delete TiFlash pd rule",
 			zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)), zap.Uint64("safePoint", safePoint))
-		ruleID := fmt.Sprintf("table-%v-r", id)
+		ruleID := infosync.MakeRuleID(id)
 		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
 			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc",
 				zap.Error(err), zap.String("ruleID", ruleID), zap.Uint64("safePoint", safePoint))

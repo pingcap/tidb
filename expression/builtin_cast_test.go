@@ -36,12 +36,12 @@ func TestCastFunctions(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 
 	// Test `cast as char[(N)]` and `cast as binary[(N)]`.
-	originIgnoreTruncate := sc.IgnoreTruncate
+	originIgnoreTruncate := sc.IgnoreTruncate.Load()
 	originTruncateAsWarning := sc.TruncateAsWarning
-	sc.IgnoreTruncate = false
+	sc.IgnoreTruncate.Store(false)
 	sc.TruncateAsWarning = true
 	defer func() {
-		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.IgnoreTruncate.Store(originIgnoreTruncate)
 		sc.TruncateAsWarning = originTruncateAsWarning
 	}()
 
@@ -296,12 +296,12 @@ func TestCastFuncSig(t *testing.T) {
 	ctx := createContext(t)
 
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate
+	originIgnoreTruncate := sc.IgnoreTruncate.Load()
 	originTZ := sc.TimeZone
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	sc.TimeZone = time.UTC
 	defer func() {
-		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.IgnoreTruncate.Store(originIgnoreTruncate)
 		sc.TimeZone = originTZ
 	}()
 	var sig builtinFunc
@@ -1105,10 +1105,10 @@ func TestCastFuncSig(t *testing.T) {
 func TestCastJSONAsDecimalSig(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
+	originIgnoreTruncate := sc.IgnoreTruncate.Load()
+	sc.IgnoreTruncate.Store(true)
 	defer func() {
-		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.IgnoreTruncate.Store(originIgnoreTruncate)
 	}()
 
 	col := &Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0}
@@ -1562,10 +1562,10 @@ func TestCastConstAsDecimalFieldType(t *testing.T) {
 func TestCastBinaryStringAsJSONSig(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
+	originIgnoreTruncate := sc.IgnoreTruncate.Load()
+	sc.IgnoreTruncate.Store(true)
 	defer func() {
-		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.IgnoreTruncate.Store(originIgnoreTruncate)
 	}()
 
 	// BINARY STRING will be converted to a JSON opaque
@@ -1648,20 +1648,6 @@ func TestCastArrayFunc(t *testing.T) {
 			nil,
 			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CharsetBin).SetArray(true).BuildP(),
 			false,
-			true,
-		},
-		{
-			[]interface{}{"1", "2"},
-			nil,
-			types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetCharset(charset.CharsetBin).SetCollate(charset.CharsetBin).SetArray(true).BuildP(),
-			false,
-			true,
-		},
-		{
-			[]interface{}{int64(-1), 2.1, int64(3)},
-			[]interface{}{int64(-1), 2.1, int64(3)},
-			types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetCharset(charset.CharsetBin).SetCollate(charset.CharsetBin).SetArray(true).BuildP(),
-			true,
 			true,
 		},
 	}

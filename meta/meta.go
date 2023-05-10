@@ -77,6 +77,20 @@ var (
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
 	mMetaDataLock        = []byte("metadataLock")
+	// the id for 'default' group, the internal ddl can ensure
+	// user created resource group won't duplicate with this id.
+	defaultGroupID = int64(1)
+	// the default meta of the `default` group
+	defaultRGroupMeta = &model.ResourceGroupInfo{
+		ResourceGroupSettings: &model.ResourceGroupSettings{
+			RURate:     1000000,
+			BurstLimit: -1,
+			Priority:   model.MediumPriorityValue,
+		},
+		ID:    defaultGroupID,
+		Name:  model.NewCIStr("default"),
+		State: model.StatePublic,
+	}
 )
 
 const (
@@ -121,6 +135,25 @@ var (
 	// ErrInvalidString is the error for invalid string to parse
 	ErrInvalidString = dbterror.ClassMeta.NewStd(errno.ErrInvalidCharacterString)
 )
+
+// DDLTableVersion is to display ddl related table versions
+type DDLTableVersion int
+
+const (
+	// InitDDLTableVersion is the original version.
+	InitDDLTableVersion DDLTableVersion = 0
+	// BaseDDLTableVersion is for support concurrent DDL, it added tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+	BaseDDLTableVersion DDLTableVersion = 1
+	// MDLTableVersion is for support MDL tables.
+	MDLTableVersion DDLTableVersion = 2
+	// BackfillTableVersion is for support distributed reorg stage, it added tidb_background_subtask, tidb_background_subtask_history.
+	BackfillTableVersion DDLTableVersion = 3
+)
+
+// Bytes returns the byte slice.
+func (ver DDLTableVersion) Bytes() []byte {
+	return []byte(strconv.Itoa(int(ver)))
+}
 
 // Meta is for handling meta information in a transaction.
 type Meta struct {
@@ -408,6 +441,12 @@ func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
 	return v, err
 }
 
+// EncodeSchemaDiffKey returns the raw kv key for a schema diff
+func (m *Meta) EncodeSchemaDiffKey(schemaVersion int64) kv.Key {
+	diffKey := m.schemaDiffKey(schemaVersion)
+	return m.txn.EncodeStringDataKey(diffKey)
+}
+
 // GetSchemaVersion gets current global schema version.
 func (m *Meta) GetSchemaVersion() (int64, error) {
 	return m.txn.GetInt64(mSchemaVersionKey)
@@ -520,8 +559,8 @@ func (m *Meta) UpdatePolicy(policy *model.PolicyInfo) error {
 	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
 }
 
-// CreateResourceGroup creates a resource group.
-func (m *Meta) CreateResourceGroup(group *model.ResourceGroupInfo) error {
+// AddResourceGroup creates a resource group.
+func (m *Meta) AddResourceGroup(group *model.ResourceGroupInfo) error {
 	if group.ID == 0 {
 		return errors.New("group.ID is invalid")
 	}
@@ -540,8 +579,11 @@ func (m *Meta) CreateResourceGroup(group *model.ResourceGroupInfo) error {
 // UpdateResourceGroup updates a resource group.
 func (m *Meta) UpdateResourceGroup(group *model.ResourceGroupInfo) error {
 	groupKey := m.resourceGroupKey(group.ID)
-	if err := m.checkResourceGroupExists(groupKey); err != nil {
-		return errors.Trace(err)
+	// do not check the default because it may not be persisted.
+	if group.ID != defaultGroupID {
+		if err := m.checkResourceGroupExists(groupKey); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	data, err := json.Marshal(group)
@@ -555,10 +597,7 @@ func (m *Meta) UpdateResourceGroup(group *model.ResourceGroupInfo) error {
 func (m *Meta) DropResourceGroup(groupID int64) error {
 	// Check if group exists.
 	groupKey := m.resourceGroupKey(groupID)
-	if err := m.txn.HClear(groupKey); err != nil {
-		return errors.Trace(err)
-	}
-	if err := m.txn.HDel(mPolicies, groupKey); err != nil {
+	if err := m.txn.HDel(mResourceGroups, groupKey); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -619,15 +658,25 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // SetDDLTables write a key into storage.
-func (m *Meta) SetDDLTables() error {
-	err := m.txn.Set(mDDLTableVersion, []byte("1"))
+func (m *Meta) SetDDLTables(ddlTableVersion DDLTableVersion) error {
+	err := m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes())
 	return errors.Trace(err)
 }
 
-// SetMDLTables write a key into storage.
-func (m *Meta) SetMDLTables() error {
-	err := m.txn.Set(mDDLTableVersion, []byte("2"))
-	return errors.Trace(err)
+// CheckDDLTableVersion check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckDDLTableVersion() (DDLTableVersion, error) {
+	v, err := m.txn.Get(mDDLTableVersion)
+	if err != nil {
+		return -1, errors.Trace(err)
+	}
+	if string(v) == "" {
+		return InitDDLTableVersion, nil
+	}
+	ver, err := strconv.Atoi(string(v))
+	if err != nil {
+		return -1, errors.Trace(err)
+	}
+	return DDLTableVersion(ver), nil
 }
 
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
@@ -664,24 +713,6 @@ func (m *Meta) GetSystemDBID() (int64, error) {
 		}
 	}
 	return 0, nil
-}
-
-// CheckDDLTableExists check if the tables related to concurrent DDL exists.
-func (m *Meta) CheckDDLTableExists() (bool, error) {
-	v, err := m.txn.Get(mDDLTableVersion)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return len(v) != 0, nil
-}
-
-// CheckMDLTableExists check if the tables related to concurrent DDL exists.
-func (m *Meta) CheckMDLTableExists() (bool, error) {
-	v, err := m.txn.Get(mDDLTableVersion)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return bytes.Equal(v, []byte("2")), nil
 }
 
 // SetMetadataLock sets the metadata lock.
@@ -841,6 +872,32 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
+// IterTables iterates all the table at once, in order to avoid oom.
+func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	err := m.txn.HGetIter(dbKey, func(r structure.HashPair) error {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			return nil
+		}
+
+		tbInfo := &model.TableInfo{}
+		err := json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = fn(tbInfo)
+		return errors.Trace(err)
+	})
+	return errors.Trace(err)
+}
+
 // ListTables shows all tables in database.
 func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
@@ -956,6 +1013,7 @@ func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
+	hasDefault := false
 	groups := make([]*model.ResourceGroupInfo, 0, len(res))
 	for _, r := range res {
 		value, err := detachMagicByte(r.Value)
@@ -968,8 +1026,17 @@ func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		groups = append(groups, group)
+		hasDefault = hasDefault || (group.Name.L == "default")
+	}
+	if !hasDefault {
+		groups = append(groups, defaultRGroupMeta)
 	}
 	return groups, nil
+}
+
+// DefaultGroupMeta4Test return the default group info for test usage.
+func DefaultGroupMeta4Test() *model.ResourceGroupInfo {
+	return defaultRGroupMeta
 }
 
 // GetResourceGroup gets the database value with ID.
@@ -980,6 +1047,10 @@ func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
+		// the default group is not persistanted to tikv by default.
+		if groupID == defaultGroupID {
+			return defaultRGroupMeta, nil
+		}
 		return nil, ErrResourceGroupNotExists.GenWithStack("resource group id : %d doesn't exist", groupID)
 	}
 

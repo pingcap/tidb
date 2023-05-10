@@ -39,9 +39,13 @@ import (
 
 const testLease = 5 * time.Millisecond
 
+// DDLForTest exports for testing.
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
+	NewReorgCtx(jobID int64, rowCount int64) *reorgCtx
+	GetReorgCtx(jobID int64) *reorgCtx
+	RemoveReorgCtx(id int64)
 }
 
 // SetInterceptor implements DDL.SetInterceptor interface.
@@ -52,25 +56,32 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 	d.mu.interceptor = i
 }
 
+// IsReorgCanceled exports for testing.
+func (rc *reorgCtx) IsReorgCanceled() bool {
+	return rc.isReorgCanceled()
+}
+
+// NewReorgCtx exports for testing.
+func (d *ddl) NewReorgCtx(jobID int64, rowCount int64) *reorgCtx {
+	return d.newReorgCtx(jobID, rowCount)
+}
+
+// GetReorgCtx exports for testing.
+func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
+	return d.getReorgCtx(jobID)
+}
+
+// RemoveReorgCtx exports for testing.
+func (d *ddl) RemoveReorgCtx(id int64) {
+	d.removeReorgCtx(id)
+}
+
 // JobNeedGCForTest is only used for test.
 var JobNeedGCForTest = jobNeedGC
-
-// NewSession is only used for test.
-var NewSession = newSession
 
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
 	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
-}
-
-func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
-	// init infoCache and a stub infoSchema
-	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	options = append(options, WithInfoCache(ic))
-	d := newDDL(ctx, options...)
-	err := d.Start(nil)
-	return d, err
 }
 
 func createMockStore(t *testing.T) kv.Storage {

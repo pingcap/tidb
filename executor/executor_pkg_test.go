@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
@@ -87,64 +86,6 @@ func generateDatumSlice(vals ...int64) []types.Datum {
 		datums[i].SetInt64(val)
 	}
 	return datums
-}
-
-func TestGetFieldsFromLine(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected []string
-	}{
-		{
-			`"1","a string","100.20"`,
-			[]string{"1", "a string", "100.20"},
-		},
-		{
-			`"2","a string containing a , comma","102.20"`,
-			[]string{"2", "a string containing a , comma", "102.20"},
-		},
-		{
-			`"3","a string containing a \" quote","102.20"`,
-			[]string{"3", "a string containing a \" quote", "102.20"},
-		},
-		{
-			`"4","a string containing a \", quote and comma","102.20"`,
-			[]string{"4", "a string containing a \", quote and comma", "102.20"},
-		},
-		// Test some escape char.
-		{
-			`"\0\b\n\r\t\Z\\\  \c\'\""`,
-			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
-		},
-		// Test mixed.
-		{
-			`"123",456,"\t7890",abcd`,
-			[]string{"123", "456", "\t7890", "abcd"},
-		},
-	}
-
-	ldInfo := LoadDataInfo{
-		FieldsInfo: &ast.FieldsClause{
-			Enclosed:   '"',
-			Terminated: ",",
-			Escaped:    '\\',
-		},
-	}
-
-	for _, test := range tests {
-		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
-		require.NoErrorf(t, err, "failed: %s", test.input)
-		assertEqualStrings(t, got, test.expected)
-	}
-
-	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
-	require.NoError(t, err)
-}
-
-func assertEqualStrings(t *testing.T, got []field, expect []string) {
-	require.Equal(t, len(expect), len(got))
-	for i := 0; i < len(got); i++ {
-		require.Equal(t, expect[i], string(got[i].str))
-	}
 }
 
 func TestSlowQueryRuntimeStats(t *testing.T) {
@@ -268,33 +209,6 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})
 	require.Len(t, res, 1)
-}
-
-func TestLoadDataWithDifferentEscapeChar(t *testing.T) {
-	tests := []struct {
-		input      string
-		escapeChar byte
-		expected   []string
-	}{
-		{
-			`"{""itemRangeType"":0,""itemContainType"":0,""shopRangeType"":1,""shopJson"":""[{\""id\"":\""A1234\"",\""shopName\"":\""AAAAAA\""}]""}"`,
-			byte(0), // escaped by ''
-			[]string{`{"itemRangeType":0,"itemContainType":0,"shopRangeType":1,"shopJson":"[{\"id\":\"A1234\",\"shopName\":\"AAAAAA\"}]"}`},
-		},
-	}
-
-	for _, test := range tests {
-		ldInfo := LoadDataInfo{
-			FieldsInfo: &ast.FieldsClause{
-				Enclosed:   '"',
-				Terminated: ",",
-				Escaped:    test.escapeChar,
-			},
-		}
-		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
-		require.NoErrorf(t, err, "failed: %s", test.input)
-		assertEqualStrings(t, got, test.expected)
-	}
 }
 
 func TestSortSpillDisk(t *testing.T) {

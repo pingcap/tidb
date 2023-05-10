@@ -28,10 +28,12 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -551,6 +553,13 @@ type PhysicalIndexMergeReader struct {
 	// IsIntersectionType means whether it's intersection type or union type.
 	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
 	IsIntersectionType bool
+	// AccessMVIndex indicates whether this IndexMergeReader access a MVIndex.
+	AccessMVIndex bool
+
+	// PushedLimit is used to avoid unnecessary table scan tasks of IndexMergeReader.
+	PushedLimit *PushedDownLimit
+	// ByItems is used to support sorting the handles returned by partialPlans.
+	ByItems []*util.ByItems
 
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
@@ -563,6 +572,8 @@ type PhysicalIndexMergeReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+
+	KeepOrder bool
 }
 
 // GetAvgTableRowSize return the average row size of table plan.
@@ -667,6 +678,9 @@ type PhysicalIndexScan struct {
 	isPartition bool
 	Desc        bool
 	KeepOrder   bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
+
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
@@ -683,6 +697,10 @@ type PhysicalIndexScan struct {
 	constColsByCond []bool
 
 	prop *property.PhysicalProperty
+
+	// usedStatsInfo records stats status of this physical table.
+	// It's for printing stats related information when display execution plan.
+	usedStatsInfo *stmtctx.UsedStatsInfoForTable
 }
 
 // Clone implements PhysicalPlan interface.
@@ -791,6 +809,10 @@ type PhysicalTableScan struct {
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
+	// lateMaterializationFilterCondition is used to record the filter conditions
+	// that are pushed down to table scan from selection by late materialization.
+	// TODO: remove this field after we support pushing down selection to coprocessor.
+	lateMaterializationFilterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
@@ -822,6 +844,8 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
 
 	isChildOfIndexLookUp bool
 
@@ -834,6 +858,15 @@ type PhysicalTableScan struct {
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
 	prop        *property.PhysicalProperty
+
+	// constColsByCond records the constant part of the index columns caused by the access conds.
+	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
+	// it's for indexMerge's tableScan only.
+	constColsByCond []bool
+
+	// usedStatsInfo records stats status of this physical table.
+	// It's for printing stats related information when display execution plan.
+	usedStatsInfo *stmtctx.UsedStatsInfoForTable
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1032,9 +1065,15 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 type PhysicalTopN struct {
 	basePhysicalPlan
 
-	ByItems []*util.ByItems
-	Offset  uint64
-	Count   uint64
+	ByItems     []*util.ByItems
+	PartitionBy []property.SortItem
+	Offset      uint64
+	Count       uint64
+}
+
+// GetPartitionBy returns partition by fields
+func (lt *PhysicalTopN) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1049,6 +1088,10 @@ func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
 	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
 	for _, it := range lt.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
+	}
+	cloned.PartitionBy = make([]property.SortItem, 0, len(lt.PartitionBy))
+	for _, it := range lt.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
 	}
 	return cloned, nil
 }
@@ -1071,6 +1114,9 @@ func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
 	sum = lt.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
 	for _, byItem := range lt.ByItems {
 		sum += byItem.MemoryUsage()
+	}
+	for _, item := range lt.PartitionBy {
+		sum += item.MemoryUsage()
 	}
 	return
 }
@@ -1493,7 +1539,61 @@ func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 	return
 }
 
-// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
+// PhysicalExpand is used to expand underlying data sources to feed different grouping sets.
+type PhysicalExpand struct {
+	// data after repeat-OP will generate a new grouping-ID column to indicate what grouping set is it for.
+	physicalSchemaProducer
+
+	// generated grouping ID column itself.
+	GroupingIDCol *expression.Column
+
+	// GroupingSets is used to define what kind of group layout should the underlying data follow.
+	// For simple case: select count(distinct a), count(distinct b) from t; the grouping expressions are [a] and [b].
+	GroupingSets expression.GroupingSets
+}
+
+// Init only assigns type and context.
+func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalExpand {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
+	p.stats = stats
+	return &p
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalExpand) Clone() (PhysicalPlan, error) {
+	np := new(PhysicalExpand)
+	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.basePhysicalPlan = *base
+	// clone ID cols.
+	np.GroupingIDCol = p.GroupingIDCol.Clone().(*expression.Column)
+
+	// clone grouping expressions.
+	clonedGroupingSets := make([]expression.GroupingSet, 0, len(p.GroupingSets))
+	for _, one := range p.GroupingSets {
+		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
+	}
+	np.GroupingSets = p.GroupingSets
+	return np, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalExpand
+func (p *PhysicalExpand) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfSlice + int64(cap(p.GroupingSets))*size.SizeOfPointer
+	for _, gs := range p.GroupingSets {
+		sum += gs.MemoryUsage()
+	}
+	sum += p.GroupingIDCol.MemoryUsage()
+	return
+}
+
+// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing.
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
 
@@ -1501,10 +1601,11 @@ type PhysicalExchangeSender struct {
 	ExchangeType tipb.ExchangeType
 	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
-	Tasks []*kv.MPPTask
+	Tasks           []*kv.MPPTask
+	CompressionMode kv.ExchangeCompressionMode
 }
 
-// Clone implment PhysicalPlan interface.
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np := new(PhysicalExchangeSender)
 	base, err := p.basePhysicalPlan.cloneWithSelf(np)
@@ -1514,6 +1615,7 @@ func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np.basePhysicalPlan = *base
 	np.ExchangeType = p.ExchangeType
 	np.HashCols = p.HashCols
+	np.CompressionMode = p.CompressionMode
 	return np, nil
 }
 
@@ -1581,8 +1683,14 @@ func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 type PhysicalLimit struct {
 	physicalSchemaProducer
 
-	Offset uint64
-	Count  uint64
+	PartitionBy []property.SortItem
+	Offset      uint64
+	Count       uint64
+}
+
+// GetPartitionBy returns partition by fields
+func (p *PhysicalLimit) GetPartitionBy() []property.SortItem {
+	return p.PartitionBy
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1592,6 +1700,10 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
+	}
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
 	}
 	cloned.physicalSchemaProducer = *base
 	return cloned, nil

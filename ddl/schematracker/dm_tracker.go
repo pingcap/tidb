@@ -473,11 +473,6 @@ func (d SchemaTracker) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName
 		return dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
-	err = ddl.CheckDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
-	if err != nil {
-		return err
-	}
-
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L != indexInfo.Name.L {
@@ -1173,8 +1168,8 @@ func (SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.Alte
 	return nil
 }
 
-// CreateResourceGroup implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) CreateResourceGroup(_ sessionctx.Context, _ *ast.CreateResourceGroupStmt) error {
+// AddResourceGroup implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) AddResourceGroup(_ sessionctx.Context, _ *ast.CreateResourceGroupStmt) error {
 	return nil
 }
 
@@ -1233,6 +1228,11 @@ func (SchemaTracker) RegisterStatsHandle(handle *handle.Handle) {}
 
 // SchemaSyncer implements the DDL interface, it's no-op in DM's case.
 func (SchemaTracker) SchemaSyncer() syncer.SchemaSyncer {
+	return nil
+}
+
+// StateSyncer implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) StateSyncer() syncer.StateSyncer {
 	return nil
 }
 

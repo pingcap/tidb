@@ -74,7 +74,7 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys:.* rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
+		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1,( RU:.*,)? cop_task: {num:.*, max:.*, proc_keys:.* rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
 			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A",
 			buf.String())
 	}
@@ -464,9 +464,8 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
 		`└─MergeJoin_10 1.00 root  inner join, left key:test.t2.a, right key:test.t1.a`,
-		`  ├─Selection_42(Build) 10.00 root  eq(test.t1.a, 1)`,
-		`  │ └─TableReader_41 10.00 root  data:TableRangeScan_40`,
-		`  │   └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo`,
+		`  ├─TableReader_41(Build) 10.00 root  data:TableRangeScan_40`,
+		`  │ └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo`,
 		`  └─Selection_39(Probe) 0.80 root  not(isnull(test.t2.a))`,
 		`    └─Point_Get_38 1.00 root table:t2, index:idx_a(a) `))
 
@@ -480,9 +479,8 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
 		`└─MergeJoin_10 1.00 root  inner join, left key:test.t2.a, right key:test.t1.a`,
-		`  ├─Selection_42(Build) 10.00 root  eq(test.t1.a, 2)`,
-		`  │ └─TableReader_41 10.00 root  data:TableRangeScan_40`,
-		`  │   └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[2,2], keep order:true, stats:pseudo`,
+		`  ├─TableReader_41(Build) 10.00 root  data:TableRangeScan_40`,
+		`  │ └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[2,2], keep order:true, stats:pseudo`,
 		`  └─Selection_39(Probe) 0.80 root  not(isnull(test.t2.a))`,
 		`    └─Point_Get_38 1.00 root table:t2, index:idx_a(a) `))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -539,9 +537,8 @@ func TestIssue28259(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 3)
-	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 2)
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[1][0])
 
 	tk.MustExec("set @a=-1696020282760139948, @b=-2619168038882941276, @c=-4004648990067362699;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -575,11 +572,9 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 5)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Equal(t, "lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))", res.Rows()[1][4])
-	require.Regexp(t, ".*IndexReader.*", res.Rows()[2][0])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[4][0])
+	require.Len(t, res.Rows(), 4)
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -619,12 +614,11 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 6)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexLookUp.*", res.Rows()[2][0])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[4][0])
-	require.Regexp(t, ".*TableRowIDScan.*", res.Rows()[5][0])
+	require.Len(t, res.Rows(), 5)
+	require.Regexp(t, ".*IndexLookUp.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[2][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[3][0])
+	require.Regexp(t, ".*TableRowIDScan.*", res.Rows()[4][0])
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -662,12 +656,10 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 5)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Equal(t, "lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))", res.Rows()[1][4])
-	require.Regexp(t, ".*TableReader.*", res.Rows()[2][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[3][0])
-	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[4][0])
+	require.Len(t, res.Rows(), 4)
+	require.Regexp(t, ".*TableReader.*", res.Rows()[1][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[2][0])
+	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[3][0])
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -677,12 +669,10 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 5)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Equal(t, "lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))", res.Rows()[1][4])
-	require.Regexp(t, ".*TableReader.*", res.Rows()[2][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[3][0])
-	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[4][0])
+	require.Len(t, res.Rows(), 4)
+	require.Regexp(t, ".*TableReader.*", res.Rows()[1][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[2][0])
+	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[3][0])
 
 	res = tk.MustQuery("explain format = 'brief' select a from t " +
 		"where (a between 0 and 2 or a < 2) and b < 1;")
@@ -708,11 +698,10 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 4)
-	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
-	require.Regexp(t, ".*TableReader.*", res.Rows()[1][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[2][0])
-	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[3][0])
+	require.Len(t, res.Rows(), 3)
+	require.Regexp(t, ".*TableReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
+	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[2][0])
 }
 
 func TestIssue28696(t *testing.T) {
@@ -734,12 +723,11 @@ func TestIssue28696(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 6)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexLookUp.*", res.Rows()[2][0])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[4][0])
-	require.Regexp(t, ".*TableRowIDScan.*", res.Rows()[5][0])
+	require.Len(t, res.Rows(), 5)
+	require.Regexp(t, ".*IndexLookUp.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[2][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[3][0])
+	require.Regexp(t, ".*TableRowIDScan.*", res.Rows()[4][0])
 
 	res = tk.MustQuery("explain format = 'brief' select a from t1 where b = 'bbcsa';")
 	require.Len(t, res.Rows(), 5)
@@ -781,12 +769,11 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 7)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexMerge.*", res.Rows()[2][0])
+	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
+	require.Equal(t, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo", res.Rows()[3][4])
 	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[4][0])
-	require.Equal(t, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo", res.Rows()[4][4])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[5][0])
-	require.Equal(t, "range:[0198-09-29 20:19:49,0198-09-29 20:19:49], keep order:false, stats:pseudo", res.Rows()[5][4])
+	require.Equal(t, "range:[0198-09-29 20:19:49,0198-09-29 20:19:49], keep order:false, stats:pseudo", res.Rows()[4][4])
 
 	// test for cluster index in indexMerge
 	tk.MustExec("drop table if exists t;")
@@ -800,13 +787,12 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 6)
-	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
-	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
-	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[2][0])
-	require.Equal(t, "range:(0,3), keep order:false, stats:pseudo", res.Rows()[2][4])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
-	require.Equal(t, "range:(1,+inf], keep order:false, stats:pseudo", res.Rows()[3][4])
+	require.Len(t, res.Rows(), 5)
+	require.Regexp(t, ".*IndexMerge.*", res.Rows()[0][0])
+	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[1][0])
+	require.Equal(t, "range:(0,3), keep order:false, stats:pseudo", res.Rows()[1][4])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[2][0])
+	require.Equal(t, "range:(1,+inf], keep order:false, stats:pseudo", res.Rows()[2][4])
 
 	// test for prefix index
 	tk.MustExec("drop table if exists t1;")
@@ -821,16 +807,16 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexMerge.*", res.Rows()[0][0])
 
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0")) // unsafe range
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexMerge.*", res.Rows()[0][0])
 
 	// rewrite the origin indexMerge test
 	tk.MustExec("drop table if exists t;")
@@ -879,7 +865,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=9, @b=10, @c=11;")
 	tk.MustQuery("execute stmt using @c, @a;").Check(testkit.Rows("10 10 10"))
 	tk.MustQuery("execute stmt using @a, @c;").Check(testkit.Rows("10 10 10", "11 11 11"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @a, @a;").Check(testkit.Rows("10 10 10"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
@@ -1251,9 +1237,9 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=5, @b=4, @c=2, @d=1;")
 	tk.MustQuery("execute stmt using @d, @a").Check(testkit.Rows("1", "2", "3", "4", "5"))
 	tk.MustQuery("execute stmt using @d, @b").Check(testkit.Rows("1", "2", "3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @c, @b").Check(testkit.Rows("2", "3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	// Two seed parts.
 	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
@@ -1266,7 +1252,7 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=10, @b=2;")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1", "2", "2", "3", "3", "4", "4", "5", "5", "6", "6", "7", "7", "8", "8", "9", "9", "10", "10"))
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("1", "2", "2"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	// Two recursive parts.
 	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
@@ -1281,7 +1267,7 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=1, @b=2, @c=3, @d=4, @e=5;")
 	tk.MustQuery("execute stmt using @c, @b, @e;").Check(testkit.Rows("1", "2", "2", "3", "3", "3", "4", "4", "5", "5", "5", "6", "6"))
 	tk.MustQuery("execute stmt using @b, @a, @d;").Check(testkit.Rows("1", "2", "2", "2", "3", "3", "3", "4", "4", "4"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(a int);")
@@ -1293,11 +1279,13 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt using @f, @a, @f").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: PhysicalApply plan is un-cacheable"))
 
 	tk.MustExec("prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';")
 	tk.MustQuery("execute stmt using @a, @a, @e;").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1"))
 	tk.MustQuery("execute stmt using @b, @b, @c;").Check(testkit.Rows("1 1", "3 1"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
 func TestValidity4PlanCache(t *testing.T) {

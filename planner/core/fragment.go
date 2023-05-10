@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -115,11 +116,13 @@ func AllocMPPQueryID() uint64 {
 }
 
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
-	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)))
+	mppVersion := e.ctx.GetSessionVars().ChooseMppVersion()
+	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)), zap.Int64("mpp-version", mppVersion.ToInt64()))
 	tidbTask := &kv.MPPTask{
 		StartTs:    e.startTS,
 		MppQueryID: e.mppQueryID,
 		ID:         -1,
+		MppVersion: mppVersion,
 	}
 	_, frags, err := e.generateMPPTasksForExchangeSender(s)
 	if err != nil {
@@ -136,6 +139,8 @@ type mppAddr struct {
 	addr string
 }
 
+var _ kv.MPPTaskMeta = &mppAddr{}
+
 func (m *mppAddr) GetAddress() string {
 	return m.addr
 }
@@ -147,6 +152,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 	newTasks := make([]*kv.MPPTask, 0, len(tasks))
 	for _, task := range tasks {
 		addr := task.Meta.GetAddress()
+		// for upper fragment, the task num is equal to address num covered by lower tasks
 		_, ok := addressMap[addr]
 		if !ok {
 			mppTask := &kv.MPPTask{
@@ -155,6 +161,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 				MppQueryID: e.mppQueryID,
 				StartTs:    e.startTS,
 				TableID:    -1,
+				MppVersion: e.ctx.GetSessionVars().ChooseMppVersion(),
 			}
 			newTasks = append(newTasks, mppTask)
 			addressMap[addr] = struct{}{}
@@ -188,7 +195,7 @@ func (f *Fragment) init(p PhysicalPlan) error {
 
 // We would remove all the union-all operators by 'untwist'ing and copying the plans above union-all.
 // This will make every route from root (ExchangeSender) to leaf nodes (ExchangeReceiver and TableScan)
-// a new ioslated tree (and also a fragment) without union all. These trees (fragments then tasks) will
+// a new isolated tree (and also a fragment) without union all. These trees (fragments then tasks) will
 // finally be gathered to TiDB or be exchanged to upper tasks again.
 // For instance, given a plan "select c1 from t union all select c1 from s"
 // after untwist, there will be two plans in `forest` slice:
@@ -273,6 +280,7 @@ func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchange
 	}
 	results := make([]*kv.MPPTask, 0, len(frags))
 	for _, f := range frags {
+		// from the bottom up
 		tasks, err := e.generateMPPTasksForFragment(f)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -286,6 +294,7 @@ func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchange
 
 func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
 	for _, r := range f.ExchangeReceivers {
+		// chain call: to get lower fragments and tasks
 		r.Tasks, r.frags, err = e.generateMPPTasksForExchangeSender(r.GetExchangeSender())
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -410,7 +419,12 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
 		ttl = 30 * time.Second
 	}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl)
+	dispatchPolicy := tiflashcompute.DispatchPolicyInvalid
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
+		ttl = time.Duration(0)
+	}
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -420,6 +434,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		task := &kv.MPPTask{
 			Meta:                              meta,
 			ID:                                AllocMPPTaskID(e.ctx),
+			MppVersion:                        e.ctx.GetSessionVars().ChooseMppVersion(),
 			StartTs:                           e.startTS,
 			MppQueryID:                        e.mppQueryID,
 			TableID:                           ts.Table.ID,

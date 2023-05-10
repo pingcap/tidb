@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
@@ -226,9 +227,12 @@ func TestSelectClusterTable(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	slowLogFileName := "tidb-slow.log"
+	slowLogFileName := "tidb-slow0.log"
 	prepareSlowLogfile(t, slowLogFileName)
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFileName
+	})
 
 	tk.MustExec("use information_schema")
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
@@ -449,23 +453,23 @@ func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {
 	tk.MustExec("set time_zone = '+08:00';")
 	tk.MustExec("select sleep(0.1);")
 	r := tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
-	date8First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
+	date8First, err := time.Parse(time.DateTime, r.Rows()[0][0].(string))
 	require.NoError(t, err)
-	date8Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
+	date8Last, err := time.Parse(time.DateTime, r.Rows()[0][1].(string))
 	require.NoError(t, err)
-	date8Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	date8Begin, err := time.Parse(time.DateTime, r.Rows()[0][2].(string))
 	require.NoError(t, err)
-	date8End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	date8End, err := time.Parse(time.DateTime, r.Rows()[0][3].(string))
 	require.NoError(t, err)
 	tk.MustExec("set time_zone = '+01:00';")
 	r = tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
-	date1First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
+	date1First, err := time.Parse(time.DateTime, r.Rows()[0][0].(string))
 	require.NoError(t, err)
-	date1Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
+	date1Last, err := time.Parse(time.DateTime, r.Rows()[0][1].(string))
 	require.NoError(t, err)
-	date1Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	date1Begin, err := time.Parse(time.DateTime, r.Rows()[0][2].(string))
 	require.NoError(t, err)
-	date1End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	date1End, err := time.Parse(time.DateTime, r.Rows()[0][3].(string))
 	require.NoError(t, err)
 
 	require.Less(t, date1First.Unix(), date8First.Unix())
@@ -701,7 +705,7 @@ select * from t1;
 
 		err = tk.QueryToErr("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 		require.Error(t, err, quota)
-		require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
+		require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg, quota)
 	}
 	memQuotas := []int{128, 512, 1024, 2048, 4096}
 	for _, quota := range memQuotas {
@@ -816,42 +820,62 @@ func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 }
 
 func TestMDLView(t *testing.T) {
-	// setup suite
-	s := new(clusterTablesSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
-	s.startTime = time.Now()
-	defer s.httpServer.Close()
+	testCases := []struct {
+		name        string
+		createTable string
+		ddl         string
+		queryInTxn  []string
+		sqlDigest   string
+	}{
+		{"add column", "create table t(a int)", "alter table test.t add column b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+		{"change column in 1 step", "create table t(a int)", "alter table test.t change column a b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+	}
+	for _, c := range testCases {
+		t.Run(c.name, func(t *testing.T) {
+			// setup suite
+			s := new(clusterTablesSuite)
+			s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+			s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+			s.startTime = time.Now()
+			defer s.httpServer.Close()
 
-	tk := s.newTestKitWithRoot(t)
-	tkDDL := s.newTestKitWithRoot(t)
-	tk3 := s.newTestKitWithRoot(t)
-	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_metadata_lock=1")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t values(1);")
+			tk := s.newTestKitWithRoot(t)
+			tkDDL := s.newTestKitWithRoot(t)
+			tk3 := s.newTestKitWithRoot(t)
+			tk.MustExec("use test")
+			tk.MustExec("set global tidb_enable_metadata_lock=1")
+			tk.MustExec(c.createTable)
 
-	tk.MustExec("begin")
-	tk.MustQuery("select 1;")
-	tk.MustQuery("select * from t;")
+			tk.MustExec("begin")
+			for _, q := range c.queryInTxn {
+				tk.MustQuery(q)
+			}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		tkDDL.MustExec("alter table test.t add column b int;")
-		wg.Done()
-	}()
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				tkDDL.MustExec(c.ddl)
+				wg.Done()
+			}()
 
-	time.Sleep(200 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", tk3.Session().GetSessionManager())
-	defer s.rpcserver.Stop()
+			s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", tk3.Session().GetSessionManager())
+			defer s.rpcserver.Stop()
 
-	tk3.MustQuery("select DB_NAME, QUERY, SQL_DIGESTS from mysql.tidb_mdl_view").Check(testkit.Rows("test alter table test.t add column b int; [\"begin\",\"select ? ;\",\"select * from `t` ;\"]"))
+			tk3.MustQuery("select DB_NAME, QUERY, SQL_DIGESTS from mysql.tidb_mdl_view").Check(testkit.Rows(
+				strings.Join([]string{
+					"test",
+					c.ddl,
+					c.sqlDigest,
+				}, " "),
+			))
 
-	tk.MustExec("commit")
+			tk.MustExec("commit")
 
-	wg.Wait()
+			wg.Wait()
+		})
+	}
 }
 
 func TestCreateBindingFromHistory(t *testing.T) {
@@ -999,15 +1023,14 @@ func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
 
 func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
 	s := new(clusterTablesSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.store = testkit.CreateMockStore(t, withMockTiFlash(2))
+	_, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.store = testkit.CreateMockStore(t, withMockTiFlash(1))
 	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1020,7 +1043,7 @@ func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
 
 	sql := "select * from t"
 	tk.MustExec(sql)
-	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.cluster_statements_summary where query_sample_text = '%s'", sql)).Rows()
 	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with tiflash engine")
 }
 
@@ -1053,6 +1076,8 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	tk.MustExec(sql)
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 	tk.MustGetErrMsg("set binding enabled for sql digest '2'", "can't find any binding for '2'")
+	tk.MustGetErrMsg("set binding enabled for sql digest ''", "sql digest is empty")
+	tk.MustGetErrMsg("set binding disabled for sql digest ''", "sql digest is empty")
 }
 
 func TestCreateBindingWhenCloseStmtSummaryTable(t *testing.T) {
@@ -1126,18 +1151,18 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	tk.MustExec(sql)
 	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	time.Sleep(time.Millisecond * 10)
 	binding := tk.MustQuery("show bindings").Rows()
 	loc, _ := time.LoadLocation("Asia/Shanghai")
-	createTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][4].(string), loc)
-	updateTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][5].(string), loc)
+	createTime, _ := time.ParseInLocation(time.DateTime, binding[0][4].(string), loc)
+	updateTime, _ := time.ParseInLocation(time.DateTime, binding[0][5].(string), loc)
 
 	// binding from history cover binding from history
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
-	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
-	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	time.Sleep(time.Millisecond * 10)
 	binding1 := tk.MustQuery("show bindings").Rows()
-	createTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][4].(string), loc)
-	updateTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][5].(string), loc)
+	createTime1, _ := time.ParseInLocation(time.DateTime, binding1[0][4].(string), loc)
+	updateTime1, _ := time.ParseInLocation(time.DateTime, binding1[0][5].(string), loc)
 	require.Greater(t, createTime1.UnixNano(), createTime.UnixNano())
 	require.Greater(t, updateTime1.UnixNano(), updateTime.UnixNano())
 	for i := range binding1[0] {
@@ -1147,9 +1172,10 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	}
 	// binding from sql cover binding from history
 	tk.MustExec("create binding for select * from t where a = 1 using select /*+ ignore_index(t, a) */ * from t where a = 1")
+	time.Sleep(time.Millisecond * 10)
 	binding2 := tk.MustQuery("show bindings").Rows()
-	createTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][4].(string), loc)
-	updateTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][5].(string), loc)
+	createTime2, _ := time.ParseInLocation(time.DateTime, binding2[0][4].(string), loc)
+	updateTime2, _ := time.ParseInLocation(time.DateTime, binding2[0][5].(string), loc)
 	require.Greater(t, createTime2.UnixNano(), createTime1.UnixNano())
 	require.Greater(t, updateTime2.UnixNano(), updateTime1.UnixNano())
 	require.Equal(t, binding2[0][8], "manual")
@@ -1162,9 +1188,10 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	}
 	// binding from history cover binding from sql
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	time.Sleep(time.Millisecond * 10)
 	binding3 := tk.MustQuery("show bindings").Rows()
-	createTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][4].(string), loc)
-	updateTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][5].(string), loc)
+	createTime3, _ := time.ParseInLocation(time.DateTime, binding3[0][4].(string), loc)
+	updateTime3, _ := time.ParseInLocation(time.DateTime, binding3[0][5].(string), loc)
 	require.Greater(t, createTime3.UnixNano(), createTime2.UnixNano())
 	require.Greater(t, updateTime3.UnixNano(), updateTime2.UnixNano())
 	require.Equal(t, binding3[0][8], "history")
@@ -1241,4 +1268,38 @@ func TestNewCreatedBindingCanWorkWithPlanCache(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+}
+
+func TestCreateBindingForPrepareToken(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b time, c varchar(5))")
+
+	//some builtin functions listed in https://dev.mysql.com/doc/refman/8.0/en/function-resolution.html
+	cases := []string{
+		"select std(a) from t",
+		"select cast(a as decimal(10, 2)) from t",
+		"select bit_or(a) from t",
+		"select min(a) from t",
+		"select max(a) from t",
+		"select substr(c, 1, 2) from t",
+	}
+
+	for _, sql := range cases {
+		prep := fmt.Sprintf("prepare stmt from '%s'", sql)
+		tk.MustExec(prep)
+		tk.MustExec("execute stmt")
+		planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+		tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	}
 }

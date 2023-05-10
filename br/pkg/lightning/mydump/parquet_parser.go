@@ -47,6 +47,8 @@ type ParquetParser struct {
 	curIndex    int
 	lastRow     Row
 	logger      log.Logger
+
+	readSeekCloser ReadSeekCloser
 }
 
 // readerWrapper is a used for implement `source.ParquetFile`
@@ -144,9 +146,9 @@ func OpenParquetReader(
 	}, nil
 }
 
-// ReadParquetFileRowCount reads the parquet file row count.
+// readParquetFileRowCount reads the parquet file row count.
 // It is a special func to fetch parquet file row count fast.
-func ReadParquetFileRowCount(
+func readParquetFileRowCount(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	r storage.ReadSeekCloser,
@@ -170,6 +172,23 @@ func ReadParquetFileRowCount(
 		return 0, err
 	}
 	return numRows, nil
+}
+
+// ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
+func ReadParquetFileRowCountByFile(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	fileMeta SourceFileMeta,
+) (int64, error) {
+	r, err := store.Open(ctx, fileMeta.Path)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	numberRows, err := readParquetFileRowCount(ctx, store, r, fileMeta.Path)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return numberRows, nil
 }
 
 // NewParquetParser generates a parquet parser.
@@ -216,10 +235,11 @@ func NewParquetParser(
 	}
 
 	return &ParquetParser{
-		Reader:      reader,
-		columns:     columns,
-		columnMetas: columnMetas,
-		logger:      log.FromContext(ctx),
+		Reader:         reader,
+		columns:        columns,
+		columnMetas:    columnMetas,
+		logger:         log.FromContext(ctx),
+		readSeekCloser: wrapper,
 	}, nil
 }
 
@@ -351,10 +371,10 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	return nil
 }
 
-// RealPos implements the Parser interface.
-// For parquet it's equal to Pos().
-func (pp *ParquetParser) RealPos() (int64, error) {
-	return pp.curStart + int64(pp.curIndex), nil
+// ScannedPos implements the Parser interface.
+// For parquet it's parquet file's reader current position.
+func (pp *ParquetParser) ScannedPos() (int64, error) {
+	return pp.readSeekCloser.Seek(0, io.SeekCurrent)
 }
 
 // Close closes the parquet file of the parser.
@@ -523,7 +543,7 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
 		dotIndex := len(val) - int(*meta.Scale)
 		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "utf8mb4_bin")
 	case logicalType.DATE != nil:
-		dateStr := time.Unix(v*86400, 0).Format("2006-01-02")
+		dateStr := time.Unix(v*86400, 0).Format(time.DateOnly)
 		d.SetString(dateStr, "utf8mb4_bin")
 	case logicalType.TIMESTAMP != nil:
 		// convert all timestamp types (datetime/timestamp) to string

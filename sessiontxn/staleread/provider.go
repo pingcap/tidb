@@ -164,6 +164,18 @@ func (p *StalenessTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.Stm
 	return nil
 }
 
+// OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
+// a pessimistic select-for-update statements.
+func (p *StalenessTxnContextProvider) OnPessimisticStmtStart(_ context.Context) error {
+	return nil
+}
+
+// OnPessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// select-for-update statement.
+func (p *StalenessTxnContextProvider) OnPessimisticStmtEnd(_ context.Context, _ bool) error {
+	return nil
+}
+
 // ActivateTxn activates the transaction.
 func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
@@ -186,13 +198,23 @@ func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
-func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.StmtErrorHandlePoint, _ error) (sessiontxn.StmtErrorAction, error) {
+func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(ctx context.Context, point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	return sessiontxn.NoIdea()
 }
 
 // OnStmtRetry is the hook that should be called when a statement retry
 func (p *StalenessTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
+	return nil
+}
+
+// OnStmtCommit is the hook that should be called when a statement is executed successfully.
+func (p *StalenessTxnContextProvider) OnStmtCommit(_ context.Context) error {
+	return nil
+}
+
+// OnStmtRollback is the hook that should be called when a statement fails to execute.
+func (p *StalenessTxnContextProvider) OnStmtRollback(_ context.Context, _ bool) error {
 	return nil
 }
 

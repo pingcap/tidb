@@ -922,6 +922,7 @@ const (
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
+	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
@@ -989,8 +990,9 @@ const (
 	ErrWarnMemoryQuotaOverflow             = 8063
 	ErrWarnOptimizerHintParseError         = 8064
 	ErrWarnOptimizerHintInvalidInteger     = 8065
-	ErrUnsupportedSecondArgumentType       = 8066
-	ErrColumnNotMatched                    = 8067
+	ErrWarnOptimizerHintWrongPos           = 8066
+	ErrUnsupportedSecondArgumentType       = 8067
+	ErrColumnNotMatched                    = 8068
 	ErrInvalidPluginID                     = 8101
 	ErrInvalidPluginManifest               = 8102
 	ErrInvalidPluginName                   = 8103
@@ -1044,6 +1046,24 @@ const (
 	ErrTempTableNotAllowedWithTTL          = 8151
 	ErrUnsupportedTTLReferencedByFK        = 8152
 	ErrUnsupportedPrimaryKeyTypeWithTTL    = 8153
+	ErrLoadDataFromServerDisk              = 8154
+	ErrLoadParquetFromLocal                = 8155
+	ErrLoadDataEmptyPath                   = 8156
+	ErrLoadDataUnsupportedFormat           = 8157
+	ErrLoadDataInvalidURI                  = 8158
+	ErrLoadDataCantAccess                  = 8159
+	ErrLoadDataCantRead                    = 8160
+	ErrLoadDataPhysicalImportTableNotEmpty = 8161
+	ErrLoadDataWrongFormatConfig           = 8162
+	ErrUnknownOption                       = 8163
+	ErrInvalidOptionVal                    = 8164
+	ErrDuplicateOption                     = 8165
+	ErrLoadDataUnsupportedOption           = 8166
+	ErrLoadDataJobNotFound                 = 8170
+	ErrLoadDataInvalidOperation            = 8171
+	ErrLoadDataLocalUnsupportedOption      = 8172
+	ErrLoadDataPreCheckFailed              = 8173
+	ErrBRJobNotFound                       = 8174
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1093,8 +1113,12 @@ const (
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
-	ErrResourceGroupExists                = 8248
-	ErrResourceGroupNotExists             = 8249
+	// Resource group errors.
+	ErrResourceGroupExists            = 8248
+	ErrResourceGroupNotExists         = 8249
+	ErrResourceGroupSupportDisabled   = 8250
+	ErrResourceGroupConfigUnavailable = 8251
+	ErrResourceGroupThrottled         = 8252
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

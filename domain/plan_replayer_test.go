@@ -46,7 +46,7 @@ func TestPlanReplayerGC(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 }
 
-func TestPlanReplayerParseTime(t *testing.T) {
+func TestDumpGCFileParseTime(t *testing.T) {
 	nowTime := time.Now()
 	name1 := fmt.Sprintf("replayer_single_xxxxxx_%v.zip", nowTime.UnixNano())
 	pt, err := parseTime(name1)
@@ -60,4 +60,49 @@ func TestPlanReplayerParseTime(t *testing.T) {
 	name3 := fmt.Sprintf("replayer_single_xxxxxx_%v._zip", nowTime.UnixNano())
 	_, err = parseTime(name3)
 	require.NotNil(t, err)
+
+	name4 := "extract_-brq6zKMarD9ayaifkHc4A==_1678168728477502000.zip"
+	_, err = parseTime(name4)
+	require.NoError(t, err)
+
+	var pName string
+	pName, err = replayer.GeneratePlanReplayerFileName(false, false, false)
+	require.NoError(t, err)
+	_, err = parseTime(pName)
+	require.NoError(t, err)
+
+	pName, err = replayer.GeneratePlanReplayerFileName(true, false, false)
+	require.NoError(t, err)
+	_, err = parseTime(pName)
+	require.NoError(t, err)
+
+	pName, err = replayer.GeneratePlanReplayerFileName(false, true, false)
+	require.NoError(t, err)
+	_, err = parseTime(pName)
+	require.NoError(t, err)
+
+	pName, err = replayer.GeneratePlanReplayerFileName(true, true, false)
+	require.NoError(t, err)
+	_, err = parseTime(pName)
+	require.NoError(t, err)
+
+	pName, err = replayer.GeneratePlanReplayerFileName(false, false, true)
+	require.NoError(t, err)
+	_, err = parseTime(pName)
+	require.NoError(t, err)
+
+	pName, err = replayer.GeneratePlanReplayerFileName(true, false, true)
+	require.NoError(t, err)
+	_, err = parseTime(pName)
+	require.NoError(t, err)
+
+	pName, err = replayer.GeneratePlanReplayerFileName(false, true, true)
+	require.NoError(t, err)
+	_, err = parseTime(pName)
+	require.NoError(t, err)
+
+	pName, err = replayer.GeneratePlanReplayerFileName(true, true, true)
+	require.NoError(t, err)
+	_, err = parseTime(pName)
+	require.NoError(t, err)
 }

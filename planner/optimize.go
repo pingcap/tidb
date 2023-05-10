@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/cascades"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -75,24 +76,47 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p core.Plan, ns types.NameSlice, ok bool, err error) {
-	if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		!core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	_, isExplain := stmt.(*ast.ExplainStmt)
+	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
+		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
+		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
+		stmtCtx.InRestrictedSQL || // is internal SQL
+		isExplain || // explain external
+		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
+		sctx.GetSessionVars().InMultiStmts || // in multi-stmt
+		(stmtCtx.InExplainStmt && stmtCtx.ExplainFormat != types.ExplainFormatPlanCache) { // in explain internal
 		return nil, nil, false, nil
 	}
-	paramSQL, params, err := core.ParameterizeAST(ctx, sctx, stmt)
+	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+	if !ok {
+		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+			stmtCtx.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason))
+		}
+		return nil, nil, false, nil
+	}
+
+	paramSQL, params, err := core.GetParamSQLFromAST(ctx, sctx, stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	defer func() {
-		if err != nil {
-			// keep the stmt unchanged if err so that it can fallback to the normal optimization path.
-			// TODO: add metrics
-			err = core.RestoreASTWithParams(ctx, sctx, stmt, params)
-		}
-	}()
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
+	paramExprs := core.Params2Expressions(params)
+
 	if val == nil {
-		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, paramSQL, stmt)
+		// Create a new AST upon this parameterized SQL instead of using the original AST.
+		// Keep the original AST unchanged to avoid any side effect.
+		paramStmt, err := core.ParseParameterizedSQL(sctx, paramSQL)
+		if err != nil {
+			// This can happen rarely, cannot parse the parameterized(restored) SQL successfully, skip the plan cache in this case.
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return nil, nil, false, nil
+		}
+		// GeneratePlanCacheStmtWithAST may evaluate these parameters so set their values into SCtx in advance.
+		if err := core.SetParameterValuesIntoSCtx(sctx, true, nil, paramExprs); err != nil {
+			return nil, nil, false, err
+		}
+		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, paramSQL, paramStmt, is)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -101,7 +125,6 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	}
 	cachedStmt := val.(*core.PlanCacheStmt)
 
-	paramExprs := core.Params2Expressions(params)
 	cachedPlan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, true, is, cachedStmt, paramExprs)
 	if err != nil {
 		return nil, nil, false, err
@@ -113,6 +136,10 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
+	}
 
 	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
 		allowed, err := allowInReadOnlyMode(sctx, node)
@@ -124,9 +151,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !sessVars.EnableTiFlashReadForWriteStmt && !IsReadOnly(node, sessVars) {
+	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && sctx.GetSessionVars().StrictSQLMode && !IsReadOnly(node, sessVars) {
+		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		delete(sessVars.IsolationReadEngines, kv.TiFlash)
 		defer func() {
+			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
 	}
@@ -151,6 +180,17 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
+	// Override the resource group if necessary
+	// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
+	if originStmtHints.HasResourceGroup {
+		if variable.EnableResourceControl.Load() {
+			sessVars.ResourceGroupName = originStmtHints.ResourceGroup
+		} else {
+			err := infoschema.ErrResourceGroupSupportDisabled
+			sessVars.StmtCtx.AppendWarning(err)
+		}
+	}
+
 	txnManger := sessiontxn.GetTxnManager(sctx)
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp core.Plan
@@ -168,14 +208,28 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return nil, nil, err
 	}
 
-	useBinding := sessVars.UsePlanBaselines
+	enableUseBinding := sessVars.UsePlanBaselines
 	stmtNode, isStmtNode := node.(ast.StmtNode)
-	if !isStmtNode {
-		useBinding = false
-	}
 	bindRecord, scope, match := matchSQLBinding(sctx, stmtNode)
-	if !match {
-		useBinding = false
+	useBinding := enableUseBinding && isStmtNode && match
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
+			if val.(bool) && bindRecord != nil {
+				bindRecord = bindRecord.Copy()
+				for i := range bindRecord.Bindings {
+					bindRecord.Bindings[i].CreateTime = types.ZeroTime
+					bindRecord.Bindings[i].UpdateTime = types.ZeroTime
+				}
+			}
+		})
+		debugtrace.RecordAnyValuesWithNames(sctx,
+			"Used binding", useBinding,
+			"Enable binding", enableUseBinding,
+			"IsStmtNode", isStmtNode,
+			"Matched", match,
+			"Scope", scope,
+			"Matched bindings", bindRecord,
+		)
 	}
 	if isStmtNode {
 		// add the extra Limit after matching the bind record
@@ -211,10 +265,20 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			if !binding.IsBindingEnabled() {
 				continue
 			}
+			if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+				core.DebugTraceTryBinding(sctx, binding.Hint)
+			}
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, _, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
 			sessVars.StmtCtx.StmtHints = curStmtHints
+			// update session var by hint /set_var/
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				err := sessVars.SetStmtVar(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+			}
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
@@ -244,9 +308,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			} else {
 				sessVars.StmtCtx.AppendExtraNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
+			if len(tableHints) > 0 {
+				sessVars.StmtCtx.AppendWarning(errors.Errorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
+			}
 		}
 		// Restore the hint to avoid changing the stmt node.
 		hint.BindHint(stmtNode, originHints)
+	}
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
+		core.DebugTraceBestBinding(sctx, chosenBinding.Hint)
 	}
 	// No plan found from the bindings, or the bindings are ignored.
 	if bestPlan == nil {
@@ -380,6 +450,11 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sqlPrefixes := []string{"select"}
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
 	})
+	sessVars := sctx.GetSessionVars()
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
+	}
 
 	// build logical plan
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
@@ -393,7 +468,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return nil, nil, 0, err
 	}
 
-	activeRoles := sctx.GetSessionVars().ActiveRoles
+	activeRoles := sessVars.ActiveRoles
 	// Check privilege. Maybe it's better to move this to the Preprocess, but
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
@@ -417,7 +492,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	// Handle the logical plan statement, use cascades planner if enabled.
-	if sctx.GetSessionVars().GetEnableCascadesPlanner() {
+	if sessVars.GetEnableCascadesPlanner() {
 		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
 		return finalPlan, names, cost, err
 	}
@@ -426,7 +501,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	// TODO: capture plan replayer here if it matches sql and plan digest
 
-	sctx.GetSessionVars().DurationOptimization = time.Since(beginOpt)
+	sessVars.DurationOptimization = time.Since(beginOpt)
 	return finalPlan, names, cost, err
 }
 
@@ -456,12 +531,12 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 }
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
-	sctx.GetSessionVars().PlanID = 0
-	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().PlanID.Store(0)
+	sctx.GetSessionVars().PlanColumnID.Store(0)
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
 	failpoint.Inject("mockRandomPlanID", func() {
-		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
+		sctx.GetSessionVars().PlanID.Store(rand.Int31n(1000)) // nolint:gosec
 	})
 
 	// reset fields about rewrite
@@ -595,7 +670,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -603,6 +678,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "memory_quota":
 			hintOffs[hint.HintName.L] = i
 			memoryQuotaHintCnt++
+		case "resource_group":
+			hintOffs[hint.HintName.L] = i
+			resourceGroupHintCnt++
 		case "use_toja":
 			hintOffs[hint.HintName.L] = i
 			useToJAHintCnt++
@@ -725,6 +803,16 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		}
 		stmtHints.HasMaxExecutionTime = true
 		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
+	}
+	// Handle RESOURCE_GROUP
+	if resourceGroupHintCnt != 0 {
+		resourceGroup := hints[hintOffs["resource_group"]]
+		if resourceGroupHintCnt > 1 {
+			warn := errors.Errorf("RESOURCE_GROUP() is defined more than once, only the last definition takes effect: RESOURCE_GROUP(%v)", resourceGroup.HintData.(string))
+			warns = append(warns, warn)
+		}
+		stmtHints.HasResourceGroup = true
+		stmtHints.ResourceGroup = resourceGroup.HintData.(string)
 	}
 	// Handle NTH_PLAN
 	if forceNthPlanCnt != 0 {

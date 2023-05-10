@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/errors"
 )
 
+var errNoCPUControllerDetected = errors.New("no cpu controller detected")
+
 // Helper function for getCgroupCPU. Root is always "/", except in tests.
 func getCgroupCPU(root string) (CPUUsage, error) {
 	path, err := detectControlPath(filepath.Join(root, procPathCGroup), "cpu,cpuacct")
@@ -30,7 +32,7 @@ func getCgroupCPU(root string) (CPUUsage, error) {
 
 	// No CPU controller detected
 	if path == "" {
-		return CPUUsage{}, errors.New("no cpu controller detected")
+		return CPUUsage{}, errNoCPUControllerDetected
 	}
 
 	mount, ver, err := getCgroupDetails(filepath.Join(root, procPathMountInfo), path, "cpu,cpuacct")
@@ -39,30 +41,48 @@ func getCgroupCPU(root string) (CPUUsage, error) {
 	}
 
 	var res CPUUsage
-
-	switch ver {
-	case 1:
-		cgroupRoot := filepath.Join(root, mount)
-		res.Period, res.Quota, err = detectCPUQuotaInV1(cgroupRoot)
+	if len(mount) == 2 {
+		cgroupRootV1 := filepath.Join(root, mount[0])
+		cgroupRootV2 := filepath.Join(root, mount[1], path)
+		res.Period, res.Quota, err = detectCPUQuotaInV2(cgroupRootV2)
+		if err != nil {
+			res.Period, res.Quota, err = detectCPUQuotaInV1(cgroupRootV1)
+		}
 		if err != nil {
 			return res, err
 		}
-		res.Stime, res.Utime, err = detectCPUUsageInV1(cgroupRoot)
+		res.Stime, res.Utime, err = detectCPUUsageInV2(cgroupRootV2)
+		if err != nil {
+			res.Stime, res.Utime, err = detectCPUUsageInV1(cgroupRootV1)
+		}
 		if err != nil {
 			return res, err
 		}
-	case 2:
-		cgroupRoot := filepath.Join(root, mount, path)
-		res.Period, res.Quota, err = detectCPUQuotaInV2(cgroupRoot)
-		if err != nil {
-			return res, err
+	} else {
+		switch ver[0] {
+		case 1:
+			cgroupRoot := filepath.Join(root, mount[0])
+			res.Period, res.Quota, err = detectCPUQuotaInV1(cgroupRoot)
+			if err != nil {
+				return res, err
+			}
+			res.Stime, res.Utime, err = detectCPUUsageInV1(cgroupRoot)
+			if err != nil {
+				return res, err
+			}
+		case 2:
+			cgroupRoot := filepath.Join(root, mount[0], path)
+			res.Period, res.Quota, err = detectCPUQuotaInV2(cgroupRoot)
+			if err != nil {
+				return res, err
+			}
+			res.Stime, res.Utime, err = detectCPUUsageInV2(cgroupRoot)
+			if err != nil {
+				return res, err
+			}
+		default:
+			return CPUUsage{}, fmt.Errorf("detected unknown cgroup version index: %d", ver)
 		}
-		res.Stime, res.Utime, err = detectCPUUsageInV2(cgroupRoot)
-		if err != nil {
-			return res, err
-		}
-	default:
-		return CPUUsage{}, fmt.Errorf("detected unknown cgroup version index: %d", ver)
 	}
 
 	return res, nil

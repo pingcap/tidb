@@ -11,7 +11,9 @@ import (
 	"github.com/opentracing/opentracing-go"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"go.uber.org/zap"
 )
 
@@ -50,10 +52,14 @@ type Batcher struct {
 	// outCh is for output the restored table, so it can be sent to do something like checksum.
 	outCh chan<- CreatedTable
 
+	updateCh glue.Progress
+
 	sender             BatchSender
 	manager            ContextManager
 	batchSizeThreshold int
 	size               int32
+
+	checkpointTrees map[int64]rtree.RangeTree
 }
 
 // Len calculate the current size of this batcher.
@@ -102,6 +108,7 @@ func NewBatcher(
 	sender BatchSender,
 	manager ContextManager,
 	errCh chan<- error,
+	updateCh glue.Progress,
 ) (*Batcher, <-chan CreatedTable) {
 	output := make(chan CreatedTable, defaultChannelSize)
 	sendChan := make(chan SendType, 2)
@@ -112,6 +119,7 @@ func NewBatcher(
 		sender:             sender,
 		manager:            manager,
 		sendCh:             sendChan,
+		updateCh:           updateCh,
 		cachedTablesMu:     new(sync.Mutex),
 		everythingIsDone:   new(sync.WaitGroup),
 		batchSizeThreshold: 1,
@@ -220,6 +228,8 @@ type DrainResult struct {
 	BlankTablesAfterSend []CreatedTable
 	RewriteRules         *RewriteRules
 	Ranges               []rtree.Range
+	// Record which part of ranges belongs to the table
+	TableEndOffsetInRanges []int
 }
 
 // Files returns all files of this drain result.
@@ -233,11 +243,42 @@ func (result DrainResult) Files() []*backuppb.File {
 
 func newDrainResult() DrainResult {
 	return DrainResult{
-		TablesToSend:         make([]CreatedTable, 0),
-		BlankTablesAfterSend: make([]CreatedTable, 0),
-		RewriteRules:         EmptyRewriteRule(),
-		Ranges:               make([]rtree.Range, 0),
+		TablesToSend:           make([]CreatedTable, 0),
+		BlankTablesAfterSend:   make([]CreatedTable, 0),
+		RewriteRules:           EmptyRewriteRule(),
+		Ranges:                 make([]rtree.Range, 0),
+		TableEndOffsetInRanges: make([]int, 0),
 	}
+}
+
+// fileterOutRanges filter out the range from `drained-range` that is overlapped with ranges in the `range-tree`
+func (b *Batcher) filterOutRanges(tree rtree.RangeTree, drained []rtree.Range) []rtree.Range {
+	newRanges := make([]rtree.Range, 0, len(drained))
+	progress := int(0)
+	totalKVs := uint64(0)
+	totalBytes := uint64(0)
+	for _, rg := range drained {
+		if r := tree.Find(&rg); r != nil {
+			// The range is overlapped with ranges in the tree,
+			// so skip it and update the summary information.
+			progress += 1
+			for _, f := range rg.Files {
+				totalKVs += f.TotalKvs
+				totalBytes += f.TotalBytes
+			}
+		} else {
+			newRanges = append(newRanges, rg)
+		}
+	}
+	if progress > 0 {
+		// split/scatter + download/ingest
+		b.updateCh.IncBy(int64(progress) * 2)
+		summary.CollectSuccessUnit(summary.TotalKV, progress, totalKVs)
+		summary.CollectSuccessUnit(summary.SkippedKVCountByCheckpoint, progress, totalKVs)
+		summary.CollectSuccessUnit(summary.TotalBytes, progress, totalBytes)
+		summary.CollectSuccessUnit(summary.SkippedBytesByCheckpoint, progress, totalBytes)
+	}
+	return newRanges
 }
 
 // drainRanges 'drains' ranges from current tables.
@@ -265,6 +306,7 @@ func (b *Batcher) drainRanges() DrainResult {
 	defer b.cachedTablesMu.Unlock()
 
 	for offset, thisTable := range b.cachedTables {
+		t, exists := b.checkpointTrees[thisTable.Table.ID]
 		thisTableLen := len(thisTable.Range)
 		collected := len(result.Ranges)
 
@@ -286,16 +328,28 @@ func (b *Batcher) drainRanges() DrainResult {
 				zap.Int("size", thisTableLen),
 				zap.Int("drained", drainSize),
 			)
-			result.Ranges = append(result.Ranges, drained...)
-			b.cachedTables = b.cachedTables[offset:]
+			// Firstly calculated the batcher size, and then
+			// filter out ranges by checkpoint.
 			atomic.AddInt32(&b.size, -int32(len(drained)))
+			if exists {
+				drained = b.filterOutRanges(t, drained)
+			}
+			result.Ranges = append(result.Ranges, drained...)
+			result.TableEndOffsetInRanges = append(result.TableEndOffsetInRanges, len(result.Ranges))
+			b.cachedTables = b.cachedTables[offset:]
 			return result
 		}
 
 		result.BlankTablesAfterSend = append(result.BlankTablesAfterSend, thisTable.CreatedTable)
-		// let's 'drain' the ranges of current table. This op must not make the batch full.
-		result.Ranges = append(result.Ranges, thisTable.Range...)
+		// Firstly calculated the batcher size, and then filter out ranges by checkpoint.
 		atomic.AddInt32(&b.size, -int32(len(thisTable.Range)))
+		// let's 'drain' the ranges of current table. This op must not make the batch full.
+		if exists {
+			result.Ranges = append(result.Ranges, b.filterOutRanges(t, thisTable.Range)...)
+		} else {
+			result.Ranges = append(result.Ranges, thisTable.Range...)
+		}
+		result.TableEndOffsetInRanges = append(result.TableEndOffsetInRanges, len(result.Ranges))
 		// clear the table length.
 		b.cachedTables[offset].Range = []rtree.Range{}
 		log.Debug("draining table to batch",
@@ -371,4 +425,8 @@ func (b *Batcher) Close() {
 // just set threshold before anything starts(e.g. EnableAutoCommit), please.
 func (b *Batcher) SetThreshold(newThreshold int) {
 	b.batchSizeThreshold = newThreshold
+}
+
+func (b *Batcher) SetCheckpoint(trees map[int64]rtree.RangeTree) {
+	b.checkpointTrees = trees
 }

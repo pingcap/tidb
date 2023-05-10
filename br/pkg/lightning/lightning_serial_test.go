@@ -20,11 +20,12 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/docker/go-units"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/stretchr/testify/require"
@@ -61,14 +62,15 @@ func TestRun(t *testing.T) {
 
 	path, _ := filepath.Abs(".")
 	ctx := context.Background()
-	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
 	o := &options{
-		glue:         invalidGlue,
 		promRegistry: lightning.promRegistry,
 		promFactory:  lightning.promFactory,
 		logger:       log.L(),
+		db:           db,
 	}
-	err = lightning.run(ctx, &config.Config{
+	cfgCheckpoint := config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
 			Filter:           []string{"*.*"},
@@ -78,8 +80,22 @@ func TestRun(t *testing.T) {
 			Enable: true,
 			Driver: "invalid",
 		},
-	}, o)
+	}
+	err = lightning.run(ctx, &cfgCheckpoint, o)
 	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
+	mock.ExpectQuery("show config").WillReturnError(errors.New("lack privilege"))
+	cfgKeyspaceName := config.NewConfig()
+	cfgKeyspaceName.TikvImporter.Backend = config.BackendLocal
+	cfgKeyspaceName.TikvImporter.LocalWriterMemCacheSize = config.SplitRegionSize
+	cfgKeyspaceName.Mydumper = cfgCheckpoint.Mydumper
+	cfgKeyspaceName.Checkpoint = cfgCheckpoint.Checkpoint
+	err = lightning.run(ctx, cfgKeyspaceName, o)
+	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
+
+	err = lightning.run(ctx, cfgKeyspaceName, o)
+	cfgKeyspaceName.TikvImporter.KeyspaceName = "test"
+	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{

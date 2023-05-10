@@ -520,7 +520,7 @@ func TestBytes(t *testing.T) {
 
 func parseTime(t *testing.T, s string) types.Time {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp)
+	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp, nil)
 	require.NoError(t, err)
 	return m
 }
@@ -778,7 +778,7 @@ func TestDecimal(t *testing.T) {
 	_, err = EncodeDecimal(nil, d, 12, 10)
 	require.Truef(t, terror.ErrorEqual(err, types.ErrOverflow), "err %v", err)
 
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	decimalDatum := types.NewDatum(d)
 	decimalDatum.SetLength(20)
 	decimalDatum.SetFrac(5)
@@ -998,7 +998,7 @@ func TestHashGroup(t *testing.T) {
 	require.Error(t, err)
 }
 
-func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldType) {
+func datumsForTest(_ *stmtctx.StatementContext) ([]types.Datum, []*types.FieldType) {
 	decType := types.NewFieldType(mysql.TypeNewDecimal)
 	decType.SetDecimal(2)
 	_tp1 := types.NewFieldType(mysql.TypeEnum)

@@ -107,8 +107,9 @@ func TestSystemVars(t *testing.T) {
 		},
 		{
 			// hidden variable
-			inSessionStates: false,
+			inSessionStates: true,
 			varName:         variable.TiDBTxnReadTS,
+			expectedValue:   "",
 		},
 		{
 			// none-scoped variable
@@ -419,6 +420,19 @@ func TestSessionCtx(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			},
+		},
+		{
+			// check ResourceGroupName
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")
+				tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
+				tk.MustExec("SET RESOURCE GROUP `rg1`")
+				require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
 			},
 		},
 	}
@@ -1253,6 +1267,16 @@ func TestShowStateFail(t *testing.T) {
 			},
 		},
 		{
+			// enable sandbox mode
+			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
+				tk.Session().EnableSandBoxMode()
+			},
+			showErr: errno.ErrCannotMigrateSession,
+			cleanFunc: func(tk *testkit.TestKit) {
+				tk.Session().DisableSandBoxMode()
+			},
+		},
+		{
 			// after COM_STMT_SEND_LONG_DATA
 			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
 				cmd := append([]byte{mysql.ComStmtPrepare}, []byte("select ?")...)
@@ -1363,6 +1387,18 @@ func TestShowStateFail(t *testing.T) {
 		}
 		conn1.Close()
 	}
+}
+
+func TestInvalidSysVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// unknown is an unknown variable
+	// tidb_executor_concurrency is in wrong data type
+	// max_prepared_stmt_count is in wrong scope
+	tk.MustExec(`set session_states '{"sys-vars": {"timestamp":"100", "unknown":"100", "tidb_executor_concurrency":"hello", "max_prepared_stmt_count":"100"}}'`)
+	tk.MustQuery("select @@timestamp").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@tidb_executor_concurrency").Check(testkit.Rows("5"))
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
 }
 
 func showSessionStatesAndSet(t *testing.T, tk1, tk2 *testkit.TestKit) {

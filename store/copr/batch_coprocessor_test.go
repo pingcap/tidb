@@ -15,16 +15,21 @@
 package copr
 
 import (
+	"context"
 	"math/rand"
 	"sort"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/driver/backoff"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 // StoreID: [1, storeCount]
@@ -204,4 +209,76 @@ func TestConsistentHash(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestDispatchPolicyRR(t *testing.T) {
+	allAddrs := generateDifferentAddrs(100)
+	for i := 0; i < 100; i++ {
+		regCnt := rand.Intn(10000)
+		regIDs := make([]tikv.RegionVerID, 0, regCnt)
+		for i := 0; i < regCnt; i++ {
+			regIDs = append(regIDs, tikv.NewRegionVerID(uint64(i), 0, 0))
+		}
+
+		rpcCtxs, err := getTiFlashComputeRPCContextByRoundRobin(regIDs, allAddrs)
+		require.NoError(t, err)
+		require.Equal(t, len(rpcCtxs), len(regIDs))
+		checkMap := make(map[string]int, len(rpcCtxs))
+		for _, c := range rpcCtxs {
+			if v, ok := checkMap[c.Addr]; !ok {
+				checkMap[c.Addr] = 1
+			} else {
+				checkMap[c.Addr] = v + 1
+			}
+		}
+		actCnt := 0
+		for _, v := range checkMap {
+			actCnt += v
+		}
+		require.Equal(t, regCnt, actCnt)
+		if len(regIDs) < len(allAddrs) {
+			require.Equal(t, len(regIDs), len(checkMap))
+			exp := -1
+			for _, v := range checkMap {
+				if exp == -1 {
+					exp = v
+				} else {
+					require.Equal(t, exp, v)
+				}
+			}
+		} else {
+			// Using RR, it means region cnt for each tiflash_compute node should be almost same.
+			minV := regCnt
+			for _, v := range checkMap {
+				if v < minV {
+					minV = v
+				}
+			}
+			for k, v := range checkMap {
+				checkMap[k] = v - minV
+			}
+			for _, v := range checkMap {
+				require.True(t, v == 0 || v == 1)
+			}
+		}
+	}
+}
+
+func TestTopoFetcherBackoff(t *testing.T) {
+	fetchTopoBo := backoff.NewBackofferWithVars(context.Background(), fetchTopoMaxBackoff, nil)
+	expectErr := errors.New("Cannot find proper topo from AutoScaler")
+	var retryNum int
+	start := time.Now()
+	for {
+		retryNum++
+		if err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), expectErr); err != nil {
+			break
+		}
+		logutil.BgLogger().Info("TestTopoFetcherBackoff", zap.Any("retryNum", retryNum))
+	}
+	dura := time.Since(start)
+	// fetchTopoMaxBackoff is milliseconds.
+	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
+	require.GreaterOrEqual(t, dura, 30*time.Second)
+	require.LessOrEqual(t, dura, 50*time.Second)
 }

@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,7 +50,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	job := model.Job{}
-	require.Equal(t, 288, int(unsafe.Sizeof(job)), msg)
+	require.Equal(t, 328, int(unsafe.Sizeof(job)), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
@@ -61,7 +62,7 @@ func TestBackfillMetaCodec(t *testing.T) {
 	}
 	bm := &model.BackfillMeta{
 		EndInclude: true,
-		ErrMsg:     "has a err",
+		Error:      terror.ErrResultUndetermined,
 		JobMeta:    jm,
 	}
 	bmBytes, err := bm.Encode()
@@ -69,4 +70,35 @@ func TestBackfillMetaCodec(t *testing.T) {
 	bmRet := &model.BackfillMeta{}
 	bmRet.Decode(bmBytes)
 	require.Equal(t, bm, bmRet)
+}
+
+func TestMayNeedReorg(t *testing.T) {
+	//TODO(bb7133): add more test cases for different ActionType.
+	reorgJobTypes := []model.ActionType{
+		model.ActionReorganizePartition,
+		model.ActionAddIndex,
+		model.ActionAddPrimaryKey,
+	}
+	generalJobTypes := []model.ActionType{
+		model.ActionCreateTable,
+		model.ActionDropTable,
+	}
+	job := &model.Job{
+		ID:              100,
+		Type:            model.ActionCreateTable,
+		SchemaID:        101,
+		TableID:         102,
+		SchemaName:      "test",
+		TableName:       "t",
+		State:           model.JobStateDone,
+		MultiSchemaInfo: nil,
+	}
+	for _, jobType := range reorgJobTypes {
+		job.Type = jobType
+		require.True(t, job.MayNeedReorg())
+	}
+	for _, jobType := range generalJobTypes {
+		job.Type = jobType
+		require.False(t, job.MayNeedReorg())
+	}
 }

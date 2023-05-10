@@ -309,7 +309,7 @@ func GetTimeZoneOffset(ctx context.Context, db QueryExecutor) (time.Duration, er
 		}
 		timeStr = timeStr[1:]
 	}
-	t, err := time.Parse("15:04:05", timeStr)
+	t, err := time.Parse(time.TimeOnly, timeStr)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -551,7 +551,7 @@ func AnalyzeValuesFromBuckets(valueString string, cols []*model.ColumnInfo) ([]s
 		if IsTimeTypeAndNeedDecode(col.GetType()) {
 			// check if values[i] is already a time string
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-			_, err := types.ParseTime(sc, values[i], col.GetType(), types.MinFsp)
+			_, err := types.ParseTime(sc, values[i], col.GetType(), types.MinFsp, nil)
 			if err == nil {
 				continue
 			}

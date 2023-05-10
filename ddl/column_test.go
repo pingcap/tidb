@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -672,7 +672,7 @@ func TestAddColumn(t *testing.T) {
 
 	checkOK := false
 
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkOK {
 			return
@@ -740,7 +740,7 @@ func TestAddColumns(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -810,7 +810,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 	var mu sync.Mutex
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -872,7 +872,7 @@ func TestDropColumns(t *testing.T) {
 	var mu sync.Mutex
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -998,7 +998,7 @@ func TestWriteDataWriteOnlyMode(t *testing.T) {
 	originalCallback := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originalCallback)
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
@@ -1009,7 +1009,7 @@ func TestWriteDataWriteOnlyMode(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t change column `col1` `col1` varchar(20)")
 
-	hook = &ddl.TestDDLCallback{Do: dom}
+	hook = &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return

@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -50,95 +52,10 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
-
-type allTableData struct {
-	keys [][]byte
-	vals [][]byte
-	tp   []string
-}
-
-// TODO: Create a more generic function that gets all accessible table ids
-// from all schemas, and checks the full key space so that there are no
-// keys for non-existing table IDs. Also figure out how to wait for deleteRange
-// Checks that there are no accessible data after an existing table
-// assumes that tableIDs are only increasing.
-// To be used during failure testing of ALTER, to make sure cleanup is done.
-func noNewTablesAfter(t *testing.T, ctx sessionctx.Context, tbl table.Table) {
-	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	defer func() {
-		err := txn.Rollback()
-		require.NoError(t, err)
-	}()
-	// Get max tableID (if partitioned)
-	tblID := tbl.Meta().ID
-	if pt := tbl.GetPartitionedTable(); pt != nil {
-		defs := pt.Meta().Partition.Definitions
-		{
-			for i := range defs {
-				tblID = mathutil.Max[int64](tblID, defs[i].ID)
-			}
-		}
-	}
-	prefix := tablecodec.EncodeTablePrefix(tblID + 1)
-	it, err := txn.Iter(prefix, nil)
-	require.NoError(t, err)
-	if it.Valid() {
-		foundTblID := tablecodec.DecodeTableID(it.Key())
-		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
-		// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
-		require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00, "Found table data after highest physical Table ID %d < %d", tblID, foundTblID)
-	}
-}
-
-func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable table.PhysicalTable) allTableData {
-	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	defer func() {
-		err := txn.Rollback()
-		require.NoError(t, err)
-	}()
-
-	all := allTableData{
-		keys: make([][]byte, 0),
-		vals: make([][]byte, 0),
-		tp:   make([]string, 0),
-	}
-	pid := physTable.GetPhysicalID()
-	prefix := tablecodec.EncodeTablePrefix(pid)
-	it, err := txn.Iter(prefix, nil)
-	require.NoError(t, err)
-	for it.Valid() {
-		if !it.Key().HasPrefix(prefix) {
-			break
-		}
-		all.keys = append(all.keys, it.Key())
-		all.vals = append(all.vals, it.Value())
-		if tablecodec.IsRecordKey(it.Key()) {
-			all.tp = append(all.tp, "Record")
-			tblID, kv, _ := tablecodec.DecodeRecordKey(it.Key())
-			require.Equal(t, pid, tblID)
-			vals, _ := tablecodec.DecodeValuesBytesToStrings(it.Value())
-			logutil.BgLogger().Info("Record",
-				zap.Int64("pid", tblID),
-				zap.Stringer("key", kv),
-				zap.Strings("values", vals))
-		} else if tablecodec.IsIndexKey(it.Key()) {
-			all.tp = append(all.tp, "Index")
-		} else {
-			all.tp = append(all.tp, "Other")
-		}
-		err = it.Next()
-		require.NoError(t, err)
-	}
-	return all
-}
 
 func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
@@ -1951,13 +1868,61 @@ func TestMultiPartitionDropAndTruncate(t *testing.T) {
 	result.Check(testkit.Rows(`2010`))
 }
 
-func TestDropPartitionWithGlobalIndex(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	store := testkit.CreateMockStore(t)
+func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int, unique key p_b(b))
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
+
+	tk.MustExec("insert into test_global values (1,2,2)")
+	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
+	tk.MustGetErrMsg("insert into test_global values (11,2,2)", "[kv:1062]Duplicate entry '2' for key 'test_global.p_b'")
+
+	// NULL will not get 'duplicate key' error here
+	tk.MustExec("insert into test_global(a,c) values (1,2)")
+	tk.MustExec("insert into test_global(a,c) values (11,2)")
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustGetErrMsg(`create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustGetErrMsg(`create table test_global ( a int, b int, c int, primary key p_b_c(b, c) /*T![clustered_index] CLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int, primary key (b) /*T![clustered_index] NONCLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
+	tk.MustExec("insert into test_global values (1,2,2)")
+	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
+	tk.MustGetErrMsg("insert into test_global values (11,2,2)", "[kv:1062]Duplicate entry '2' for key 'test_global.PRIMARY'")
+}
+
+func TestDropPartitionWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_global")
@@ -1987,9 +1952,179 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
 	require.Equal(t, 2, cnt)
+}
+
+func TestGlobalIndexInsertInDropPartition(t *testing.T) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = false
+		conf.EnableGlobalIndex = true
 	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("insert into test_global values (9, 9, 9)")
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("alter table test_global drop partition p1")
+
+	tk.MustExec("analyze table test_global")
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("9 9 9", "11 11 11", "12 12 12"))
+}
+
+func TestUpdateGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+	tk.MustExec("update test_global set a = 2 where a = 11")
+	tk.MustExec("update test_global set a = 13 where a = 12")
+	tk.MustExec("analyze table test_global")
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("1 1 1", "2 11 11", "8 8 8", "13 12 12"))
+}
+
+func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("update test_global set a = 2 where a = 11")
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("alter table test_global drop partition p1")
+
+	tk.MustExec("analyze table test_global")
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("2 11 11", "12 12 12"))
+}
+
+func TestGlobalIndexReaderInDropPartition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+
+	var indexScanResult *testkit.Result
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+
+			indexScanResult = tk1.MustQuery("select b from test_global use index(idx_b)").Sort()
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("alter table test_global drop partition p1")
+
+	indexScanResult.Check(testkit.Rows("11", "12"))
+}
+
+func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+
+	var indexLookupResult *testkit.Result
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			tk1.MustExec("analyze table test_global")
+			indexLookupResult = tk1.MustQuery("select * from test_global use index(idx_b)").Sort()
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("alter table test_global drop partition p1")
+
+	indexLookupResult.Check(testkit.Rows("11 11 11", "12 12 12"))
 }
 
 func TestAlterTableExchangePartition(t *testing.T) {
@@ -2533,7 +2668,7 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustExec(`insert into pt values (0), (4), (7)`)
 	tk.MustExec("insert into nt values (1)")
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	dom.DDL().SetHook(hook)
 
 	hookFunc := func(job *model.Job) {
@@ -2588,19 +2723,22 @@ func TestTiDBEnableExchangePartition(t *testing.T) {
         PARTITION p2 values less than (9)
 		);`)
 	// default
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec(`create table nt(a int primary key auto_increment);`)
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 
 	// set tidb_enable_exchange_partition = 0
 	tk.MustExec("set @@tidb_enable_exchange_partition=0")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on, this variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 
 	// set tidb_enable_exchange_partition = 1
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on, this variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
@@ -3401,8 +3539,9 @@ func TestPartitionErrorCode(t *testing.T) {
 	)
 	partition by hash(store_id)
 	partitions 4;`)
-	tk.MustGetDBError("alter table employees add partition partitions 8;", dbterror.ErrUnsupportedAddPartition)
-	tk.MustGetDBError("alter table employees add partition (partition p5 values less than (42));", dbterror.ErrUnsupportedAddPartition)
+	tk.MustExec("alter table employees add partition partitions 8")
+	tk.MustGetDBError("alter table employees add partition (partition pNew values less than (42))", ast.ErrPartitionWrongValues)
+	tk.MustGetDBError("alter table employees add partition (partition pNew values in (42))", ast.ErrPartitionWrongValues)
 
 	// coalesce partition
 	tk.MustExec(`create table clients (
@@ -3412,8 +3551,8 @@ func TestPartitionErrorCode(t *testing.T) {
 		signed date
 	)
 	partition by hash( month(signed) )
-	partitions 12;`)
-	tk.MustGetDBError("alter table clients coalesce partition 4;", dbterror.ErrUnsupportedCoalescePartition)
+	partitions 12`)
+	tk.MustContainErrMsg("alter table clients coalesce partition 12", "[ddl:1508]Cannot remove all partitions, use DROP TABLE instead")
 
 	tk.MustExec(`create table t_part (a int key)
 		partition by range(a) (
@@ -3442,6 +3581,299 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk2.MustExec("use test")
 	tk2.MustExec("alter table t truncate partition p0;")
 	tk1.MustExec("commit")
+}
+
+func TestCoalescePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// coalesce partition
+	tk.MustExec(`create schema coalescePart`)
+	tk.MustExec(`use coalescePart`)
+	tk.MustExec(`create table t (
+		id int,
+		fname varchar(30),
+		lname varchar(30),
+		signed date
+	)
+	partition by hash( month(signed) )
+	partitions 12`)
+	for i := 0; i < 200; i++ {
+		tk.MustExec(`insert into t values (?, "Joe", "Doe", from_days(738974 + ?))`, i, i*3)
+	}
+	tk.MustExec("alter table t coalesce partition 4")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `signed` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (MONTH(`signed`)) PARTITIONS 8"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_name = 't' and table_schema = 'coalescePart'`).Sort().Check(testkit.Rows(""+
+		"p0 20",
+		"p1 30",
+		"p2 30",
+		"p3 27",
+		"p4 31",
+		"p5 20",
+		"p6 20",
+		"p7 22"))
+	tk.MustQuery("" +
+		`(select 'p0', count(*) from t partition (p0) UNION` +
+		` select 'p1', count(*) from t partition (p1) UNION` +
+		` select 'p2', count(*) from t partition (p2) UNION` +
+		` select 'p3', count(*) from t partition (p3) UNION` +
+		` select 'p4', count(*) from t partition (p4) UNION` +
+		` select 'p5', count(*) from t partition (p5) UNION` +
+		` select 'p6', count(*) from t partition (p6) UNION` +
+		` select 'p7', count(*) from t partition (p7)` +
+		`) ORDER BY 1`).Check(testkit.Rows(""+
+		"p0 20",
+		"p1 30",
+		"p2 30",
+		"p3 27",
+		"p4 31",
+		"p5 20",
+		"p6 20",
+		"p7 22"))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (
+		id int,
+		fname varchar(30),
+		lname varchar(30),
+		signed date
+	)
+	partition by key(signed,fname)
+	partitions 12`)
+	for i := 0; i < 200; i++ {
+		tk.MustExec(`insert into t values (?, "Joe", "Doe", from_days(738974 + ?))`, i, i*3)
+	}
+	tk.MustExec("alter table t coalesce partition 4")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `signed` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY KEY (`signed`,`fname`) PARTITIONS 8"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_name = 't' and table_schema = 'coalescePart'`).Sort().Check(testkit.Rows(""+
+		"p0 26",
+		"p1 28",
+		"p2 22",
+		"p3 24",
+		"p4 30",
+		"p5 27",
+		"p6 22",
+		"p7 21"))
+	tk.MustQuery("" +
+		`(select 'p0', count(*) from t partition (p0) UNION` +
+		` select 'p1', count(*) from t partition (p1) UNION` +
+		` select 'p2', count(*) from t partition (p2) UNION` +
+		` select 'p3', count(*) from t partition (p3) UNION` +
+		` select 'p4', count(*) from t partition (p4) UNION` +
+		` select 'p5', count(*) from t partition (p5) UNION` +
+		` select 'p6', count(*) from t partition (p6) UNION` +
+		` select 'p7', count(*) from t partition (p7)` +
+		`) ORDER BY 1`).Check(testkit.Rows(""+
+		"p0 26",
+		"p1 28",
+		"p2 22",
+		"p3 24",
+		"p4 30",
+		"p5 27",
+		"p6 22",
+		"p7 21"))
+}
+
+func TestAddHashPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// add partition
+	tk.MustExec("create database addHash")
+	tk.MustExec("use addHash")
+	tk.MustExec(`create table t (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date,
+		job_code int,
+		store_id int
+	)
+	partition by hash(store_id)
+	partitions 4`)
+	// TiDB does not support system versioned tables / SYSTEM_TIME
+	// also the error is slightly wrong with 'VALUES HISTORY'
+	// instead of just 'HISTORY'
+	tk.MustContainErrMsg(`alter table t add partition (partition pHist history)`, "[ddl:1480]Only SYSTEM_TIME PARTITIONING can use VALUES HISTORY in partition definition")
+	tk.MustContainErrMsg(`alter table t add partition (partition pList values in (22))`, "[ddl:1480]Only LIST PARTITIONING can use VALUES IN in partition definition")
+	tk.MustContainErrMsg(`alter table t add partition (partition pRange values less than (22))`, "[ddl:1480]Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition")
+	tk.MustExec(`insert into t values (20, "Joe", "Doe", '2020-01-05', null, 1,1), (21, "Jane", "Doe", '2021-07-05', null, 2,1)`)
+	tk.MustExec("alter table t add partition partitions 8")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`store_id`) PARTITIONS 12"))
+	tk.MustContainErrMsg(`alter table t coalesce partition 0`,
+		"[ddl:1515]At least one partition must be coalesced")
+	tk.MustContainErrMsg(`alter table t coalesce partition 12`,
+		"[ddl:1508]Cannot remove all partitions, use DROP TABLE instead")
+	tk.MustExec(`create placement policy tworeplicas followers=1`)
+	tk.MustExec(`create placement policy threereplicas followers=2`)
+	tk.MustExec(`create placement policy fourreplicas followers=3`)
+	tk.MustExec("alter table t add partition (partition pp13 comment 'p13' placement policy tworeplicas, partition pp14 comment 'p14' placement policy threereplicas, partition pp15 comment 'p15' placement policy fourreplicas)")
+	tk.MustExec(`alter table t add partition partitions 1`)
+	tk.MustExec(`alter table t coalesce partition 1`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`store_id`)\n" +
+		"(PARTITION `p0`,\n" +
+		" PARTITION `p1`,\n" +
+		" PARTITION `p2`,\n" +
+		" PARTITION `p3`,\n" +
+		" PARTITION `p4`,\n" +
+		" PARTITION `p5`,\n" +
+		" PARTITION `p6`,\n" +
+		" PARTITION `p7`,\n" +
+		" PARTITION `p8`,\n" +
+		" PARTITION `p9`,\n" +
+		" PARTITION `p10`,\n" +
+		" PARTITION `p11`,\n" +
+		" PARTITION `pp13` COMMENT 'p13' /*T![placement] PLACEMENT POLICY=`tworeplicas` */,\n" +
+		" PARTITION `pp14` COMMENT 'p14' /*T![placement] PLACEMENT POLICY=`threereplicas` */,\n" +
+		" PARTITION `pp15` COMMENT 'p15' /*T![placement] PLACEMENT POLICY=`fourreplicas` */)"))
+	// MySQL keeps the comments, so we should keep all options connected to the remaining partitions too!
+	// So once you added any partition option,
+	// it will never go back to just a number of partitions in MySQL!
+	tk.MustExec("alter table t coalesce partition 2")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`store_id`)\n" +
+		"(PARTITION `p0`,\n" +
+		" PARTITION `p1`,\n" +
+		" PARTITION `p2`,\n" +
+		" PARTITION `p3`,\n" +
+		" PARTITION `p4`,\n" +
+		" PARTITION `p5`,\n" +
+		" PARTITION `p6`,\n" +
+		" PARTITION `p7`,\n" +
+		" PARTITION `p8`,\n" +
+		" PARTITION `p9`,\n" +
+		" PARTITION `p10`,\n" +
+		" PARTITION `p11`,\n" +
+		" PARTITION `pp13` COMMENT 'p13' /*T![placement] PLACEMENT POLICY=`tworeplicas` */)"))
+	// If no extra options, it will go back to just numbers in TiDB:
+	tk.MustExec("alter table t coalesce partition 1")
+	tk.MustExec(`alter table t add partition (partition p13 comment 'p13')`)
+	tk.MustContainErrMsg(`alter table t add partition partitions 1`,
+		"[ddl:1517]Duplicate partition name p13")
+	tk.MustExec("alter table t coalesce partition 1")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`store_id`) PARTITIONS 12"))
+	tk.MustExec(`drop placement policy tworeplicas`)
+	tk.MustExec(`drop placement policy threereplicas`)
+	tk.MustExec(`drop placement policy fourreplicas`)
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date,
+		job_code int,
+		store_id int
+	)
+	partition by key (hired)
+	partitions 4`)
+	tk.MustExec(`insert into t values (20, "Joe", "Doe", '2020-01-05', null, 1,1), (21, "Jane", "Doe", '2021-07-05', null, 2,1)`)
+	tk.MustExec("alter table t add partition partitions 8")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY KEY (`hired`) PARTITIONS 12"))
+	tk.MustExec("alter table t add partition (partition p13)")
+	tk.MustContainErrMsg(`alter table t add partition partitions 1`,
+		"[ddl:1517]Duplicate partition name p13")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY KEY (`hired`)\n" +
+		"(PARTITION `p0`,\n" +
+		" PARTITION `p1`,\n" +
+		" PARTITION `p2`,\n" +
+		" PARTITION `p3`,\n" +
+		" PARTITION `p4`,\n" +
+		" PARTITION `p5`,\n" +
+		" PARTITION `p6`,\n" +
+		" PARTITION `p7`,\n" +
+		" PARTITION `p8`,\n" +
+		" PARTITION `p9`,\n" +
+		" PARTITION `p10`,\n" +
+		" PARTITION `p11`,\n" +
+		" PARTITION `p13`)"))
+	// Note: MySQL does not remove all names when coalesce partitions is back to defaults
+	tk.MustExec("alter table t coalesce partition 2")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY KEY (`hired`) PARTITIONS 11"))
 }
 
 func TestConstAndTimezoneDepent(t *testing.T) {
@@ -3816,7 +4248,7 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	dom.DDL().SetHook(hook)
 	injected := false
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -3825,10 +4257,10 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 			time.Sleep(30 * time.Millisecond)
 		}
 	}
-	var errCount int32
+	var errCount atomic.Int32
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
-			atomic.AddInt32(&errCount, 1)
+			errCount.Add(1)
 		}
 	}
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -3838,7 +4270,7 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 	go backgroundExec(store, "test", "alter table test.t truncate partition p0;", done2)
 	<-done1
 	<-done2
-	require.LessOrEqual(t, errCount, int32(1))
+	require.LessOrEqual(t, errCount.Load(), int32(1))
 }
 
 func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
@@ -3882,6 +4314,92 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 	err = tk.ExecToErr("alter table t1 add partition (partition p3 values less than (300));")
 	require.Error(t, err)
 	require.Equal(t, "[ddl:-1]DDL job rollback, error msg: [ddl] add partition wait for tiflash replica to complete", err.Error())
+}
+
+func TestReorgPartitionTiFlash(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartTiFlash"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by list columns (a) ` +
+		`(partition p0 values in (10,11,45),` +
+		` partition p1 values in (20,1,23,56),` +
+		` partition p2 values in (12,34,9))`)
+	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		require.NoError(t, err)
+	}()
+
+	tk.MustExec(`alter table t set tiflash replica 1`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`a`)\n" +
+		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
+		" PARTITION `p1` VALUES IN (20,1,23,56),\n" +
+		" PARTITION `p2` VALUES IN (12,34,9))"))
+
+	tbl := external.GetTableByName(t, tk, schemaName, "t")
+	p := tbl.GetPartitionedTable()
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
+	}
+	// Reload
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	p = tbl.GetPartitionedTable()
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.True(t, tbl.Meta().TiFlashReplica.Available)
+	pids := p.GetAllPartitionIDs()
+	sort.Slice(pids, func(i, j int) bool { return pids[i] < pids[j] })
+	availablePids := tbl.Meta().TiFlashReplica.AvailablePartitionIDs
+	sort.Slice(availablePids, func(i, j int) bool { return availablePids[i] < availablePids[j] })
+	require.Equal(t, pids, availablePids)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplicaOK", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplicaOK")
+		require.NoError(t, err)
+	}()
+	tk.MustExec(`alter table t reorganize partition p1, p2 into (partition p1 values in (34,2,23), partition p2 values in (12,56,9),partition p3 values in (1,8,19))`)
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`a`)\n" +
+		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
+		" PARTITION `p1` VALUES IN (34,2,23),\n" +
+		" PARTITION `p2` VALUES IN (12,56,9),\n" +
+		" PARTITION `p3` VALUES IN (1,8,19))"))
+
+	// TODO: Check how to properly test TiFlash, since this will just change the actual configuration
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	p = tbl.GetPartitionedTable()
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
+	}
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	p = tbl.GetPartitionedTable()
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.True(t, tbl.Meta().TiFlashReplica.Available)
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.True(t, tbl.Meta().TiFlashReplica.IsPartitionAvailable(pid))
+	}
 }
 
 func TestDuplicatePartitionNames(t *testing.T) {
@@ -4444,7 +4962,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
 	err = tk.ExecToErr(`ALTER TABLE t LAST PARTITION LESS THAN (10)`)
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported add partitions", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported LAST PARTITION of HASH/KEY partitioned table", err.Error())
 	tk.MustExec(`drop table t`)
 
 	tk.MustExec(`create table t (a int, b varchar(255)) partition by list (a) (partition p0 values in (1,2,3), partition p1 values in (22,23,24))`)
@@ -4612,215 +5130,41 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
 }
 
-func TestReorganizeRangePartition(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+func TestIssue40135Ver2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database ReorgPartition")
-	tk.MustExec("use ReorgPartition")
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b)) partition by range (a) ` +
-		`(partition p0 values less than (10),` +
-		` partition p1 values less than (20),` +
-		` partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	tk.MustQuery(`select * from t where c < 40`).Sort().Check(testkit.Rows(""+
-		"1 1 1",
-		"12 12 21",
-		"23 23 32"))
-	tk.MustExec(`alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE))`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `p2` VALUES LESS THAN (30),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"1 1 1",
-		"12 12 21",
-		"23 23 32",
-		"34 34 43",
-		"45 45 54",
-		"56 56 65"))
-	tk.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows("" +
-		"1 1 1"))
-	tk.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("" +
-		"12 12 21"))
-	tk.MustQuery(`select * from t partition (p2)`).Sort().Check(testkit.Rows("" +
-		"23 23 32"))
-	tk.MustQuery(`select * from t partition (pMax)`).Sort().Check(testkit.Rows(""+
-		"34 34 43",
-		"45 45 54",
-		"56 56 65"))
-	tk.MustQuery(`select * from t where b > "1"`).Sort().Check(testkit.Rows(""+
-		"12 12 21",
-		"23 23 32",
-		"34 34 43",
-		"45 45 54",
-		"56 56 65"))
-	tk.MustQuery(`select * from t where c < 40`).Sort().Check(testkit.Rows(""+
-		"1 1 1",
-		"12 12 21",
-		"23 23 32"))
-	tk.MustExec(`alter table t reorganize partition p2,pMax into (partition p2 values less than (35),partition p3 values less than (47), partition pMax values less than (MAXVALUE))`)
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"1 1 1",
-		"12 12 21",
-		"23 23 32",
-		"34 34 43",
-		"45 45 54",
-		"56 56 65"))
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `p2` VALUES LESS THAN (35),\n" +
-		" PARTITION `p3` VALUES LESS THAN (47),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows("" +
-		"1 1 1"))
-	tk.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("" +
-		"12 12 21"))
-	tk.MustQuery(`select * from t partition (p2)`).Sort().Check(testkit.Rows(""+
-		"23 23 32",
-		"34 34 43"))
-	tk.MustQuery(`select * from t partition (p3)`).Sort().Check(testkit.Rows("" +
-		"45 45 54"))
-	tk.MustQuery(`select * from t partition (pMax)`).Sort().Check(testkit.Rows("" +
-		"56 56 65"))
-	tk.MustExec(`alter table t reorganize partition p0,p1 into (partition p1 values less than (20))`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `p2` VALUES LESS THAN (35),\n" +
-		" PARTITION `p3` VALUES LESS THAN (47),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"1 1 1",
-		"12 12 21",
-		"23 23 32",
-		"34 34 43",
-		"45 45 54",
-		"56 56 65"))
-	tk.MustExec(`alter table t drop index b`)
-	tk.MustExec(`alter table t drop index c`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `p2` VALUES LESS THAN (35),\n" +
-		" PARTITION `p3` VALUES LESS THAN (47),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustExec(`create table t2 (a int unsigned not null, b varchar(255), c int, key (b), key (c,b)) partition by range (a) ` +
-		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `p2` VALUES LESS THAN (35),\n" +
-		" PARTITION `p3` VALUES LESS THAN (47),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))")
-	tk.MustExec(`insert into t2 select * from t`)
-	// Not allowed to change the start range!
-	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (20), partition p2b values less than (36))`,
-		mysql.ErrRangeNotIncreasing)
-	// Not allowed to change the end range!
-	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (36))`, mysql.ErrRangeNotIncreasing)
-	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (34))`, mysql.ErrRangeNotIncreasing)
-	// Also not allowed to change from MAXVALUE to something else IF there are values in the removed range!
-	tk.MustContainErrMsg(`alter table t2 reorganize partition pMax into (partition p2b values less than (50))`, "[table:1526]Table has no partition for value 56")
-	tk.MustQuery(`show create table t2`).Check(testkit.Rows("" +
-		"t2 CREATE TABLE `t2` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `p2` VALUES LESS THAN (35),\n" +
-		" PARTITION `p3` VALUES LESS THAN (47),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	// But allowed to change from MAXVALUE if no existing values is outside the new range!
-	tk.MustExec(`alter table t2 reorganize partition pMax into (partition p4 values less than (90))`)
-	tk.MustQuery(`show create table t2`).Check(testkit.Rows("" +
-		"t2 CREATE TABLE `t2` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `p2` VALUES LESS THAN (35),\n" +
-		" PARTITION `p3` VALUES LESS THAN (47),\n" +
-		" PARTITION `p4` VALUES LESS THAN (90))"))
-}
+	tk.MustExec("use test")
 
-func TestReorganizeListPartition(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database ReorgListPartition")
-	tk.MustExec("use ReorgListPartition")
-	tk.MustExec(`create table t (a int, b varchar(55), c int) partition by list (a)` +
-		` (partition p1 values in (12,23,51,14), partition p2 values in (24,63), partition p3 values in (45))`)
-	tk.MustExec(`insert into t values (12,"12",21), (24,"24",42),(51,"51",15),(23,"23",32),(63,"63",36),(45,"45",54)`)
-	tk.MustExec(`alter table t reorganize partition p1 into (partition p0 values in (12,51,13), partition p1 values in (23))`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` varchar(55) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY LIST (`a`)\n" +
-		"(PARTITION `p0` VALUES IN (12,51,13),\n" +
-		" PARTITION `p1` VALUES IN (23),\n" +
-		" PARTITION `p2` VALUES IN (24,63),\n" +
-		" PARTITION `p3` VALUES IN (45))"))
-	tk.MustExec(`alter table t add primary key (a), add key (b), add key (c,b)`)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 
-	// Note: MySQL cannot reorganize two non-consecutive list partitions :)
-	// ERROR 1519 (HY000): When reorganizing a set of partitions they must be in consecutive order
-	tk.MustExec(`alter table t reorganize partition p1, p3 into (partition pa values in (45,23,15))`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(11) NOT NULL,\n" +
-		"  `b` varchar(55) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY LIST (`a`)\n" +
-		"(PARTITION `p0` VALUES IN (12,51,13),\n" +
-		" PARTITION `pa` VALUES IN (45,23,15),\n" +
-		" PARTITION `p2` VALUES IN (24,63))"))
-	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', index(a)) PARTITION BY HASH (a) PARTITIONS 6")
+	tk.MustExec("insert into t40135 values (1, 'md'), (2, 'ma'), (3, 'md'), (4, 'ma'), (5, 'md'), (6, 'ma')")
+	one := true
+	hook := &callback.TestDDLCallback{Do: dom}
+	var checkErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly {
+			tk3.MustExec("delete from t40135 where a = 1")
+		}
+		if one {
+			one = false
+			go func() {
+				_, checkErr = tk1.Exec("alter table t40135 modify column a int NULL")
+				wg.Done()
+			}()
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
+	wg.Wait()
+	require.ErrorContains(t, checkErr, "[ddl:8200]Unsupported modify column: table is partition table")
+	tk.MustExec("admin check table t40135")
 }
 
 func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
@@ -4840,6 +5184,7 @@ func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
 		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
 		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
+	tk.MustExec(`admin check table t`)
 }
 
 func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
@@ -4896,551 +5241,21 @@ func TestDropPartitionKeyColumn(t *testing.T) {
 	tk.MustExec("alter table t4 drop column b")
 }
 
-type TestReorgDDLCallback struct {
-	*ddl.TestDDLCallback
-	syncChan chan bool
-}
-
-func (tc *TestReorgDDLCallback) OnChanged(err error) error {
-	err = tc.TestDDLCallback.OnChanged(err)
-	<-tc.syncChan
-	// We want to wait here
-	<-tc.syncChan
-	return err
-}
-
-func TestReorgPartitionConcurrent(t *testing.T) {
+func TestRangeExpressions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartConcurrent"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
-		` partition by range (a) ` +
-		`(partition p0 values less than (10),` +
-		` partition p1 values less than (20),` +
-		` partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (1,"1",1), (10,"10",10),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	syncOnChanged := make(chan bool)
-	defer close(syncOnChanged)
-	hook := &TestReorgDDLCallback{TestDDLCallback: &ddl.TestDDLCallback{Do: dom}, syncChan: syncOnChanged}
-	dom.DDL().SetHook(hook)
-
-	wait := make(chan bool)
-	defer close(wait)
-
-	currState := model.StateNone
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionReorganizePartition &&
-			(job.SchemaState == model.StateDeleteOnly ||
-				job.SchemaState == model.StateWriteOnly ||
-				job.SchemaState == model.StateWriteReorganization ||
-				job.SchemaState == model.StateDeleteReorganization) &&
-			currState != job.SchemaState {
-			currState = job.SchemaState
-			<-wait
-			<-wait
-		}
-	}
-	alterErr := make(chan error, 1)
-	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
-
-	wait <- true
-	// StateDeleteOnly
-	deleteOnlyInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	wait <- true
-
-	// StateWriteOnly
-	wait <- true
-	tk.MustExec(`insert into t values (11, "11", 11),(12,"12",21)`)
-	writeOnlyInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	require.Equal(t, int64(1), writeOnlyInfoSchema.SchemaMetaVersion()-deleteOnlyInfoSchema.SchemaMetaVersion())
-	deleteOnlyTbl, err := deleteOnlyInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	writeOnlyTbl, err := writeOnlyInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	writeOnlyParts := writeOnlyTbl.Meta().Partition
-	writeOnlyTbl.Meta().Partition = deleteOnlyTbl.Meta().Partition
-	// If not DeleteOnly is working, then this would show up when reorg is done
-	tk.MustExec(`delete from t where a = 11`)
-	tk.MustExec(`update t set b = "12b", c = 12 where a = 12`)
-	writeOnlyTbl.Meta().Partition = writeOnlyParts
-	wait <- true
-
-	// StateWriteReorganization
-	wait <- true
-	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
-	writeReorgInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
+	tk.MustExec("create database RangeExpr")
+	tk.MustExec("use RangeExpr")
+	tk.MustExec(`create table t6 (colint int, col1 date)
+partition by range(colint)
+(partition p0 values less than (extract(year from '1998-11-23')),
+partition p1 values less than maxvalue)`)
+	tk.MustQuery(`show create table t6`).Check(testkit.Rows("" +
+		"t6 CREATE TABLE `t6` (\n" +
+		"  `colint` int(11) DEFAULT NULL,\n" +
+		"  `col1` date DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	wait <- true
-
-	// StateDeleteReorganization
-	wait <- true
-	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
-		"10 10 10",
-		"12 12b 12",
-		"14 14 14",
-		"15 15 15"))
-	deleteReorgInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	require.Equal(t, int64(1), deleteReorgInfoSchema.SchemaMetaVersion()-writeReorgInfoSchema.SchemaMetaVersion())
-	tk.MustExec(`insert into t values (16, "16", 16)`)
-	oldTbl, err := writeReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	partDef := oldTbl.Meta().Partition.Definitions[1]
-	require.Equal(t, "p1", partDef.Name.O)
-	rows := getNumRowsFromPartitionDefs(t, tk, oldTbl, oldTbl.Meta().Partition.Definitions[1:2])
-	require.Equal(t, 5, rows)
-	currTbl, err := deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	currPart := currTbl.Meta().Partition
-	currTbl.Meta().Partition = oldTbl.Meta().Partition
-	tk.MustQuery(`select * from t where b = "16"`).Sort().Check(testkit.Rows("16 16 16"))
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows(""+
-		"10 10 10",
-		"12 12b 12",
-		"14 14 14",
-		"15 15 15",
-		"16 16 16"))
-	currTbl.Meta().Partition = currPart
-	wait <- true
-	syncOnChanged <- true
-	// This reads the new schema (Schema update completed)
-	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
-		"10 10 10",
-		"12 12b 12",
-		"14 14 14",
-		"15 15 15",
-		"16 16 16"))
-	newInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-deleteReorgInfoSchema.SchemaMetaVersion())
-	oldTbl, err = deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	partDef = oldTbl.Meta().Partition.Definitions[1]
-	require.Equal(t, "p1a", partDef.Name.O)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
-		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	newTbl, err := deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	newPart := newTbl.Meta().Partition
-	newTbl.Meta().Partition = oldTbl.Meta().Partition
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
-		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	newTbl.Meta().Partition = newPart
-	syncOnChanged <- true
-	require.NoError(t, <-alterErr)
+		"PARTITION BY RANGE (`colint`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1998),\n" +
+		" PARTITION `p1` VALUES LESS THAN (MAXVALUE))"))
 }
-
-func TestReorgPartitionFailConcurrent(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartFailConcurrent"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
-		` partition by range (a) ` +
-		`(partition p0 values less than (10),` +
-		` partition p1 values less than (20),` +
-		` partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
-	dom.DDL().SetHook(hook)
-
-	wait := make(chan bool)
-	defer close(wait)
-
-	// Test insert of duplicate key during copy phase
-	injected := false
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
-			injected = true
-			<-wait
-			<-wait
-		}
-	}
-	alterErr := make(chan error, 1)
-	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
-	wait <- true
-	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
-	tk.MustGetErrCode(`insert into t values (11, "11", 11),(12,"duplicate PK 💥", 13)`, mysql.ErrDupEntry)
-	wait <- true
-	require.NoError(t, <-alterErr)
-	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
-		"12 12 21",
-		"14 14 14",
-		"15 15 15"))
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
-		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-
-	// Test reorg of duplicate key
-	prevState := model.StateNone
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionReorganizePartition &&
-			job.SchemaState == model.StateWriteReorganization &&
-			job.SnapshotVer == 0 &&
-			prevState != job.SchemaState {
-			prevState = job.SchemaState
-			<-wait
-			<-wait
-		}
-		if job.Type == model.ActionReorganizePartition &&
-			job.SchemaState == model.StateDeleteReorganization &&
-			prevState != job.SchemaState {
-			prevState = job.SchemaState
-			<-wait
-			<-wait
-		}
-	}
-	go backgroundExec(store, schemaName, "alter table t reorganize partition p1a,p1b into (partition p1a values less than (14), partition p1b values less than (17), partition p1c values less than (20))", alterErr)
-	wait <- true
-	infoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	tbl, err := infoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	require.Equal(t, 0, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
-	tk.MustExec(`delete from t where a = 14`)
-	tk.MustExec(`insert into t values (13, "13", 31),(14,"14b",14),(16, "16",16)`)
-	wait <- true
-	wait <- true
-	tbl, err = infoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	require.Equal(t, 5, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
-	tk.MustExec(`delete from t where a = 15`)
-	tk.MustExec(`insert into t values (11, "11", 11),(15,"15b",15),(17, "17",17)`)
-	wait <- true
-	require.NoError(t, <-alterErr)
-
-	tk.MustQuery(`select * from t where a between 10 and 22`).Sort().Check(testkit.Rows(""+
-		"11 11 11",
-		"12 12 21",
-		"13 13 31",
-		"14 14b 14",
-		"15 15b 15",
-		"16 16 16",
-		"17 17 17"))
-	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
-		"11 11 11",
-		"12 12 21",
-		"14 14b 14",
-		"15 15b 15",
-		"16 16 16",
-		"17 17 17"))
-	tk.MustQuery(`select * from t where b between "10" and "22"`).Sort().Check(testkit.Rows(""+
-		"11 11 11",
-		"12 12 21",
-		"13 13 31",
-		"14 14b 14",
-		"15 15b 15",
-		"16 16 16",
-		"17 17 17"))
-}
-
-func getNumRowsFromPartitionDefs(t *testing.T, tk *testkit.TestKit, tbl table.Table, defs []model.PartitionDefinition) int {
-	ctx := tk.Session()
-	pt := tbl.GetPartitionedTable()
-	require.NotNil(t, pt)
-	cnt := 0
-	for _, def := range defs {
-		data := getAllDataForPhysicalTable(t, ctx, pt.GetPartition(def.ID))
-		require.True(t, len(data.keys) == len(data.vals))
-		require.True(t, len(data.keys) == len(data.tp))
-		for _, s := range data.tp {
-			if s == "Record" {
-				cnt++
-			}
-		}
-	}
-	return cnt
-}
-
-func TestReorgPartitionTiFlash(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartTiFlash"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
-		` partition by list columns (a) ` +
-		`(partition p0 values in (10,11,45),` +
-		` partition p1 values in (20,1,23,56),` +
-		` partition p2 values in (12,34,9))`)
-	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
-		require.NoError(t, err)
-	}()
-
-	tk.MustExec(`alter table t set tiflash replica 1`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY LIST COLUMNS(`a`)\n" +
-		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
-		" PARTITION `p1` VALUES IN (20,1,23,56),\n" +
-		" PARTITION `p2` VALUES IN (12,34,9))"))
-
-	tbl := external.GetTableByName(t, tk, schemaName, "t")
-	p := tbl.GetPartitionedTable()
-	for _, pid := range p.GetAllPartitionIDs() {
-		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
-	}
-	// Reload
-	tbl = external.GetTableByName(t, tk, schemaName, "t")
-	p = tbl.GetPartitionedTable()
-	require.NotNil(t, tbl.Meta().TiFlashReplica)
-	require.True(t, tbl.Meta().TiFlashReplica.Available)
-	pids := p.GetAllPartitionIDs()
-	sort.Slice(pids, func(i, j int) bool { return pids[i] < pids[j] })
-	availablePids := tbl.Meta().TiFlashReplica.AvailablePartitionIDs
-	sort.Slice(availablePids, func(i, j int) bool { return availablePids[i] < availablePids[j] })
-	require.Equal(t, pids, availablePids)
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplicaOK", `return(true)`))
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplicaOK")
-		require.NoError(t, err)
-	}()
-	tk.MustExec(`alter table t reorganize partition p1, p2 into (partition p1 values in (34,2,23), partition p2 values in (12,56,9),partition p3 values in (1,8,19))`)
-	tk.MustExec(`admin check table t`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY LIST COLUMNS(`a`)\n" +
-		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
-		" PARTITION `p1` VALUES IN (34,2,23),\n" +
-		" PARTITION `p2` VALUES IN (12,56,9),\n" +
-		" PARTITION `p3` VALUES IN (1,8,19))"))
-
-	// TODO: Check how to properly test TiFlash, since this will just change the actual configuration
-	tbl = external.GetTableByName(t, tk, schemaName, "t")
-	p = tbl.GetPartitionedTable()
-	for _, pid := range p.GetAllPartitionIDs() {
-		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
-	}
-	tbl = external.GetTableByName(t, tk, schemaName, "t")
-	p = tbl.GetPartitionedTable()
-	require.NotNil(t, tbl.Meta().TiFlashReplica)
-	require.True(t, tbl.Meta().TiFlashReplica.Available)
-	for _, pid := range p.GetAllPartitionIDs() {
-		require.True(t, tbl.Meta().TiFlashReplica.IsPartitionAvailable(pid))
-	}
-}
-
-func TestReorgPartitionFailInject(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartFailInjectConcurrent"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
-		` partition by range (a) ` +
-		`(partition p0 values less than (10),` +
-		` partition p1 values less than (20),` +
-		` partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
-	dom.DDL().SetHook(hook)
-
-	wait := make(chan bool)
-	defer close(wait)
-
-	injected := false
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
-			injected = true
-			<-wait
-			<-wait
-		}
-	}
-	alterErr := make(chan error, 1)
-	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
-	wait <- true
-	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
-	tk.MustGetErrCode(`insert into t values (11, "11", 11),(12,"duplicate PK 💥", 13)`, mysql.ErrDupEntry)
-	wait <- true
-	require.NoError(t, <-alterErr)
-	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
-		"12 12 21",
-		"14 14 14",
-		"15 15 15"))
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
-		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-}
-
-func TestReorgPartitionRollback(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartRollback"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
-		` partition by range (a) ` +
-		`(partition p0 values less than (10),` +
-		` partition p1 values less than (20),` +
-		` partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	// TODO: Check that there are no additional placement rules,
-	// bundles, or ranges with non-completed tableIDs
-	// (partitions used during reorg, but was dropped)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`))
-	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
-	tk.MustExec(`admin check table t`)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"))
-	ctx := tk.Session()
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	noNewTablesAfter(t, ctx, tbl)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/reorgPartitionAfterDataCopy", `return(true)`))
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/ddl/reorgPartitionAfterDataCopy")
-		require.NoError(t, err)
-	}()
-	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
-	tk.MustExec(`admin check table t`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-
-	// WASHERE: How to test these?
-	//tk.MustQuery(`select * from mysql.gc_delete_range_done`).Sort().Check(testkit.Rows())
-	//time.Sleep(1 * time.Second)
-	//tk.MustQuery(`select * from mysql.gc_delete_range`).Sort().Check(testkit.Rows())
-
-	tbl, err = is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	noNewTablesAfter(t, ctx, tbl)
-}
-
-func TestReorgPartitionData(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartData"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`SET @@session.sql_mode = default`)
-	tk.MustExec(`create table t (a int PRIMARY KEY AUTO_INCREMENT, b varchar(255), c int, d datetime, key (b), key (c,b)) partition by range (a) (partition p1 values less than (0), partition p1M values less than (1000000))`)
-	tk.MustContainErrMsg(`insert into t values (0, "Zero value!", 0, '2022-02-30')`, "[table:1292]Incorrect datetime value: '2022-02-30' for column 'd' at row 1")
-	tk.MustExec(`SET @@session.sql_mode = 'ALLOW_INVALID_DATES,NO_AUTO_VALUE_ON_ZERO'`)
-	tk.MustExec(`insert into t values (0, "Zero value!", 0, '2022-02-30')`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("0 Zero value! 0 2022-02-30 00:00:00"))
-	tk.MustExec(`SET @@session.sql_mode = default`)
-	tk.MustExec(`alter table t reorganize partition p1M into (partition p0 values less than (1), partition p2M values less than (2000000))`)
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("0 Zero value! 0 2022-02-30 00:00:00"))
-}
-
-// TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
-
-// How to test rollback?
-// Create new table
-// insert some data
-// start reorganize partition
-// pause and get the AddingPartition IDs for later use
-// continue reorganize partition and fail or crash in points of interests
-// check if there are any data to be read from the AddingPartition IDs
-// check if the table structure is correct.

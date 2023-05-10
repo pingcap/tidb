@@ -26,34 +26,24 @@ import (
 
 var (
 	// PanicCounter measures the count of panics.
-	PanicCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "panic_total",
-			Help:      "Counter of panic.",
-		}, []string{LblType})
+	PanicCounter *prometheus.CounterVec
 
 	// MemoryUsage measures the usage gauge of memory.
-	MemoryUsage = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "memory_usage",
-			Help:      "Memory Usage",
-		}, []string{LblModule, LblType})
+	MemoryUsage *prometheus.GaugeVec
 )
 
 // metrics labels.
 const (
-	LabelSession   = "session"
-	LabelDomain    = "domain"
-	LabelDDLOwner  = "ddl-owner"
-	LabelDDL       = "ddl"
-	LabelDDLWorker = "ddl-worker"
-	LabelDDLSyncer = "ddl-syncer"
-	LabelGCWorker  = "gcworker"
-	LabelAnalyze   = "analyze"
+	LabelSession    = "session"
+	LabelDomain     = "domain"
+	LabelDDLOwner   = "ddl-owner"
+	LabelDDL        = "ddl"
+	LabelDDLWorker  = "ddl-worker"
+	LabelDistReorg  = "dist-reorg"
+	LabelDDLSyncer  = "ddl-syncer"
+	LabelGCWorker   = "gcworker"
+	LabelAnalyze    = "analyze"
+	LabelWorkerPool = "worker-pool"
 
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
@@ -76,6 +66,47 @@ func RetLabel(err error) string {
 		return opSucc
 	}
 	return opFailed
+}
+
+func init() {
+	InitMetrics()
+}
+
+// InitMetrics is used to initialize metrics.
+func InitMetrics() {
+	InitBindInfoMetrics()
+	InitDDLMetrics()
+	InitDistSQLMetrics()
+	InitDomainMetrics()
+	InitExecutorMetrics()
+	InitGCWorkerMetrics()
+	InitLogBackupMetrics()
+	InitMetaMetrics()
+	InitOwnerMetrics()
+	InitResourceManagerMetrics()
+	InitServerMetrics()
+	InitSessionMetrics()
+	InitSliMetrics()
+	InitStatsMetrics()
+	InitTelemetryMetrics()
+	InitTopSQLMetrics()
+	InitTTLMetrics()
+
+	PanicCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "panic_total",
+			Help:      "Counter of panic.",
+		}, []string{LblType})
+
+	MemoryUsage = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "memory_usage",
+			Help:      "Memory Usage",
+		}, []string{LblModule, LblType})
 }
 
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.
@@ -194,6 +225,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ReadFromTableCacheCounter)
 	prometheus.MustRegister(LoadTableCacheDurationHistogram)
 	prometheus.MustRegister(NonTransactionalDMLCount)
+	prometheus.MustRegister(PessimisticDMLDurationByAttempt)
+	prometheus.MustRegister(ResourceGroupQueryTotalCounter)
 	prometheus.MustRegister(MemoryUsage)
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
@@ -209,13 +242,18 @@ func RegisterMetrics() {
 	prometheus.MustRegister(AutoIDReqDuration)
 	prometheus.MustRegister(RegionCheckpointSubscriptionEvent)
 	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
+	prometheus.MustRegister(FairLockingUsageCount)
 
 	prometheus.MustRegister(TTLQueryDuration)
 	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
 	prometheus.MustRegister(TTLJobStatus)
+	prometheus.MustRegister(TTLTaskStatus)
 	prometheus.MustRegister(TTLPhaseTime)
+	prometheus.MustRegister(TTLInsertRowsCount)
+	prometheus.MustRegister(TTLWatermarkDelay)
 
 	prometheus.MustRegister(EMACPUUsageGauge)
+	prometheus.MustRegister(PoolConcurrencyCounter)
 
 	prometheus.MustRegister(HistoricalStatsCounter)
 	prometheus.MustRegister(PlanReplayerTaskCounter)

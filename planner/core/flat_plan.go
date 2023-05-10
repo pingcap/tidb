@@ -92,7 +92,7 @@ type FlatOperator struct {
 
 	// With ChildrenIdx and ChildrenEndIdx, we can locate every children subtrees of this operator in the FlatPlanTree.
 	// For example, the first children subtree is flatTree[ChildrenIdx[0] : ChildrenIdx[1]], the last children subtree
-	// is flatTree[ChildrenIdx[n-1] : ChildrenEndIdx].
+	// is flatTree[ChildrenIdx[n-1] : ChildrenEndIdx+1].
 
 	// ChildrenIdx is the indexes of the children of this operator in the FlatPlanTree.
 	// It's ordered from small to large.

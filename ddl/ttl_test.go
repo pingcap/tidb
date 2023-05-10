@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/assert"
 )
@@ -26,12 +25,13 @@ import (
 func Test_getTTLInfoInOptions(t *testing.T) {
 	falseValue := false
 	trueValue := true
+	twentyFourHours := "24h"
 
 	cases := []struct {
 		options            []*ast.TableOption
 		ttlInfo            *model.TTLInfo
 		ttlEnable          *bool
-		ttlCronJobSchedule *duration.Duration
+		ttlCronJobSchedule *string
 		err                error
 	}{
 		{
@@ -55,7 +55,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      duration.Duration{Hour: 1},
+				JobInterval:      "1h",
 			},
 			nil,
 			nil,
@@ -79,7 +79,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           false,
-				JobInterval:      duration.Duration{Hour: 1},
+				JobInterval:      "1h",
 			},
 			&falseValue,
 			nil,
@@ -107,7 +107,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      duration.Duration{Hour: 1},
+				JobInterval:      "1h",
 			},
 			&trueValue,
 			nil,
@@ -131,10 +131,10 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      duration.Duration{Day: 1},
+				JobInterval:      "24h",
 			},
 			nil,
-			&duration.Duration{Day: 1},
+			&twentyFourHours,
 			nil,
 		},
 	}

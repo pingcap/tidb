@@ -100,4 +100,6 @@ var (
 	ErrForeignKeyNoIndexInParent = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyNoIndexInParent)
 	// ErrForeignKeyColumnNotNull returns when foreign key with SET NULL constrain and the related column has not null.
 	ErrForeignKeyColumnNotNull = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyColumnNotNull)
+	// ErrResourceGroupSupportDisabled returns for resource group feature is disabled
+	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
 )

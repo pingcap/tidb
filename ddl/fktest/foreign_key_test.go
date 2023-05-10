@@ -427,7 +427,7 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	// check the schema diff
 	diff = getLatestSchemaDiff(t, tk)
 	require.Equal(t, model.ActionRenameTable, diff.Type)
-	require.Equal(t, 1, len(diff.AffectedOpts))
+	require.Equal(t, 0, len(diff.AffectedOpts))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),
@@ -1809,4 +1809,29 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 			require.Equal(t, ca.err2, err2.Error())
 		}
 	}
+}
+
+func TestForeignKeyAndRenameIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, index idx1(b));")
+	tk.MustExec("create table t2 (id int key, b int, constraint fk foreign key (b) references t1(b));")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("delete from t1 where id=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("alter table t1 rename index idx1 to idx2")
+	tk.MustExec("alter table t2 rename index fk to idx")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("delete from t1 where id=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete cascade on update cascade")
+	tk.MustExec("alter table t1 rename index idx2 to idx3")
+	tk.MustExec("alter table t2 rename index idx to idx0")
+	tk.MustExec("delete from t1 where id=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2 2"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 2"))
+	tk.MustExec("admin check table t1,t2")
 }

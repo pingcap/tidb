@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "callback",
+    srcs = ["callback.go"],
+    importpath = "github.com/pingcap/tidb/ddl/internal/callback",
+    visibility = ["//ddl:__subpackages__"],
+    deps = [
+        "//ddl",
+        "//infoschema",
+        "//parser/model",
+        "//sessionctx",
+        "//util/logutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "callback_test",
+    timeout = "short",
+    srcs = ["callback_test.go"],
+    embed = [":callback"],
+    flaky = True,
+    deps = [
+        "//ddl",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -27,13 +27,13 @@ func (t *TxStructure) Set(key []byte, value []byte) error {
 	if t.readWriter == nil {
 		return ErrWriteOnSnapshot
 	}
-	ek := t.encodeStringDataKey(key)
+	ek := t.EncodeStringDataKey(key)
 	return t.readWriter.Set(ek, value)
 }
 
 // Get gets the string value of a key.
 func (t *TxStructure) Get(key []byte) ([]byte, error) {
-	ek := t.encodeStringDataKey(key)
+	ek := t.EncodeStringDataKey(key)
 	value, err := t.reader.Get(context.TODO(), ek)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
@@ -58,7 +58,7 @@ func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 	if t.readWriter == nil {
 		return 0, ErrWriteOnSnapshot
 	}
-	ek := t.encodeStringDataKey(key)
+	ek := t.EncodeStringDataKey(key)
 	// txn Inc will lock this key, so we don't lock it here.
 	n, err := kv.IncInt64(t.readWriter, ek, step)
 	if kv.ErrNotExist.Equal(err) {
@@ -72,7 +72,7 @@ func (t *TxStructure) Clear(key []byte) error {
 	if t.readWriter == nil {
 		return ErrWriteOnSnapshot
 	}
-	ek := t.encodeStringDataKey(key)
+	ek := t.EncodeStringDataKey(key)
 	err := t.readWriter.Delete(ek)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil

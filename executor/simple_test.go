@@ -94,9 +94,9 @@ func TestUserAttributes(t *testing.T) {
 	_, err := rootTK.Exec(`CREATE USER testuser2 ATTRIBUTE '{"name": "Tom", age: 19}'`)
 	rootTK.MustExec(`CREATE USER testuser2`)
 	require.Error(t, err)
-	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser'`).Check(testkit.Rows(`{"metadata": {"comment": "1234"}, "resource_group": "default"}`))
-	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser1'`).Check(testkit.Rows(`{"metadata": {"age": 19, "name": "Tom"}, "resource_group": "default"}`))
-	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser2'`).Check(testkit.Rows(`{"resource_group": "default"}`))
+	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser'`).Check(testkit.Rows(`{"metadata": {"comment": "1234"}}`))
+	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser1'`).Check(testkit.Rows(`{"metadata": {"age": 19, "name": "Tom"}}`))
+	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser2'`).Check(testkit.Rows(`{}`))
 	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser'`).Check(testkit.Rows(`{"comment": "1234"}`))
 	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 19, "name": "Tom"}`))
 	rootTK.MustQueryWithContext(ctx, `SELECT attribute->>"$.age" AS age, attribute->>"$.name" AS name FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`19 Tom`))
@@ -127,7 +127,34 @@ func TestUserAttributes(t *testing.T) {
 	// https://github.com/pingcap/tidb/issues/39207
 	rootTK.MustExec("create user usr1@'%' identified by 'passord'")
 	rootTK.MustExec("alter user usr1 comment 'comment1'")
-	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "default"}`))
-	rootTK.MustExec("alter user usr1 resource group 'rg1'")
+	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}}`))
+	rootTK.MustExec("set global tidb_enable_resource_control = 'on'")
+	rootTK.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
+	rootTK.MustExec("alter user usr1 resource group rg1")
 	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}`))
+}
+
+func TestSetResourceGroup(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")
+
+	tk.MustContainErrMsg("SET RESOURCE GROUP rg1", "Unknown resource group 'rg1'")
+
+	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
+	tk.MustExec("ALTER USER `root` RESOURCE GROUP `rg1`")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows(""))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
+
+	tk.MustExec("CREATE RESOURCE GROUP rg2 ru_per_sec = 200")
+	tk.MustExec("SET RESOURCE GROUP `rg2`")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg2"))
+	tk.MustExec("SET RESOURCE GROUP ``")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows(""))
+
+	tk.RefreshSession()
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
 }

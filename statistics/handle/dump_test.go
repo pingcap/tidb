@@ -23,17 +23,17 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
 func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
-	require.Equal(t, b.Count, a.Count)
+	require.Equal(t, b.RealtimeCount, a.RealtimeCount)
 	require.Equal(t, b.ModifyCount, a.ModifyCount)
 	require.Equal(t, len(b.Columns), len(a.Columns))
 	for i := range a.Columns {
-		require.Equal(t, b.Columns[i].Count, a.Columns[i].Count)
 		require.True(t, statistics.HistogramEqual(&a.Columns[i].Histogram, &b.Columns[i].Histogram, false))
 		if a.Columns[i].CMSketch == nil {
 			require.Nil(t, b.Columns[i].CMSketch)
@@ -53,7 +53,7 @@ func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 		}
 		require.True(t, a.Indices[i].TopN.Equal(b.Indices[i].TopN))
 	}
-	require.True(t, isSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
+	require.True(t, internal.IsSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
 }
 
 func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
@@ -467,4 +467,70 @@ func TestJSONTableToBlocks(t *testing.T) {
 	jsonStr, err := json.Marshal(jsConverted)
 	require.NoError(t, err)
 	require.JSONEq(t, string(jsOrigin), string(jsonStr))
+}
+
+func TestLoadStatsFromOldVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(b))")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	require.NoError(t, h.Update(is))
+
+	statsJSONFromOldVersion := `{
+ "database_name": "test",
+ "table_name": "t",
+ "columns": {
+  "a": {
+   "histogram": {
+    "ndv": 0
+   },
+   "cm_sketch": null,
+   "null_count": 0,
+   "tot_col_size": 256,
+   "last_update_version": 440735055846047747,
+   "correlation": 0
+  },
+  "b": {
+   "histogram": {
+    "ndv": 0
+   },
+   "cm_sketch": null,
+   "null_count": 0,
+   "tot_col_size": 256,
+   "last_update_version": 440735055846047747,
+   "correlation": 0
+  }
+ },
+ "indices": {
+  "idx": {
+   "histogram": {
+    "ndv": 0
+   },
+   "cm_sketch": null,
+   "null_count": 0,
+   "tot_col_size": 0,
+   "last_update_version": 440735055846047747,
+   "correlation": 0
+  }
+ },
+ "count": 256,
+ "modify_count": 256,
+ "partitions": null
+}`
+	jsonTbl := &handle.JSONTable{}
+	require.NoError(t, json.Unmarshal([]byte(statsJSONFromOldVersion), jsonTbl))
+	require.NoError(t, h.LoadStatsFromJSON(is, jsonTbl))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetTableStats(tbl.Meta())
+	for _, col := range statsTbl.Columns {
+		require.False(t, col.IsStatsInitialized())
+	}
+	for _, idx := range statsTbl.Indices {
+		require.False(t, idx.IsStatsInitialized())
+	}
 }

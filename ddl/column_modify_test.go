@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -538,7 +538,7 @@ func TestGeneratedColumnDDL(t *testing.T) {
 	}{
 		// Drop/rename columns dependent by other column.
 		{`alter table test_gv_ddl drop column a`, errno.ErrDependentByGeneratedColumn},
-		{`alter table test_gv_ddl change column a anew int`, errno.ErrBadField},
+		{`alter table test_gv_ddl change column a anew int`, errno.ErrDependentByGeneratedColumn},
 
 		// Modify/change stored status of generated columns.
 		{`alter table test_gv_ddl modify column b bigint`, errno.ErrUnsupportedOnGeneratedColumn},
@@ -546,7 +546,7 @@ func TestGeneratedColumnDDL(t *testing.T) {
 
 		// Modify/change generated columns breaking prior.
 		{`alter table test_gv_ddl modify column b int as (c+100)`, errno.ErrGeneratedColumnNonPrior},
-		{`alter table test_gv_ddl change column b bnew int as (c+100)`, errno.ErrGeneratedColumnNonPrior},
+		{`alter table test_gv_ddl change column b bnew int as (c+100)`, errno.ErrDependentByGeneratedColumn},
 
 		// Refer not exist columns in generation expression.
 		{`create table test_gv_ddl_bad (a int, b int as (c+8))`, errno.ErrBadField},
@@ -582,13 +582,15 @@ func TestGeneratedColumnDDL(t *testing.T) {
 	result = tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
-	tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
-	result = tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+	// According to https://github.com/pingcap/tidb/issues/24321, this test case is not supported.
+	// Although in MySQL this is a legal one.
+	// tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
+	// result = tk.MustQuery(`DESC test_gv_ddl`)
+	// result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
 	tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
 	result = tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
 
 	// Test generated column `\\`.
 	tk.MustExec("drop table if exists t")
@@ -664,7 +666,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 		},
 	}
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -872,7 +874,7 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 	tk1.MustExec("use test")
 
 	d := dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
@@ -916,7 +918,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	var checkErr error
 	assertChangingColName := "_col$_c2_0"
 	assertChangingIdxName := "_idx$_idx_0"
