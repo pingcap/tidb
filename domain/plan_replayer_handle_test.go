@@ -140,7 +140,7 @@ func TestPlanReplayerGC(t *testing.T) {
 	zf, err := os.Create(path)
 	require.NoError(t, err)
 	zf.Close()
-	handler.GCDumpFiles(0)
+	handler.GCDumpFiles(0, 0)
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("0"))
 
 	_, err = os.Stat(path)

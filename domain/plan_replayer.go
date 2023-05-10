@@ -75,11 +75,11 @@ func parseTime(s string) (time.Time, error) {
 }
 
 // GCDumpFiles periodically cleans the outdated files for plan replayer and plan trace.
-func (p *dumpFileGcChecker) GCDumpFiles(t time.Duration) {
+func (p *dumpFileGcChecker) GCDumpFiles(gcDurationDefault, gcDurationForCapture time.Duration) {
 	p.Lock()
 	defer p.Unlock()
 	for _, path := range p.paths {
-		p.gcDumpFilesByPath(path, t)
+		p.gcDumpFilesByPath(path, gcDurationDefault, gcDurationForCapture)
 	}
 }
 
@@ -87,7 +87,7 @@ func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
 	p.sctx = sctx
 }
 
-func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
+func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gcDurationForCapture time.Duration) {
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -95,7 +95,8 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 		}
 	}
 
-	gcTime := time.Now().Add(-t)
+	gcTargetTimeDefault := time.Now().Add(-gcDurationDefault)
+	gcTargetTimeForCapture := time.Now().Add(-gcDurationForCapture)
 	for _, f := range files {
 		fileName := f.Name()
 		createTime, err := parseTime(fileName)
@@ -104,7 +105,14 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 			continue
 		}
 		isPlanReplayer := strings.Contains(fileName, "replayer")
-		if !createTime.After(gcTime) {
+		isPlanReplayerCapture := strings.Contains(fileName, "capture")
+		canGC := false
+		if isPlanReplayer && isPlanReplayerCapture {
+			canGC = !createTime.After(gcTargetTimeForCapture)
+		} else {
+			canGC = !createTime.After(gcTargetTimeDefault)
+		}
+		if canGC {
 			err := os.Remove(filepath.Join(path, f.Name()))
 			if err != nil {
 				logutil.BgLogger().Warn("[dumpFileGcChecker] remove file failed", zap.Error(err), zap.String("filename", fileName))

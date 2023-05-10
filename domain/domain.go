@@ -1984,7 +1984,7 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.GCDumpFiles(time.Hour)
+				do.dumpFileGcChecker.GCDumpFiles(time.Hour, time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")
