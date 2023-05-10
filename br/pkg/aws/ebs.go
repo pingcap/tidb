@@ -85,7 +85,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				return snapIDMap, nil, errors.Errorf("specified volume %s is not attached", volumes[0].ID)
 			}
 			ec2InstanceId := resp.Volumes[0].Attachments[0].InstanceId
-			log.Info("EC2 instance id", zap.Any("id", ec2InstanceId))
+			log.Info("EC2 instance id is", zap.Stringp("id", ec2InstanceId))
 
 			// determine the exclude volume list
 			var excludedVolumeIDs []*string
@@ -96,13 +96,13 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			for j := range resp1.Reservations[0].Instances[0].BlockDeviceMappings {
 				device := resp1.Reservations[0].Instances[0].BlockDeviceMappings[j]
 				// skip root volume
-				if *device.DeviceName == *resp1.Reservations[0].Instances[0].RootDeviceName {
+				if aws.StringValue(device.DeviceName) == aws.StringValue(resp1.Reservations[0].Instances[0].RootDeviceName) {
 					continue
 				}
 				toInclude := false
 				for k := range targetVolumeIDs {
 					targetVolumeID := targetVolumeIDs[k]
-					if *targetVolumeID == *device.Ebs.VolumeId {
+					if aws.StringValue(targetVolumeID) == aws.StringValue(device.Ebs.VolumeId) {
 						toInclude = true
 						break
 					}
@@ -112,7 +112,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				}
 			}
 
-			log.Info("exclude volume list", zap.Any("ec2", ec2InstanceId), zap.Any("exclude volume list", excludedVolumeIDs))
+			log.Info("exclude volume list", zap.Stringp("ec2", ec2InstanceId), zap.Any("exclude volume list", excludedVolumeIDs))
 
 			// create snapshots for volumes on this ec2 instance
 			workerPool.ApplyOnErrorGroup(eg, func() error {
