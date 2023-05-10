@@ -168,7 +168,7 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 		s.subtaskWg.Done()
 		return
 	}
-	logutil.Logger(s.logCtx).Info("split subTask", zap.Any("cnt", len(minimalTasks)), zap.Any("subtask_id", subtask.ID))
+	logutil.Logger(s.logCtx).Info("split subTask", zap.Int("cnt", len(minimalTasks)), zap.Int64("subtask_id", subtask.ID))
 
 	// fast path for ADD INDEX.
 	// ADD INDEX is a special case now, no minimal tasks will be generated.
@@ -249,6 +249,25 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler rollback a step", zap.Any("step", task.Step))
+
+	// We should cancel all subtasks before rolling back
+	for {
+		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending, proto.TaskStateRunning)
+		if err != nil {
+			s.onError(err)
+			return s.getError()
+		}
+
+		if subtask == nil {
+			break
+		}
+
+		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
+		if err = s.getError(); err != nil {
+			return err
+		}
+	}
+
 	scheduler, err := createScheduler(task)
 	if err != nil {
 		s.onError(err)

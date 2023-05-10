@@ -366,7 +366,6 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) erro
 	return d.updateTask(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
 }
 
-
 func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	// Generate the needed global task meta and subTask meta.
 	handle := GetTaskFlowHandle(gTask.Type)

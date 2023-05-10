@@ -70,11 +70,10 @@ func (t *MockTaskTable) UpdateSubtaskStateAndError(id int64, state string, _ str
 }
 
 // FinishSubtask implements SubtaskTable.FinishSubtask
-func (t *MockTaskTable) FinishSubtask(id int64, meta []byte ) error {
+func (t *MockTaskTable) FinishSubtask(id int64, meta []byte) error {
 	args := t.Called(id, meta)
 	return args.Error(0)
 }
-
 
 // HasSubtasksInStates implements SubtaskTable.HasSubtasksInStates.
 func (t *MockTaskTable) HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error) {
@@ -140,7 +139,7 @@ func (m *MockScheduler) SplitSubtask(ctx context.Context, subtask []byte) ([]pro
 }
 
 // OnSubtaskFinished implements Scheduler.OnSubtaskFinished.
-func (m *MockScheduler) OnSubtaskFinished(ctx context.Context, subtask []byte) ([]byte,error) {
+func (m *MockScheduler) OnSubtaskFinished(ctx context.Context, subtask []byte) ([]byte, error) {
 	args := m.Called(ctx, subtask)
 	if args.Error(1) != nil {
 		return nil, args.Error(1)

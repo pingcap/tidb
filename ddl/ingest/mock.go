@@ -81,8 +81,9 @@ func (m *MockBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
 
 // MockBackendCtx is a mock backend context.
 type MockBackendCtx struct {
-	sessCtx sessionctx.Context
-	mu      sync.Mutex
+	sessCtx       sessionctx.Context
+	mu            sync.Mutex
+	checkpointMgr *CheckpointManager
 }
 
 // Register implements BackendCtx.Register interface.
@@ -113,7 +114,7 @@ func (*MockBackendCtx) ResetWorkers(_, _ int64) {
 }
 
 // Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(_ int64, _ bool) (flushed bool, imported bool, err error) {
+func (*MockBackendCtx) Flush(_ int64, _ FlushMode) (flushed bool, imported bool, err error) {
 	return false, false, nil
 }
 
@@ -124,6 +125,16 @@ func (*MockBackendCtx) Done() bool {
 
 // SetDone implements BackendCtx.SetDone interface.
 func (*MockBackendCtx) SetDone() {
+}
+
+// AttachCheckpointManager attaches a checkpoint manager to the backend context.
+func (m *MockBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
+	m.checkpointMgr = mgr
+}
+
+// GetCheckpointManager returns the checkpoint manager attached to the backend context.
+func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
+	return m.checkpointMgr
 }
 
 // MockEngineInfo is a mock engine info.
