@@ -1500,6 +1500,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeCompile:       sessVars.DurationCompile,
 		TimeOptimize:      sessVars.DurationOptimization,
 		TimeWaitTS:        sessVars.DurationWaitTS,
+		TimeBuildExecutor: a.phaseBuildDurations[0],
+		TimeOpenExecutor:  a.phaseOpenDurations[0],
 		IndexNames:        indexNames,
 		CopTasks:          copTaskInfo,
 		ExecDetail:        execDetail,
@@ -1533,6 +1535,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			}
 		}
 	})
+	slowItems.TimeExecute = costTime - sessVars.DurationParse - sessVars.DurationCompile
+	slowItems.TimeRunExecutor = costTime - sessVars.DurationParse - sessVars.DurationCompile - a.phaseBuildDurations[0] - a.phaseOpenDurations[0]
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
