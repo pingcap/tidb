@@ -33,8 +33,6 @@
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
 
-// Copyright 2015-2023 PingCAP Xingchen (Beijing) Technology Co., Ltd.
-
 package server
 
 import (

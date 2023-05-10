@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Copyright 2016-2023 PingCAP Xingchen (Beijing) Technology Co., Ltd.
-
 package executor
 
 import (

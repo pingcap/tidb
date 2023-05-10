@@ -16,8 +16,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSES/QL-LICENSE file.
 
-// Copyright 2015-2023 PingCAP Xingchen (Beijing) Technology Co., Ltd.
-
 package session
 
 import (
