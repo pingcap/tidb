@@ -319,7 +319,10 @@ func (cw *compressedWriter) Write(data []byte) (n int, err error) {
 		}
 		n += written
 		data = data[remainingLen:]
-		cw.Flush()
+		err = cw.Flush()
+		if err != nil {
+			return 0, err
+		}
 	}
 }
 
