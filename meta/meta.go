@@ -77,6 +77,20 @@ var (
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
 	mMetaDataLock        = []byte("metadataLock")
+	// the id for 'default' group, the internal ddl can ensure
+	// user created resource group won't duplicate with this id.
+	defaultGroupID = int64(1)
+	// the default meta of the `default` group
+	defaultRGroupMeta = &model.ResourceGroupInfo{
+		ResourceGroupSettings: &model.ResourceGroupSettings{
+			RURate:     1000000,
+			BurstLimit: -1,
+			Priority:   model.MediumPriorityValue,
+		},
+		ID:    defaultGroupID,
+		Name:  model.NewCIStr("default"),
+		State: model.StatePublic,
+	}
 )
 
 const (
@@ -427,6 +441,12 @@ func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
 	return v, err
 }
 
+// EncodeSchemaDiffKey returns the raw kv key for a schema diff
+func (m *Meta) EncodeSchemaDiffKey(schemaVersion int64) kv.Key {
+	diffKey := m.schemaDiffKey(schemaVersion)
+	return m.txn.EncodeStringDataKey(diffKey)
+}
+
 // GetSchemaVersion gets current global schema version.
 func (m *Meta) GetSchemaVersion() (int64, error) {
 	return m.txn.GetInt64(mSchemaVersionKey)
@@ -559,8 +579,11 @@ func (m *Meta) AddResourceGroup(group *model.ResourceGroupInfo) error {
 // UpdateResourceGroup updates a resource group.
 func (m *Meta) UpdateResourceGroup(group *model.ResourceGroupInfo) error {
 	groupKey := m.resourceGroupKey(group.ID)
-	if err := m.checkResourceGroupExists(groupKey); err != nil {
-		return errors.Trace(err)
+	// do not check the default because it may not be persisted.
+	if group.ID != defaultGroupID {
+		if err := m.checkResourceGroupExists(groupKey); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	data, err := json.Marshal(group)
@@ -849,6 +872,32 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
+// IterTables iterates all the table at once, in order to avoid oom.
+func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	err := m.txn.HGetIter(dbKey, func(r structure.HashPair) error {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			return nil
+		}
+
+		tbInfo := &model.TableInfo{}
+		err := json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = fn(tbInfo)
+		return errors.Trace(err)
+	})
+	return errors.Trace(err)
+}
+
 // ListTables shows all tables in database.
 func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
@@ -964,6 +1013,7 @@ func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
+	hasDefault := false
 	groups := make([]*model.ResourceGroupInfo, 0, len(res))
 	for _, r := range res {
 		value, err := detachMagicByte(r.Value)
@@ -976,8 +1026,17 @@ func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		groups = append(groups, group)
+		hasDefault = hasDefault || (group.Name.L == "default")
+	}
+	if !hasDefault {
+		groups = append(groups, defaultRGroupMeta)
 	}
 	return groups, nil
+}
+
+// DefaultGroupMeta4Test return the default group info for test usage.
+func DefaultGroupMeta4Test() *model.ResourceGroupInfo {
+	return defaultRGroupMeta
 }
 
 // GetResourceGroup gets the database value with ID.
@@ -988,6 +1047,10 @@ func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
+		// the default group is not persistanted to tikv by default.
+		if groupID == defaultGroupID {
+			return defaultRGroupMeta, nil
+		}
 		return nil, ErrResourceGroupNotExists.GenWithStack("resource group id : %d doesn't exist", groupID)
 	}
 

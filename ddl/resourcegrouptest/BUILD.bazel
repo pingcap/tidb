@@ -5,6 +5,8 @@ go_test(
     timeout = "short",
     srcs = ["resource_group_test.go"],
     flaky = True,
+    race = "on",
+    shard_count = 4,
     deps = [
         "//ddl/internal/callback",
         "//ddl/resourcegroup",
@@ -14,6 +16,7 @@ go_test(
         "//parser/model",
         "//sessionctx",
         "//testkit",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_stretchr_testify//require",
     ],

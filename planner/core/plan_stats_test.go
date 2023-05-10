@@ -304,16 +304,25 @@ func TestPlanStatsStatusRecord(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect this ut
 	tk.MustExec(`create table t (b int,key b(b))`)
 	tk.MustExec("insert into t (b) values (1)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select * from t where b >= 1")
-	require.Len(t, tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus, 0)
+	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.RecordedStatsLoadStatusCnt(), 0)
 	// drop stats in order to change status
 	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
 	tk.MustQuery("select * from t where b >= 1")
-	require.Len(t, tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus, 2)
-	for _, status := range tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus {
-		require.Equal(t, status, "allEvicted")
+	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.RecordedStatsLoadStatusCnt(), 2)
+	for _, usedStatsForTbl := range tk.Session().GetSessionVars().StmtCtx.GetUsedStatsInfo(false) {
+		if usedStatsForTbl == nil {
+			continue
+		}
+		for _, status := range usedStatsForTbl.IndexStatsLoadStatus {
+			require.Equal(t, status, "allEvicted")
+		}
+		for _, status := range usedStatsForTbl.ColumnStatsLoadStatus {
+			require.Equal(t, status, "allEvicted")
+		}
 	}
 }

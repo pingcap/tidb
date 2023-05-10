@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -99,6 +100,18 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		}
 	}
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
+
+	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
+		if val.(bool) {
+			// The earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count.
+			// So we need to make the order here fully deterministic to make the stats from analyze ver1 stable.
+			// See (*SampleCollector).ExtractTopN(), which calls this function, for details
+			sort.SliceStable(sorted, func(i, j int) bool {
+				return sorted[i].cnt > sorted[j].cnt ||
+					(sorted[i].cnt == sorted[j].cnt && string(sorted[i].data) < string(sorted[j].data))
+			})
+		}
+	})
 
 	var (
 		sumTopN   uint64
@@ -206,7 +219,7 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 
 func updateValueBytes(c *CMSketch, t *TopN, d []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := t.QueryTopN(d); ok {
+	if oriCount, ok := t.QueryTopN(nil, d); ok {
 		if count > oriCount {
 			t.updateTopNWithDelta(d, count-oriCount, true)
 		} else {
@@ -218,7 +231,7 @@ func updateValueBytes(c *CMSketch, t *TopN, d []byte, count uint64) {
 
 // setValue sets the count for value that hashed into (h1, h2), and update defaultValue if necessary.
 func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
-	oriCount := c.queryHashValue(h1, h2)
+	oriCount := c.queryHashValue(nil, h1, h2)
 	if c.considerDefVal(oriCount) {
 		// We should update c.defaultValue if we used c.defaultValue when getting the estimate count.
 		// This should make estimation better, remove this line if it does not work as expected.
@@ -247,16 +260,20 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 	}
 }
 
-func queryValue(sc *stmtctx.StatementContext, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
+func queryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
+	var sc *stmtctx.StatementContext
+	if sctx != nil {
+		sc = sctx.GetSessionVars().StmtCtx
+	}
 	bytes, err := tablecodec.EncodeValue(sc, nil, val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	h1, h2 := murmur3.Sum128(bytes)
-	if ret, ok := t.QueryTopN(bytes); ok {
+	if ret, ok := t.QueryTopN(sctx, bytes); ok {
 		return ret, nil
 	}
-	return c.queryHashValue(h1, h2), nil
+	return c.queryHashValue(sctx, h1, h2), nil
 }
 
 // QueryBytes is used to query the count of specified bytes.
@@ -265,17 +282,33 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 		failpoint.Return(uint64(val.(int)))
 	})
 	h1, h2 := murmur3.Sum128(d)
-	return c.queryHashValue(h1, h2)
+	return c.queryHashValue(nil, h1, h2)
 }
 
-func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (result uint64) {
 	vals := make([]uint32, c.depth)
+	originVals := make([]uint32, c.depth)
 	min := uint32(math.MaxUint32)
+	useDefaultValue := false
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx,
+				"Origin Values", originVals,
+				"Values", vals,
+				"Use default value", useDefaultValue,
+				"Result", result,
+			)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	// We want that when res is 0 before the noise is eliminated, the default value is not used.
 	// So we need a temp value to distinguish before and after eliminating noise.
 	temp := uint32(1)
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
+		originVals[i] = c.table[i][j]
 		if min > c.table[i][j] {
 			min = c.table[i][j]
 		}
@@ -298,6 +331,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	}
 	res = res - temp
 	if c.considerDefVal(uint64(res)) {
+		useDefaultValue = true
 		return c.defaultValue
 	}
 	return uint64(res)
@@ -579,11 +613,22 @@ type TopNMeta struct {
 }
 
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
-func (c *TopN) QueryTopN(d []byte) (uint64, bool) {
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, found bool) {
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Found", found)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	if c == nil {
 		return 0, false
 	}
 	idx := c.findTopN(d)
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.RecordAnyValuesWithNames(sctx, "FindTopN idx", idx)
+	}
 	if idx < 0 {
 		return 0, false
 	}
@@ -625,7 +670,15 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 }
 
 // BetweenCount estimates the row count for interval [l, r).
-func (c *TopN) BetweenCount(l, r []byte) uint64 {
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (c *TopN) BetweenCount(sctx sessionctx.Context, l, r []byte) (result uint64) {
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	if c == nil {
 		return 0
 	}
@@ -634,6 +687,9 @@ func (c *TopN) BetweenCount(l, r []byte) uint64 {
 	ret := uint64(0)
 	for i := lIdx; i < rIdx; i++ {
 		ret += c.TopN[i].Count
+	}
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugTraceTopNRange(sctx, c, lIdx, rIdx)
 	}
 	return ret
 }
@@ -808,7 +864,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 					datum = d
 				}
 				// Get the row count which the value is equal to the encodedVal from histogram.
-				count, _ := hists[j].equalRowCount(datum, isIndex)
+				count, _ := hists[j].equalRowCount(nil, datum, isIndex)
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.

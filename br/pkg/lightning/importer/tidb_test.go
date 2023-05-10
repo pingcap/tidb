@@ -24,11 +24,11 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
@@ -38,9 +38,9 @@ import (
 )
 
 type tidbSuite struct {
+	db     *sql.DB
 	mockDB sqlmock.Sqlmock
 	timgr  *TiDBManager
-	tiGlue glue.Glue
 }
 
 func newTiDBSuite(t *testing.T) *tidbSuite {
@@ -48,12 +48,12 @@ func newTiDBSuite(t *testing.T) *tidbSuite {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
+	s.db = db
 	s.mockDB = mock
 	defaultSQLMode, err := tmysql.GetSQLMode(tmysql.DefaultSQLMode)
 	require.NoError(t, err)
 
 	s.timgr = NewTiDBManagerWithDB(db, defaultSQLMode)
-	s.tiGlue = glue.NewExternalTiDBGlue(db, defaultSQLMode)
 	t.Cleanup(func() {
 		s.timgr.Close()
 		require.NoError(t, s.mockDB.ExpectationsWereMet())
@@ -62,11 +62,10 @@ func newTiDBSuite(t *testing.T) *tidbSuite {
 }
 
 func TestCreateTableIfNotExistsStmt(t *testing.T) {
-	s := newTiDBSuite(t)
-
 	dbName := "testdb"
+	p := parser.New()
 	createSQLIfNotExistsStmt := func(createTable, tableName string) []string {
-		res, err := createIfNotExistsStmt(s.tiGlue.GetParser(), createTable, dbName, tableName)
+		res, err := createIfNotExistsStmt(p, createTable, dbName, tableName)
 		require.NoError(t, err)
 		return res
 	}
@@ -236,22 +235,25 @@ func TestLoadSchemaInfo(t *testing.T) {
 			Name: "db",
 			Tables: map[string]*checkpoints.TidbTableInfo{
 				"t1": {
-					ID:   100,
-					DB:   "db",
-					Name: "t1",
-					Core: tableInfos[0],
+					ID:      100,
+					DB:      "db",
+					Name:    "t1",
+					Core:    tableInfos[0],
+					Desired: tableInfos[0],
 				},
 				"t2": {
-					ID:   101,
-					DB:   "db",
-					Name: "t2",
-					Core: tableInfos[1],
+					ID:      101,
+					DB:      "db",
+					Name:    "t2",
+					Core:    tableInfos[1],
+					Desired: tableInfos[1],
 				},
 				"t4": {
-					ID:   103,
-					DB:   "db",
-					Name: "t4",
-					Core: tableInfos[3],
+					ID:      103,
+					DB:      "db",
+					Name:    "t4",
+					Core:    tableInfos[3],
+					Desired: tableInfos[3],
 				},
 			},
 		},
@@ -271,36 +273,6 @@ func TestLoadSchemaInfoMissing(t *testing.T) {
 	require.Regexp(t, ".*Unknown database.*", err.Error())
 }
 
-func TestGetGCLifetime(t *testing.T) {
-	s := newTiDBSuite(t)
-	ctx := context.Background()
-
-	s.mockDB.
-		ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
-	s.mockDB.
-		ExpectClose()
-
-	res, err := ObtainGCLifeTime(ctx, s.timgr.db)
-	require.NoError(t, err)
-	require.Equal(t, "10m", res)
-}
-
-func TestSetGCLifetime(t *testing.T) {
-	s := newTiDBSuite(t)
-	ctx := context.Background()
-
-	s.mockDB.
-		ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WithArgs("12m").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	s.mockDB.
-		ExpectClose()
-
-	err := UpdateGCLifeTime(ctx, s.timgr.db, "12m")
-	require.NoError(t, err)
-}
-
 func TestAlterAutoInc(t *testing.T) {
 	s := newTiDBSuite(t)
 	ctx := context.Background()
@@ -314,10 +286,10 @@ func TestAlterAutoInc(t *testing.T) {
 	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
+	err := AlterAutoIncrement(ctx, s.db, "`db`.`table`", 12345)
 	require.NoError(t, err)
 
-	err = AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1)
+	err = AlterAutoIncrement(ctx, s.db, "`db`.`table`", uint64(math.MaxInt64)+1)
 	require.NoError(t, err)
 }
 
@@ -334,14 +306,14 @@ func TestAlterAutoRandom(t *testing.T) {
 	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345, 288230376151711743)
+	err := AlterAutoRandom(ctx, s.db, "`db`.`table`", 12345, 288230376151711743)
 	require.NoError(t, err)
 
 	// insert 288230376151711743 and try rebase to 288230376151711744
-	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 288230376151711744, 288230376151711743)
+	err = AlterAutoRandom(ctx, s.db, "`db`.`table`", 288230376151711744, 288230376151711743)
 	require.NoError(t, err)
 
-	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1, 288230376151711743)
+	err = AlterAutoRandom(ctx, s.db, "`db`.`table`", uint64(math.MaxInt64)+1, 288230376151711743)
 	require.NoError(t, err)
 }
 
@@ -349,8 +321,6 @@ func TestObtainRowFormatVersionSucceed(t *testing.T) {
 	s := newTiDBSuite(t)
 	ctx := context.Background()
 
-	s.mockDB.
-		ExpectBegin()
 	s.mockDB.
 		ExpectQuery(`SHOW VARIABLES WHERE Variable_name IN \(.*'tidb_row_format_version'.*\)`).
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
@@ -363,11 +333,9 @@ func TestObtainRowFormatVersionSucceed(t *testing.T) {
 			AddRow("block_encryption_mode", "aes-256-cbc").
 			AddRow("group_concat_max_len", "1073741824"))
 	s.mockDB.
-		ExpectCommit()
-	s.mockDB.
 		ExpectClose()
 
-	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
+	sysVars := ObtainImportantVariables(ctx, s.db, true)
 	require.Equal(t, map[string]string{
 		"tidb_row_format_version": "2",
 		"max_allowed_packet":      "1073741824",
@@ -385,16 +353,12 @@ func TestObtainRowFormatVersionFailure(t *testing.T) {
 	ctx := context.Background()
 
 	s.mockDB.
-		ExpectBegin()
-	s.mockDB.
 		ExpectQuery(`SHOW VARIABLES WHERE Variable_name IN \(.*'tidb_row_format_version'.*\)`).
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).AddRow("time_zone", "+00:00"))
 	s.mockDB.
-		ExpectCommit()
-	s.mockDB.
 		ExpectClose()
 
-	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
+	sysVars := ObtainImportantVariables(ctx, s.db, true)
 	require.Equal(t, map[string]string{
 		"tidb_row_format_version": "1",
 		"max_allowed_packet":      "67108864",
@@ -416,7 +380,7 @@ func TestObtainNewCollationEnabled(t *testing.T) {
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 		WillReturnError(permErr)
-	_, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+	_, err := ObtainNewCollationEnabled(ctx, s.db)
 	require.Equal(t, permErr, errors.Cause(err))
 
 	// this error can retry
@@ -426,7 +390,7 @@ func TestObtainNewCollationEnabled(t *testing.T) {
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).RowError(0, sql.ErrNoRows))
-	version, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+	version, err := ObtainNewCollationEnabled(ctx, s.db)
 	require.NoError(t, err)
 	require.Equal(t, false, version)
 
@@ -439,7 +403,7 @@ func TestObtainNewCollationEnabled(t *testing.T) {
 			ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).AddRow(k))
 
-		version, err = ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		version, err = ObtainNewCollationEnabled(ctx, s.db)
 		require.NoError(t, err)
 		require.Equal(t, v, version)
 	}

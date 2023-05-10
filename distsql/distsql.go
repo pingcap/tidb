@@ -42,7 +42,7 @@ import (
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64, mppQueryID kv.MPPQueryID, memTracker *memory.Tracker) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-	ctx = SetTiFlashMaxThreadsInContext(ctx, sctx)
+	ctx = SetTiFlashConfVarsInContext(ctx, sctx)
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs, mppQueryID, sctx.GetSessionVars().ChooseMppVersion(), memTracker)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -93,7 +93,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}
 
 	if kvReq.StoreType == kv.TiFlash {
-		ctx = SetTiFlashMaxThreadsInContext(ctx, sctx)
+		ctx = SetTiFlashConfVarsInContext(ctx, sctx)
 	}
 
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
@@ -124,10 +124,19 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}, nil
 }
 
-// SetTiFlashMaxThreadsInContext set the config TiFlash max threads in context.
-func SetTiFlashMaxThreadsInContext(ctx context.Context, sctx sessionctx.Context) context.Context {
+// SetTiFlashConfVarsInContext set some TiFlash config variables in context.
+func SetTiFlashConfVarsInContext(ctx context.Context, sctx sessionctx.Context) context.Context {
 	if sctx.GetSessionVars().TiFlashMaxThreads != -1 {
 		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashThreads, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxThreads, 10))
+	}
+	if sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalJoin, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin, 10))
+	}
+	if sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalGroupBy != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalGroupBy, 10))
+	}
+	if sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalSort != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalSort, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalSort, 10))
 	}
 	return ctx
 }

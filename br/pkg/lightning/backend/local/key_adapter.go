@@ -102,6 +102,7 @@ func (dupDetectKeyAdapter) EncodedLen(key []byte, rowID []byte) int {
 
 var _ KeyAdapter = dupDetectKeyAdapter{}
 
+// static vars for rowID
 var (
 	MinRowID  = common.EncodeIntRowID(math.MinInt64)
 	ZeroRowID = common.EncodeIntRowID(0)

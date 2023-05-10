@@ -229,17 +229,18 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	err = b.ctx.GetAdvisoryLock(lockName, timeout)
 	if err != nil {
-		switch errors.Cause(err).(*terror.Error).Code() {
-		case mysql.ErrLockWaitTimeout:
-			return 0, false, nil // Another user has the lock
-		case mysql.ErrLockDeadlock:
-			// Currently this code is not reachable because each Advisory Lock
-			// Uses a separate session. Deadlock detection does not work across
-			// independent sessions.
-			return 0, false, errUserLockDeadlock
-		default:
-			return 0, false, err
+		if terr, ok := errors.Cause(err).(*terror.Error); ok {
+			switch terr.Code() {
+			case mysql.ErrLockWaitTimeout:
+				return 0, false, nil // Another user has the lock
+			case mysql.ErrLockDeadlock:
+				// Currently this code is not reachable because each Advisory Lock
+				// Uses a separate session. Deadlock detection does not work across
+				// independent sessions.
+				return 0, false, errUserLockDeadlock
+			}
 		}
+		return 0, false, err
 	}
 	return 1, false, nil
 }
@@ -1465,4 +1466,12 @@ func (b *builtinTidbShardSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	hashed = hashed % tidbShardBucketCount
 	return int64(hashed), false, nil
+}
+
+type tidbRowChecksumFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbRowChecksumFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, ErrNotSupportedYet.GenWithStack("FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan")
 }

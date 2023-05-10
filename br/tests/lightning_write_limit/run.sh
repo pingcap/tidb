@@ -18,6 +18,9 @@ set -eux
 
 mkdir -p "$TEST_DIR/data"
 
+run_sql "DROP DATABASE IF EXISTS test;"
+run_sql "DROP TABLE IF EXISTS test.t;"
+
 cat <<EOF >"$TEST_DIR/data/test-schema-create.sql"
 CREATE DATABASE test;
 EOF

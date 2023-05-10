@@ -2116,6 +2116,7 @@ type ResourceUnitType int
 const (
 	// RU mode
 	ResourceRURate ResourceUnitType = iota
+	ResourcePriority
 	// Raw mode
 	ResourceUnitCPU
 	ResourceUnitIOReadBandwidth
@@ -2126,15 +2127,16 @@ const (
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
-	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
-		return nil
-	}
 	fn := func() error {
 		switch n.Tp {
 		case ResourceRURate:
 			ctx.WriteKeyWord("RU_PER_SEC ")
 			ctx.WritePlain("= ")
 			ctx.WritePlainf("%d", n.UintValue)
+		case ResourcePriority:
+			ctx.WriteKeyWord("PRIORITY ")
+			ctx.WritePlain("= ")
+			ctx.WriteKeyWord(model.PriorityValueToName(n.UintValue))
 		case ResourceUnitCPU:
 			ctx.WriteKeyWord("CPU ")
 			ctx.WritePlain("= ")
@@ -3686,6 +3688,7 @@ var (
 	ErrTooManyValues                        = terror.ClassDDL.NewStd(mysql.ErrTooManyValues)
 	ErrWrongPartitionTypeExpectedSystemTime = terror.ClassDDL.NewStd(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 	ErrUnknownCharacterSet                  = terror.ClassDDL.NewStd(mysql.ErrUnknownCharacterSet)
+	ErrCoalescePartitionNoPartition         = terror.ClassDDL.NewStd(mysql.ErrCoalescePartitionNoPartition)
 )
 
 type SubPartitionDefinition struct {

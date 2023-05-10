@@ -82,7 +82,8 @@ func (s FastIntSet) toLarge() *intsets.Sparse {
 	return large
 }
 
-// Next returns the next existing number in the Set. If there's no larger one than the given start val, return (MaxInt, false).
+// Next returns the next existing number in the Set.
+// If there's no larger one than the given start val, return (MaxInt, false).
 func (s FastIntSet) Next(startVal int) (int, bool) {
 	if startVal < smallCutOff {
 		if startVal < 0 {
@@ -199,7 +200,8 @@ func (s FastIntSet) Equals(rhs FastIntSet) bool {
 	if s.large != nil && rhs.large != nil {
 		return s.large.Equals(rhs.large)
 	}
-	// how come to this? eg: a set operates like: {insert:1, insert:65, remove:65}, resulting a large int-set with only small numbers.
+	// how come to this? eg: a set operates like:
+	//	{insert:1, insert:65, remove:65}, resulting a large int-set with only small numbers.
 	// so we need calculate the exact numbers.
 	var excess bool
 	s1 := s.small

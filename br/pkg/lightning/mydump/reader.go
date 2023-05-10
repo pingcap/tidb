@@ -70,7 +70,8 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 }
 
 // ExportStatement exports the SQL statement in the schema file.
-func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile FileInfo, characterSet string) ([]byte, error) {
+func ExportStatement(ctx context.Context, store storage.ExternalStorage,
+	sqlFile FileInfo, characterSet string) ([]byte, error) {
 	if sqlFile.FileMeta.Compression != CompressionNone {
 		compressType, err := ToStorageCompressType(sqlFile.FileMeta.Compression)
 		if err != nil {

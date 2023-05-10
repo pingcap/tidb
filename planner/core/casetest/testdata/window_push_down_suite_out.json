@@ -14,7 +14,7 @@
           "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_19 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -27,7 +27,7 @@
           "  └─Window_21 10000.00 mpp[tiflash]  row_number()->Column#6 over(order by test.employee.salary rows between current row and current row)",
           "    └─Sort_13 10000.00 mpp[tiflash]  test.employee.salary",
           "      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -109,7 +109,7 @@
           "  └─Window_33 10000.00 mpp[tiflash]  rank()->Column#8 over()",
           "    └─Window_14 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
           "      └─ExchangeReceiver_18 10000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─TableFullScan_16 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -125,7 +125,7 @@
           "        └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
           "          └─Window_14 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
           "            └─ExchangeReceiver_17 10000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "              └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "                └─TableFullScan_15 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -167,7 +167,7 @@
           "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_19 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -179,7 +179,7 @@
           "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_19 10000.00 mpp[tiflash]  rank()->Column#6 over()",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -191,7 +191,7 @@
           "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_19 10000.00 mpp[tiflash]  dense_rank()->Column#6 over()",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -203,7 +203,7 @@
           "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_19 10000.00 mpp[tiflash]  lead(test.employee.empid)->Column#6 over()",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -215,7 +215,7 @@
           "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_19 10000.00 mpp[tiflash]  lag(test.employee.empid)->Column#6 over()",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -328,7 +328,7 @@
           "    └─Projection_15 1.00 mpp[tiflash]  Column#5",
           "      └─HashAgg_16 1.00 mpp[tiflash]  funcs:sum(Column#8)->Column#5",
           "        └─ExchangeReceiver_20 1.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_19 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─ExchangeSender_19 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "            └─HashAgg_16 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#8",
           "              └─ExchangeReceiver_18 1.00 mpp[tiflash]  ",
           "                └─ExchangeSender_17 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.empid, collate: binary]",
@@ -364,7 +364,7 @@
           "          └─Projection_14 1.00 mpp[tiflash]  Column#5",
           "            └─HashAgg_15 1.00 mpp[tiflash]  funcs:sum(Column#8)->Column#5",
           "              └─ExchangeReceiver_19 1.00 mpp[tiflash]  ",
-          "                └─ExchangeSender_18 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "                └─ExchangeSender_18 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "                  └─HashAgg_15 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#8",
           "                    └─ExchangeReceiver_17 1.00 mpp[tiflash]  ",
           "                      └─ExchangeSender_16 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.empid, collate: binary]",
@@ -398,7 +398,7 @@
           "    └─HashAgg_32 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#7",
           "      └─Window_24 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
           "        └─ExchangeReceiver_17 10000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "            └─TableFullScan_15 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -411,7 +411,7 @@
           "  └─Projection_42 1.00 mpp[tiflash]  Column#7",
           "    └─HashAgg_43 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#7",
           "      └─ExchangeReceiver_47 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_46 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─ExchangeSender_46 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─HashAgg_43 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#9",
           "            └─ExchangeReceiver_45 1.00 mpp[tiflash]  ",
           "              └─ExchangeSender_44 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.empid, collate: binary]",
@@ -433,7 +433,7 @@
           "    └─HashAgg_44 10000.00 mpp[tiflash]  group by:Column#6, funcs:count(test.employee.empid)->Column#7",
           "      └─Window_27 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
           "        └─ExchangeReceiver_20 10000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "            └─TableFullScan_18 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -465,7 +465,7 @@
           "    └─Window_35 10000.00 mpp[tiflash]  row_number()->Column#8 over(order by test.employee.deptid rows between current row and current row)",
           "      └─Sort_20 10000.00 mpp[tiflash]  test.employee.deptid",
           "        └─ExchangeReceiver_19 10000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "            └─Window_13 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
           "              └─Sort_17 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
           "                └─ExchangeReceiver_16 10000.00 mpp[tiflash]  stream_count: 8",

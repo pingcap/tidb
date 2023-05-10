@@ -6,11 +6,13 @@ go_library(
         "backup.go",
         "backup_ebs.go",
         "backup_raw.go",
+        "backup_txn.go",
         "common.go",
         "restore.go",
         "restore_data.go",
         "restore_ebs_meta.go",
         "restore_raw.go",
+        "restore_txn.go",
         "stream.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/task",
@@ -18,6 +20,7 @@ go_library(
     deps = [
         "//br/pkg/aws",
         "//br/pkg/backup",
+        "//br/pkg/checkpoint",
         "//br/pkg/checksum",
         "//br/pkg/common",
         "//br/pkg/config",
@@ -56,6 +59,7 @@ go_library(
         "@com_github_docker_go_units//:go-units",
         "@com_github_fatih_color//:color",
         "@com_github_gogo_protobuf//proto",
+        "@com_github_google_uuid//:uuid",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -79,7 +83,6 @@ go_library(
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zapcore",
     ],
 )
 
@@ -95,6 +98,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
+    shard_count = 19,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/errors",

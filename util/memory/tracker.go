@@ -302,6 +302,9 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 
 // Detach de-attach the tracker child from its parent, then set its parent property as nil
 func (t *Tracker) Detach() {
+	if t == nil {
+		return
+	}
 	parent := t.getParent()
 	if parent == nil {
 		return
@@ -445,6 +448,9 @@ func (t *Tracker) Consume(bs int64) {
 			for nextAction := currentAction.GetFallback(); nextAction != nil; {
 				currentAction = nextAction
 				nextAction = currentAction.GetFallback()
+			}
+			if action, ok := currentAction.(ActionCareInvoker); ok {
+				action.SetInvoker(Instance)
 			}
 			currentAction.Action(tracker)
 		}

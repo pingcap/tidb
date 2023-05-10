@@ -21,7 +21,7 @@
       {
         "SQL": "select * from t1 where (t1.a, t1.b) not in (select a, b from t2)",
         "Plan": [
-          "HashJoin 3.20 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "HashJoin 3.20 root  Null-aware anti semi join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
           "├─TableReader(Build) 4.00 root  data:TableFullScan",
           "│ └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
           "└─TableReader(Probe) 4.00 root  data:TableFullScan",
@@ -51,7 +51,7 @@
       {
         "SQL": "select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2)",
         "Plan": [
-          "HashJoin 2.40 root  CARTESIAN anti semi join, other cond:eq(Column#7, test.t2.b), eq(test.t1.a, test.t2.a)",
+          "HashJoin 2.40 root  Null-aware anti semi join, equal:[eq(test.t1.a, test.t2.a) eq(Column#7, test.t2.b)]",
           "├─TableReader(Build) 4.00 root  data:TableFullScan",
           "│ └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
           "└─HashAgg(Probe) 3.00 root  group by:test.t1.a, funcs:count(1)->Column#7, funcs:firstrow(test.t1.a)->test.t1.a",
