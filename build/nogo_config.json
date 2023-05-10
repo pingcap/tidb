@@ -65,13 +65,6 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
-  "errorlint": {
-    "exclude_files": {
-      "parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
-    }
-  },
   "printf": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
@@ -131,6 +124,16 @@
       "external/": "no need to vet third party code",
       "/rules_go_work-*": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "errorlint": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore generated code",
+      "/rules_go_work-*": "ignore generated code",
+      "GOROOT/": "ignore code"
     }
   },
   "errorsas": {
