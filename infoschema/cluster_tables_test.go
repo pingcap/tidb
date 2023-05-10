@@ -202,7 +202,7 @@ func SubTestDataLockWaitsPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 	err := tk.QueryToErr("select * from information_schema.DATA_LOCK_WAITS")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
@@ -213,7 +213,7 @@ func SubTestDataLockWaitsPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 	_ = tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS")
 }
 
@@ -318,7 +318,7 @@ select * from t3;
 	require.NoError(t, user1.Session().Auth(&auth.UserIdentity{
 		Username: "user1",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	user1.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
 	user1.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("1"))
 	user1.MustQuery("select user,query from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("user1 select * from t1;"))
@@ -328,7 +328,7 @@ select * from t3;
 	require.NoError(t, user2.Session().Auth(&auth.UserIdentity{
 		Username: "user2",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	user2.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
 	user2.MustQuery("select user,query from `CLUSTER_SLOW_QUERY` order by query").Check(testkit.Rows("user2 select * from t2;", "user2 select * from t3;"))
 }
@@ -382,7 +382,7 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	err := tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED")
 	// This error is come from cop(TiDB) fetch from rpc server.
@@ -391,7 +391,7 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 	require.NoError(t, tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED"))
 }
 
@@ -418,7 +418,7 @@ func TestStmtSummaryIssue35340(t *testing.T) {
 				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 					Username: user,
 					Hostname: "localhost",
-				}, nil, nil))
+				}, nil, nil, nil))
 				tk.MustQuery("select count(*) from information_schema.statements_summary;")
 			}
 		}()
@@ -815,7 +815,7 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }
 
@@ -887,7 +887,7 @@ func TestCreateBindingFromHistory(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -953,7 +953,7 @@ func TestCreateBindingForPrepareFromHistory(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -982,7 +982,7 @@ func TestErrorCasesCreateBindingFromHistory(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")
@@ -1056,7 +1056,7 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int, a int, key(a))")
@@ -1089,7 +1089,7 @@ func TestCreateBindingWhenCloseStmtSummaryTable(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1110,7 +1110,7 @@ func TestCreateBindingForNotSupportedStmt(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1141,7 +1141,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1213,7 +1213,7 @@ func TestCreateBindingWithUsingKeyword(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1, t2")
@@ -1251,7 +1251,7 @@ func TestNewCreatedBindingCanWorkWithPlanCache(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1, t2")
@@ -1279,7 +1279,7 @@ func TestCreateBindingForPrepareToken(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
