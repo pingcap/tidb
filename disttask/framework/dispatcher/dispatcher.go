@@ -476,9 +476,19 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 	}
 	ids := make([]string, 0, len(schedulerIDs))
 	for _, id := range schedulerIDs {
-		if _, ok := serverInfos[id]; ok {
+		if ok := matchServerInfo(serverInfos, id); ok {
 			ids = append(ids, id)
 		}
 	}
 	return ids, nil
+}
+
+func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
+	for _, serverInfo := range serverInfos {
+		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port)
+		if serverID == schedulerID {
+			return true
+		}
+	}
+	return false
 }
