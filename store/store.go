@@ -15,6 +15,9 @@
 package store
 
 import (
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"github.com/justinas/nosurf"
 	"net/url"
 	"strings"
 	"sync"
@@ -56,6 +59,9 @@ func Register(name string, driver kv.Driver) error {
 //
 // The engine should be registered before creating storage.
 func New(path string) (kv.Storage, error) {
+	fmt.Println(gin.DebugMode)
+	fmt.Println(nosurf.MaxAge)
+	fmt.Println("test")
 	return newStoreWithRetry(path, util.DefaultMaxRetries)
 }
 
