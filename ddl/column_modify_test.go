@@ -753,7 +753,7 @@ func TestModifyGeneratedColumn(t *testing.T) {
 	tk.MustExec("insert into t1 set a=1;")
 	tk.MustExec("alter table t1 modify column b int as (a+1) stored;")
 	// Forbit this to workaround issue https://github.com/pingcap/tidb/issues/37611
-	// If we don't forbit it, a similiar issue would be:
+	// If we don't forbit it, a similar issue would be:
 	//    tk.MustExec("set @@sql_mode = '';")
 	//    tk.MustExec("create table t1 (a int, b tinyint as (a+255) stored);")
 	//    tk.MustExec("insert into t1 set a=128;")
