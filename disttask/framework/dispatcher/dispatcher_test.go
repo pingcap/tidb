@@ -135,7 +135,7 @@ const (
 	subtaskCnt = 3
 )
 
-func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
+func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)")
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
@@ -233,16 +233,24 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		return
 	}
 
-	// Test each task has a subtask failed.
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
-	}()
-	// Mock a subtask fails.
-	for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, "")
-		require.NoError(t, err)
+	if isCancel {
+		for i := 1; i <= taskCnt; i++ {
+			err = mgr.CancelGlobalTask(int64(i))
+			require.NoError(t, err)
+		}
+	} else {
+		// Test each task has a subtask failed.
+		failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
+		}()
+		// Mock a subtask fails.
+		for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, "")
+			require.NoError(t, err)
+		}
 	}
+
 	checkGetGTaskState(proto.TaskStateReverting)
 	require.Len(t, tasks, taskCnt)
 	// Mock all subtask reverted.
@@ -257,19 +265,27 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 }
 
 func TestSimpleNormalFlow(t *testing.T) {
-	checkDispatch(t, 1, true)
+	checkDispatch(t, 1, true, false)
 }
 
 func TestSimpleErrFlow(t *testing.T) {
-	checkDispatch(t, 1, false)
+	checkDispatch(t, 1, false, false)
+}
+
+func TestSimpleCancelFlow(t *testing.T) {
+	checkDispatch(t, 1, false, true)
 }
 
 func TestParallelNormalFlow(t *testing.T) {
-	checkDispatch(t, 3, true)
+	checkDispatch(t, 3, true, false)
 }
 
 func TestParallelErrFlow(t *testing.T) {
-	checkDispatch(t, 3, false)
+	checkDispatch(t, 3, false, false)
+}
+
+func TestParallelCancelFlow(t *testing.T) {
+	checkDispatch(t, 3, false, true)
 }
 
 const taskTypeExample = "task_example"

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
-	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -254,57 +253,62 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 // restored for the first time, it will initialize the checkpoint metadata. Otherwrise,
 // it will load checkpoint metadata and checkpoint ranges/checksum from the external
 // storage.
-func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage, mgr *conn.Mgr, config *pdutil.ClusterConfig, useCheckpoint bool) (map[int64]rtree.RangeTree, pdutil.UndoFunc, error) {
+func (rc *Client) InitCheckpoint(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+	config *pdutil.ClusterConfig,
+	useCheckpoint bool,
+) (map[int64]map[string]struct{}, *pdutil.ClusterConfig, error) {
 	var (
-		taskName = fmt.Sprintf("%d", rc.GetPDClient().GetClusterID(ctx))
-		// checkpoint ranges
-		tree = make(map[int64]rtree.RangeTree)
+		// checkpoint sets distinguished by range key
+		checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
-		undo pdutil.UndoFunc
+		checkpointClusterConfig *pdutil.ClusterConfig
 	)
 
 	// if not use checkpoint, return empty checkpoint ranges and new gc-safepoint id
 	if !useCheckpoint {
-		return tree, nil, nil
+		return checkpointSetWithTableID, nil, nil
 	}
 
 	// if the checkpoint metadata exists in the external storage, the restore is not
 	// for the first time.
 	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, taskName)
 	if err != nil {
-		return tree, nil, errors.Trace(err)
+		return checkpointSetWithTableID, nil, errors.Trace(err)
 	}
 
 	if exists {
 		// load the checkpoint since this is not the first time to restore
 		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
 		if err != nil {
-			return tree, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 
+		// The schedulers config is nil, so the restore-schedulers operation is just nil.
+		// Then the undo function would use the result undo of `remove schedulers` operation,
+		// instead of that in checkpoint meta.
 		if meta.SchedulersConfig != nil {
-			undo = mgr.MakeUndoFunctionByConfig(*meta.SchedulersConfig)
-		} else {
-			// the schedulers config is nil, so the restore-schedulers operation is just a nop
-			undo = pdutil.Nop
+			checkpointClusterConfig = meta.SchedulersConfig
 		}
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
-		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rg checkpoint.RestoreValueType) {
-			t, exists := tree[tableID]
+		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rangeKey checkpoint.RestoreValueType) {
+			checkpointSet, exists := checkpointSetWithTableID[tableID]
 			if !exists {
-				t = rtree.NewRangeTree()
-				tree[tableID] = t
+				checkpointSet = make(map[string]struct{})
+				checkpointSetWithTableID[tableID] = checkpointSet
 			}
-			t.InsertRange(*rg.Range)
+			checkpointSet[rangeKey.RangeKey] = struct{}{}
 		})
 		if err != nil {
-			return tree, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 		// t2 is the latest time the checkpoint checksum persisted to the external storage.
 		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
 		if err != nil {
-			return tree, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 		rc.checkpointChecksum = checkpointChecksum
 		// use the later time to adjust the summary elapsed time.
@@ -321,12 +325,12 @@ func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage,
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
 		}
 		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, meta, taskName); err != nil {
-			return tree, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 	}
 
 	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, s, rc.cipher, taskName)
-	return tree, undo, errors.Trace(err)
+	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
 }
 
 func (rc *Client) WaitForFinishCheckpoint(ctx context.Context) {
@@ -1254,26 +1258,25 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 	return nil
 }
 
-// isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
-func isFilesBelongToSameRange(f1, f2 string) bool {
+func getFileRangeKey(f string) string {
 	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
 	// so we need to compare with out the `_{cf}.sst` suffix
-	idx1 := strings.LastIndex(f1, "_")
-	idx2 := strings.LastIndex(f2, "_")
-
-	if idx1 < 0 || idx2 < 0 {
-		panic(fmt.Sprintf("invalid backup data file name: '%s', '%s'", f1, f2))
+	idx := strings.LastIndex(f, "_")
+	if idx < 0 {
+		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
 	}
 
-	return f1[:idx1] == f2[:idx2]
+	return f[:idx]
 }
 
-func drainFilesByRange(files []*backuppb.File, supportMulti bool) ([]*backuppb.File, []*backuppb.File) {
+// isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
+func isFilesBelongToSameRange(f1, f2 string) bool {
+	return getFileRangeKey(f1) == getFileRangeKey(f2)
+}
+
+func drainFilesByRange(files []*backuppb.File) ([]*backuppb.File, []*backuppb.File) {
 	if len(files) == 0 {
 		return nil, nil
-	}
-	if !supportMulti {
-		return files[:1], files[1:]
 	}
 	idx := 1
 	for idx < len(files) {
@@ -1284,6 +1287,20 @@ func drainFilesByRange(files []*backuppb.File, supportMulti bool) ([]*backuppb.F
 	}
 
 	return files[:idx], files[idx:]
+}
+
+func getGroupFiles(files []*backuppb.File, supportMulti bool) [][]*backuppb.File {
+	if len(files) == 0 {
+		return nil
+	}
+	if !supportMulti {
+		newFiles := make([][]*backuppb.File, 0, len(files))
+		for _, file := range files {
+			newFiles = append(newFiles, []*backuppb.File{file})
+		}
+		return newFiles
+	}
+	return [][]*backuppb.File{files}
 }
 
 // SplitRanges implements TiKVRestorer.
@@ -1328,7 +1345,7 @@ func (rc *Client) WrapLogFilesIterWithCheckpoint(
 	logIter LogIter,
 	downstreamIdset map[int64]struct{},
 	taskName string,
-	updateStats func(kvCount uint64, size uint64),
+	updateStats func(kvCount, size uint64),
 	onProgress func(),
 ) (LogIter, error) {
 	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset, taskName)
@@ -1348,20 +1365,21 @@ func (rc *Client) WrapLogFilesIterWithCheckpoint(
 // RestoreSSTFiles tries to restore the files.
 func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
-	files []*backuppb.File,
+	tableIDWithFiles []TableIDWithFiles,
 	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 ) (err error) {
 	start := time.Now()
+	fileCount := 0
 	defer func() {
 		elapsed := time.Since(start)
 		if err == nil {
-			log.Info("Restore files", zap.Duration("take", elapsed), logutil.Files(files))
-			summary.CollectSuccessUnit("files", len(files), elapsed)
+			log.Info("Restore files", zap.Duration("take", elapsed), zapTableIDWithFiles(tableIDWithFiles))
+			summary.CollectSuccessUnit("files", fileCount, elapsed)
 		}
 	}()
 
-	log.Debug("start to restore files", zap.Int("files", len(files)))
+	log.Debug("start to restore files", zap.Int("files", fileCount))
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
@@ -1375,29 +1393,54 @@ func (rc *Client) RestoreSSTFiles(
 		return errors.Trace(err)
 	}
 
+	runner := rc.GetCheckpointRunner()
+
 	var rangeFiles []*backuppb.File
 	var leftFiles []*backuppb.File
-	for rangeFiles, leftFiles = drainFilesByRange(files, rc.fileImporter.supportMultiIngest); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles, rc.fileImporter.supportMultiIngest) {
-		filesReplica := rangeFiles
-		if ectx.Err() != nil {
-			log.Warn("Restoring encountered error and already stopped, give up remained files.",
-				zap.Int("remained", len(leftFiles)),
-				logutil.ShortError(ectx.Err()))
-			// We will fetch the error from the errgroup then (If there were).
-			// Also note if the parent context has been canceled or something,
-			// breaking here directly is also a reasonable behavior.
-			break
-		}
-		rc.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
-				fileStart := time.Now()
-				defer func() {
-					log.Info("import files done", logutil.Files(filesReplica),
-						zap.Duration("take", time.Since(fileStart)))
-					updateCh.Inc()
-				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
+LOOPFORTABLE:
+	for _, tableIDWithFile := range tableIDWithFiles {
+		tableID := tableIDWithFile.TableID
+		files := tableIDWithFile.Files
+		fileCount += len(files)
+		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
+			filesReplica := rangeFiles
+			if ectx.Err() != nil {
+				log.Warn("Restoring encountered error and already stopped, give up remained files.",
+					zap.Int("remained", len(leftFiles)),
+					logutil.ShortError(ectx.Err()))
+				// We will fetch the error from the errgroup then (If there were).
+				// Also note if the parent context has been canceled or something,
+				// breaking here directly is also a reasonable behavior.
+				break LOOPFORTABLE
+			}
+			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
+				for _, filesGroup := range filesGroups {
+					if importErr := func(fs []*backuppb.File) error {
+						fileStart := time.Now()
+						defer func() {
+							log.Info("import files done", logutil.Files(filesGroup),
+								zap.Duration("take", time.Since(fileStart)))
+							updateCh.Inc()
+						}()
+						return rc.fileImporter.ImportSSTFiles(ectx, fs, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
+					}(filesGroup); importErr != nil {
+						return errors.Trace(importErr)
+					}
+				}
+
+				// the data of this range has been import done
+				if runner != nil && len(filesReplica) > 0 {
+					rangeKey := getFileRangeKey(filesReplica[0].Name)
+					// The checkpoint range shows this ranges of kvs has been restored into
+					// the table corresponding to the table-id.
+					if err := checkpoint.AppendRangesForRestore(ectx, runner, tableID, rangeKey); err != nil {
+						return errors.Trace(err)
+					}
+				}
+				return nil
 			})
+		}
 	}
 
 	if err := eg.Wait(); err != nil {
@@ -1648,7 +1691,6 @@ func (rc *Client) execChecksum(
 
 	item, exists := rc.checkpointChecksum[tbl.Table.ID]
 	if !exists {
-		beginT := time.Now()
 		startTS, err := rc.GetTSWithRetry(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -1675,7 +1717,7 @@ func (rc *Client) execChecksum(
 			TotalBytes: checksumResp.TotalBytes,
 		}
 		if rc.checkpointRunner != nil {
-			err = rc.checkpointRunner.FlushChecksumItem(ctx, item, time.Since(beginT).Seconds())
+			err = rc.checkpointRunner.FlushChecksumItem(ctx, item)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1738,6 +1780,116 @@ func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *Crea
 			}
 		}
 	}
+}
+
+// called by failpoint, only used for test
+// it would print the checksum result into the log, and
+// the auto-test script records them to compare another
+// cluster's checksum.
+func (rc *Client) FailpointDoChecksumForLogRestore(
+	ctx context.Context,
+	kvClient kv.Client,
+	pdClient pd.Client,
+	idrules map[int64]int64,
+	rewriteRules map[int64]*RewriteRules,
+) (finalErr error) {
+	startTS, err := rc.GetTSWithRetry(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// set gc safepoint for checksum
+	sp := utils.BRServiceSafePoint{
+		BackupTS: startTS,
+		TTL:      utils.DefaultBRGCSafePointTTL,
+		ID:       utils.MakeSafePointID(),
+	}
+	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
+	defer func() {
+		log.Info("start to remove gc-safepoint keeper")
+		// close the gc safe point keeper at first
+		gcSafePointKeeperCancel()
+		// set the ttl to 0 to remove the gc-safe-point
+		sp.TTL = 0
+		if err := utils.UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
+			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+				zap.Error(err),
+			)
+		}
+		log.Info("finish removing gc-safepoint keeper")
+	}()
+	err = utils.StartServiceSafePointKeeper(cctx, pdClient, sp)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	eg, ectx := errgroup.WithContext(ctx)
+	pool := utils.NewWorkerPool(4, "checksum for log restore")
+	infoSchema := rc.GetDomain().InfoSchema()
+	// downstream id -> upstream id
+	reidRules := make(map[int64]int64)
+	for upstreamID, downstreamID := range idrules {
+		reidRules[downstreamID] = upstreamID
+	}
+	for upstreamID, downstreamID := range idrules {
+		newTable, ok := infoSchema.TableByID(downstreamID)
+		if !ok {
+			// a dropped table
+			continue
+		}
+		rewriteRule, ok := rewriteRules[upstreamID]
+		if !ok {
+			continue
+		}
+		newTableInfo := newTable.Meta()
+		var definitions []model.PartitionDefinition
+		if newTableInfo.Partition != nil {
+			for _, def := range newTableInfo.Partition.Definitions {
+				upid, ok := reidRules[def.ID]
+				if !ok {
+					log.Panic("no rewrite rule for parition table id", zap.Int64("id", def.ID))
+				}
+				definitions = append(definitions, model.PartitionDefinition{
+					ID: upid,
+				})
+			}
+		}
+		oldPartition := &model.PartitionInfo{
+			Definitions: definitions,
+		}
+		oldTable := &metautil.Table{
+			Info: &model.TableInfo{
+				ID:        upstreamID,
+				Indices:   newTableInfo.Indices,
+				Partition: oldPartition,
+			},
+		}
+		pool.ApplyOnErrorGroup(eg, func() error {
+			exe, err := checksum.NewExecutorBuilder(newTableInfo, startTS).
+				SetOldTable(oldTable).
+				SetConcurrency(4).
+				SetOldKeyspace(rewriteRule.OldKeyspace).
+				SetNewKeyspace(rewriteRule.NewKeyspace).
+				Build()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			checksumResp, err := exe.Execute(ectx, kvClient, func() {})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// print to log so that the test script can get final checksum
+			log.Info("failpoint checksum completed",
+				zap.String("table-name", newTableInfo.Name.O),
+				zap.Int64("upstream-id", oldTable.Info.ID),
+				zap.Uint64("checksum", checksumResp.Checksum),
+				zap.Uint64("total-kvs", checksumResp.TotalKvs),
+				zap.Uint64("total-bytes", checksumResp.TotalBytes),
+			)
+			return nil
+		})
+	}
+
+	return eg.Wait()
 }
 
 const (
@@ -1964,15 +2116,27 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 		return err
 	}
 	for _, table := range tables {
-		if recorder != nil ||
-			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > tiFlashStoreCount) {
-			if recorder != nil && table.Info.TiFlashReplica != nil {
+		if table.Info.TiFlashReplica != nil {
+			if recorder != nil {
 				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
+				log.Info("record tiflash replica for table, to reset it by ddl later",
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name),
+				)
+				table.Info.TiFlashReplica = nil
+			} else if table.Info.TiFlashReplica.Count > tiFlashStoreCount {
+				// we cannot satisfy TiFlash replica in restore cluster. so we should
+				// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
+				// see details at https://github.com/pingcap/br/issues/931
+				// TODO maybe set table.Info.TiFlashReplica.Count to tiFlashStoreCount, but we need more tests about it.
+				log.Warn("table does not satisfy tiflash replica requirements, set tiflash replcia to unavaiable",
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name),
+					zap.Uint64("expect tiflash replica", table.Info.TiFlashReplica.Count),
+					zap.Uint64("actual tiflash store", tiFlashStoreCount),
+				)
+				table.Info.TiFlashReplica = nil
 			}
-			// we cannot satisfy TiFlash replica in restore cluster. so we should
-			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
-			// see details at https://github.com/pingcap/br/issues/931
-			table.Info.TiFlashReplica = nil
 		}
 	}
 	return nil
@@ -2312,8 +2476,9 @@ func (rc *Client) RestoreKVFiles(
 						} else {
 							for _, f := range files {
 								filenames = append(filenames, f.Path+", ")
-								if e := checkpoint.AppendRangeForLogRestore(ctx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+								if e := checkpoint.AppendRangeForLogRestore(ectx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
 									err = errors.Annotate(e, "failed to append checkpoint data")
+									break
 								}
 							}
 						}
@@ -2383,6 +2548,60 @@ func (rc *Client) initSchemasMap(
 	return backupMeta.GetDbMaps(), nil
 }
 
+func initFullBackupTables(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	tableFilter filter.Filter,
+) (map[int64]*metautil.Table, error) {
+	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	backupMeta := &backuppb.BackupMeta{}
+	if err = backupMeta.Unmarshal(metaData); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// read full backup databases to get map[table]table.Info
+	reader := metautil.NewMetaReader(backupMeta, s, nil)
+
+	databases, err := utils.LoadBackupTables(ctx, reader)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make(map[int64]*metautil.Table)
+	for _, db := range databases {
+		dbName := db.Info.Name.O
+		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
+			dbName = name
+		}
+
+		if !tableFilter.MatchSchema(dbName) {
+			continue
+		}
+
+		for _, table := range db.Tables {
+			// check this db is empty.
+			if table.Info == nil {
+				tables[db.Info.ID] = table
+				continue
+			}
+			if !tableFilter.MatchTable(dbName, table.Info.Name.O) {
+				continue
+			}
+			tables[table.Info.ID] = table
+		}
+	}
+
+	return tables, nil
+}
+
+type FullBackupStorageConfig struct {
+	Backend *backuppb.StorageBackend
+	Opts    *storage.ExternalStorageOptions
+}
+
 type InitSchemaConfig struct {
 	// required
 	IsNewTask      bool
@@ -2390,8 +2609,8 @@ type InitSchemaConfig struct {
 	TableFilter    filter.Filter
 
 	// optional
-	TiFlashRecorder *tiflashrec.TiFlashRecorder
-	Tables          map[int64]*metautil.Table
+	TiFlashRecorder   *tiflashrec.TiFlashRecorder
+	FullBackupStorage *FullBackupStorageConfig
 }
 
 // InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
@@ -2403,6 +2622,8 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	var (
 		err    error
 		dbMaps []*backuppb.PitrDBMap
+		// the id map doesn't need to construct only when it is not the first execution
+		needConstructIdMap bool
 
 		dbReplaces = make(map[stream.UpstreamID]*stream.DBReplace)
 	)
@@ -2410,6 +2631,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	// not new task, load schemas map from external storage
 	if !cfg.IsNewTask {
 		log.Info("try to load pitr id maps")
+		needConstructIdMap = false
 		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.restoreTS)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -2420,6 +2642,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && !cfg.HasFullRestore {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
+		needConstructIdMap = true
 		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -2427,8 +2650,17 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	}
 
 	if len(dbMaps) <= 0 {
-		log.Info("no id maps, build the table replaces from cluster")
-		for _, t := range cfg.Tables {
+		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
+		needConstructIdMap = true
+		s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, t := range fullBackupTables {
 			dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
 			newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
 			if !exist {
@@ -2481,7 +2713,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	}
 
 	rp := stream.NewSchemasReplace(
-		dbReplaces, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
+		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
 		rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
 	return rp, nil
 }
@@ -2543,15 +2775,24 @@ func (rc *Client) RestoreMetaKVFiles(
 	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
 	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
-	// Preconstruct the map and save it into external storage.
-	if err := rc.PreConstructAndSaveIDMap(
-		ctx,
-		filesInWriteCF,
-		filesInDefaultCF,
-		schemasReplace,
-	); err != nil {
-		return errors.Trace(err)
+	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
+	})
+
+	if schemasReplace.NeedConstructIdMap() {
+		// Preconstruct the map and save it into external storage.
+		if err := rc.PreConstructAndSaveIDMap(
+			ctx,
+			filesInWriteCF,
+			filesInDefaultCF,
+			schemasReplace,
+		); err != nil {
+			return errors.Trace(err)
+		}
 	}
+	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
+	})
 
 	// run the rewrite and restore meta-kv into TiKV cluster.
 	if err := rc.RestoreMetaKVFilesWithBatchMethod(
@@ -2791,9 +3032,18 @@ func (rc *Client) restoreMetaKvEntries(
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.e.Value)), zap.ByteString("new-key", newEntry.Key))
 
+		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
+			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
+		})
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
+		// for failpoint, we need to flush the cache in rawKVClient every time
+		failpoint.Inject("do-not-put-metakv-in-batch", func(_ failpoint.Value) {
+			if err := rc.rawKVClient.PutRest(ctx); err != nil {
+				failpoint.Return(0, 0, errors.Trace(err))
+			}
+		})
 		kvCount++
 		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}
@@ -2861,8 +3111,20 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			var e error
-			schemaVersion, e = t.GenSchemaVersions(128)
-			return e
+			// To trigger full-reload instead of diff-reload, we need to increase the schema version
+			// by at least `domain.LoadSchemaDiffVersionGapThreshold`.
+			schemaVersion, e = t.GenSchemaVersions(64 + domain.LoadSchemaDiffVersionGapThreshold)
+			if e != nil {
+				return e
+			}
+			// add the diff key so that the domain won't retry to reload the schemas with `schemaVersion` frequently.
+			return t.SetSchemaDiff(&model.SchemaDiff{
+				Version:             schemaVersion,
+				Type:                model.ActionNone,
+				SchemaID:            -1,
+				TableID:             -1,
+				RegenerateSchemaMap: true,
+			})
 		},
 	); err != nil {
 		return errors.Trace(err)
