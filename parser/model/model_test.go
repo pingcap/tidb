@@ -471,6 +471,12 @@ func TestJobCodec(t *testing.T) {
 	require.Greater(t, len(newJob.String()), 0)
 	require.Equal(t, newJob.ReorgMeta.Location.Name, tzName)
 	require.Equal(t, newJob.ReorgMeta.Location.Offset, tzOffset)
+	name = CIStr{}
+	a = A{}
+	err = DecodeArgs(newJob, &name, &a)
+	require.NoError(t, err)
+	require.Equal(t, NewCIStr(""), name)
+	require.Equal(t, A{Name: ""}, a)
 
 	job.BinlogInfo.Clean()
 	b1, err := job.Encode(true)
@@ -486,6 +492,12 @@ func TestJobCodec(t *testing.T) {
 	require.Equal(t, NewCIStr("a"), name)
 	require.Equal(t, A{Name: "abc"}, a)
 	require.Greater(t, len(newJob.String()), 0)
+	name = CIStr{}
+	a = A{}
+	err = DecodeArgs(newJob, &name, &a)
+	require.NoError(t, err)
+	require.Equal(t, NewCIStr("a"), name)
+	require.Equal(t, A{Name: "abc"}, a)
 
 	b2, err := job.Encode(true)
 	require.NoError(t, err)
@@ -495,6 +507,11 @@ func TestJobCodec(t *testing.T) {
 	name = CIStr{}
 	// Don't decode to a here.
 	err = newJob.DecodeArgs(&name)
+	require.NoError(t, err)
+	require.Equal(t, NewCIStr("a"), name)
+	require.Greater(t, len(newJob.String()), 0)
+	name = CIStr{}
+	err = DecodeArgs(newJob, &name, &a)
 	require.NoError(t, err)
 	require.Equal(t, NewCIStr("a"), name)
 	require.Greater(t, len(newJob.String()), 0)

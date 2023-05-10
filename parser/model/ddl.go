@@ -571,12 +571,21 @@ func (job *Job) Decode(b []byte) error {
 	return errors.Trace(err)
 }
 
-// DecodeArgs decodes job args.
-func (job *Job) DecodeArgs(args ...interface{}) error {
+// DecodeArgs decodes a job's RawArgs which doesn't affect the job's Args.
+func DecodeArgs(job *Job, args ...interface{}) error {
+	fmt.Printf("xxx ================================== zzz, job:%s, raw args:%#v, len:%d\n",
+		job.String(), len(job.RawArgs), len(args))
+	_, err := decodeArgs(job, args...)
+	return errors.Trace(err)
+}
+
+func decodeArgs(job *Job, args ...interface{}) ([]interface{}, error) {
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
+	fmt.Printf("xxx ================================== zzz, job:%s, raw args:%#v\n",
+		job.String(), rawArgs)
 
 	sz := len(rawArgs)
 	if sz > len(args) {
@@ -585,10 +594,23 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 
 	for i := 0; i < sz; i++ {
 		if err := json.Unmarshal(rawArgs[i], args[i]); err != nil {
-			return errors.Trace(err)
+			fmt.Printf("xxx ================================== xxx, job:%s, no.%d, raw args:%#v, args:%#v, err:%v\n",
+				job.String(), i, rawArgs[i], args[i], err)
+			return nil, errors.Trace(err)
 		}
+		fmt.Printf("xxx ================================== yyy, job:%s, no.%d, raw args:%#v, args:%#v\n",
+			job.String(), i, rawArgs[i], args[i])
 	}
-	job.Args = args[:sz]
+	return args[:sz], nil
+}
+
+// DecodeArgs decodes job args.
+func (job *Job) DecodeArgs(args ...interface{}) error {
+	args, err := decodeArgs(job, args...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.Args = args
 	return nil
 }
 
@@ -747,9 +769,9 @@ func (job *Job) IsPaused() bool {
 	return job.State == JobStatePaused
 }
 
-// IsPausedBySystem returns whether the job is paused by system.
-func (job *Job) IsPausedBySystem() bool {
-	return job.State == JobStatePaused && job.AdminOperator == AdminCommandBySystem
+// IsPauseBySystem returns whether the job is pausing or paused by system.
+func (job *Job) IsPauseBySystem() bool {
+	return job.AdminOperator == AdminCommandBySystem && (job.State == JobStatePaused || job.State == JobStatePausing)
 }
 
 // IsPausing indicates whether the job is pausing.

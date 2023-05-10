@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -107,7 +108,12 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 		TestHook.OnBootstrap(s)
 		mustExecute(s, sql)
 		logutil.BgLogger().Info("mock upgrade exec", zap.String("sql", sql))
-		time.Sleep(20 * time.Millisecond)
+		// Make test faster.
+		if intest.InTest {
+			time.Sleep(5 * time.Millisecond)
+		} else {
+			time.Sleep(30 * time.Millisecond)
+		}
 	}
 	TestHook.OnBootstrapAfter(s)
 }

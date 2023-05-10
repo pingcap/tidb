@@ -346,7 +346,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			ch <- struct{}{}
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			_, err = tk.ExecWithContext(context.Background(), query)
+			_, err := tk.ExecWithContext(context.Background(), query)
 			if err != nil {
 				// Maybe the bootstrap domain is closed.
 				require.Equal(t, err.Error(), context.Canceled.Error())
@@ -363,9 +363,9 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			require.NoError(t, err)
 			cmt := fmt.Sprintf("job: %s", runJob.String())
 			if !tidb_util.IsSysDB(runJob.SchemaName) {
-				require.True(t, runJob.IsPausedBySystem(), cmt)
+				require.True(t, runJob.IsPauseBySystem(), cmt)
 			} else {
-				require.False(t, !runJob.IsPausedBySystem(), cmt)
+				require.False(t, !runJob.IsPauseBySystem(), cmt)
 			}
 		}
 	}
@@ -380,9 +380,9 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			require.NoError(t, err)
 			cmt := fmt.Sprintf("job: %s", runJob.String())
 			if !tidb_util.IsSysDB(runJob.SchemaName) {
-				require.True(t, runJob.IsPausedBySystem(), cmt)
+				require.True(t, runJob.IsPauseBySystem(), cmt)
 			} else {
-				require.False(t, !runJob.IsPausedBySystem(), cmt)
+				require.False(t, !runJob.IsPauseBySystem(), cmt)
 			}
 		}
 	}

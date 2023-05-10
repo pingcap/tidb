@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	tidb_util "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -183,23 +182,16 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 	return nil, nil
 }
 
-func hasSysDB(job *model.Job) bool {
-	sNames := job2SchemaNames(job)
-	// TODO: Handle for the name is empty, like ActionCreatePlacementPolicy.
-	for _, name := range sNames {
-		if tidb_util.IsSysDB(name) {
-			return true
-		}
-	}
-	return false
-}
-
 func (d *ddl) handleUpgradingState(se *sess.Session, job *model.Job) error {
 	if !d.stateSyncer.IsUpgradingState() {
-		if !job.IsPausedBySystem() || hasSysDB(job) {
+		if !job.IsPauseBySystem() {
 			return nil
 		}
-		_, err := ResumeJobsBySystem(se.Session(), []int64{job.ID})
+		hasSysDB, err := util.HasSysDB(job)
+		if err != nil || hasSysDB {
+			return err
+		}
+		_, err = ResumeJobsBySystem(se.Session(), []int64{job.ID})
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] resume user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 			return err
@@ -210,10 +202,11 @@ func (d *ddl) handleUpgradingState(se *sess.Session, job *model.Job) error {
 	if job.IsPausing() {
 		return nil
 	}
-	if hasSysDB(job) {
-		return nil
+	hasSysDB, err := util.HasSysDB(job)
+	if err != nil || hasSysDB {
+		return err
 	}
-	_, err := PauseJobsBySystem(se.Session(), []int64{job.ID})
+	_, err = PauseJobsBySystem(se.Session(), []int64{job.ID})
 	logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job), zap.Error(err))
 	return err
 }
@@ -558,27 +551,6 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		return strconv.FormatInt(job.SchemaID, 10)
 	}
 	return strconv.FormatInt(job.TableID, 10)
-}
-
-func job2SchemaNames(job *model.Job) []string {
-	switch job.Type {
-	case model.ActionRenameTable:
-		var oldSchemaID int64
-		var oldSchemaName model.CIStr
-		var tableName model.CIStr
-		if err := job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName); err != nil {
-			// TODO: Handle this error
-		}
-		names := make([]string, 0, 2)
-		names = append(names, strings.ToLower(job.SchemaName))
-		names = append(names, oldSchemaName.O)
-		return names
-	case model.ActionRenameTables:
-		// TODO: Get this action's schema names.
-	case model.ActionExchangeTablePartition:
-		// TODO: Get this action's schema names.
-	}
-	return []string{job.SchemaName}
 }
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
