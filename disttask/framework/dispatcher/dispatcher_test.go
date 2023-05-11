@@ -317,8 +317,3 @@ func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Task
 	// Don't handle not.
 	return nil, nil
 }
-
-// ProcessFinishFlow processes the finish flow.
-func (n NumberExampleHandle) ProcessFinishFlow(context.Context, dispatcher.TaskHandle, *proto.Task, [][]byte) (err error) {
-	return nil
-}
