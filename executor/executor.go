@@ -2403,9 +2403,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		pkCols = append(pkCols, model.ExtraHandleName.O)
 	}
 
-	var indexCols []string
-	for _, col := range idxInfo.Columns {
-		indexCols = append(indexCols, col.Name.O)
+	indexCols := make([]string, 0, len(idxInfo.Columns))
+	for i, col := range idxInfo.Columns {
+		indexCols[i] = col.Name.O
 	}
 
 	// build the SQL query string
