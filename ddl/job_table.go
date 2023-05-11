@@ -28,13 +28,16 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	tidb_util "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -127,6 +130,12 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 			continue
 		}
 
+		if isJobProcessing {
+			if err := d.handleUpgradingState(se, &job); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
 		// Receive the `admin pause ...` command on this job, turn it to be
 		// not processing; And, keep continue to pause the job and the
 		// background reorganization workers.
@@ -135,12 +144,10 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 			// (i.e., job_id) they were issued, and lower than those are still
 			// running.
 			if err = d.markJobNotProcessing(se, &job); err != nil {
-				logutil.BgLogger().Warn(
-					"[ddl] failed to mark the job as processing=0",
+				logutil.BgLogger().Warn("[ddl] failed to mark the job as processing=0",
 					zap.Error(err), zap.String("job", job.String()))
 				return nil, errors.Trace(err)
 			}
-
 			// The job may have been run for a while, we need to notify the
 			// background reorganization worker to finish in worker.runDDLJob
 			// So that we should not `continue` or `return` here
@@ -156,6 +163,9 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 			return nil, errors.Trace(err)
 		}
 		if b {
+			if err := d.handleUpgradingState(se, &job); err != nil {
+				return nil, errors.Trace(err)
+			}
 			if !job.IsPausing() {
 				// This should be the first time that the job is picked up.
 				// Then it should not be a pausing or paused job.
@@ -171,6 +181,41 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		}
 	}
 	return nil, nil
+}
+
+func hasSysDB(job *model.Job) bool {
+	sNames := job2SchemaNames(job)
+	// TODO: Handle for the name is empty, like ActionCreatePlacementPolicy.
+	for _, name := range sNames {
+		if tidb_util.IsSysDB(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *ddl) handleUpgradingState(se *sess.Session, job *model.Job) error {
+	if !d.stateSyncer.IsUpgradingState() {
+		if !job.IsPausedBySystem() || hasSysDB(job) {
+			return nil
+		}
+		_, err := ResumeJobsBySystem(se.Session(), []int64{job.ID})
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] resume user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
+			return err
+		}
+		logutil.BgLogger().Info("[ddl] resume user DDL by system successful", zap.Stringer("job", job))
+		return nil
+	}
+	if job.IsPausing() {
+		return nil
+	}
+	if hasSysDB(job) {
+		return nil
+	}
+	_, err := PauseJobsBySystem(se.Session(), []int64{job.ID})
+	logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job), zap.Error(err))
+	return err
 }
 
 func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
@@ -217,12 +262,22 @@ func (d *ddl) startDispatchLoop() {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
+	if err := d.doCheckClusterState(false); err != nil {
+		logutil.BgLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
+	}
 	defer ticker.Stop()
+	isFirst := true
+	isOnce := false
 	for {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
+		if err := d.needCheckClusterState(isFirst || isOnce); err != nil {
+			continue
+		}
+		isFirst = false
 		if !d.isOwner() {
+			isOnce = true
 			d.once.Store(true)
 			time.Sleep(dispatchLoopWaitingDuration)
 			continue
@@ -237,12 +292,60 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Second)
 				continue
 			}
+		case _, ok := <-d.stateSyncer.WatchChan():
+			if err := d.doCheckClusterState(!ok); err != nil {
+				continue
+			}
 		case <-d.ctx.Done():
 			return
 		}
+		isOnce = false
 		d.loadDDLJobAndRun(se, d.generalDDLWorkerPool, d.getGeneralJob)
 		d.loadDDLJobAndRun(se, d.reorgWorkerPool, d.getReorgJob)
 	}
+}
+
+func (d *ddl) needCheckClusterState(mustCheck bool) error {
+	select {
+	case _, ok := <-d.stateSyncer.WatchChan():
+		return d.doCheckClusterState(!ok)
+	default:
+		if mustCheck {
+			return d.doCheckClusterState(false)
+		}
+	}
+	return nil
+}
+
+func (d *ddl) doCheckClusterState(needRewatch bool) error {
+	if needRewatch {
+		d.stateSyncer.Rewatch(d.ctx)
+		return nil
+	}
+
+	oldState := d.stateSyncer.IsUpgradingState()
+	stateInfo, err := d.stateSyncer.GetGlobalState(d.ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] get global state failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Info("[ddl] get global state and global state change",
+		zap.Bool("oldState", oldState), zap.Bool("currState", d.stateSyncer.IsUpgradingState()))
+	if !d.isOwner() {
+		return nil
+	}
+
+	ownerOp := owner.OpNone
+	if stateInfo.State == syncer.StateUpgrading {
+		ownerOp = owner.OpGetUpgradingState
+	}
+	err = d.ownerManager.SetOwnerOpValue(d.ctx, ownerOp)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] the owner sets global state to owner operator value failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Info("[ddl] the owner sets owner operator value", zap.Stringer("ownerOp", ownerOp))
+	return nil
 }
 
 func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*sess.Session) (*model.Job, error)) {
@@ -455,6 +558,27 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		return strconv.FormatInt(job.SchemaID, 10)
 	}
 	return strconv.FormatInt(job.TableID, 10)
+}
+
+func job2SchemaNames(job *model.Job) []string {
+	switch job.Type {
+	case model.ActionRenameTable:
+		var oldSchemaID int64
+		var oldSchemaName model.CIStr
+		var tableName model.CIStr
+		if err := job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName); err != nil {
+			// TODO: Handle this error
+		}
+		names := make([]string, 0, 2)
+		names = append(names, strings.ToLower(job.SchemaName))
+		names = append(names, oldSchemaName.O)
+		return names
+	case model.ActionRenameTables:
+		// TODO: Get this action's schema names.
+	case model.ActionExchangeTablePartition:
+		// TODO: Get this action's schema names.
+	}
+	return []string{job.SchemaName}
 }
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
