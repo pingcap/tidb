@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/conn"
+	"github.com/pingcap/tidb/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -236,6 +238,8 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		return true
 	case mysql.AuthTiDBAuthToken:
 		return true
+	case mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
+		return true
 	}
 
 	logutil.BgLogger().Error("user password from the mysql.user table not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
@@ -268,9 +272,11 @@ func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, 
 	if record == nil {
 		return "", errors.New("Failed to get user record")
 	}
-	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+	switch record.AuthPlugin {
+	case mysql.AuthTiDBAuthToken, mysql.AuthLDAPSASL, mysql.AuthLDAPSimple:
 		return record.AuthPlugin, nil
 	}
+
 	// zero-length auth string means no password for native and caching_sha2 auth.
 	// but for auth_socket it means there should be a 1-to-1 mapping between the TiDB user
 	// and the OS user.
@@ -505,7 +511,7 @@ func BuildPasswordLockingJSON(failedLoginAttempts int64,
 }
 
 // ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars) (info privilege.VerificationInfo, err error) {
+func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars, authConn conn.AuthConn) (info privilege.VerificationInfo, err error) {
 	if SkipWithGrant {
 		p.user = authUser
 		p.host = authHost
@@ -563,6 +569,18 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		}
 		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
 			logutil.BgLogger().Error("check claims failed", zap.Error(err))
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	} else if record.AuthPlugin == mysql.AuthLDAPSASL {
+		if err = ldap.LDAPSASLAuthImpl.AuthLDAPSASL(authUser, pwd, authentication, authConn); err != nil {
+			// though the pwd stores only `dn` for LDAP SASL, it could be unsafe to print it out.
+			// for example, someone may alter the auth plugin name but forgot to change the password...
+			logutil.BgLogger().Warn("verify through LDAP SASL failed", zap.String("username", user.Username), zap.Error(err))
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	} else if record.AuthPlugin == mysql.AuthLDAPSimple {
+		if err = ldap.LDAPSimpleAuthImpl.AuthLDAPSimple(authUser, pwd, authentication); err != nil {
+			logutil.BgLogger().Warn("verify through LDAP Simple failed", zap.String("username", user.Username), zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if len(pwd) > 0 && len(authentication) > 0 {
