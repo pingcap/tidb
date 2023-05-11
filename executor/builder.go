@@ -499,7 +499,9 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		buildIndexLookUpChecker(b, readerPlan, readerExec)
+		if readerExec.checkIndexValue == nil {
+			buildIndexLookUpChecker(b, readerPlan, readerExec)
+		}
 
 		readerExecs = append(readerExecs, readerExec)
 	}
@@ -3984,6 +3986,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		}
 		e.handleCols = v.CommonHandleCols
 		e.primaryKeyIndex = tables.FindPrimaryIndex(tbl.Meta())
+	}
+
+	if b.ctx.GetSessionVars().CheckTableInIndexLookup {
+		buildIndexLookUpChecker(b, v, e)
 	}
 	return e, nil
 }

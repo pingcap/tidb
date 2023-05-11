@@ -1441,7 +1441,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	}
 	defer terror.Call(tableReader.Close)
 
-	if w.checkIndexValue != nil || w.idxLookup.ctx.GetSessionVars().FastCheckTable {
+	if w.checkIndexValue != nil {
 		return w.compareData(ctx, task, tableReader)
 	}
 

@@ -2508,11 +2508,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			return
 		}
 
-		save := se.GetSessionVars().FastCheckTable
+		save := se.GetSessionVars().CheckTableInIndexLookup
 		defer func() {
-			se.GetSessionVars().FastCheckTable = save
+			se.GetSessionVars().CheckTableInIndexLookup = save
 		}()
-		se.GetSessionVars().FastCheckTable = true
+		se.GetSessionVars().CheckTableInIndexLookup = true
 		rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 		if err != nil {
 			trySaveErr(err)
