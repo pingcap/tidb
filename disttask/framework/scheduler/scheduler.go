@@ -134,6 +134,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 		if err := s.getError(); err != nil {
 			return err
 		}
+
 		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending)
 		if err != nil {
 			s.onError(err)

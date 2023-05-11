@@ -92,6 +92,7 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 	// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
 	// Multiple index engines may suffer performance degradation due to range overlap.
 	// These issues will be alleviated after we integrate s3 sorter.
+	// engineID = -1, -2, -3, ...
 	indexEngine, err := s.tableImporter.OpenIndexEngine(ctx, common.IndexEngineID-subtaskMeta.ID)
 	if err != nil {
 		return nil, err
