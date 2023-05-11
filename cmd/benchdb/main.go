@@ -18,6 +18,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/gin-gonic/gin"
+	"github.com/justinas/nosurf"
+	"github.com/spf13/viper"
+	"gorm.io/driver/mysql"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -53,6 +57,11 @@ var (
 )
 
 func main() {
+
+	fmt.Println(mysql.ClauseFor)
+	fmt.Println(nosurf.MaxAge)
+	fmt.Println(gin.DebugMode)
+	fmt.Println(viper.Viper{})
 	flag.Parse()
 	flag.PrintDefaults()
 	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
