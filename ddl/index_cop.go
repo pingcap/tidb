@@ -21,6 +21,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
+>>>>>>> 2e8bc40073a (ddl: use session begin timestamp to read record for adding index (#43639))
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -92,9 +97,16 @@ func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask)
 }
 
 type copReqSenderPool struct {
+<<<<<<< HEAD
 	tasksCh   chan *reorgBackfillTask
 	resultsCh chan idxRecResult
 	results   generic.SyncMap[int, struct{}]
+=======
+	tasksCh       chan *reorgBackfillTask
+	chunkSender   chunkSender
+	checkpointMgr *ingest.CheckpointManager
+	sessPool      *sess.Pool
+>>>>>>> 2e8bc40073a (ddl: use session begin timestamp to read record for adding index (#43639))
 
 	ctx    context.Context
 	copCtx *copContext
@@ -117,10 +129,21 @@ type copReqSender struct {
 func (c *copReqSender) run() {
 	p := c.senderPool
 	defer p.wg.Done()
-	var curTaskID int
 	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
+<<<<<<< HEAD
 		p.resultsCh <- idxRecResult{id: curTaskID, err: dbterror.ErrReorgPanic}
+=======
+		p.chunkSender.AddTask(idxRecResult{err: dbterror.ErrReorgPanic})
+>>>>>>> 2e8bc40073a (ddl: use session begin timestamp to read record for adding index (#43639))
 	}, false)
+	sessCtx, err := p.sessPool.Get()
+	if err != nil {
+		logutil.BgLogger().Error("[ddl-ingest] copReqSender get session from pool failed", zap.Error(err))
+		p.chunkSender.AddTask(idxRecResult{err: err})
+		return
+	}
+	se := sess.NewSession(sessCtx)
+	defer p.sessPool.Put(sessCtx)
 	for {
 		if util.HasCancelled(c.ctx) {
 			return
@@ -129,18 +152,40 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
+<<<<<<< HEAD
 		curTaskID = task.id
 		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
 			zap.Int("id", task.id), zap.String("task", task.String()))
 		ver, err := p.store.CurrentVersion(kv.GlobalTxnScope)
+=======
+		if p.checkpointMgr != nil && p.checkpointMgr.IsComplete(task.endKey) {
+			logutil.BgLogger().Info("[ddl-ingest] checkpoint detected, skip a cop-request task",
+				zap.Int("task ID", task.id),
+				zap.String("task end key", hex.EncodeToString(task.endKey)))
+			continue
+		}
+		err := scanRecords(p, task, se)
+>>>>>>> 2e8bc40073a (ddl: use session begin timestamp to read record for adding index (#43639))
 		if err != nil {
 			p.resultsCh <- idxRecResult{id: task.id, err: err}
 			return
 		}
-		rs, err := p.copCtx.buildTableScan(p.ctx, ver.Ver, task.startKey, task.excludedEndKey())
+	}
+}
+
+func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
+	logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
+		zap.Int("id", task.id), zap.String("task", task.String()))
+
+	return wrapInBeginRollback(se, func(startTS uint64) error {
+		rs, err := p.copCtx.buildTableScan(p.ctx, startTS, task.startKey, task.excludedEndKey())
 		if err != nil {
+<<<<<<< HEAD
 			p.resultsCh <- idxRecResult{id: task.id, err: err}
 			return
+=======
+			return err
+>>>>>>> 2e8bc40073a (ddl: use session begin timestamp to read record for adding index (#43639))
 		}
 		failpoint.Inject("MockCopSenderPanic", func(val failpoint.Value) {
 			if val.(bool) {
@@ -153,28 +198,57 @@ func (c *copReqSender) run() {
 			idxRec, srcChk := p.getIndexRecordsAndChunks()
 			idxRec, done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk, idxRec)
 			if err != nil {
+<<<<<<< HEAD
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
 				p.recycleIdxRecordsAndChunk(idxRec, srcChk)
 				terror.Call(rs.Close)
 				_ = rs.Close()
 				return
+=======
+				p.recycleChunk(srcChk)
+				terror.Call(rs.Close)
+				return err
+>>>>>>> 2e8bc40073a (ddl: use session begin timestamp to read record for adding index (#43639))
 			}
 			total += len(idxRec)
 			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, chunk: srcChk, done: done, total: total}
 		}
 		terror.Call(rs.Close)
-	}
+		return nil
+	})
 }
 
+func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
+	err := se.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer se.Rollback()
+	var startTS uint64
+	sessVars := se.GetSessionVars()
+	sessVars.TxnCtxMu.Lock()
+	startTS = sessVars.TxnCtx.StartTS
+	sessVars.TxnCtxMu.Unlock()
+	return f(startTS)
+}
+
+<<<<<<< HEAD
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage) *copReqSenderPool {
 	poolSize := int(variable.GetDDLReorgWorkerCounter() * copReadConcurrencyFactor)
 	idxBufPool := make(chan []*indexRecord, poolSize)
+=======
+func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
+	taskCh chan *reorgBackfillTask, sessPool *sess.Pool,
+	checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
+	poolSize := copReadChunkPoolSize()
+>>>>>>> 2e8bc40073a (ddl: use session begin timestamp to read record for adding index (#43639))
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
 		idxBufPool <- make([]*indexRecord, 0, copReadBatchFactor*variable.GetDDLReorgBatchSize())
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, int(copReadBatchFactor*variable.GetDDLReorgBatchSize()))
 	}
 	return &copReqSenderPool{
+<<<<<<< HEAD
 		tasksCh:    make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultsCh:  make(chan idxRecResult, backfillTaskChanSize),
 		results:    generic.NewSyncMap[int, struct{}](10),
@@ -185,6 +259,17 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Stora
 		wg:         sync.WaitGroup{},
 		idxBufPool: idxBufPool,
 		srcChkPool: srcChkPool,
+=======
+		tasksCh:       taskCh,
+		ctx:           ctx,
+		copCtx:        copCtx,
+		store:         store,
+		senders:       make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
+		wg:            sync.WaitGroup{},
+		srcChkPool:    srcChkPool,
+		sessPool:      sessPool,
+		checkpointMgr: checkpointMgr,
+>>>>>>> 2e8bc40073a (ddl: use session begin timestamp to read record for adding index (#43639))
 	}
 }
 

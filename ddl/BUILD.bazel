@@ -205,6 +205,11 @@ go_test(
     deps = [
         "//config",
         "//ddl/ingest",
+<<<<<<< HEAD
+=======
+        "//ddl/internal/callback",
+        "//ddl/internal/session",
+>>>>>>> 2e8bc40073a (ddl: use session begin timestamp to read record for adding index (#43639))
         "//ddl/placement",
         "//ddl/schematracker",
         "//ddl/testutil",

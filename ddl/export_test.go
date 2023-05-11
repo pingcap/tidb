@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 
+	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -36,7 +37,15 @@ func FetchRowsFromCop4Test(copCtx *copContext, startKey, endKey kv.Key, store kv
 		startKey: startKey,
 		endKey:   endKey,
 	}
+<<<<<<< HEAD
 	pool := newCopReqSenderPool(context.Background(), copCtx, store)
+=======
+	taskCh := make(chan *reorgBackfillTask, 5)
+	resultCh := make(chan idxRecResult, 5)
+	sessPool := session.NewSessionPool(nil, store)
+	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, sessPool, nil)
+	pool.chunkSender = &resultChanForTest{ch: resultCh}
+>>>>>>> 2e8bc40073a (ddl: use session begin timestamp to read record for adding index (#43639))
 	pool.adjustSize(1)
 	pool.tasksCh <- task
 	idxRec, _, _, done, err := pool.fetchRowColValsFromCop(*task)
