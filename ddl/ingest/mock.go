@@ -109,6 +109,11 @@ func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error 
 	return nil
 }
 
+// DoChecksum implements BackendCtx.DoChecksum interface.
+func (*MockBackendCtx) DoChecksum(_ kv.Storage, _, _ int64) error {
+	return nil
+}
+
 // ResetWorkers implements BackendCtx.ResetWorkers interface.
 func (*MockBackendCtx) ResetWorkers(_, _ int64) {
 }

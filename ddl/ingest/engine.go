@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
@@ -55,10 +56,11 @@ type engineInfo struct {
 	uuid         uuid.UUID
 	cfg          *backend.EngineConfig
 	writerCount  int
-	writerCache  generic.SyncMap[int, backend.EngineWriter]
+	writerCache  generic.SyncMap[int, *writerContext]
 	memRoot      MemRoot
 	flushLock    *sync.RWMutex
 	flushing     atomic.Bool
+	checksum     *verification.KVChecksum
 }
 
 // newEngineInfo create a new engineInfo struct.
@@ -72,7 +74,7 @@ func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 		openedEngine: en,
 		uuid:         uuid,
 		writerCount:  wCnt,
-		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](wCnt),
+		writerCache:  generic.NewSyncMap[int, *writerContext](wCnt),
 		memRoot:      memRoot,
 		flushLock:    &sync.RWMutex{},
 	}
@@ -157,10 +159,11 @@ func (ei *engineInfo) ImportAndClean() error {
 
 // writerContext is used to keep a lightning local writer for each backfill worker.
 type writerContext struct {
-	ctx    context.Context
-	unique bool
-	lWrite backend.EngineWriter
-	fLock  *sync.RWMutex
+	ctx      context.Context
+	unique   bool
+	lWrite   backend.EngineWriter
+	fLock    *sync.RWMutex
+	checksum *verification.KVChecksum
 }
 
 // CreateWriter creates a new writerContext.
@@ -193,35 +196,37 @@ func (ei *engineInfo) CreateWriter(id int, unique bool) (Writer, error) {
 // note: operate ei.writeCache map is not thread safe please make sure there is sync mechanism to
 // make sure the safe.
 func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*writerContext, error) {
-	lWrite, exist := ei.writerCache.Load(workerID)
+	wCtx, exist := ei.writerCache.Load(workerID)
 	if !exist {
-		var err error
-		lWrite, err = ei.openedEngine.LocalWriter(ei.ctx, &backend.LocalWriterConfig{})
+		localWriter, err := ei.openedEngine.LocalWriter(ei.ctx, &backend.LocalWriterConfig{})
 		if err != nil {
 			return nil, err
 		}
 		// Cache the local writer.
-		ei.writerCache.Store(workerID, lWrite)
+		wCtx = &writerContext{
+			ctx:      ei.ctx,
+			unique:   unique,
+			lWrite:   localWriter,
+			fLock:    ei.flushLock,
+			checksum: verification.NewKVChecksum(0),
+		}
+		ei.writerCache.Store(workerID, wCtx)
 	}
-	wc := &writerContext{
-		ctx:    ei.ctx,
-		unique: unique,
-		lWrite: lWrite,
-		fLock:  ei.flushLock,
-	}
-	return wc, nil
+	return wCtx, nil
 }
 
 func (ei *engineInfo) closeWriters() error {
 	var firstErr error
+	ei.checksum = verification.NewKVChecksum(0)
 	for _, wid := range ei.writerCache.Keys() {
 		if w, ok := ei.writerCache.Load(wid); ok {
-			_, err := w.Close(ei.ctx)
+			_, err := w.lWrite.Close(ei.ctx)
 			if err != nil {
 				if firstErr == nil {
 					firstErr = err
 				}
 			}
+			ei.checksum.Add(w.checksum)
 		}
 		ei.writerCache.Delete(wid)
 	}
@@ -237,7 +242,12 @@ func (wCtx *writerContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) er
 		kvs[0].RowID = handle.Encoded()
 	}
 	row := kv.MakeRowsFromKvPairs(kvs)
-	return wCtx.lWrite.AppendRows(wCtx.ctx, nil, row)
+	err := wCtx.lWrite.AppendRows(wCtx.ctx, nil, row)
+	if err != nil {
+		return err
+	}
+	wCtx.checksum.Update(kvs)
+	return nil
 }
 
 // LockForWrite locks the local writer for write.

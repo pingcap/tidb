@@ -945,6 +945,13 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		return false, ver, errors.Trace(err)
 	}
+	err = bc.DoChecksum(d.store, tbl.Meta().ID, indexInfo.ID)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] convert add index job to rollback",
+			zap.String("job", job.String()), zap.Error(err))
+		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+		return false, ver, errors.Trace(err)
+	}
 	bc.SetDone()
 	return true, ver, nil
 }

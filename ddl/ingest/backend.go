@@ -40,6 +40,8 @@ type BackendCtx interface {
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
+	DoChecksum(store tikv.Storage, tableID, indexID int64) error
+
 	ResetWorkers(jobID, indexID int64)
 	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
 	Done() bool
@@ -139,6 +141,15 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 		}
 	}
 	return nil
+}
+
+// DoChecksum compares and validates remote checksum with local checksum.
+func (bc *litBackendCtx) DoChecksum(store tikv.Storage, tableID, indexID int64) error {
+	ei, exist := bc.Load(indexID)
+	if !exist {
+		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
+	}
+	return validateChecksum(bc.ctx, tableID, indexID, store, ei.checksum)
 }
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
