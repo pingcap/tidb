@@ -1858,7 +1858,7 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 		}
 		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 		for _, idx := range tblInfo.Indices {
-			if idx.State != model.StatePublic {
+			if idx.State != model.StatePublic || idx.MVIndex {
 				continue
 			}
 			for _, idxCol := range idx.Columns {
