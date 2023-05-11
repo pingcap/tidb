@@ -262,8 +262,9 @@ type DDL interface {
 }
 
 type limitJobTask struct {
-	job *model.Job
-	err chan error
+	job      *model.Job
+	err      chan error
+	cacheErr error
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -547,12 +548,12 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	}
 }
 
-func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
+func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
 		return
 	}
-	rc.notifyReorgCancel()
+	rc.notifyJobState(job.State)
 }
 
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
@@ -627,6 +628,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(ctx, id)
 		schemaSyncer = NewMockSchemaSyncer()
+		stateSyncer = NewMockStateSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
@@ -758,6 +760,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+
+	if err := d.stateSyncer.Init(d.ctx); err != nil {
+		logutil.BgLogger().Warn("[ddl] start DDL init state syncer failed", zap.Error(err))
+		return errors.Trace(err)
+	}
 
 	d.prepareWorkers4ConcurrencyDDL()
 
@@ -1017,7 +1024,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-	task := &limitJobTask{job, make(chan error)}
+	task := &limitJobTask{job, make(chan error), nil}
 	d.limitJobCh <- task
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
@@ -1025,7 +1032,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			<-task.err
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			task1 := &limitJobTask{job, make(chan error)}
+			task1 := &limitJobTask{job, make(chan error), nil}
 			d.limitJobCh <- task1
 			// The second job result is used for test.
 			task = task1
@@ -1462,6 +1469,10 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 	job.State = model.JobStatePausing
 	job.AdminOperator = byWho
 
+	if job.RawArgs == nil {
+		return nil
+	}
+
 	return json.Unmarshal(job.RawArgs, &job.Args)
 }
 
@@ -1630,7 +1641,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 		}
 
 		// Just in case the job ID is not sequential
-		if jobs[len(jobs)-1].ID > jobIDMax {
+		if len(jobs) > 0 && jobs[len(jobs)-1].ID > jobIDMax {
 			jobIDMax = jobs[len(jobs)-1].ID
 		}
 
