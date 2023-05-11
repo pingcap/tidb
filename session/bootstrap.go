@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -1078,6 +1079,9 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	return row.GetString(0), false, nil
 }
 
+// SupportUpgradeStateVer is exported for testing.
+var SupportUpgradeStateVer = version144
+
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
@@ -1106,17 +1110,23 @@ func upgrade(s Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
+	if ver >= int64(SupportUpgradeStateVer) {
+		syncUpgradeState(s)
+	}
 	if isNull {
 		upgradeToVer99Before(s)
 	}
 
 	// It is only used in test.
-	addMockBootstrapVersionForTest()
+	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
 	if isNull {
 		upgradeToVer99After(s)
+	}
+	if ver >= int64(SupportUpgradeStateVer) {
+		syncNormalRunning(s)
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1143,6 +1153,59 @@ func upgrade(s Session) {
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
 	}
+}
+
+func syncUpgradeState(s Session) {
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelFunc()
+	dom := domain.GetDomain(s)
+	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
+	if err != nil {
+		logutil.BgLogger().Fatal("upgrade update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
+	}
+
+	retryTimes := 10
+	interval := 200 * time.Millisecond
+	for i := 0; i < retryTimes; i++ {
+		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
+		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
+			break
+		}
+		if i == retryTimes-1 {
+			logutil.BgLogger().Fatal("upgrade get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		}
+		logutil.BgLogger().Warn("upgrade get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		time.Sleep(interval)
+	}
+
+	for i := 0; i < retryTimes; i++ {
+		if _, err = ddl.PauseAllJobsBySystem(s); err == nil {
+			break
+		}
+
+		if i == retryTimes-1 {
+			logutil.BgLogger().Fatal("upgrade pause all jobs failed", zap.Error(err))
+		}
+		logutil.BgLogger().Warn("upgrade pause all jobs failed", zap.Error(err))
+		time.Sleep(interval)
+	}
+	logutil.BgLogger().Info("upgrade update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+}
+
+func syncNormalRunning(s Session) {
+	_, err := ddl.ResumeAllJobsBySystem(s)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgrade pause all jobs failed", zap.Error(err))
+	}
+
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelFunc()
+	dom := domain.GetDomain(s)
+	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
+	if err != nil {
+		logutil.BgLogger().Fatal("upgrade update global state failed", zap.String("state", syncer.StateNormalRunning), zap.Error(err))
+	}
+	logutil.BgLogger().Info("upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.

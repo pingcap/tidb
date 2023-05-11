@@ -989,6 +989,54 @@ const (
 	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
 	// limitation, if the storage is not TiKV).
 	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
+	// AuthenticationLDAPSASLAuthMethodName defines the authentication method used by LDAP SASL authentication plugin
+	AuthenticationLDAPSASLAuthMethodName = "authentication_ldap_sasl_auth_method_name"
+	// AuthenticationLDAPSASLCAPath defines the ca certificate to verify LDAP connection in LDAP SASL authentication plugin
+	AuthenticationLDAPSASLCAPath = "authentication_ldap_sasl_ca_path"
+	// AuthenticationLDAPSASLTLS defines whether to use TLS connection in LDAP SASL authentication plugin
+	AuthenticationLDAPSASLTLS = "authentication_ldap_sasl_tls"
+	// AuthenticationLDAPSASLServerHost defines the server host of LDAP server for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLServerHost = "authentication_ldap_sasl_server_host"
+	// AuthenticationLDAPSASLServerPort defines the port of LDAP server for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLServerPort = "authentication_ldap_sasl_server_port"
+	// AuthenticationLDAPSASLReferral defines whether to enable LDAP referral for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLReferral = "authentication_ldap_sasl_referral"
+	// AuthenticationLDAPSASLUserSearchAttr defines the attribute of username in LDAP server
+	AuthenticationLDAPSASLUserSearchAttr = "authentication_ldap_sasl_user_search_attr"
+	// AuthenticationLDAPSASLBindBaseDN defines the `dn` to search the users in. It's used to limit the search scope of TiDB.
+	AuthenticationLDAPSASLBindBaseDN = "authentication_ldap_sasl_bind_base_dn"
+	// AuthenticationLDAPSASLBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootDN = "authentication_ldap_sasl_bind_root_dn"
+	// AuthenticationLDAPSASLBindRootPW defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootPW = "authentication_ldap_sasl_bind_root_pw"
+	// AuthenticationLDAPSASLInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSASLInitPoolSize = "authentication_ldap_sasl_init_pool_size"
+	// AuthenticationLDAPSASLMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSASLMaxPoolSize = "authentication_ldap_sasl_max_pool_size"
+	// AuthenticationLDAPSimpleAuthMethodName defines the authentication method used by LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleAuthMethodName = "authentication_ldap_simple_auth_method_name"
+	// AuthenticationLDAPSimpleCAPath defines the ca certificate to verify LDAP connection in LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleCAPath = "authentication_ldap_simple_ca_path"
+	// AuthenticationLDAPSimpleTLS defines whether to use TLS connection in LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleTLS = "authentication_ldap_simple_tls"
+	// AuthenticationLDAPSimpleServerHost defines the server host of LDAP server for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleServerHost = "authentication_ldap_simple_server_host"
+	// AuthenticationLDAPSimpleServerPort defines the port of LDAP server for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleServerPort = "authentication_ldap_simple_server_port"
+	// AuthenticationLDAPSimpleReferral defines whether to enable LDAP referral for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleReferral = "authentication_ldap_simple_referral"
+	// AuthenticationLDAPSimpleUserSearchAttr defines the attribute of username in LDAP server
+	AuthenticationLDAPSimpleUserSearchAttr = "authentication_ldap_simple_user_search_attr"
+	// AuthenticationLDAPSimpleBindBaseDN defines the `dn` to search the users in. It's used to limit the search scope of TiDB.
+	AuthenticationLDAPSimpleBindBaseDN = "authentication_ldap_simple_bind_base_dn"
+	// AuthenticationLDAPSimpleBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootDN = "authentication_ldap_simple_bind_root_dn"
+	// AuthenticationLDAPSimpleBindRootPW defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootPW = "authentication_ldap_simple_bind_root_pw"
+	// AuthenticationLDAPSimpleInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSimpleInitPoolSize = "authentication_ldap_simple_init_pool_size"
+	// AuthenticationLDAPSimpleMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSimpleMaxPoolSize = "authentication_ldap_simple_max_pool_size"
 )
 
 // TiDB intentional limits
@@ -1210,7 +1258,7 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = true
+	DefTiDBEnableNonPreparedPlanCache              = false
 	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
@@ -1231,43 +1279,55 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold                float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan                  = true
-	DefTiDBExternalTS                                = 0
-	DefTiDBEnableExternalTSRead                      = false
-	DefTiDBEnableReusechunk                          = true
-	DefTiDBUseAlloc                                  = false
-	DefTiDBEnablePlanReplayerCapture                 = false
-	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
-	DefTiDBTTLJobEnable                              = true
-	DefTiDBTTLScanBatchSize                          = 500
-	DefTiDBTTLScanBatchMaxSize                       = 10240
-	DefTiDBTTLScanBatchMinSize                       = 1
-	DefTiDBTTLDeleteBatchSize                        = 100
-	DefTiDBTTLDeleteBatchMaxSize                     = 10240
-	DefTiDBTTLDeleteBatchMinSize                     = 1
-	DefTiDBTTLDeleteRateLimit                        = 0
-	DefTiDBTTLRunningTasks                           = -1
-	DefPasswordReuseHistory                          = 0
-	DefPasswordReuseTime                             = 0
-	DefTiDBStoreBatchSize                            = 4
-	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
-	DefTiDBEnableHistoricalStatsForCapture           = false
-	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
-	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
-	DefTiDBTTLScanWorkerCount                        = 4
-	DefTiDBTTLDeleteWorkerCount                      = 4
-	DefaultExchangeCompressionMode                   = kv.ExchangeCompressionModeUnspecified
-	DefTiDBEnableResourceControl                     = true
-	DefTiDBPessimisticTransactionFairLocking         = false
-	DefTiDBEnablePlanCacheForParamLimit              = true
-	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
-	DefTiDBEnablePlanCacheForSubquery                = true
-	DefTiDBLoadBasedReplicaReadThreshold             = time.Second
-	DefTiDBOptEnableLateMaterialization              = true
-	DefTiDBOptOrderingIdxSelThresh                   = 0.0
-	DefTiDBPlanCacheInvalidationOnFreshStats         = true
-	DefTiDBEnableRowLevelChecksum                    = false
+	DefTiDBGOGCTunerThreshold                 float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBExternalTS                                 = 0
+	DefTiDBEnableExternalTSRead                       = false
+	DefTiDBEnableReusechunk                           = true
+	DefTiDBUseAlloc                                   = false
+	DefTiDBEnablePlanReplayerCapture                  = false
+	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
+	DefTiDBTTLJobEnable                               = true
+	DefTiDBTTLScanBatchSize                           = 500
+	DefTiDBTTLScanBatchMaxSize                        = 10240
+	DefTiDBTTLScanBatchMinSize                        = 1
+	DefTiDBTTLDeleteBatchSize                         = 100
+	DefTiDBTTLDeleteBatchMaxSize                      = 10240
+	DefTiDBTTLDeleteBatchMinSize                      = 1
+	DefTiDBTTLDeleteRateLimit                         = 0
+	DefTiDBTTLRunningTasks                            = -1
+	DefPasswordReuseHistory                           = 0
+	DefPasswordReuseTime                              = 0
+	DefTiDBStoreBatchSize                             = 4
+	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture            = false
+	DefTiDBTTLJobScheduleWindowStartTime              = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                         = 4
+	DefTiDBTTLDeleteWorkerCount                       = 4
+	DefaultExchangeCompressionMode                    = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                      = true
+	DefTiDBPessimisticTransactionFairLocking          = false
+	DefTiDBEnablePlanCacheForParamLimit               = true
+	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiDBEnablePlanCacheForSubquery                 = true
+	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
+	DefTiDBOptEnableLateMaterialization               = true
+	DefTiDBOptOrderingIdxSelThresh                    = 0.0
+	DefTiDBPlanCacheInvalidationOnFreshStats          = true
+	DefTiDBEnableRowLevelChecksum                     = false
+	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
+	DefAuthenticationLDAPSASLServerPort               = 389
+	DefAuthenticationLDAPSASLTLS                      = false
+	DefAuthenticationLDAPSASLUserSearchAttr           = "uid"
+	DefAuthenticationLDAPSASLInitPoolSize             = 10
+	DefAuthenticationLDAPSASLMaxPoolSize              = 1000
+	DefAuthenticationLDAPSimpleAuthMethodName         = "SIMPLE"
+	DefAuthenticationLDAPSimpleServerPort             = 389
+	DefAuthenticationLDAPSimpleTLS                    = false
+	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
+	DefAuthenticationLDAPSimpleInitPoolSize           = 10
+	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
 )
 
 // Process global variables.

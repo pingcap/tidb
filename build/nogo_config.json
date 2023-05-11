@@ -524,6 +524,8 @@
       "plugin/conn_ip_example/": "plugin/conn_ip_example/"
     },
     "only_files": {
+      "autoid_service/": "autoid_service",
+      "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
       "executor/aggregate.go": "executor/aggregate.go",
       "types/json_binary_functions.go": "types/json_binary_functions.go",

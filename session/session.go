@@ -66,6 +66,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/conn"
 	"github.com/pingcap/tidb/privilege/privileges"
 	session_metrics "github.com/pingcap/tidb/session/metrics"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -149,7 +150,7 @@ type Session interface {
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
-	Auth(user *auth.UserIdentity, auth, salt []byte) error
+	Auth(user *auth.UserIdentity, auth, salt []byte, authConn conn.AuthConn) error
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
 	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
@@ -2611,7 +2612,7 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 // Auth validates a user using an authentication string and salt.
 // If the password fails, it will keep trying other users until exhausted.
 // This means it can not be refactored to use MatchIdentity yet.
-func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) error {
+func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, authConn conn.AuthConn) error {
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
@@ -2654,7 +2655,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		}
 	}
 
-	info, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars)
+	info, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars, authConn)
 	if err != nil {
 		if info.FailedDueToWrongPassword {
 			// when user enables the account locking function for consecutive login failures,
@@ -3650,7 +3651,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return ver
+	return modifyBootstrapVersionForTest(store, ver)
 }
 
 func finishBootstrap(store kv.Storage) {
