@@ -417,7 +417,7 @@ func (ti *TableImporter) rebaseChunkRowID(rowIDBase int64) {
 }
 
 // OpenIndexEngine opens an index engine.
-func (ti *TableImporter) OpenIndexEngine(ctx context.Context) (*backend.OpenedEngine, error) {
+func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*backend.OpenedEngine, error) {
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
 	}
@@ -436,7 +436,7 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context) (*backend.OpenedEn
 	// some return path, didn't make sure all data engine and index engine are cleaned up.
 	// maybe we can add this in upper level to clean the whole local-sort directory
 	mgr := backend.MakeEngineManager(ti.backend)
-	return mgr.OpenEngine(ctx, idxEngineCfg, fullTableName, common.IndexEngineID)
+	return mgr.OpenEngine(ctx, idxEngineCfg, fullTableName, engineID)
 }
 
 // OpenDataEngine opens a data engine.
@@ -458,7 +458,7 @@ func (ti *TableImporter) preprocessAndImportEngines(ctx context.Context) (err er
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	indexEngine, err3 := ti.OpenIndexEngine(ctx)
+	indexEngine, err3 := ti.OpenIndexEngine(ctx, common.IndexEngineID)
 	if err3 != nil {
 		return errors.Trace(err3)
 	}

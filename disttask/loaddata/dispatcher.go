@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -122,13 +121,6 @@ func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, 
 		localChecksum.Add(&checksum)
 	}
 	logutil.BgLogger().Info("local checksum", zap.Object("checksum", &localChecksum))
-	// TODO(gmhdbjd): add index checksum verification.
-	for _, idxInfo := range tableImporter.TableInfo.Indices {
-		if idxInfo.State == model.StatePublic {
-			logutil.BgLogger().Info("skip checksum verification because table has public indices")
-			return nil
-		}
-	}
 	return tableImporter.VerifyChecksum(ctx, localChecksum)
 }
 
