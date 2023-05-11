@@ -59,6 +59,9 @@ const (
 	// FlagKeyspaceName corresponds to tidb config keyspace-name
 	FlagKeyspaceName = "keyspace-name"
 
+	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
+	FlagWaitTiFlashReady = "wait-tiflash-ready"
+
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restored-ts"
@@ -202,6 +205,7 @@ type RestoreConfig struct {
 	checkpointSnapshotRestoreTaskName string `json:"-" toml:"-"`
 	checkpointLogRestoreTaskName      string `json:"-" toml:"-"`
 	checkpointTaskInfoClusterID       uint64 `json:"-" toml:"-"`
+	WaitTiflashReady                  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -225,6 +229,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
+
+	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -326,6 +332,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagUseCheckpoint)
+	}
+
+	cfg.WaitTiflashReady, err = flags.GetBool(FlagWaitTiFlashReady)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -926,21 +937,29 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
-	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
+	batcher, afterTableRestoredCh := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
 	batcher.SetCheckpoint(checkpointSetWithTableID)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
 	go restoreTableStream(ctx, rangeStream, batcher, errCh)
 
 	var finish <-chan struct{}
-	// Checksum
+	postHandleCh := afterTableRestoredCh
+
+	// pipeline checksum and load stats
 	if cfg.Checksum {
-		finish = client.GoValidateChecksum(
-			ctx, afterRestoreStream, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-	} else {
-		// when user skip checksum, just collect tables, and drop them.
-		finish = dropToBlackhole(ctx, afterRestoreStream, errCh, updateCh)
+		afterTableCheckesumedCh := client.GoValidateChecksum(
+			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
+		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
+		postHandleCh = afterTableLoadStatsCh
 	}
+
+	// pipeline wait Tiflash synced
+	if cfg.WaitTiflashReady {
+		postHandleCh = client.GoWaitTiFlashReady(ctx, postHandleCh, errCh)
+	}
+
+	finish = dropToBlackhole(ctx, postHandleCh, errCh)
 
 	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
 	defer func() {
@@ -987,9 +1006,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 // i.e. don't execute checksum, just increase the process anyhow.
 func dropToBlackhole(
 	ctx context.Context,
-	tableStream <-chan restore.CreatedTable,
+	inCh <-chan *restore.CreatedTable,
 	errCh chan<- error,
-	updateCh glue.Progress,
 ) <-chan struct{} {
 	outCh := make(chan struct{}, 1)
 	go func() {
@@ -1001,11 +1019,10 @@ func dropToBlackhole(
 			case <-ctx.Done():
 				errCh <- ctx.Err()
 				return
-			case _, ok := <-tableStream:
+			case _, ok := <-inCh:
 				if !ok {
 					return
 				}
-				updateCh.Inc()
 			}
 		}
 	}()
