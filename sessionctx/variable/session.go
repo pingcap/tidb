@@ -246,6 +246,12 @@ type TxnCtxNoNeedToRestore struct {
 	// fair locking mode, and it takes effect (which is determined according to whether lock-with-conflict
 	// has occurred during execution of any statement).
 	FairLockingEffective bool
+
+	// CurrentStmtPessimisticLockCache is the cache for pessimistic locked keys in the current statement.
+	// It is merged into `pessimisticLockCache` after a statement finishes.
+	// Read results cannot be directly written into pessimisticLockCache because failed statement need to rollback
+	// its pessimistic locks.
+	CurrentStmtPessimisticLockCache map[string][]byte
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -317,22 +323,32 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 
 // GetKeyInPessimisticLockCache gets a key in pessimistic lock cache.
 func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []byte, ok bool) {
-	if tc.pessimisticLockCache == nil {
+	if tc.pessimisticLockCache == nil && tc.CurrentStmtPessimisticLockCache == nil {
 		return nil, false
 	}
-	val, ok = tc.pessimisticLockCache[string(key)]
-	if ok {
-		tc.PessimisticCacheHit++
+	if tc.CurrentStmtPessimisticLockCache != nil {
+		val, ok = tc.CurrentStmtPessimisticLockCache[string(key)]
+		if ok {
+			tc.PessimisticCacheHit++
+			return
+		}
+	}
+	if tc.pessimisticLockCache != nil {
+		val, ok = tc.pessimisticLockCache[string(key)]
+		if ok {
+			tc.PessimisticCacheHit++
+		}
 	}
 	return
 }
 
-// SetPessimisticLockCache sets a key value pair into pessimistic lock cache.
+// SetPessimisticLockCache sets a key value pair in pessimistic lock cache.
+// The value is buffered in the statement cache until the current statement finishes.
 func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
-	if tc.pessimisticLockCache == nil {
-		tc.pessimisticLockCache = map[string][]byte{}
+	if tc.CurrentStmtPessimisticLockCache == nil {
+		tc.CurrentStmtPessimisticLockCache = make(map[string][]byte)
 	}
-	tc.pessimisticLockCache[string(key)] = val
+	tc.CurrentStmtPessimisticLockCache[string(key)] = val
 }
 
 // Cleanup clears up transaction info that no longer use.
@@ -345,6 +361,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.relatedTableForMDL = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
+	tc.CurrentStmtPessimisticLockCache = nil
 	tc.IsStaleness = false
 	tc.Savepoints = nil
 	tc.EnableMDL = false
@@ -380,6 +397,8 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	}
 	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
 	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
+	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
+	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
 	cachedTables := make(map[int64]interface{}, len(tc.CachedTables))
 	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
@@ -446,6 +465,21 @@ func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord 
 		}
 	}
 	return nil
+}
+
+// FlushStmtPessimisticLockCache merges the current statement pessimistic lock cache into transaction pessimistic lock
+// cache. The caller may need to clear the stmt cache itself.
+func (tc *TransactionContext) FlushStmtPessimisticLockCache() {
+	if tc.CurrentStmtPessimisticLockCache == nil {
+		return
+	}
+	if tc.pessimisticLockCache == nil {
+		tc.pessimisticLockCache = make(map[string][]byte)
+	}
+	for key, val := range tc.CurrentStmtPessimisticLockCache {
+		tc.pessimisticLockCache[key] = val
+	}
+	tc.CurrentStmtPessimisticLockCache = nil
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
