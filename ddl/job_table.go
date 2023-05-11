@@ -26,11 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/ddl/syncer"
-	"github.com/pingcap/tidb/ddl/util"
->>>>>>> 43146873058 (*: Update bootstrap and support pause user DDL when upgrading TiDB (#43666))
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -118,18 +114,18 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 	}
 	for _, row := range rows {
 		jobBinary := row.GetBytes(0)
-		runJob := model.Job{}
-		err := runJob.Decode(jobBinary)
+		isJobProcessing := row.GetInt64(1) == 1
+
+		job := model.Job{}
+		err = job.Decode(jobBinary)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if row.GetInt64(1) == 1 {
-			return &runJob, nil
+		if job.IsPaused() {
+			// If the job has been Paused, we should not process it. And the
+			// processing should have been set with 0.
+			continue
 		}
-<<<<<<< HEAD
-		b, err := filter(&runJob)
-=======
-
 		if isJobProcessing {
 			if err := d.handleUpgradingState(se, &job); err != nil {
 				return nil, errors.Trace(err)
@@ -159,16 +155,10 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		}
 
 		b, err := filter(&job)
->>>>>>> 43146873058 (*: Update bootstrap and support pause user DDL when upgrading TiDB (#43666))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if b {
-<<<<<<< HEAD
-			if err := d.markJobProcessing(se, &runJob); err != nil {
-				logutil.BgLogger().Warn("[ddl] handle ddl job failed: mark job is processing meet error", zap.Error(err), zap.String("job", runJob.String()))
-				return nil, errors.Trace(err)
-=======
 			if err := d.handleUpgradingState(se, &job); err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -182,9 +172,8 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 						zap.String("job", job.String()))
 					return nil, errors.Trace(err)
 				}
->>>>>>> 43146873058 (*: Update bootstrap and support pause user DDL when upgrading TiDB (#43666))
 			}
-			return &runJob, nil
+			return &job, nil
 		}
 	}
 	return nil, nil
@@ -230,18 +219,18 @@ func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 		if job.Type == model.ActionDropSchema {
 			// Check if there is any reorg job on this schema.
 			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
-			return d.checkJobIsRunnable(sess, sql)
+			return d.NoConflictJob(sess, sql)
 		}
 		// Check if there is any running job works on the same table.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where "+
 			"(processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',', REPLACE(t1.table_ids, ',', '|'), ',') != 0)"+
 			"or (type = %d and processing)", job.ID, model.ActionFlashbackCluster)
-		return d.checkJobIsRunnable(sess, sql)
+		return d.NoConflictJob(sess, sql)
 	})
 }
 
-func (d *ddl) checkJobIsRunnable(se *sess.Session, sql string) (bool, error) {
-	rows, err := se.Execute(context.Background(), sql, "check_runnable")
+func (d *ddl) NoConflictJob(se *sess.Session, sql string) (bool, error) {
+	rows, err := se.Execute(context.Background(), sql, "check conflict jobs")
 	return len(rows) == 0, err
 }
 
@@ -253,7 +242,7 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 			"or (CONCAT(',', table_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing) "+
 			"or (type = %d and processing) limit 1",
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, strconv.Quote(strconv.FormatInt(job.TableID, 10)), model.ActionFlashbackCluster)
-		return d.checkJobIsRunnable(sess, sql)
+		return d.NoConflictJob(sess, sql)
 	})
 }
 
@@ -461,9 +450,19 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	})
 }
 
+func (d *ddl) markJobNotProcessing(se *sess.Session, job *model.Job) error {
+	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := se.Execute(context.Background(), fmt.Sprintf(
+		"update mysql.tidb_ddl_job set processing = 0 where job_id = %d", job.ID),
+		"mark_job_not_processing")
+	return errors.Trace(err)
+}
+
 func (d *ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := se.Execute(context.Background(), fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID), "mark_job_processing")
+	_, err := se.Execute(context.Background(), fmt.Sprintf(
+		"update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID),
+		"mark_job_processing")
 	return errors.Trace(err)
 }
 
