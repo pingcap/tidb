@@ -153,7 +153,7 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.
-func (s *ImportScheduler) CleanupSubtaskExecEnv(ctx context.Context) (err error) {
+func (s *ImportScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
 	logutil.BgLogger().Info("CleanupSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
 	return s.tableImporter.Close()
 }

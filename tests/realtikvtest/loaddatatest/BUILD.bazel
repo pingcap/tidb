@@ -17,7 +17,6 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
-        "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
         "//config",
         "//executor/asyncloaddata",

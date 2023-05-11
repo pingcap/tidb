@@ -81,6 +81,7 @@ type Chunk struct {
 	Timestamp    int64
 }
 
+// Checksum records the checksum information.
 type Checksum struct {
 	Sum  uint64
 	KVs  uint64
