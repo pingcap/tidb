@@ -34,8 +34,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
@@ -62,9 +65,54 @@ var (
 	splitRetryTimes = 8
 )
 
+// TableRegionSizeGetter get table region size.
+type TableRegionSizeGetter interface {
+	GetTableRegionSize(ctx context.Context, tableID int64) (map[uint64]int64, error)
+}
+
+// TableRegionSizeGetterImpl implements TableRegionSizeGetter.
+type TableRegionSizeGetterImpl struct {
+	DB *sql.DB
+}
+
+var _ TableRegionSizeGetter = &TableRegionSizeGetterImpl{}
+
+// GetTableRegionSize implements TableRegionSizeGetter.
+func (g *TableRegionSizeGetterImpl) GetTableRegionSize(ctx context.Context, tableID int64) (map[uint64]int64, error) {
+	if g.DB == nil {
+		return nil, errors.Errorf("db is nil")
+	}
+	exec := &common.SQLWithRetry{
+		DB:     g.DB,
+		Logger: log.FromContext(ctx),
+	}
+
+	stats := make(map[uint64]int64)
+	err := exec.Transact(ctx, "fetch region approximate sizes", func(ctx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT REGION_ID, APPROXIMATE_SIZE FROM information_schema.TIKV_REGION_STATUS WHERE TABLE_ID = ?", tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		//nolint: errcheck
+		defer rows.Close()
+		var (
+			regionID uint64
+			size     int64
+		)
+		for rows.Next() {
+			if err = rows.Scan(&regionID, &size); err != nil {
+				return errors.Trace(err)
+			}
+			stats[regionID] = size * units.MiB
+		}
+		return rows.Err()
+	})
+	return stats, errors.Trace(err)
+}
+
 // SplitAndScatterRegionInBatches splits&scatter regions in batches.
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
-func (local *local) SplitAndScatterRegionInBatches(
+func (local *Backend) SplitAndScatterRegionInBatches(
 	ctx context.Context,
 	ranges []Range,
 	tableInfo *checkpoints.TidbTableInfo,
@@ -88,20 +136,24 @@ func (local *local) SplitAndScatterRegionInBatches(
 // we can simply call br function, but we need to change some function signature of br
 // When the ranges total size is small, we can skip the split to avoid generate empty regions.
 // TODO: remove this file and use br internal functions
-func (local *local) SplitAndScatterRegionByRanges(
+func (local *Backend) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []Range,
 	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
 	regionSplitSize int64,
-) error {
+) (err error) {
 	if len(ranges) == 0 {
 		return nil
 	}
 
-	db, err := local.g.GetDB()
-	if err != nil {
-		return errors.Trace(err)
+	if m, ok := metric.FromContext(ctx); ok {
+		begin := time.Now()
+		defer func() {
+			if err == nil {
+				m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessSplit).Observe(time.Since(begin).Seconds())
+			}
+		}()
 	}
 
 	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
@@ -174,7 +226,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 
 		var tableRegionStats map[uint64]int64
 		if tableInfo != nil {
-			tableRegionStats, err = fetchTableRegionSizeStats(ctx, db, tableInfo.ID)
+			tableRegionStats, err = local.regionSizeGetter.GetTableRegionSize(ctx, tableInfo.ID)
 			if err != nil {
 				log.FromContext(ctx).Warn("fetch table region size statistics failed",
 					zap.String("table", tableInfo.Name), zap.Error(err))
@@ -348,39 +400,8 @@ func (local *local) SplitAndScatterRegionByRanges(
 	return nil
 }
 
-func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (map[uint64]int64, error) {
-	if db == nil {
-		return nil, errors.Errorf("db is nil")
-	}
-	exec := &common.SQLWithRetry{
-		DB:     db,
-		Logger: log.FromContext(ctx),
-	}
-
-	stats := make(map[uint64]int64)
-	err := exec.Transact(ctx, "fetch region approximate sizes", func(ctx context.Context, tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, "SELECT REGION_ID, APPROXIMATE_SIZE FROM information_schema.TIKV_REGION_STATUS WHERE TABLE_ID = ?", tableID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		//nolint: errcheck
-		defer rows.Close()
-		var (
-			regionID uint64
-			size     int64
-		)
-		for rows.Next() {
-			if err = rows.Scan(&regionID, &size); err != nil {
-				return errors.Trace(err)
-			}
-			stats[regionID] = size * units.MiB
-		}
-		return rows.Err()
-	})
-	return stats, errors.Trace(err)
-}
-
-func (local *local) BatchSplitRegions(
+// BatchSplitRegions splits the region into multiple regions by given split keys.
+func (local *Backend) BatchSplitRegions(
 	ctx context.Context,
 	region *split.RegionInfo,
 	keys [][]byte,
@@ -425,7 +446,7 @@ func (local *local) BatchSplitRegions(
 	return region, newRegions, nil
 }
 
-func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
+func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
 	regionInfo, err := local.splitCli.GetRegionByID(ctx, regionID)
 	if err != nil {
 		return false, err
@@ -433,7 +454,7 @@ func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error
 	return regionInfo != nil, nil
 }
 
-func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
+func (local *Backend) waitForSplit(ctx context.Context, regionID uint64) {
 	for i := 0; i < split.SplitCheckMaxRetryTimes; i++ {
 		ok, err := local.hasRegion(ctx, regionID)
 		if err != nil {
@@ -451,7 +472,7 @@ func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
 	}
 }
 
-func (local *local) waitForScatterRegions(ctx context.Context, regions []*split.RegionInfo) (scatterCount int, _ error) {
+func (local *Backend) waitForScatterRegions(ctx context.Context, regions []*split.RegionInfo) (scatterCount int, _ error) {
 	subCtx, cancel := context.WithTimeout(ctx, split.ScatterWaitUpperInterval)
 	defer cancel()
 
@@ -482,7 +503,7 @@ func (local *local) waitForScatterRegions(ctx context.Context, regions []*split.
 	return scatterCount, nil
 }
 
-func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
+func (local *Backend) checkRegionScatteredOrReScatter(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
 	resp, err := local.splitCli.GetOperator(ctx, regionInfo.Region.GetId())
 	if err != nil {
 		return false, err
@@ -605,6 +626,7 @@ func intersectRange(region *metapb.Region, rg Range) Range {
 	return Range{start: startKey, end: endKey}
 }
 
+// StoreWriteLimiter is used to limit the write rate of a store.
 type StoreWriteLimiter interface {
 	WaitN(ctx context.Context, storeID uint64, n int) error
 	Limit() int
@@ -669,10 +691,61 @@ func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
 
 type noopStoreWriteLimiter struct{}
 
-func (noopStoreWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) error {
+func (noopStoreWriteLimiter) WaitN(_ context.Context, _ uint64, _ int) error {
 	return nil
 }
 
 func (noopStoreWriteLimiter) Limit() int {
 	return math.MaxInt
+}
+
+// compaction threshold
+const (
+	CompactionLowerThreshold = 512 * units.MiB
+	CompactionUpperThreshold = 32 * units.GiB
+)
+
+// EstimateCompactionThreshold estimate SST files compression threshold by total row file size
+// with a higher compression threshold, the compression time increases, but the iteration time decreases.
+// Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
+// we set the upper bound to 32GB to avoid too long compression time.
+// factor is the non-clustered(1 for data engine and number of non-clustered index count for index engine).
+func EstimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
+	totalRawFileSize := int64(0)
+	var lastFile string
+	fileSizeMap := make(map[string]int64, len(files))
+	for _, file := range files {
+		fileSizeMap[file.FileMeta.Path] = file.FileMeta.RealSize
+	}
+
+	for _, engineCp := range cp.Engines {
+		for _, chunk := range engineCp.Chunks {
+			if chunk.FileMeta.Path == lastFile {
+				continue
+			}
+			size, ok := fileSizeMap[chunk.FileMeta.Path]
+			if !ok {
+				size = chunk.FileMeta.FileSize
+			}
+			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				// parquet file is compressed, thus estimates with a factor of 2
+				size *= 2
+			}
+			totalRawFileSize += size
+			lastFile = chunk.FileMeta.Path
+		}
+	}
+	totalRawFileSize *= factor
+
+	// try restrict the total file number within 512
+	threshold := totalRawFileSize / 512
+	threshold = utils.NextPowerOfTwo(threshold)
+	if threshold < CompactionLowerThreshold {
+		// too may small SST files will cause inaccuracy of region range estimation,
+		threshold = CompactionLowerThreshold
+	} else if threshold > CompactionUpperThreshold {
+		threshold = CompactionUpperThreshold
+	}
+
+	return threshold
 }

@@ -1193,10 +1193,16 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 
 // CollectTiFlashStatus query sync status of one table from TiFlash store.
 // `regionReplica` is a map from RegionID to count of TiFlash Replicas in this region.
-func CollectTiFlashStatus(statusAddress string, tableID int64, regionReplica *map[int64]int) error {
-	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
+func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
+	// The new query schema is like: http://<host>/tiflash/sync-status/keyspace/<keyspaceID>/table/<tableID>.
+	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
+	// The query URL is like: http://<host>/sync-status/keyspace/<NullspaceID>/table/<tableID>
+	// The old query schema is like: http://<host>/sync-status/<tableID>
+	// This API is preserved in TiFlash for compatibility with old versions of TiDB.
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/keyspace/%d/table/%d",
 		util.InternalHTTPSchema(),
 		statusAddress,
+		keyspaceID,
 		tableID,
 	)
 	resp, err := util.InternalHTTPClient().Get(statURL)

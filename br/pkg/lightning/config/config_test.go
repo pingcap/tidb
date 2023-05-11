@@ -783,7 +783,7 @@ func TestLoadConfig(t *testing.T) {
 	err = taskCfg.Adjust(context.Background())
 	require.NoError(t, err)
 	equivalentDSN := taskCfg.Checkpoint.MySQLParam.ToDriverConfig().FormatDSN()
-	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
+	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
 	require.Equal(t, expectedDSN, equivalentDSN)
 
 	result := taskCfg.String()
@@ -1124,6 +1124,11 @@ func TestCheckAndAdjustForLocalBackend(t *testing.T) {
 	// legal dir
 	cfg.TikvImporter.SortedKVDir = base
 	require.NoError(t, cfg.CheckAndAdjustForLocalBackend())
+
+	cfg.TikvImporter.IncrementalImport = true
+	cfg.TikvImporter.AddIndexBySQL = true
+	err = cfg.CheckAndAdjustForLocalBackend()
+	require.ErrorContains(t, err, "tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
 }
 
 func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {

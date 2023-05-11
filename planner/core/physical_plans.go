@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -555,6 +556,11 @@ type PhysicalIndexMergeReader struct {
 	// AccessMVIndex indicates whether this IndexMergeReader access a MVIndex.
 	AccessMVIndex bool
 
+	// PushedLimit is used to avoid unnecessary table scan tasks of IndexMergeReader.
+	PushedLimit *PushedDownLimit
+	// ByItems is used to support sorting the handles returned by partialPlans.
+	ByItems []*util.ByItems
+
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
@@ -566,6 +572,8 @@ type PhysicalIndexMergeReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+
+	KeepOrder bool
 }
 
 // GetAvgTableRowSize return the average row size of table plan.
@@ -670,6 +678,9 @@ type PhysicalIndexScan struct {
 	isPartition bool
 	Desc        bool
 	KeepOrder   bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
+
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
@@ -686,6 +697,10 @@ type PhysicalIndexScan struct {
 	constColsByCond []bool
 
 	prop *property.PhysicalProperty
+
+	// usedStatsInfo records stats status of this physical table.
+	// It's for printing stats related information when display execution plan.
+	usedStatsInfo *stmtctx.UsedStatsInfoForTable
 }
 
 // Clone implements PhysicalPlan interface.
@@ -794,6 +809,10 @@ type PhysicalTableScan struct {
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
+	// lateMaterializationFilterCondition is used to record the filter conditions
+	// that are pushed down to table scan from selection by late materialization.
+	// TODO: remove this field after we support pushing down selection to coprocessor.
+	lateMaterializationFilterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
@@ -825,6 +844,8 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
 
 	isChildOfIndexLookUp bool
 
@@ -837,6 +858,15 @@ type PhysicalTableScan struct {
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
 	prop        *property.PhysicalProperty
+
+	// constColsByCond records the constant part of the index columns caused by the access conds.
+	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
+	// it's for indexMerge's tableScan only.
+	constColsByCond []bool
+
+	// usedStatsInfo records stats status of this physical table.
+	// It's for printing stats related information when display execution plan.
+	usedStatsInfo *stmtctx.UsedStatsInfoForTable
 }
 
 // Clone implements PhysicalPlan interface.

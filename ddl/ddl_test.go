@@ -43,7 +43,7 @@ const testLease = 5 * time.Millisecond
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
-	NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx
+	NewReorgCtx(jobID int64, rowCount int64) *reorgCtx
 	GetReorgCtx(jobID int64) *reorgCtx
 	RemoveReorgCtx(id int64)
 }
@@ -62,8 +62,8 @@ func (rc *reorgCtx) IsReorgCanceled() bool {
 }
 
 // NewReorgCtx exports for testing.
-func (d *ddl) NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
-	return d.newReorgCtx(jobID, startKey, currElement, rowCount)
+func (d *ddl) NewReorgCtx(jobID int64, rowCount int64) *reorgCtx {
+	return d.newReorgCtx(jobID, rowCount)
 }
 
 // GetReorgCtx exports for testing.
@@ -79,35 +79,9 @@ func (d *ddl) RemoveReorgCtx(id int64) {
 // JobNeedGCForTest is only used for test.
 var JobNeedGCForTest = jobNeedGC
 
-// NewSession is only used for test.
-var NewSession = newSession
-
-// GetJobWithoutPartition is only used for test.
-const GetJobWithoutPartition = getJobWithoutPartition
-
-// BackfillJobPrefixKeyString is only used for test.
-func BackfillJobPrefixKeyString(ddlJobID int64, eleKey kv.Key, eleID int64) string {
-	return backfillJobPrefixKeyString(ddlJobID, eleKey, eleID)
-}
-
-// GetDDLCtx returns ddlCtx for test.
-func GetDDLCtx(d DDL) *ddlCtx {
-	return d.(*ddl).ddlCtx
-}
-
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
 	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
-}
-
-func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
-	// init infoCache and a stub infoSchema
-	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	options = append(options, WithInfoCache(ic))
-	d := newDDL(ctx, options...)
-	err := d.Start(nil)
-	return d, err
 }
 
 func createMockStore(t *testing.T) kv.Storage {

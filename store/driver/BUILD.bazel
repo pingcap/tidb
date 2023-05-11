@@ -6,6 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/store/driver",
     visibility = ["//visibility:public"],
     deps = [
+        "//executor",
+        "//executor/importer",
         "//kv",
         "//sessionctx/variable",
         "//store/copr",
@@ -40,6 +42,7 @@ go_test(
     ],
     embed = [":driver"],
     flaky = True,
+    shard_count = 7,
     deps = [
         "//domain",
         "//kv",

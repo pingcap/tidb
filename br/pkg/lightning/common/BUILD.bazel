@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "common",
     srcs = [
+        "common.go",
         "conn.go",
         "errors.go",
         "once_error.go",
@@ -22,6 +23,8 @@ go_library(
         "//br/pkg/lightning/log",
         "//br/pkg/utils",
         "//errno",
+        "//kv",
+        "//meta/autoid",
         "//parser/model",
         "//store/driver/error",
         "//table/tables",
@@ -97,6 +100,7 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
+    shard_count = 18,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/log",

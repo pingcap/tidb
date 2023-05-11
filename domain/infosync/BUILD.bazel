@@ -36,6 +36,7 @@ go_library(
         "//util/hack",
         "//util/logutil",
         "//util/pdapi",
+        "//util/syncutil",
         "//util/versioninfo",
         "@com_github_coreos_go_semver//semver",
         "@com_github_gorilla_mux//:mux",
@@ -60,7 +61,7 @@ go_test(
     srcs = ["info_test.go"],
     embed = [":infosync"],
     flaky = True,
-    shard_count = 50,
+    shard_count = 4,
     deps = [
         "//ddl/placement",
         "//ddl/util",

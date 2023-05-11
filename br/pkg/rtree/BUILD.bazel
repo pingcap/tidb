@@ -29,6 +29,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
+    shard_count = 3,
     deps = [
         ":rtree",
         "//testkit/testsetup",

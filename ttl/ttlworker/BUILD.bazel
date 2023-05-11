@@ -15,8 +15,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/ttl/ttlworker",
     visibility = ["//visibility:public"],
     deps = [
+        "//infoschema",
         "//kv",
-        "//parser/duration",
         "//parser/terror",
         "//sessionctx",
         "//sessionctx/variable",
@@ -46,7 +46,7 @@ go_library(
 
 go_test(
     name = "ttlworker_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "del_test.go",
         "job_manager_integration_test.go",
@@ -59,7 +59,7 @@ go_test(
     embed = [":ttlworker"],
     flaky = True,
     race = "on",
-    shard_count = 30,
+    shard_count = 35,
     deps = [
         "//domain",
         "//infoschema",
@@ -80,6 +80,7 @@ go_test(
         "//types",
         "//util/chunk",
         "//util/logutil",
+        "@com_github_google_uuid//:uuid",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

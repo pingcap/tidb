@@ -50,7 +50,7 @@ import (
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }
 
@@ -60,7 +60,7 @@ func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }
 
@@ -126,7 +126,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{
 		Username: "xxx",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
@@ -873,6 +873,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
@@ -893,6 +894,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test.
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -989,6 +991,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
@@ -1080,7 +1083,7 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	result = tk1.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
 	// Ordinary users can not see others' records
@@ -1140,7 +1143,7 @@ func TestCapturePrivilege(t *testing.T) {
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	rows = tk1.MustQuery("show global bindings").Rows()
 	// Ordinary users can not see others' records
@@ -1167,7 +1170,7 @@ func TestIssue18845(t *testing.T) {
 		Hostname:     "localhost",
 		AuthUsername: "user18845",
 		AuthHostname: "localhost",
-	}, nil, nil)
+	}, nil, nil, nil)
 	tk.MustQuery(`select count(*) from information_schema.columns;`)
 }
 
@@ -1326,8 +1329,8 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustQuery("select * from `information_schema`.`STATEMENTS_SUMMARY_EVICTED`;").
 		Check(testkit.Rows(
 			fmt.Sprintf("%s %s %v",
-				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05"),
-				time.Unix(beginTimeForCurInterval+interval, 0).Format("2006-01-02 15:04:05"),
+				time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime),
+				time.Unix(beginTimeForCurInterval+interval, 0).Format(time.DateTime),
 				int64(2)),
 		))
 
@@ -1369,8 +1372,8 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").Check(testkit.Rows("2"))
 	tk.MustQuery("select BEGIN_TIME from information_schema.statements_summary_evicted;").
 		Check(testkit.
-			Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format("2006-01-02 15:04:05"),
-				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05")))
+			Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format(time.DateTime),
+				time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime)))
 	require.NoError(t, failpoint.Disable(fpPath))
 	// TODO: Add more tests.
 }
@@ -1531,7 +1534,7 @@ func TestInfoSchemaClientErrors(t *testing.T) {
 	errno.IncrementError(1365, "root", "localhost")
 
 	tk.MustExec("CREATE USER 'infoschematest'@'localhost'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil, nil))
 
 	err := tk.QueryToErr("SELECT * FROM information_schema.client_errors_summary_global")
 	require.Equal(t, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation", err.Error())
@@ -1635,7 +1638,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 	err := tk.QueryToErr("select * from information_schema.deadlocks")
 	require.Error(t, err)
 	require.Equal(t, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation", err.Error())
@@ -1646,7 +1649,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 	_ = tk.MustQuery("select * from information_schema.deadlocks")
 }
 
@@ -1720,6 +1723,7 @@ func TestVariablesInfo(t *testing.T) {
 		"tidb_enable_collect_execution_info ON OFF", // for test stability
 		"tidb_enable_mutation_checker OFF ON",       // for new installs
 		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
+		"tidb_pessimistic_txn_fair_locking OFF ON",  // for new instances
 		"tidb_row_format_version 1 2",               // for new installs
 		"tidb_txn_assertion_level OFF FAST",         // for new installs
 		"timestamp 0 123456789",                     // always dynamic
@@ -1831,7 +1835,7 @@ func TestAddFieldsForBinding(t *testing.T) {
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, key(a))")

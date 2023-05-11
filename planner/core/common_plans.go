@@ -127,6 +127,20 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
+// PauseDDLJobs indicates a plan to pause the Running DDL Jobs.
+type PauseDDLJobs struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
+// ResumeDDLJobs indicates a plan to resume the Paused DDL Jobs.
+type ResumeDDLJobs struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
 // ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
 type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
@@ -550,19 +564,22 @@ type LoadData struct {
 	FileLocRef  ast.FileLocRefTp
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
-	Format      string
+	Format      *string
 	Table       *ast.TableName
+	Charset     *string
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
-	NullInfo    *ast.NullDefinedBy
-	IgnoreLines uint64
+	IgnoreLines *uint64
 
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Options            []*LoadDataOpt
 
 	GenCols InsertGeneratedColumns
+
+	// only use for distributed load data
+	Stmt string
 }
 
 // LoadDataOpt represents load data option.
@@ -614,7 +631,7 @@ type IndexAdvise struct {
 	Path        string
 	MaxMinutes  uint64
 	MaxIndexNum *ast.MaxIndexNumClause
-	LinesInfo   *ast.LinesClause
+	LineFieldsInfo
 }
 
 // SplitRegion represents a split regions plan.
@@ -660,6 +677,51 @@ type SelectInto struct {
 
 	TargetPlan Plan
 	IntoOpt    *ast.SelectIntoOption
+	LineFieldsInfo
+}
+
+// LineFieldsInfo used in load-data/select-into/index-advise stmt.
+type LineFieldsInfo struct {
+	FieldsTerminatedBy string
+	FieldsEnclosedBy   string // length always <= 1, see parser.y
+	FieldsEscapedBy    string // length always <= 1, see parser.y
+	FieldsOptEnclosed  bool
+	LinesStartingBy    string
+	LinesTerminatedBy  string
+}
+
+// NewLineFieldsInfo new LineFieldsInfo from FIELDS/LINES info.
+func NewLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause) LineFieldsInfo {
+	e := LineFieldsInfo{
+		FieldsTerminatedBy: "\t",
+		FieldsEnclosedBy:   "",
+		FieldsEscapedBy:    "\\",
+		FieldsOptEnclosed:  false,
+		LinesStartingBy:    "",
+		LinesTerminatedBy:  "\n",
+	}
+
+	if fieldsInfo != nil {
+		if fieldsInfo.Terminated != nil {
+			e.FieldsTerminatedBy = *fieldsInfo.Terminated
+		}
+		if fieldsInfo.Enclosed != nil {
+			e.FieldsEnclosedBy = *fieldsInfo.Enclosed
+		}
+		if fieldsInfo.Escaped != nil {
+			e.FieldsEscapedBy = *fieldsInfo.Escaped
+		}
+		e.FieldsOptEnclosed = fieldsInfo.OptEnclosed
+	}
+	if linesInfo != nil {
+		if linesInfo.Starting != nil {
+			e.LinesStartingBy = *linesInfo.Starting
+		}
+		if linesInfo.Terminated != nil {
+			e.LinesTerminatedBy = *linesInfo.Terminated
+		}
+	}
+	return e
 }
 
 // ExplainInfoForEncode store explain info for JSON encode

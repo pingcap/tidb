@@ -35,7 +35,7 @@ var gzipWriterPool = sync.Pool{
 	},
 }
 
-func (c *gzipCompressor) Do(w io.Writer, p []byte) error {
+func (*gzipCompressor) Do(w io.Writer, p []byte) error {
 	z := gzipWriterPool.Get().(*gzip.Writer)
 	defer gzipWriterPool.Put(z)
 	z.Reset(w)
@@ -45,7 +45,7 @@ func (c *gzipCompressor) Do(w io.Writer, p []byte) error {
 	return z.Close()
 }
 
-func (c *gzipCompressor) Type() string {
+func (*gzipCompressor) Type() string {
 	return "gzip"
 }
 
@@ -57,7 +57,7 @@ var gzipReaderPool = sync.Pool{
 	},
 }
 
-func (d *gzipDecompressor) Do(r io.Reader) ([]byte, error) {
+func (*gzipDecompressor) Do(r io.Reader) ([]byte, error) {
 	z := gzipReaderPool.Get().(*gzip.Reader)
 	if err := z.Reset(r); err != nil {
 		gzipReaderPool.Put(z)
@@ -71,6 +71,6 @@ func (d *gzipDecompressor) Do(r io.Reader) ([]byte, error) {
 	return io.ReadAll(z)
 }
 
-func (d *gzipDecompressor) Type() string {
+func (*gzipDecompressor) Type() string {
 	return "gzip"
 }

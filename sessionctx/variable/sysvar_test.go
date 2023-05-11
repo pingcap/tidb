@@ -97,6 +97,37 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
+func TestTiFlashMaxBytes(t *testing.T) {
+	varNames := []string{TiDBMaxBytesBeforeTiFlashExternalJoin, TiDBMaxBytesBeforeTiFlashExternalGroupBy, TiDBMaxBytesBeforeTiFlashExternalSort}
+	for index, varName := range varNames {
+		sv := GetSysVar(varName)
+		vars := NewSessionVars(nil)
+		val, err := sv.Validate(vars, "-10", ScopeSession)
+		require.NoError(t, err) // it has autoconvert out of range.
+		require.Equal(t, "-1", val)
+		val, err = sv.Validate(vars, "-10", ScopeGlobal)
+		require.NoError(t, err) // it has autoconvert out of range.
+		require.Equal(t, "-1", val)
+		val, err = sv.Validate(vars, "100", ScopeSession)
+		require.NoError(t, err)
+		require.Equal(t, "100", val)
+
+		_, err = sv.Validate(vars, strconv.FormatUint(uint64(math.MaxInt64)+1, 10), ScopeSession)
+		// can not autoconvert because the input is out of the range of Int64
+		require.Error(t, err)
+
+		require.Nil(t, sv.SetSessionFromHook(vars, "10000")) // sets
+		switch index {
+		case 0:
+			require.Equal(t, int64(10000), vars.TiFlashMaxBytesBeforeExternalJoin)
+		case 1:
+			require.Equal(t, int64(10000), vars.TiFlashMaxBytesBeforeExternalGroupBy)
+		case 2:
+			require.Equal(t, int64(10000), vars.TiFlashMaxBytesBeforeExternalSort)
+		}
+	}
+}
+
 func TestCollationServer(t *testing.T) {
 	sv := GetSysVar(CollationServer)
 	vars := NewSessionVars(nil)
@@ -682,16 +713,16 @@ func TestSetTIDBDistributeReorg(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 
 	// Set to on
-	err := mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableDistributeReorg, On)
+	err := mock.SetGlobalSysVar(context.Background(), TiDBEnableDistTask, On)
 	require.NoError(t, err)
-	val, err := mock.GetGlobalSysVar(TiDBDDLEnableDistributeReorg)
+	val, err := mock.GetGlobalSysVar(TiDBEnableDistTask)
 	require.NoError(t, err)
 	require.Equal(t, On, val)
 
 	// Set to off
-	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableDistributeReorg, Off)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableDistTask, Off)
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBDDLEnableDistributeReorg)
+	val, err = mock.GetGlobalSysVar(TiDBEnableDistTask)
 	require.NoError(t, err)
 	require.Equal(t, Off, val)
 }
@@ -1179,4 +1210,31 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 	require.NoError(t, err1)
 	require.Equal(t, On, val)
 	require.Equal(t, enable, true)
+}
+
+func TestTiDBEnableRowLevelChecksum(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// default to false
+	val, err := mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+
+	// enable
+	err = mock.SetGlobalSysVar(ctx, TiDBEnableRowLevelChecksum, On)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, On, val)
+
+	// disable
+	err = mock.SetGlobalSysVar(ctx, TiDBEnableRowLevelChecksum, Off)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
 }

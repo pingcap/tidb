@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
@@ -201,7 +202,7 @@ func SubTestDataLockWaitsPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 	err := tk.QueryToErr("select * from information_schema.DATA_LOCK_WAITS")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
@@ -212,7 +213,7 @@ func SubTestDataLockWaitsPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 	_ = tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS")
 }
 
@@ -317,7 +318,7 @@ select * from t3;
 	require.NoError(t, user1.Session().Auth(&auth.UserIdentity{
 		Username: "user1",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	user1.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
 	user1.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("1"))
 	user1.MustQuery("select user,query from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("user1 select * from t1;"))
@@ -327,7 +328,7 @@ select * from t3;
 	require.NoError(t, user2.Session().Auth(&auth.UserIdentity{
 		Username: "user2",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	user2.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
 	user2.MustQuery("select user,query from `CLUSTER_SLOW_QUERY` order by query").Check(testkit.Rows("user2 select * from t2;", "user2 select * from t3;"))
 }
@@ -381,7 +382,7 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	err := tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED")
 	// This error is come from cop(TiDB) fetch from rpc server.
@@ -390,7 +391,7 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 	require.NoError(t, tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED"))
 }
 
@@ -417,7 +418,7 @@ func TestStmtSummaryIssue35340(t *testing.T) {
 				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 					Username: user,
 					Hostname: "localhost",
-				}, nil, nil))
+				}, nil, nil, nil))
 				tk.MustQuery("select count(*) from information_schema.statements_summary;")
 			}
 		}()
@@ -452,23 +453,23 @@ func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {
 	tk.MustExec("set time_zone = '+08:00';")
 	tk.MustExec("select sleep(0.1);")
 	r := tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
-	date8First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
+	date8First, err := time.Parse(time.DateTime, r.Rows()[0][0].(string))
 	require.NoError(t, err)
-	date8Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
+	date8Last, err := time.Parse(time.DateTime, r.Rows()[0][1].(string))
 	require.NoError(t, err)
-	date8Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	date8Begin, err := time.Parse(time.DateTime, r.Rows()[0][2].(string))
 	require.NoError(t, err)
-	date8End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	date8End, err := time.Parse(time.DateTime, r.Rows()[0][3].(string))
 	require.NoError(t, err)
 	tk.MustExec("set time_zone = '+01:00';")
 	r = tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
-	date1First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
+	date1First, err := time.Parse(time.DateTime, r.Rows()[0][0].(string))
 	require.NoError(t, err)
-	date1Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
+	date1Last, err := time.Parse(time.DateTime, r.Rows()[0][1].(string))
 	require.NoError(t, err)
-	date1Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	date1Begin, err := time.Parse(time.DateTime, r.Rows()[0][2].(string))
 	require.NoError(t, err)
-	date1End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	date1End, err := time.Parse(time.DateTime, r.Rows()[0][3].(string))
 	require.NoError(t, err)
 
 	require.Less(t, date1First.Unix(), date8First.Unix())
@@ -704,7 +705,7 @@ select * from t1;
 
 		err = tk.QueryToErr("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 		require.Error(t, err, quota)
-		require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
+		require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg, quota)
 	}
 	memQuotas := []int{128, 512, 1024, 2048, 4096}
 	for _, quota := range memQuotas {
@@ -814,7 +815,7 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }
 
@@ -886,7 +887,7 @@ func TestCreateBindingFromHistory(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -952,7 +953,7 @@ func TestCreateBindingForPrepareFromHistory(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -981,7 +982,7 @@ func TestErrorCasesCreateBindingFromHistory(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")
@@ -1055,7 +1056,7 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int, a int, key(a))")
@@ -1088,7 +1089,7 @@ func TestCreateBindingWhenCloseStmtSummaryTable(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1109,7 +1110,7 @@ func TestCreateBindingForNotSupportedStmt(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1140,7 +1141,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1153,15 +1154,15 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	time.Sleep(time.Millisecond * 10)
 	binding := tk.MustQuery("show bindings").Rows()
 	loc, _ := time.LoadLocation("Asia/Shanghai")
-	createTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][4].(string), loc)
-	updateTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][5].(string), loc)
+	createTime, _ := time.ParseInLocation(time.DateTime, binding[0][4].(string), loc)
+	updateTime, _ := time.ParseInLocation(time.DateTime, binding[0][5].(string), loc)
 
 	// binding from history cover binding from history
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
 	time.Sleep(time.Millisecond * 10)
 	binding1 := tk.MustQuery("show bindings").Rows()
-	createTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][4].(string), loc)
-	updateTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][5].(string), loc)
+	createTime1, _ := time.ParseInLocation(time.DateTime, binding1[0][4].(string), loc)
+	updateTime1, _ := time.ParseInLocation(time.DateTime, binding1[0][5].(string), loc)
 	require.Greater(t, createTime1.UnixNano(), createTime.UnixNano())
 	require.Greater(t, updateTime1.UnixNano(), updateTime.UnixNano())
 	for i := range binding1[0] {
@@ -1173,8 +1174,8 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	tk.MustExec("create binding for select * from t where a = 1 using select /*+ ignore_index(t, a) */ * from t where a = 1")
 	time.Sleep(time.Millisecond * 10)
 	binding2 := tk.MustQuery("show bindings").Rows()
-	createTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][4].(string), loc)
-	updateTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][5].(string), loc)
+	createTime2, _ := time.ParseInLocation(time.DateTime, binding2[0][4].(string), loc)
+	updateTime2, _ := time.ParseInLocation(time.DateTime, binding2[0][5].(string), loc)
 	require.Greater(t, createTime2.UnixNano(), createTime1.UnixNano())
 	require.Greater(t, updateTime2.UnixNano(), updateTime1.UnixNano())
 	require.Equal(t, binding2[0][8], "manual")
@@ -1189,8 +1190,8 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
 	time.Sleep(time.Millisecond * 10)
 	binding3 := tk.MustQuery("show bindings").Rows()
-	createTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][4].(string), loc)
-	updateTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][5].(string), loc)
+	createTime3, _ := time.ParseInLocation(time.DateTime, binding3[0][4].(string), loc)
+	updateTime3, _ := time.ParseInLocation(time.DateTime, binding3[0][5].(string), loc)
 	require.Greater(t, createTime3.UnixNano(), createTime2.UnixNano())
 	require.Greater(t, updateTime3.UnixNano(), updateTime2.UnixNano())
 	require.Equal(t, binding3[0][8], "history")
@@ -1212,7 +1213,7 @@ func TestCreateBindingWithUsingKeyword(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1, t2")
@@ -1250,7 +1251,7 @@ func TestNewCreatedBindingCanWorkWithPlanCache(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1, t2")
@@ -1278,7 +1279,7 @@ func TestCreateBindingForPrepareToken(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
