@@ -274,15 +274,12 @@ func TestTiDBClusterInfo(t *testing.T) {
 
 func TestTikvRegionStatus(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
-
-	tk := testkit.NewTestKit(t, s.store)
 	mockAddr := s.mockAddr
 	store := &mockStore{
 		s.store.(helper.Storage),
 		mockAddr,
 	}
-
-	tk = testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
 	restoreConfig := config.RestoreFunc()
 	defer restoreConfig()
 	config.UpdateGlobal(func(conf *config.Config) {
