@@ -2445,7 +2445,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			sb.WriteString(", ")
 		}
 	}
-	sb.WriteString("))")
+	sb.WriteString(")))")
 
 	groupStr := fmt.Sprintf("md5(%s)", pkCols[0])
 
@@ -2501,6 +2501,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		}
 	}
 
+	sql := fmt.Sprintf("select * from %s.%s use index(%s) where (%s - %d) %% %d = 0", w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupStr, offset, mod)
 	if meetError && len(indexCols) == len(w.e.table.Cols()) {
 		// for index which contains all the table's column, we can't use indexLookup to check.
 		err = admin.ErrAdminCheckTable.GenWithStackByArgs(fmt.Sprintf("index is not consistent with table data, location hint: '%s', compare the result with the sql that using table scan", sql))
@@ -2510,8 +2511,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 	// If there is an error, we use indexLookup to get the detailed information.
 	if meetError || !checkCheckSum {
-		sql := fmt.Sprintf("select * from %s.%s use index(%s) where (%s - %d) %% %d = 0", w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupStr, offset, mod)
-
 		save := se.GetSessionVars().CheckTableInIndexLookup
 		defer func() {
 			se.GetSessionVars().CheckTableInIndexLookup = save
