@@ -2456,9 +2456,13 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	meetError := false
 
 	lookupCheckThreshold := int64(10000)
-	checkCheckSum := w.rowCnt > lookupCheckThreshold
+	fullColCheck := len(indexCols) == len(w.e.table.Cols())
+	checkCheckSum := w.rowCnt > lookupCheckThreshold || fullColCheck
 
-	for tableRowCnt > lookupCheckThreshold {
+	for tableRowCnt > lookupCheckThreshold || fullColCheck {
+		// If the table row count is less than lookupCheckThreshold and the index contains all the column, check only once.
+		fullColCheck = false
+
 		// compute table side checksum.
 		sql := fmt.Sprintf("select %s from %s.%s use index() group by ((%s - %d) %% 256) order by %s", sb.String(), w.e.dbName, w.e.table.Meta().Name, groupStr, offset, groupStr)
 		logutil.BgLogger().Info("check table index on table side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
@@ -2497,16 +2501,16 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		}
 	}
 
+	if meetError && len(indexCols) == len(w.e.table.Cols()) {
+		// for index which contains all the table's column, we can't use indexLookup to check.
+		err = admin.ErrAdminCheckTable.GenWithStackByArgs(fmt.Sprintf("index is not consistent with table data, location hint: '%s', compare the result with the sql that using table scan", sql))
+		trySaveErr(err)
+		return
+	}
+
 	// If there is an error, we use indexLookup to get the detailed information.
 	if meetError || !checkCheckSum {
 		sql := fmt.Sprintf("select * from %s.%s use index(%s) where (%s - %d) %% %d = 0", w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupStr, offset, mod)
-
-		// for index which contains all the table's column, we can't use indexLookup to check.
-		if len(indexCols) == len(w.e.table.Cols()) {
-			err := admin.ErrAdminCheckTable.GenWithStackByArgs(fmt.Sprintf("index is not consistent with table data, location hint: '%s', compare the result with the sql that using table scan", sql))
-			trySaveErr(err)
-			return
-		}
 
 		save := se.GetSessionVars().CheckTableInIndexLookup
 		defer func() {
