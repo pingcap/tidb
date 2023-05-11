@@ -23,9 +23,9 @@ import (
 
 // PrepareSlowLogfile prepares a slow log file for test.
 func PrepareSlowLogfile(t *testing.T, slowLogFileName string) {
-	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0600)
 	require.NoError(t, err)
-	_, err = f.Write([]byte(`# Time: 2019-02-12T19:33:56.571953+08:00
+	_, err = f.WriteString(`# Time: 2019-02-12T19:33:56.571953+08:00
 # Txn_start_ts: 406315658548871171
 # User@Host: root[root] @ localhost [127.0.0.1]
 # Conn_ID: 6
@@ -82,7 +82,7 @@ select * from t_slim;
 # Write_sql_response_total: 0
 # Succ: true
 INSERT INTO ...;
-`))
+`)
 	require.NoError(t, f.Close())
 	require.NoError(t, err)
 }
