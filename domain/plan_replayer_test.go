@@ -16,7 +16,6 @@ package domain
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -25,24 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/stretchr/testify/require"
 )
-
-func TestPlanReplayerGC(t *testing.T) {
-	startTime := time.Now()
-	time := startTime.UnixNano()
-	fileName := fmt.Sprintf("replayer_single_xxxxxx_%v.zip", time)
-	err := os.MkdirAll(replayer.GetPlanReplayerDirName(), os.ModePerm)
-	require.NoError(t, err)
-	path := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
-	zf, err := os.Create(path)
-	require.NoError(t, err)
-	zf.Close()
-
-	handler := &dumpFileGcChecker{
-		paths: []string{replayer.GetPlanReplayerDirName()},
-	}
-	handler.gcDumpFiles(0, 0)
-	require.NoFileExists(t, path)
-}
 
 func TestPlanReplayerDifferentGC(t *testing.T) {
 	dirName := replayer.GetPlanReplayerDirName()
@@ -82,13 +63,13 @@ func TestPlanReplayerDifferentGC(t *testing.T) {
 	handler := &dumpFileGcChecker{
 		paths: []string{dirName},
 	}
-	handler.gcDumpFiles(time.Hour, time.Hour*24*7)
+	handler.GCDumpFiles(time.Hour, time.Hour*24*7)
 	require.NoFileExists(t, filePath1)
 	require.FileExists(t, filePath2)
 	require.NoFileExists(t, filePath3)
 	require.FileExists(t, filePath4)
 
-	handler.gcDumpFiles(0, 0)
+	handler.GCDumpFiles(0, 0)
 	require.NoFileExists(t, filePath2)
 	require.NoFileExists(t, filePath4)
 }
