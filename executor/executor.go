@@ -2552,6 +2552,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
 	rs, err := internalSe.(sqlexec.SQLExecutor).ExecuteInternal(ctx, fmt.Sprintf("select count(*) from %s.%s", e.dbName, e.table.Meta().Name.O))
 	if err != nil {
 		return err
