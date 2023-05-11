@@ -62,10 +62,7 @@ type reorgCtx struct {
 	doneCh chan error
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
-	// notifyCancelReorgJob is used to notify the backfilling goroutine if the DDL job is cancelled.
-	// 0: job is not canceled.
-	// 1: job is canceled.
-	notifyCancelReorgJob int32
+	jobState model.JobState
 
 	mu struct {
 		sync.Mutex
@@ -94,12 +91,18 @@ const defaultWaitReorgTimeout = 10 * time.Second
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
 var ReorgWaitTimeout = 5 * time.Second
 
-func (rc *reorgCtx) notifyReorgCancel() {
-	atomic.StoreInt32(&rc.notifyCancelReorgJob, 1)
+func (rc *reorgCtx) notifyJobState(state model.JobState) {
+	atomic.StoreInt32((*int32)(&rc.jobState), int32(state))
 }
 
 func (rc *reorgCtx) isReorgCanceled() bool {
-	return atomic.LoadInt32(&rc.notifyCancelReorgJob) == 1
+	return int32(model.JobStateCancelled) == atomic.LoadInt32((*int32)(&rc.jobState)) ||
+		int32(model.JobStateCancelling) == atomic.LoadInt32((*int32)(&rc.jobState))
+}
+
+func (rc *reorgCtx) isReorgPaused() bool {
+	return int32(model.JobStatePaused) == atomic.LoadInt32((*int32)(&rc.jobState)) ||
+		int32(model.JobStatePausing) == atomic.LoadInt32((*int32)(&rc.jobState))
 }
 
 func (rc *reorgCtx) setRowCount(count int64) {
@@ -166,7 +169,8 @@ func (rc *reorgCtx) getRowCount() int64 {
 // the additional ddl round.
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
-func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
+func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
+	lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
 	d := reorgInfo.d
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
@@ -183,13 +187,18 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 	rc := w.getReorgCtx(job.ID)
 	if rc == nil {
 		// This job is cancelling, we should return ErrCancelledDDLJob directly.
+		//
 		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
-		// A: Yes, consider the case that we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
-		// and then the backfill workers send signal to the `doneCh` of the reorgCtx, and then the DDL worker will remove the reorgCtx and
-		// update the DDL job to `done`, but at the commit time, the DDL txn will raise a "write conflict" error and retry, and it happens.
+		// A: Yes, consider the case that :
+		// - we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
+		// - and then the backfill workers send signal to the `doneCh` of the reorgCtx,
+		// - and then the DDL worker will remove the reorgCtx
+		// - and update the DDL job to `done`
+		// - but at the commit time, the DDL txn will raise a "write conflict" error and retry, and it happens.
 		if job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
+
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
@@ -216,6 +225,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			d.removeReorgCtx(job.ID)
 			return dbterror.ErrCancelledDDLJob
 		}
+
 		rowCount := rc.getRowCount()
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
@@ -228,14 +238,16 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
+		// TODO: should we do this if dbterror.ErrPausedDDLJob ???
 		d.removeReorgCtx(job.ID)
+
+		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
+
 		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
 		// since in the next round, the startKey is brand new which is stored by last time.
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
 		d.removeReorgCtx(job.ID)
@@ -344,15 +356,27 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
+func (dc *ddlCtx) isReorgCancelled(jobID int64) bool {
+	return dc.getReorgCtx(jobID).isReorgCanceled()
+}
+func (dc *ddlCtx) isReorgPaused(jobID int64) bool {
+	return dc.getReorgCtx(jobID).isReorgPaused()
+}
+
 func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	if isChanClosed(dc.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
-	if dc.getReorgCtx(jobID).isReorgCanceled() {
+	if dc.isReorgCancelled(jobID) {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
+	}
+
+	if dc.isReorgPaused(jobID) {
+		logutil.BgLogger().Warn("[ddl] job paused by user", zap.String("ID", dc.uuid))
+		return dbterror.ErrPausedDDLJob
 	}
 
 	// If isDistReorg is true, we needn't check if it is owner.

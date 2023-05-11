@@ -1637,6 +1637,14 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.setSchemaAndNames(buildCancelDDLJobsFields())
 		ret = p
+	case ast.AdminPauseDDLJobs:
+		p := &PauseDDLJobs{JobIDs: as.JobIDs}
+		p.setSchemaAndNames(buildPauseDDLJobsFields())
+		ret = p
+	case ast.AdminResumeDDLJobs:
+		p := &ResumeDDLJobs{JobIDs: as.JobIDs}
+		p.setSchemaAndNames(buildResumeDDLJobsFields())
+		ret = p
 	case ast.AdminCheckIndexRange:
 		schema, names, err := b.buildCheckIndexSchema(as.Tables[0], as.Index)
 		if err != nil {
@@ -3110,12 +3118,24 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
-func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
+func buildCommandOnDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(2)
 	schema.Append(buildColumnWithName("", "JOB_ID", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "RESULT", mysql.TypeVarchar, 128))
 
 	return schema.col2Schema(), schema.names
+}
+
+func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
+}
+
+func buildPauseDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
+}
+
+func buildResumeDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
 }
 
 func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {
