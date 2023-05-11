@@ -14,8 +14,15 @@ require (
 	github.com/Shopify/sarama v1.29.0
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/ashanbrown/makezero v1.1.1
+<<<<<<< HEAD
 	github.com/aws/aws-sdk-go v1.44.48
 	github.com/blacktear23/go-proxyprotocol v1.0.5
+=======
+	github.com/aws/aws-sdk-go v1.44.259
+	github.com/bazelbuild/buildtools v0.0.0-20230317132445-9c3c1fc0106e
+	github.com/blacktear23/go-proxyprotocol v1.0.6
+	github.com/butuzov/mirror v0.1.2
+>>>>>>> 5909400b96f (br: use AWS CreateSnapshots API to automic create snapshots for multiple volumes (#43591))
 	github.com/carlmjohnson/flagext v0.21.0
 	github.com/charithe/durationcheck v0.0.9
 	github.com/cheggaaa/pb/v3 v3.0.8
