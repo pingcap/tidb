@@ -4254,11 +4254,11 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		pi.Definitions = defs
 		return pi, nil
 	}
-	var pids []int64
 	pi, err := fn(meta.GetPartitionInfo())
 	if err != nil {
 		return err
 	}
+	pids := make([]int64, 0, len(pi.Definitions))
 	for i := range pi.Definitions {
 		pids = append(pids, pi.Definitions[i].ID)
 	}
