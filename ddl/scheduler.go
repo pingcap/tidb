@@ -127,7 +127,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	go func() {
 		select {
 		case <-ctx.Done():
-			b.d.notifyReorgCancel(b.job)
+			b.d.notifyReorgWorkerJobStateChange(b.job)
 		case <-fnCtx.Done():
 		}
 	}()

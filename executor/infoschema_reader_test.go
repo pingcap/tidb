@@ -102,7 +102,7 @@ func TestSchemataTables(t *testing.T) {
 	require.NoError(t, schemataTester.Session().Auth(&auth.UserIdentity{
 		Username: "schemata_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("1"))
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		[][]interface{}{})
@@ -247,7 +247,7 @@ func TestDDLJobs(t *testing.T) {
 	require.NoError(t, DDLJobsTester.Session().Auth(&auth.UserIdentity{
 		Username: "DDL_JOBS_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	// Test the privilege of user for information_schema.ddl_jobs.
 	DDLJobsTester.MustQuery("select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
@@ -279,7 +279,7 @@ func TestKeyColumnUsage(t *testing.T) {
 	require.NoError(t, keyColumnTester.Session().Auth(&auth.UserIdentity{
 		Username: "key_column_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
 
 	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
@@ -301,7 +301,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, constraintsTester.Session().Auth(&auth.UserIdentity{
 		Username: "constraints_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
 
 	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
@@ -320,7 +320,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{
 		Username: "tester1",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk1.MustQuery("select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
 
 	// test the privilege of user with some privilege for information_schema
@@ -333,7 +333,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{
 		Username: "tester2",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk2.MustExec("set role r_columns_priv")
 	rows = tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
@@ -350,7 +350,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, tk3.Session().Auth(&auth.UserIdentity{
 		Username: "tester3",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk3.MustExec("set role r_all_priv")
 	rows = tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
@@ -368,7 +368,7 @@ func TestUserPrivilegesTable(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "usageuser",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def USAGE NO"))
 	// the usage row disappears when there is a non-dynamic privilege added
 	tk1.MustExec("GRANT SELECT ON *.* to usageuser")
@@ -590,7 +590,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	require.NoError(t, analyzeTester.Session().Auth(&auth.UserIdentity{
 		Username: "analyze_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	analyzeTester.MustQuery("show analyze status").Check([][]interface{}{})
 	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]interface{}{})
 

@@ -2491,7 +2491,7 @@ func TestPrivilegeCheckInForeignKeyCascade(t *testing.T) {
 		for _, sql := range ca.prepares {
 			tk.MustExec(sql)
 		}
-		err := tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+		err := tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 		require.NoError(t, err)
 		if ca.err == nil {
 			tk2.MustExec(ca.sql)
@@ -2542,7 +2542,7 @@ func TestForeignKeyIssue39732(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create user 'u1'@'%' identified by '';")
 	tk.MustExec("GRANT ALL PRIVILEGES ON *.* TO 'u1'@'%'")
-	err := tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	err := tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	require.NoError(t, err)
 	tk.MustExec("create table t1 (id int key, leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
 	tk.MustExec("insert into t1 values (1, null), (10, 1), (11, 1), (20, 10)")

@@ -20,6 +20,8 @@ go_library(
         "//parser/mysql",
         "//parser/terror",
         "//privilege",
+        "//privilege/conn",
+        "//privilege/privileges/ldap",
         "//sessionctx",
         "//sessionctx/sessionstates",
         "//sessionctx/variable",

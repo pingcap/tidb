@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
@@ -869,7 +870,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: DefaultAuthPlugin, Value: mysql.AuthNativePassword, Type: TypeEnum, PossibleValues: []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password}},
+	{Scope: ScopeGlobal, Name: DefaultAuthPlugin, Value: mysql.AuthNativePassword, Type: TypeEnum, PossibleValues: []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthLDAPSASL, mysql.AuthLDAPSimple}},
 	{Scope: ScopeGlobal, Name: TiDBPersistAnalyzeOptions, Value: BoolToOnOff(DefTiDBPersistAnalyzeOptions), Type: TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(PersistAnalyzeOptions.Load()), nil
@@ -2521,6 +2522,168 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBFastCheckTable, Value: BoolToOnOff(DefTiDBEnableFastCheckTable), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.FastCheckTable = TiDBOptOn(val)
 		return nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLAuthMethodName, Value: DefAuthenticationLDAPSASLAuthMethodName, Type: TypeEnum, PossibleValues: []string{ldap.SASLAuthMethodSCRAMSHA1, ldap.SASLAuthMethodSCRAMSHA256, ldap.SASLAuthMethodGSSAPI}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSASLAuthImpl.SetSASLAuthMethod(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetSASLAuthMethod(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLServerHost, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		// TODO: validate the ip/hostname
+		ldap.LDAPSASLAuthImpl.SetLDAPServerHost(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetLDAPServerHost(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLServerPort, Value: strconv.Itoa(DefAuthenticationLDAPSASLServerPort), Type: TypeInt, MinValue: 1, MaxValue: math.MaxUint16, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSASLAuthImpl.SetLDAPServerPort(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSASLAuthImpl.GetLDAPServerPort()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLTLS, Value: BoolToOnOff(DefAuthenticationLDAPSASLTLS), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSASLAuthImpl.SetEnableTLS(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(ldap.LDAPSASLAuthImpl.GetEnableTLS()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLCAPath, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		return ldap.LDAPSASLAuthImpl.SetCAPath(s)
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetCAPath(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLUserSearchAttr, Value: DefAuthenticationLDAPSASLUserSearchAttr, Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		// TODO: validate the ip/hostname
+		ldap.LDAPSASLAuthImpl.SetSearchAttr(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetSearchAttr(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLBindBaseDN, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSASLAuthImpl.SetBindBaseDN(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetBindBaseDN(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLBindRootDN, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSASLAuthImpl.SetBindRootDN(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetBindRootDN(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLBindRootPW, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSASLAuthImpl.SetBindRootPW(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetBindRootPW(), nil
+	}},
+	// TODO: allow setting init_pool_size to 0 to disable pooling
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLInitPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSASLInitPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSASLAuthImpl.SetInitCapacity(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSASLAuthImpl.GetInitCapacity()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLMaxPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSASLMaxPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSASLAuthImpl.SetMaxCapacity(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSASLAuthImpl.GetMaxCapacity()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleAuthMethodName, Value: DefAuthenticationLDAPSimpleAuthMethodName, Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		s = strings.ToUpper(s)
+		// Only "SIMPLE" is supported
+		if s != "SIMPLE" {
+			return errors.Errorf("auth method %s is not supported", s)
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleServerHost, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		// TODO: validate the ip/hostname
+		ldap.LDAPSimpleAuthImpl.SetLDAPServerHost(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetLDAPServerHost(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleServerPort, Value: strconv.Itoa(DefAuthenticationLDAPSimpleServerPort), Type: TypeInt, MinValue: 1, MaxValue: math.MaxUint16, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSimpleAuthImpl.SetLDAPServerPort(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSimpleAuthImpl.GetLDAPServerPort()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleTLS, Value: BoolToOnOff(DefAuthenticationLDAPSimpleTLS), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSimpleAuthImpl.SetEnableTLS(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(ldap.LDAPSimpleAuthImpl.GetEnableTLS()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleCAPath, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		return ldap.LDAPSimpleAuthImpl.SetCAPath(s)
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetCAPath(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleUserSearchAttr, Value: DefAuthenticationLDAPSimpleUserSearchAttr, Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		// TODO: validate the ip/hostname
+		ldap.LDAPSimpleAuthImpl.SetSearchAttr(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetSearchAttr(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleBindBaseDN, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSimpleAuthImpl.SetBindBaseDN(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetBindBaseDN(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleBindRootDN, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSimpleAuthImpl.SetBindRootDN(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetBindRootDN(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleBindRootPW, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSimpleAuthImpl.SetBindRootPW(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetBindRootPW(), nil
+	}},
+	// TODO: allow setting init_pool_size to 0 to disable pooling
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleInitPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSimpleInitPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSimpleAuthImpl.SetInitCapacity(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSimpleAuthImpl.GetInitCapacity()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleMaxPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSimpleMaxPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSimpleAuthImpl.SetMaxCapacity(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSimpleAuthImpl.GetMaxCapacity()), nil
 	}},
 }
 

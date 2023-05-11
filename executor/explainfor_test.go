@@ -40,8 +40,8 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.MustExec("create table t1(c1 int, c2 int)")
 	tkRoot.MustExec("create table t2(c1 int, c2 int)")
 	tkRoot.MustExec("create user tu@'%'")
-	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
-	tkUser.Session().Auth(&auth.UserIdentity{Username: "tu", Hostname: "localhost", CurrentUser: true, AuthUsername: "tu", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
+	tkUser.Session().Auth(&auth.UserIdentity{Username: "tu", Hostname: "localhost", CurrentUser: true, AuthUsername: "tu", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tkRoot.MustQuery("select * from t1;")
@@ -441,7 +441,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tmp := testkit.NewTestKit(t, store)
 	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
