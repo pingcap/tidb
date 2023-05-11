@@ -2552,7 +2552,7 @@ func upgradeToVer145(s Session, ver int64) {
 	if ver >= version145 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {
