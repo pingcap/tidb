@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infoschema_test
+package clustertablestest
 
 import (
 	"fmt"
@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/infoschema/internal"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -228,7 +229,7 @@ func TestSelectClusterTable(t *testing.T) {
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
 	slowLogFileName := "tidb-slow0.log"
-	prepareSlowLogfile(t, slowLogFileName)
+	internal.PrepareSlowLogfile(t, slowLogFileName)
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = slowLogFileName
