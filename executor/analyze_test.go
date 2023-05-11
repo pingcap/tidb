@@ -2605,3 +2605,34 @@ func TestAnalyzePartitionTableForFloat(t *testing.T) {
 	}
 	tk.MustExec("analyze table t1")
 }
+
+func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t (a int, b int, c json, index idx_b(b), index idx_c((cast(json_extract(c, _utf8mb4'$') as char(32) array))))")
+	tk.MustExec(`insert into t values (1, 1, '["a1", "a2"]'), (2, 2, '["b1", "b2"]'), (3, 3, '["c1", "c2"]'), (2, 2, '["c1", "c2"]')`)
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+
+	tk.MustExec("analyze table t columns a")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(""+
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+		"Warning 1105 Columns b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx_c"))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Check(testkit.Rows(
+		"analyze table columns a, b with 256 buckets, 500 topn, 1 samplerate"))
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	stats := h.GetTableStats(tblInfo)
+	require.True(t, stats.Columns[tblInfo.Columns[0].ID].IsStatsInitialized())
+	require.True(t, stats.Columns[tblInfo.Columns[1].ID].IsStatsInitialized())
+	require.False(t, stats.Columns[tblInfo.Columns[2].ID].IsStatsInitialized())
+	require.True(t, stats.Indices[tblInfo.Indices[0].ID].IsStatsInitialized())
+	require.False(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
+}
