@@ -346,7 +346,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			ch <- struct{}{}
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			_, err = tk.ExecWithContext(context.Background(), query)
+			_, err := tk.ExecWithContext(context.Background(), query)
 			if err != nil {
 				// Maybe the bootstrap domain is closed.
 				require.Equal(t, err.Error(), context.Canceled.Error())
