@@ -1011,7 +1011,7 @@ var TableTiKVRegionStatusCols = []columnInfo{
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "INDEX_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "IS_PARTITION", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
-	{name: "PARTITON_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "EPOCH_CONF_VER", tp: mysql.TypeLonglong, size: 21},
 	{name: "EPOCH_VERSION", tp: mysql.TypeLonglong, size: 21},
