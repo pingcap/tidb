@@ -384,7 +384,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	}
 	metas, retryable, err := handle.ProcessNormalFlow(d.ctx, d, gTask, prevSubtaskMetas)
 	if err != nil {
-		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
+		logutil.BgLogger().Warn("gen dist-plan failed", zap.Bool("retryble", retryable), zap.Error(err))
 		if !retryable {
 			return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 		}
