@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infoschema_test
+package clustertablestest
 
 import (
 	"fmt"
@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/internal"
-	"github.com/pingcap/tidb/infoschema/test/clustertablestest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
@@ -1763,7 +1762,7 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 }
 
 func TestAddFieldsForBinding(t *testing.T) {
-	s := new(clustertablestest.clusterTablesSuite)
+	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
