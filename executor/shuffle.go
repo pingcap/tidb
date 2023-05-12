@@ -142,17 +142,29 @@ func (e *ShuffleExec) Close() error {
 	if !e.prepared {
 		for _, w := range e.workers {
 			for _, r := range w.receivers {
-				close(r.inputHolderCh)
-				close(r.inputCh)
+				if r.inputHolderCh != nil {
+					close(r.inputHolderCh)
+				}
+				if r.inputCh != nil {
+					close(r.inputCh)
+				}
 			}
-			close(w.outputHolderCh)
+			if w.outputHolderCh != nil {
+				close(w.outputHolderCh)
+			}
 		}
-		close(e.outputCh)
+		if e.outputCh != nil {
+			close(e.outputCh)
+		}
 	}
-	close(e.finishCh)
+	if e.finishCh != nil {
+		close(e.finishCh)
+	}
 	for _, w := range e.workers {
 		for _, r := range w.receivers {
-			for range r.inputCh {
+			if r.inputCh != nil {
+				for range r.inputCh {
+				}
 			}
 		}
 		// close child executor of each worker
@@ -160,7 +172,9 @@ func (e *ShuffleExec) Close() error {
 			firstErr = err
 		}
 	}
-	for range e.outputCh { // workers exit before `e.outputCh` is closed.
+	if e.outputCh != nil {
+		for range e.outputCh { // workers exit before `e.outputCh` is closed.
+		}
 	}
 	e.executed = false
 

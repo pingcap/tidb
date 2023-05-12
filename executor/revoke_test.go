@@ -69,7 +69,13 @@ func (s *testSuite1) TestRevokeDBScope(c *C) {
 
 		tk.MustQuery(check).Check(testkit.Rows("Y"))
 		tk.MustExec(sql)
-		tk.MustQuery(check).Check(testkit.Rows("N"))
+		if v == mysql.AllDBPrivs[len(mysql.AllDBPrivs)-1] {
+			// When all privileges are set to 'N', then the record should be removed as well.
+			// https://github.com/pingcap/tidb/issues/38363
+			tk.MustQuery(check).Check(testkit.Rows())
+		} else {
+			tk.MustQuery(check).Check(testkit.Rows("N"))
+		}
 	}
 }
 
@@ -215,4 +221,18 @@ func (s *testSuite1) TestRevokeOnNonExistTable(c *C) {
 	// REVOKE ON non-existent table success
 	tk.MustExec("DROP TABLE t1;")
 	tk.MustExec("REVOKE ALTER ON d1.t1 FROM issue28533;")
+}
+
+// Check https://github.com/pingcap/tidb/issues/41773.
+func (s *testSuite1) TestIssue41773(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists xx (id int)")
+	tk.MustExec("CREATE USER 't1234'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';")
+	tk.MustExec("GRANT USAGE ON * TO 't1234'@'%';")
+	tk.MustExec("GRANT USAGE ON test.* TO 't1234'@'%';")
+	tk.MustExec("GRANT USAGE ON test.xx TO 't1234'@'%';")
+	tk.MustExec("REVOKE USAGE ON * FROM 't1234'@'%';")
+	tk.MustExec("REVOKE USAGE ON test.* FROM 't1234'@'%';")
+	tk.MustExec("REVOKE USAGE ON test.xx FROM 't1234'@'%';")
 }
