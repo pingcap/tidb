@@ -460,3 +460,16 @@ func TestCTEsInView(t *testing.T) {
 	tk.MustExec("use test1;")
 	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
 }
+
+func TestCTESeedPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1(c1 int)")
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+
+	fpPathPrefix := "github.com/pingcap/tidb/executor/"
+	require.NoError(t, failpoint.Enable(fpPathPrefix + "testCTEPanic", "return(true)"))
+	tk.MustQuery("with recursive cte1 as (select c1 from t1 union all select c1 + 1 from cte1 where c1 < 5) select t_alias_1.c1 from cte1 as t_alias_1 inner join cte1 as t_alias_2 on t_alias_1.c1 = t_alias_2.c1 order by c1").Check(testkit.Rows("1 2 3 4 5"))
+	require.NoError(t, failpoint.Disable(fpPathPrefix + "testCTEPanic"))
+}
