@@ -462,7 +462,7 @@ bazel_build: bazel_ci_prepare
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//tidb-server:tidb-server --//build:with_nogo_flag=true --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=enterprise
-	./bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server --version
+	./bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server -V
 
 bazel_fail_build:  failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
