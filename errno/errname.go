@@ -1138,4 +1138,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPrometheusAddrIsNotSet:    mysql.Message("Prometheus address is not set in PD and etcd", nil),
 	ErrTiKVStaleCommand:          mysql.Message("TiKV server reports stale command", nil),
 	ErrTiKVMaxTimestampNotSynced: mysql.Message("TiKV max timestamp is not synced", nil),
+
+	ErrCannotPauseDDLJob:  mysql.Message("Job [%v] can't be paused now", nil),
+	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed", nil),
+	ErrPausedDDLJob:       mysql.Message("Job [%v] already paused", nil),
 }

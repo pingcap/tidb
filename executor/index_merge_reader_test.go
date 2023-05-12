@@ -1000,6 +1000,11 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec("analyze table tpkhash")
 
 	for i := 0; i < 100; i++ {
+		if i%2 == 0 {
+			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
+		} else {
+			tk.MustExec("set tidb_partition_prune_mode = `dynamic-only`")
+		}
 		a := rand.Intn(32)
 		b := rand.Intn(32)
 		limit := rand.Intn(10) + 1
@@ -1027,17 +1032,23 @@ func TestOrderByWithLimit(t *testing.T) {
 		queryHash := fmt.Sprintf("select /*+ use_index_merge(thash, idx_ac, idx_bc) */ * from thash where a = %v or b = %v order by c limit %v", a, b, limit)
 		resHash := tk.MustQuery(queryHash).Rows()
 		require.True(t, tk.HasPlan(queryHash, "IndexMerge"))
-		require.False(t, tk.HasPlan(queryHash, "TopN"))
+		if i%2 == 1 {
+			require.False(t, tk.HasPlan(queryHash, "TopN"))
+		}
 
 		queryCommonHash := fmt.Sprintf("select /*+ use_index_merge(tcommonhash, primary, idx_bc) */ * from tcommonhash where a = %v or b = %v order by c limit %v", a, b, limit)
 		resCommonHash := tk.MustQuery(queryCommonHash).Rows()
 		require.True(t, tk.HasPlan(queryCommonHash, "IndexMerge"))
-		require.False(t, tk.HasPlan(queryCommonHash, "TopN"))
+		if i%2 == 1 {
+			require.False(t, tk.HasPlan(queryCommonHash, "TopN"))
+		}
 
 		queryPKHash := fmt.Sprintf("select /*+ use_index_merge(tpkhash, idx_ac, idx_bc) */ * from tpkhash where a = %v or b = %v order by c limit %v", a, b, limit)
 		resPKHash := tk.MustQuery(queryPKHash).Rows()
 		require.True(t, tk.HasPlan(queryPKHash, "IndexMerge"))
-		require.False(t, tk.HasPlan(queryPKHash, "TopN"))
+		if i%2 == 1 {
+			require.False(t, tk.HasPlan(queryPKHash, "TopN"))
+		}
 
 		sliceRes := getResult(valueSlice, a, b, limit, false)
 

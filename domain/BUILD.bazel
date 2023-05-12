@@ -42,7 +42,6 @@ go_library(
         "//meta",
         "//metrics",
         "//owner",
-        "//parser",
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
@@ -116,7 +115,7 @@ go_test(
     ],
     embed = [":domain"],
     flaky = True,
-    shard_count = 22,
+    shard_count = 23,
     deps = [
         "//config",
         "//ddl",
