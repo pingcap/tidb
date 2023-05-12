@@ -63,6 +63,7 @@ const (
 		start_time bigint,
 		state_update_time bigint,
 		meta longblob,
+		error BLOB,
 		key idx_task_key(task_key))`
 	// BackgroundSubtaskHistoryTableSQL is the CREATE TABLE SQL of `tidb_background_subtask_history`.
 	BackgroundSubtaskHistoryTableSQL = "create table " + BackgroundSubtaskHistoryTable + `(

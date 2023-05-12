@@ -911,18 +911,6 @@ func verifyCheckpoint(cfg *config.Config, taskCp *checkpoints.TaskCheckpoint) er
 		if cfg.TikvImporter.Backend == config.BackendLocal && cfg.TikvImporter.SortedKVDir != taskCp.SortedKVDir {
 			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "mydumper.sorted-kv-dir", cfg.TikvImporter.SortedKVDir, taskCp.SortedKVDir)
 		}
-
-		if cfg.TiDB.Host != taskCp.TiDBHost {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tidb.host", cfg.TiDB.Host, taskCp.TiDBHost)
-		}
-
-		if cfg.TiDB.Port != taskCp.TiDBPort {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tidb.port", cfg.TiDB.Port, taskCp.TiDBPort)
-		}
-
-		if cfg.TiDB.PdAddr != taskCp.PdAddr {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tidb.pd-addr", cfg.TiDB.PdAddr, taskCp.PdAddr)
-		}
 	}
 
 	return nil
@@ -1627,6 +1615,9 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
 				needPostProcess, err := task.tr.importTable(ctx, rc, task.cp)
+				if err != nil && !common.IsContextCanceledError(err) {
+					task.tr.logger.Error("failed to import table", zap.Error(err))
+				}
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)

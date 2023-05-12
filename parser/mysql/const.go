@@ -31,7 +31,7 @@ var (
 	TiDBReleaseVersion = "None"
 
 	// ServerVersion is the version information of this tidb-server in MySQL's format.
-	ServerVersion = fmt.Sprintf("5.7.25-TiDB-%s", TiDBReleaseVersion)
+	ServerVersion = fmt.Sprintf("8.0.11-TiDB-%s", TiDBReleaseVersion)
 )
 
 // Header information.
@@ -183,6 +183,8 @@ const (
 	AuthSocket              = "auth_socket"
 	AuthTiDBSessionToken    = "tidb_session_token"
 	AuthTiDBAuthToken       = "tidb_auth_token"
+	AuthLDAPSimple          = "authentication_ldap_simple"
+	AuthLDAPSASL            = "authentication_ldap_sasl"
 )
 
 // MySQL database and tables.

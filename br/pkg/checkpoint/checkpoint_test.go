@@ -17,9 +17,7 @@ package checkpoint_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -27,7 +25,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
@@ -169,14 +166,10 @@ func TestCheckpointBackupRunner(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1, checkpoint.MaxChecksumTotalCost-20.0)
-	checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2, 40.0)
-	// now the checksum is flushed, because the total time cost is larger than `MaxChecksumTotalCost`
-	checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3, checkpoint.MaxChecksumTotalCost-20.0)
-	time.Sleep(6 * time.Second)
-	// the checksum has not been flushed even though after 6 seconds,
-	// because the total time cost is less than `MaxChecksumTotalCost`
-	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4, 40.0)
+	checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1)
+	checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2)
+	checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3)
+	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
 		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "+", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
@@ -218,19 +211,6 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	for i = 1; i <= 4; i++ {
 		require.Equal(t, meta.CheckpointChecksum[i].Crc64xor, uint64(i))
 	}
-
-	// only 2 checksum files exists, they are t2_and__ and t4_and__
-	count := 0
-	err = s.WalkDir(ctx, &storage.WalkOption{SubDir: checkpoint.CheckpointChecksumDirForBackup},
-		func(s string, i int64) error {
-			count += 1
-			if !strings.Contains(s, "t2") {
-				require.True(t, strings.Contains(s, "t4"))
-			}
-			return nil
-		})
-	require.NoError(t, err)
-	require.Equal(t, count, 2)
 }
 
 func TestCheckpointRestoreRunner(t *testing.T) {
@@ -248,63 +228,43 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	require.NoError(t, err)
 
 	data := map[string]struct {
-		StartKey string
-		EndKey   string
+		RangeKey string
 		Name     string
 		Name2    string
 	}{
 		"a": {
-			StartKey: "a",
-			EndKey:   "b",
+			RangeKey: "a",
 		},
 		"A": {
-			StartKey: "A",
-			EndKey:   "B",
+			RangeKey: "A",
 		},
 		"1": {
-			StartKey: "1",
-			EndKey:   "2",
+			RangeKey: "1",
 		},
 	}
 
 	data2 := map[string]struct {
-		StartKey string
-		EndKey   string
+		RangeKey string
 		Name     string
 		Name2    string
 	}{
 		"+": {
-			StartKey: "+",
-			EndKey:   "-",
+			RangeKey: "+",
 		},
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, []rtree.Range{
-			{
-				StartKey: []byte(d.StartKey),
-				EndKey:   []byte(d.EndKey),
-			},
-		})
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, d.RangeKey)
 		require.NoError(t, err)
 	}
 
-	checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1, checkpoint.MaxChecksumTotalCost-20.0)
-	checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2, 40.0)
-	// now the checksum is flushed, because the total time cost is larger than `MaxChecksumTotalCost`
-	checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3, checkpoint.MaxChecksumTotalCost-20.0)
-	time.Sleep(6 * time.Second)
-	// the checksum has not been flushed even though after 6 seconds,
-	// because the total time cost is less than `MaxChecksumTotalCost`
-	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4, 40.0)
+	checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1)
+	checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2)
+	checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3)
+	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, []rtree.Range{
-			{
-				StartKey: []byte(d.StartKey),
-				EndKey:   []byte(d.EndKey),
-			},
-		})
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, d.RangeKey)
 		require.NoError(t, err)
 	}
 
@@ -312,16 +272,15 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 
 	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
 		require.NotNil(t, resp)
-		d, ok := data[string(resp.StartKey)]
+		d, ok := data[resp.RangeKey]
 		if !ok {
-			d, ok = data2[string(resp.StartKey)]
+			d, ok = data2[resp.RangeKey]
 			require.Equal(t, tableID, int64(2))
 			require.True(t, ok)
 		} else {
 			require.Equal(t, tableID, int64(1))
 		}
-		require.Equal(t, d.StartKey, string(resp.StartKey))
-		require.Equal(t, d.EndKey, string(resp.EndKey))
+		require.Equal(t, d.RangeKey, resp.RangeKey)
 	}
 
 	_, err = checkpoint.WalkCheckpointFileForRestore(ctx, s, cipher, taskName, checker)
@@ -334,19 +293,6 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	for i = 1; i <= 4; i++ {
 		require.Equal(t, checksum[i].Crc64xor, uint64(i))
 	}
-
-	// only 2 checksum files exists, they are t2_and__ and t4_and__
-	count := 0
-	checksumDir := fmt.Sprintf(checkpoint.CheckpointChecksumDirForRestoreFormat, taskName)
-	err = s.WalkDir(ctx, &storage.WalkOption{SubDir: checksumDir}, func(s string, i int64) error {
-		count += 1
-		if !strings.Contains(s, "t2") {
-			require.True(t, strings.Contains(s, "t4"))
-		}
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, count, 2)
 }
 
 func TestCheckpointLogRestoreRunner(t *testing.T) {
@@ -393,15 +339,6 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 			}
 		}
 	}
-
-	checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1, checkpoint.MaxChecksumTotalCost-20.0)
-	checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2, 40.0)
-	// now the checksum is flushed, because the total time cost is larger than `MaxChecksumTotalCost`
-	checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3, checkpoint.MaxChecksumTotalCost-20.0)
-	time.Sleep(6 * time.Second)
-	// the checksum has not been flushed even though after 6 seconds,
-	// because the total time cost is less than `MaxChecksumTotalCost`
-	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4, 40.0)
 
 	for k, d := range data2 {
 		for g, fs := range d {

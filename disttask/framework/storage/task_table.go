@@ -97,6 +97,7 @@ func row2GlobeTask(r chunk.Row) *proto.Task {
 		Meta:         r.GetBytes(7),
 		Concurrency:  uint64(r.GetInt64(8)),
 		Step:         r.GetInt64(9),
+		Error:        r.GetBytes(10),
 	}
 	// TODO: convert to local time.
 	task.StartTime, _ = r.GetTime(5).GoTime(time.UTC)
@@ -183,7 +184,7 @@ func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta [
 
 // GetNewGlobalTask get a new task from global task table, it's used by dispatcher only.
 func (stm *TaskManager) GetNewGlobalTask() (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
 	if err != nil {
 		return task, err
 	}
@@ -201,7 +202,7 @@ func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*p
 		return task, nil
 	}
 
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
 	if err != nil {
 		return task, err
 	}
@@ -214,7 +215,7 @@ func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*p
 
 // GetGlobalTaskByID gets the task by the global task ID.
 func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where id = %?", taskID)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where id = %?", taskID)
 	if err != nil {
 		return task, err
 	}
@@ -227,7 +228,7 @@ func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err e
 
 // GetGlobalTaskByKey gets the task by the task key
 func (stm *TaskManager) GetGlobalTaskByKey(key string) (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step from mysql.tidb_global_task where task_key = %?", key)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where task_key = %?", key)
 	if err != nil {
 		return task, err
 	}
@@ -298,6 +299,21 @@ func (stm *TaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{
 	return rs[0].GetInt64(0), nil
 }
 
+// CollectSubTaskError collects the subtask error.
+func (stm *TaskManager) CollectSubTaskError(taskID int64) ([][]byte, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select error from mysql.tidb_background_subtask where task_key = %? AND state = %?", taskID, proto.TaskStateFailed)
+	if err != nil {
+		return nil, err
+	}
+
+	subTaskErrors := make([][]byte, 0, len(rs))
+	for _, err := range rs {
+		subTaskErrors = append(subTaskErrors, err.GetBytes(0))
+	}
+
+	return subTaskErrors, nil
+}
+
 // HasSubtasksInStates checks if there are subtasks in the states.
 func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, states ...interface{}) (bool, error) {
 	args := []interface{}{tidbID, taskID}
@@ -310,9 +326,9 @@ func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, states 
 	return len(rs) > 0, nil
 }
 
-// UpdateSubtaskState updates the subtask state.
-func (stm *TaskManager) UpdateSubtaskState(id int64, state string) error {
-	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_background_subtask set state = %? where id = %?", state, id)
+// UpdateSubtaskStateAndError updates the subtask state.
+func (stm *TaskManager) UpdateSubtaskStateAndError(id int64, state string, subTaskErr string) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_background_subtask set state = %?, error = %? where id = %?", state, subTaskErr, id)
 	return err
 }
 
@@ -354,8 +370,8 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, isSubtaskRevert bool) error {
 	return stm.withNewTxn(func(se sessionctx.Context) error {
-		_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %? where id = %?",
-			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.ID)
+		_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, error = %? where id = %?",
+			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Error, gTask.ID)
 		if err != nil {
 			return err
 		}
@@ -382,4 +398,25 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 
 		return nil
 	})
+}
+
+// CancelGlobalTask cancels global task
+func (stm *TaskManager) CancelGlobalTask(taskID int64) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_global_task set state=%? where id=%? and state in (%?, %?)",
+		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
+	)
+	return err
+}
+
+// IsGlobalTaskCancelling checks whether the task state is cancelling
+func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_global_task where id=%? and state = %?",
+		taskID, proto.TaskStateCancelling,
+	)
+
+	if err != nil {
+		return false, err
+	}
+
+	return len(rs) > 0, nil
 }

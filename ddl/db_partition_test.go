@@ -2086,6 +2086,79 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("2 11 11", "12 12 12"))
 }
 
+func TestGlobalIndexReaderInDropPartition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+
+	var indexScanResult *testkit.Result
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+
+			indexScanResult = tk1.MustQuery("select b from test_global use index(idx_b)").Sort()
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("alter table test_global drop partition p1")
+
+	indexScanResult.Check(testkit.Rows("11", "12"))
+}
+
+func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+
+	var indexLookupResult *testkit.Result
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			tk1.MustExec("analyze table test_global")
+			indexLookupResult = tk1.MustQuery("select * from test_global use index(idx_b)").Sort()
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("alter table test_global drop partition p1")
+
+	indexLookupResult.Check(testkit.Rows("11 11 11", "12 12 12"))
+}
+
 func TestAlterTableExchangePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2682,6 +2755,7 @@ func TestTiDBEnableExchangePartition(t *testing.T) {
         PARTITION p2 values less than (9)
 		);`)
 	// default
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec(`create table nt(a int primary key auto_increment);`)
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
@@ -2689,12 +2763,14 @@ func TestTiDBEnableExchangePartition(t *testing.T) {
 	// set tidb_enable_exchange_partition = 0
 	tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 
 	// set tidb_enable_exchange_partition = 1
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
@@ -4213,10 +4289,10 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 			time.Sleep(30 * time.Millisecond)
 		}
 	}
-	var errCount int32
+	var errCount atomic.Int32
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
-			atomic.AddInt32(&errCount, 1)
+			errCount.Add(1)
 		}
 	}
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -4226,7 +4302,7 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 	go backgroundExec(store, "test", "alter table test.t truncate partition p0;", done2)
 	<-done1
 	<-done2
-	require.LessOrEqual(t, errCount, int32(1))
+	require.LessOrEqual(t, errCount.Load(), int32(1))
 }
 
 func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
