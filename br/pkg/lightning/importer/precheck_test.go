@@ -18,33 +18,34 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPrecheckBuilderBasic(t *testing.T) {
 	var err error
-	mockSrc, err := mock.NewMockImportSource(nil)
+	mockSrc, err := mock.NewImportSource(nil)
 	require.NoError(t, err)
-	mockTarget := mock.NewMockTargetInfo()
+	mockTarget := mock.NewTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 
 	preInfoGetter, err := NewPreImportInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
 	require.NoError(t, err)
 	theCheckBuilder := NewPrecheckItemBuilder(cfg, mockSrc.GetAllDBFileMetas(), preInfoGetter, nil)
-	for _, checkItemID := range []CheckItemID{
-		CheckLargeDataFile,
-		CheckSourcePermission,
-		CheckTargetTableEmpty,
-		CheckSourceSchemaValid,
-		CheckCheckpoints,
-		CheckCSVHeader,
-		CheckTargetClusterSize,
-		CheckTargetClusterEmptyRegion,
-		CheckTargetClusterRegionDist,
-		CheckTargetClusterVersion,
-		CheckLocalDiskPlacement,
-		CheckLocalTempKVDir,
+	for _, checkItemID := range []precheck.CheckItemID{
+		precheck.CheckLargeDataFile,
+		precheck.CheckSourcePermission,
+		precheck.CheckTargetTableEmpty,
+		precheck.CheckSourceSchemaValid,
+		precheck.CheckCheckpoints,
+		precheck.CheckCSVHeader,
+		precheck.CheckTargetClusterSize,
+		precheck.CheckTargetClusterEmptyRegion,
+		precheck.CheckTargetClusterRegionDist,
+		precheck.CheckTargetClusterVersion,
+		precheck.CheckLocalDiskPlacement,
+		precheck.CheckLocalTempKVDir,
 	} {
 		theChecker, err := theCheckBuilder.BuildPrecheckItem(checkItemID)
 		require.NoError(t, err)

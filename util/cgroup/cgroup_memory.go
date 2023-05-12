@@ -60,14 +60,20 @@ func getCgroupMemInactiveFileUsage(root string) (usage uint64, err error) {
 	if err != nil {
 		return 0, err
 	}
-
-	switch ver {
-	case 1:
-		usage, err = detectMemInactiveFileUsageInV1(filepath.Join(root, mount))
-	case 2:
-		usage, err = detectMemInactiveFileUsageInV2(filepath.Join(root, mount, path))
-	default:
-		usage, err = 0, fmt.Errorf("detected unknown cgroup version index: %d", ver)
+	if len(mount) == 2 {
+		usage, err = detectMemInactiveFileUsageInV1(filepath.Join(root, mount[0]))
+		if err != nil {
+			usage, err = detectMemInactiveFileUsageInV2(filepath.Join(root, mount[1], path))
+		}
+	} else {
+		switch ver[0] {
+		case 1:
+			usage, err = detectMemInactiveFileUsageInV1(filepath.Join(root, mount[0]))
+		case 2:
+			usage, err = detectMemInactiveFileUsageInV2(filepath.Join(root, mount[0], path))
+		default:
+			usage, err = 0, fmt.Errorf("detected unknown cgroup version index: %d", ver)
+		}
 	}
 
 	return usage, err
@@ -90,15 +96,22 @@ func getCgroupMemUsage(root string) (usage uint64, err error) {
 		return 0, err
 	}
 
-	switch ver {
-	case 1:
-		// cgroupv1
-		usage, err = detectMemUsageInV1(filepath.Join(root, mount))
-	case 2:
-		// cgroupv2
-		usage, err = detectMemUsageInV2(filepath.Join(root, mount, path))
-	default:
-		usage, err = 0, fmt.Errorf("detected unknown cgroup version index: %d", ver)
+	if len(ver) == 2 {
+		usage, err = detectMemUsageInV1(filepath.Join(root, mount[0]))
+		if err != nil {
+			usage, err = detectMemUsageInV2(filepath.Join(root, mount[0], path))
+		}
+	} else {
+		switch ver[0] {
+		case 1:
+			// cgroupv1
+			usage, err = detectMemUsageInV1(filepath.Join(root, mount[0]))
+		case 2:
+			// cgroupv2
+			usage, err = detectMemUsageInV2(filepath.Join(root, mount[0], path))
+		default:
+			usage, err = 0, fmt.Errorf("detected unknown cgroup version index: %d", ver)
+		}
 	}
 
 	return usage, err
@@ -121,15 +134,22 @@ func getCgroupMemLimit(root string) (limit uint64, err error) {
 		return 0, err
 	}
 
-	switch ver {
-	case 1:
-		// cgroupv1
-		limit, err = detectMemLimitInV1(filepath.Join(root, mount))
-	case 2:
-		// cgroupv2
-		limit, err = detectMemLimitInV2(filepath.Join(root, mount, path))
-	default:
-		limit, err = 0, fmt.Errorf("detected unknown cgroup version index: %d", ver)
+	if len(ver) == 2 {
+		limit, err = detectMemLimitInV1(filepath.Join(root, mount[0]))
+		if err != nil {
+			limit, err = detectMemLimitInV2(filepath.Join(root, mount[1], path))
+		}
+	} else {
+		switch ver[0] {
+		case 1:
+			// cgroupv1
+			limit, err = detectMemLimitInV1(filepath.Join(root, mount[0]))
+		case 2:
+			// cgroupv2
+			limit, err = detectMemLimitInV2(filepath.Join(root, mount[0], path))
+		default:
+			limit, err = 0, fmt.Errorf("detected unknown cgroup version index: %d", ver)
+		}
 	}
 
 	return limit, err

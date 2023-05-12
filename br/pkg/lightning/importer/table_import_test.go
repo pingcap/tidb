@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -36,19 +37,20 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/noop"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	restoremock "github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
@@ -62,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbutil"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/promutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
@@ -69,45 +72,70 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+const (
+	tiflashReplica1 = 1
+	tiflashReplica2 = 2
+	tblSize         = 222
+)
+
 type tableRestoreSuiteBase struct {
 	tr  *TableImporter
 	cfg *config.Config
 
-	tableInfo *checkpoints.TidbTableInfo
-	dbInfo    *checkpoints.TidbDBInfo
-	tableMeta *mydump.MDTableMeta
+	tableInfo  *checkpoints.TidbTableInfo
+	dbInfo     *checkpoints.TidbDBInfo
+	tableMeta  *mydump.MDTableMeta
+	tableMeta2 *mydump.MDTableMeta
 
 	store storage.ExternalStorage
 }
 
-func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
-	web.EnableCurrentProgress()
-	// Produce a mock table info
-
+func mockTiflashTableInfo(t *testing.T, sql string, replica uint64) *model.TableInfo {
 	p := parser.New()
 	p.SetSQLMode(mysql.ModeANSIQuotes)
 	se := tmock.NewContext()
-	node, err := p.ParseOneStmt(`
-	CREATE TABLE "table" (
+	node, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
+	require.NoError(t, err)
+	core.State = model.StatePublic
+	core.TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     replica,
+		Available: true,
+	}
+
+	return core
+}
+
+func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
+	web.EnableCurrentProgress()
+
+	core := mockTiflashTableInfo(t, `CREATE TABLE "table" (
 		a INT,
 		b INT,
 		c INT,
 		KEY (b)
 	)
-`, "", "")
-	require.NoError(t, err)
-	core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
-	require.NoError(t, err)
-	core.State = model.StatePublic
+`, tiflashReplica1)
+
+	core2 := mockTiflashTableInfo(t, `CREATE TABLE "table" (
+	a INT,
+	b INT,
+	c INT,
+	KEY (b)
+)
+`, tiflashReplica2)
 
 	s.tableInfo = &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
 	s.dbInfo = &checkpoints.TidbDBInfo{
-		Name:   "db",
-		Tables: map[string]*checkpoints.TidbTableInfo{"table": s.tableInfo},
+		Name: "db",
+		Tables: map[string]*checkpoints.TidbTableInfo{
+			"table":  s.tableInfo,
+			"table2": {Name: "table2", DB: "db", Core: core2},
+		},
 	}
 
 	// Write some sample SQL dump
-
 	fakeDataDir := t.TempDir()
 	store, err := storage.NewLocalStorage(fakeDataDir)
 	require.NoError(t, err)
@@ -152,7 +180,21 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 	s.tableMeta = &mydump.MDTableMeta{
 		DB:        "db",
 		Name:      "table",
-		TotalSize: 222,
+		TotalSize: tblSize,
+		SchemaFile: mydump.FileInfo{
+			TableName: filter.Table{Schema: "db", Name: "table"},
+			FileMeta: mydump.SourceFileMeta{
+				Path: "db.table-schema.sql",
+				Type: mydump.SourceTypeTableSchema,
+			},
+		},
+		DataFiles: fakeDataFiles,
+	}
+
+	s.tableMeta2 = &mydump.MDTableMeta{
+		DB:        "db",
+		Name:      "table2",
+		TotalSize: tblSize,
 		SchemaFile: mydump.FileInfo{
 			TableName: filter.Table{Schema: "db", Name: "table"},
 			FileMeta: mydump.SourceFileMeta{
@@ -319,7 +361,9 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 
 type errorLocalWriter struct{}
 
-func (w errorLocalWriter) AppendRows(context.Context, string, []string, kv.Rows) error {
+var _ backend.EngineWriter = (*errorLocalWriter)(nil)
+
+func (w errorLocalWriter) AppendRows(context.Context, []string, encode.Rows) error {
 	return errors.New("mock write rows failed")
 }
 
@@ -335,15 +379,18 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	ctx := context.Background()
 	ctrl := gomock.NewController(s.T())
 	mockBackend := mock.NewMockBackend(ctrl)
+	mockEncBuilder := mock.NewMockEncodingBuilder(ctrl)
 	rc := &Controller{
 		cfg:            s.cfg,
 		pauser:         DeliverPauser,
 		ioWorkers:      worker.NewPool(ctx, 1, "io"),
 		regionWorkers:  worker.NewPool(ctx, 10, "region"),
 		store:          s.store,
-		backend:        backend.MakeBackend(mockBackend),
+		engineMgr:      backend.MakeEngineManager(mockBackend),
+		backend:        mockBackend,
 		errorSummaries: makeErrorSummaries(log.L()),
 		saveCpCh:       make(chan saveCp, 1),
+		encBuilder:     mockEncBuilder,
 	}
 	defer close(rc.saveCpCh)
 	go func() {
@@ -358,22 +405,29 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	err := s.tr.populateChunks(ctx, rc, cp)
 	require.NoError(s.T(), err)
 
+	mockChunkFlushStatus := mock.NewMockChunkFlushStatus(ctrl)
+	mockChunkFlushStatus.EXPECT().Flushed().Return(true).AnyTimes()
+	mockEngineWriter := mock.NewMockEngineWriter(ctrl)
+	mockEngineWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockEngineWriter.EXPECT().IsSynced().Return(true).AnyTimes()
+	mockEngineWriter.EXPECT().Close(gomock.Any()).Return(mockChunkFlushStatus, nil).AnyTimes()
+
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), s.tableInfo.Core)
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
-	realBackend := tidb.NewTiDBBackend(ctx, nil, "replace", nil)
+	realEncBuilder := tidb.NewEncodingBuilder()
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(realBackend.NewEncoder(ctx, tbl, &kv.SessionOptions{})).
+	mockEncBuilder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
+		Return(realEncBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: tbl})).
 		AnyTimes()
-	mockBackend.EXPECT().MakeEmptyRows().Return(realBackend.MakeEmptyRows()).AnyTimes()
-	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(noop.Writer{}, nil)
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(realEncBuilder.MakeEmptyRows()).AnyTimes()
+	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(mockEngineWriter, nil)
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).
 		Return(nil, errors.New("mock open index local writer failed"))
-	openedIdxEngine, err := rc.backend.OpenEngine(ctx, nil, "`db`.`table`", -1)
+	openedIdxEngine, err := rc.engineMgr.OpenEngine(ctx, nil, "`db`.`table`", -1)
 	require.NoError(s.T(), err)
 
 	// open the first engine meet error, should directly return the error
@@ -386,7 +440,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 		case <-ctx.Done():
 			return nil, errors.New("mock open index local writer failed after ctx.Done")
 		default:
-			return noop.Writer{}, nil
+			return mockEngineWriter, nil
 		}
 	}
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
@@ -395,7 +449,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).
 		DoAndReturn(localWriter).AnyTimes()
 
-	openedIdxEngine, err = rc.backend.OpenEngine(ctx, nil, "`db`.`table`", -1)
+	openedIdxEngine, err = rc.engineMgr.OpenEngine(ctx, nil, "`db`.`table`", -1)
 	require.NoError(s.T(), err)
 
 	// open engine failed after write rows failed, should return write rows error
@@ -721,6 +775,12 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 	}
 }
 
+func MockDoChecksumCtx(db *sql.DB) context.Context {
+	ctx := context.Background()
+	manager := local.NewTiDBChecksumExecutor(db)
+	return context.WithValue(ctx, &checksumManagerKey, manager)
+}
+
 func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
 	db, mock, err := sqlmock.New()
 	require.NoError(s.T(), err)
@@ -794,10 +854,8 @@ func (s *tableRestoreSuite) TestAnalyzeTable() {
 	mock.ExpectClose()
 
 	ctx := context.Background()
-	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	require.NoError(s.T(), err)
-	g := glue.NewExternalTiDBGlue(db, defaultSQLMode)
-	err = s.tr.analyzeTable(ctx, g)
+	err = s.tr.analyzeTable(ctx, db)
 	require.NoError(s.T(), err)
 }
 
@@ -805,7 +863,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
-	importer := backend.MakeBackend(mockBackend)
+	importer := backend.MakeEngineManager(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
 	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
@@ -830,9 +888,9 @@ func (s *tableRestoreSuite) TestImportKVSuccess() {
 		CleanupEngine(ctx, engineUUID).
 		Return(nil)
 
-	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
+	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID, 0)
 	require.NoError(s.T(), err)
-	err = s.tr.importKV(ctx, closedEngine, rc, 1)
+	err = s.tr.importKV(ctx, closedEngine, rc)
 	require.NoError(s.T(), err)
 }
 
@@ -840,7 +898,7 @@ func (s *tableRestoreSuite) TestImportKVFailure() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
-	importer := backend.MakeBackend(mockBackend)
+	importer := backend.MakeEngineManager(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
 	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
@@ -862,9 +920,9 @@ func (s *tableRestoreSuite) TestImportKVFailure() {
 		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
-	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
+	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID, 0)
 	require.NoError(s.T(), err)
-	err = s.tr.importKV(ctx, closedEngine, rc, 1)
+	err = s.tr.importKV(ctx, closedEngine, rc)
 	require.Regexp(s.T(), "fake import error.*", err.Error())
 }
 
@@ -900,7 +958,6 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	require.NoError(s.T(), err)
 
 	cpDB := checkpoints.NewNullCheckpointsDB()
-	g := mock.NewMockGlue(controller)
 	dbMetas := []*mydump.MDDatabaseMeta{
 		{
 			Name:   s.tableInfo.DB,
@@ -909,8 +966,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	}
 	ioWorkers := worker.NewPool(ctx, 5, "io")
 	targetInfoGetter := &TargetInfoGetterImpl{
-		cfg:          cfg,
-		targetDBGlue: g,
+		cfg: cfg,
 	}
 	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              cfg,
@@ -923,6 +979,22 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	dbInfos := map[string]*checkpoints.TidbDBInfo{
 		s.tableInfo.DB: s.dbInfo,
 	}
+	mockChunkFlushStatus := mock.NewMockChunkFlushStatus(controller)
+	mockChunkFlushStatus.EXPECT().Flushed().Return(true).AnyTimes()
+	mockEngineWriter := mock.NewMockEngineWriter(controller)
+	mockEngineWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockEngineWriter.EXPECT().IsSynced().Return(true).AnyTimes()
+	mockEngineWriter.EXPECT().Close(gomock.Any()).Return(mockChunkFlushStatus, nil).AnyTimes()
+	backendObj := mock.NewMockBackend(controller)
+	backendObj.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	backendObj.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	backendObj.EXPECT().ImportEngine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	backendObj.EXPECT().CleanupEngine(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	backendObj.EXPECT().ShouldPostProcess().Return(false).AnyTimes()
+	backendObj.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockEngineWriter, nil).AnyTimes()
+	db, sqlMock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+
 	rc := &Controller{
 		cfg:               cfg,
 		dbMetas:           dbMetas,
@@ -934,8 +1006,9 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		checksumWorks:     worker.NewPool(ctx, 2, "region"),
 		saveCpCh:          chptCh,
 		pauser:            DeliverPauser,
-		backend:           noop.NewNoopBackend(),
-		tidbGlue:          g,
+		engineMgr:         backend.MakeEngineManager(backendObj),
+		backend:           backendObj,
+		db:                db,
 		errorSummaries:    makeErrorSummaries(log.L()),
 		tls:               tls,
 		checkpointsDB:     cpDB,
@@ -945,6 +1018,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		errorMgr:          errormanager.New(nil, cfg, log.L()),
 		taskMgr:           noopTaskMetaMgr{},
 		preInfoGetter:     preInfoGetter,
+		encBuilder:        tidb.NewEncodingBuilder(),
 	}
 	go func() {
 		for scp := range chptCh {
@@ -953,9 +1027,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 			}
 		}
 	}()
-	db, sqlMock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	g.EXPECT().GetDB().Return(db, nil).AnyTimes()
+
 	sqlMock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).
 		AddRow("Release Version: v5.2.1\nEdition: Community\n"))
 
@@ -999,13 +1071,13 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 
 	rc.errorSummaries = makeErrorSummaries(log.L())
 
-	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), common.IndexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
 
 	err = rc.saveStatusCheckpoint(
 		context.Background(),
-		common.UniqueTable("test", "tbl"), indexEngineID,
+		common.UniqueTable("test", "tbl"), common.IndexEngineID,
 		common.ErrChecksumMismatch.GenWithStackByArgs(0, 0, 0, 0, 0, 0),
 		checkpoints.CheckpointStatusImported,
 	)
@@ -1013,7 +1085,7 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 	require.Equal(s.T(), 1, len(rc.errorSummaries.summary))
 
 	start := time.Now()
-	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
+	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), common.IndexEngineID, nil, checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	elapsed := time.Since(start)
 	require.GreaterOrEqual(s.T(), elapsed, time.Millisecond*100)
@@ -1047,7 +1119,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster available is rich(.*)",
+			"(.*)The storage space is rich(.*)",
 			true,
 			0,
 		},
@@ -1068,7 +1140,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster doesn't have enough space(.*)",
+			"(.*)Please increase storage(.*)",
 			true,
 			0,
 		},
@@ -1136,7 +1208,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 		err = rc.clusterResource(ctx)
 		require.NoError(s.T(), err)
 
-		require.Equal(s.T(), ca.expectErrorCount, template.FailedCount(Critical))
+		require.Equal(s.T(), ca.expectErrorCount, template.FailedCount(precheck.Critical))
 		require.Equal(s.T(), ca.expectResult, template.Success())
 		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
 
@@ -1163,7 +1235,6 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		stores         pdtypes.StoresInfo
 		emptyRegions   pdtypes.RegionsInfo
 		expectMsgs     []string
-		expectResult   bool
 		expectErrorCnt int
 	}
 
@@ -1184,7 +1255,6 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				Regions: append([]pdtypes.RegionInfo(nil), makeRegions(100, 1)...),
 			},
 			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
-			expectResult:   true,
 			expectErrorCnt: 0,
 		},
 		{
@@ -1204,8 +1274,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				".*TiKV stores \\(1\\) contains more than 500 empty regions respectively.*",
 				".*Region distribution is unbalanced.*but we expect it should not be less than 0.75.*",
 			},
-			expectResult:   true,
-			expectErrorCnt: 0,
+			expectErrorCnt: 1, // empty region too large
 		},
 		{
 			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
@@ -1214,7 +1283,6 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
-			expectResult:   false,
 			expectErrorCnt: 1,
 		},
 		{
@@ -1224,7 +1292,6 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
-			expectResult:   false,
 			expectErrorCnt: 1,
 		},
 	}
@@ -1235,7 +1302,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		return data
 	}
 
-	for _, ca := range testCases {
+	for i, ca := range testCases {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			var err error
 			if req.URL.Path == pdStores {
@@ -1279,8 +1346,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		ctx := context.Background()
 		err := rc.checkClusterRegion(ctx)
 		require.NoError(s.T(), err)
-		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(Critical))
-		require.Equal(s.T(), ca.expectResult, template.Success())
+		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(precheck.Warn), fmt.Sprintf("case %d", i))
 
 		for _, expectMsg := range ca.expectMsgs {
 			require.Regexp(s.T(), expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
@@ -1369,7 +1435,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 			precheckItemBuilder: theCheckBuilder,
 		}
 		rc.HasLargeCSV(ctx)
-		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(Warn))
+		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(precheck.Warn))
 		require.Equal(s.T(), ca.expectResult, template.Success())
 		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
 	}
@@ -1379,70 +1445,71 @@ func (s *tableRestoreSuite) TestEstimate() {
 	ctx := context.Background()
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockBackend := mock.NewMockBackend(controller)
+	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
 	require.NoError(s.T(), err)
 
-	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
-		SQLMode:        s.cfg.TiDB.SQLMode,
-		Timestamp:      0,
-		AutoRandomSeed: 0,
-	}, nil, log.L())).AnyTimes()
-	importer := backend.MakeBackend(mockBackend)
-	s.cfg.TikvImporter.Backend = config.BackendLocal
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+	mockEncBuilder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:        s.cfg.TiDB.SQLMode,
+			Timestamp:      0,
+			AutoRandomSeed: 0,
+		},
+		Logger: log.L(),
+	}, nil)).AnyTimes()
 
-	template := NewSimpleTemplate()
 	dbMetas := []*mydump.MDDatabaseMeta{
 		{
 			Name:   "db1",
-			Tables: []*mydump.MDTableMeta{s.tableMeta},
+			Tables: []*mydump.MDTableMeta{s.tableMeta, s.tableMeta2},
 		},
 	}
 	dbInfos := map[string]*checkpoints.TidbDBInfo{
 		"db1": s.dbInfo,
 	}
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
-	mockTarget := restoremock.NewMockTargetInfo()
+	mockTarget := restoremock.NewTargetInfo()
 
 	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              s.cfg,
 		srcStorage:       s.store,
-		encBuilder:       importer,
+		encBuilder:       mockEncBuilder,
 		ioWorkers:        ioWorkers,
 		dbMetas:          dbMetas,
 		targetInfoGetter: mockTarget,
 	}
 	preInfoGetter.Init()
-	theCheckBuilder := NewPrecheckItemBuilder(s.cfg, dbMetas, preInfoGetter, nil)
-	rc := &Controller{
-		cfg:                 s.cfg,
-		checkTemplate:       template,
-		store:               s.store,
-		backend:             importer,
-		dbMetas:             dbMetas,
-		dbInfos:             dbInfos,
-		ioWorkers:           ioWorkers,
-		preInfoGetter:       preInfoGetter,
-		precheckItemBuilder: theCheckBuilder,
-	}
+
+	preInfoGetter.cfg.TikvImporter.Backend = config.BackendLocal
 	preInfoGetter.dbInfosCache = dbInfos
 	estimateResult, err := preInfoGetter.EstimateSourceDataSize(ctx)
 	s.Require().NoError(err)
-	source := estimateResult.SizeWithIndex
+
 	// Because this file is small than region split size so we does not sample it.
-	s.Require().Equal(s.tableMeta.TotalSize, source)
+	tikvExpected := 2 * int64(compressionRatio*float64(tblSize))
+	s.Require().Equal(tikvExpected, estimateResult.SizeWithIndex)
+	tiflashExpected := int64(compressionRatio * float64(tblSize) * float64(tiflashReplica1+tiflashReplica2))
+	s.Require().Equal(tiflashExpected, estimateResult.TiFlashSize)
+
 	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
+	tikvExpected = int64(compressionRatio * float64(config.SplitRegionSize+tblSize))
 	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
 	s.Require().NoError(err)
-	source = estimateResult.SizeWithIndex
-	s.Require().Greater(source, s.tableMeta.TotalSize)
-	rc.cfg.TikvImporter.Backend = config.BackendTiDB
+	s.Require().Greater(estimateResult.SizeWithIndex, tikvExpected)
+	tiflashExpected = int64(compressionRatio * (float64(config.SplitRegionSize*tiflashReplica1) + float64(tblSize*tiflashReplica2)))
+	s.Require().Greater(estimateResult.TiFlashSize, tiflashExpected)
+
+	// tidb backend don't compress
+	preInfoGetter.cfg.TikvImporter.Backend = config.BackendTiDB
 	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
 	s.Require().NoError(err)
-	source = estimateResult.SizeWithIndex
-	s.Require().Equal(s.tableMeta.TotalSize, source)
+	tikvExpected = int64((int(config.SplitRegionSize) + tblSize))
+	s.Require().Equal(tikvExpected, estimateResult.SizeWithIndex)
+	tiflashExpected = int64(config.SplitRegionSize*tiflashReplica1 + tblSize*tiflashReplica2)
+	s.Require().Equal(tiflashExpected, estimateResult.TiFlashSize)
 }
 
 func (s *tableRestoreSuite) TestSchemaIsValid() {
@@ -2230,4 +2297,193 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	}, dbInfos)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), msgs, 0)
+}
+
+func TestBuildAddIndexSQL(t *testing.T) {
+	tests := []struct {
+		table     string
+		current   string
+		desired   string
+		singleSQL string
+		multiSQLs []string
+	}{
+		{
+			table:     "`test`.`non_pk_auto_inc`",
+			current:   "CREATE TABLE `non_pk_auto_inc` (`pk` varchar(255), `id` int(11) NOT NULL AUTO_INCREMENT, UNIQUE KEY uniq_id (`id`))",
+			desired:   "CREATE TABLE `non_pk_auto_inc` (`pk` varchar(255) PRIMARY KEY NONCLUSTERED, `id` int(11) NOT NULL AUTO_INCREMENT, UNIQUE KEY uniq_id (`id`))",
+			singleSQL: "ALTER TABLE `test`.`non_pk_auto_inc` ADD PRIMARY KEY (`pk`)",
+			multiSQLs: []string{"ALTER TABLE `test`.`non_pk_auto_inc` ADD PRIMARY KEY (`pk`)"},
+		},
+		{
+			table: "`test`.`multi_indexes`",
+			current: `
+CREATE TABLE multi_indexes (
+    c1 bigint PRIMARY KEY CLUSTERED,
+    c2 varchar(255) NOT NULL,
+    c3 varchar(255) NOT NULL,
+    c4 varchar(255) NOT NULL,
+    c5 varchar(255) NOT NULL,
+    c6 varchar(255) NOT NULL,
+    c7 varchar(255) NOT NULL,
+    c8 varchar(255) NOT NULL,
+    c9 varchar(255) NOT NULL,
+    c10 varchar(255) NOT NULL,
+    c11 varchar(255) NOT NULL
+)
+`,
+			desired: `
+CREATE TABLE multi_indexes (
+    c1 bigint PRIMARY KEY CLUSTERED,
+    c2 varchar(255) NOT NULL UNIQUE KEY,
+    c3 varchar(255) NOT NULL,
+    c4 varchar(255) NOT NULL,
+    c5 varchar(255) NOT NULL,
+    c6 varchar(255) NOT NULL,
+    c7 varchar(255) NOT NULL,
+    c8 varchar(255) NOT NULL,
+    c9 varchar(255) NOT NULL,
+    c10 varchar(255) NOT NULL,
+    c11 varchar(255) NOT NULL,
+    INDEX idx_c2 (c2) COMMENT 'single column index',
+    INDEX idx_c2_c3(c2, c3) COMMENT 'multiple column index',
+    UNIQUE KEY uniq_c4 (c4) COMMENT 'single column unique key',
+    UNIQUE KEY uniq_c4_c5 (c4, c5) COMMENT 'multiple column unique key',
+    INDEX idx_c6 (c6 ASC)  COMMENT 'single column index with asc order',
+    INDEX idx_c7 (c7 DESC) COMMENT 'single column index with desc order',
+    INDEX idx_c6_c7 (c6 ASC, c7 DESC) COMMENT 'multiple column index with asc and desc order',
+    INDEX idx_c8 (c8) VISIBLE COMMENT 'single column index with visible',
+    INDEX idx_c9 (c9) INVISIBLE COMMENT 'single column index with invisible',
+    INDEX idx_lower_c10 ((lower(c10))) COMMENT 'single column index with function',
+    INDEX idx_prefix_c11 (c11(3)) COMMENT 'single column index with prefix'
+);`,
+			singleSQL: "ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2`(`c2`) COMMENT 'single column index', ADD KEY `idx_c2_c3`(`c2`,`c3`) COMMENT 'multiple column index', ADD UNIQUE KEY `uniq_c4`(`c4`) COMMENT 'single column unique key', ADD UNIQUE KEY `uniq_c4_c5`(`c4`,`c5`) COMMENT 'multiple column unique key', ADD KEY `idx_c6`(`c6`) COMMENT 'single column index with asc order', ADD KEY `idx_c7`(`c7`) COMMENT 'single column index with desc order', ADD KEY `idx_c6_c7`(`c6`,`c7`) COMMENT 'multiple column index with asc and desc order', ADD KEY `idx_c8`(`c8`) COMMENT 'single column index with visible', ADD KEY `idx_c9`(`c9`) INVISIBLE COMMENT 'single column index with invisible', ADD KEY `idx_lower_c10`((lower(`c10`))) COMMENT 'single column index with function', ADD KEY `idx_prefix_c11`(`c11`(3)) COMMENT 'single column index with prefix', ADD UNIQUE KEY `c2`(`c2`)",
+			multiSQLs: []string{
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2`(`c2`) COMMENT 'single column index'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2_c3`(`c2`,`c3`) COMMENT 'multiple column index'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `uniq_c4`(`c4`) COMMENT 'single column unique key'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `uniq_c4_c5`(`c4`,`c5`) COMMENT 'multiple column unique key'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c6`(`c6`) COMMENT 'single column index with asc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c7`(`c7`) COMMENT 'single column index with desc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c6_c7`(`c6`,`c7`) COMMENT 'multiple column index with asc and desc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c8`(`c8`) COMMENT 'single column index with visible'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c9`(`c9`) INVISIBLE COMMENT 'single column index with invisible'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_lower_c10`((lower(`c10`))) COMMENT 'single column index with function'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_prefix_c11`(`c11`(3)) COMMENT 'single column index with prefix'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `c2`(`c2`)",
+			},
+		}}
+
+	p := parser.New()
+
+	for _, tt := range tests {
+		curTblInfo, err := dbutil.GetTableInfoBySQL(tt.current, p)
+		require.NoError(t, err)
+		desiredTblInfo, err := dbutil.GetTableInfoBySQL(tt.desired, p)
+		require.NoError(t, err)
+
+		singleSQL, multiSQLs := buildAddIndexSQL(tt.table, curTblInfo, desiredTblInfo)
+		require.Equal(t, tt.singleSQL, singleSQL)
+		require.Equal(t, tt.multiSQLs, multiSQLs)
+	}
+}
+
+func TestGetDDLStatus(t *testing.T) {
+	const adminShowDDLJobQueries = "ADMIN SHOW DDL JOB QUERIES LIMIT 30"
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+
+	// test 1
+	mock.ExpectQuery(adminShowDDLJobQueries).WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "QUERY"}).
+		AddRow(61, "ALTER TABLE many_tables_test.t6 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(60, "ALTER TABLE many_tables_test.t5 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(59, "ALTER TABLE many_tables_test.t4 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(58, "ALTER TABLE many_tables_test.t3 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(57, "ALTER TABLE many_tables_test.t2 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(56, "ALTER TABLE many_tables_test.t1 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(55, "CREATE TABLE IF NOT EXISTS many_tables_test.t6(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(54, "CREATE TABLE IF NOT EXISTS many_tables_test.t5(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(53, "CREATE TABLE IF NOT EXISTS many_tables_test.t4(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(52, "CREATE TABLE IF NOT EXISTS many_tables_test.t3(i TINYINT, j INT UNIQUE KEY)"))
+
+	mock.ExpectQuery("ADMIN SHOW DDL JOBS 30 WHERE job_id = 61").
+		WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "DB_NAME", "TABLE_NAME", "JOB_TYPE", "SCHEMA_STATE", "SCHEMA_ID", "TABLE_ID", "ROW_COUNT", "CREATE_TIME", "START_TIME", "END_TIME", "STATE"}).
+			AddRow(61, "many_tables_test", "t6", "alter table", "public", 1, 61, 123, "2022-08-02 2:51:39", "2022-08-02 2:51:39", nil, "running"))
+
+	createTime, err := time.Parse(time.DateTime, "2022-08-02 2:51:38")
+	require.NoError(t, err)
+	status, err := getDDLStatus(context.Background(), db, "ALTER TABLE many_tables_test.t6 ADD x timestamp DEFAULT current_timestamp", createTime)
+	require.NoError(t, err)
+	require.Equal(t, model.JobStateRunning, status.state)
+	require.Equal(t, int64(123), status.rowCount)
+
+	// test 2
+	// ddl query is matched, but job is created before the ddl query
+	mock.ExpectQuery(adminShowDDLJobQueries).WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "QUERY"}).
+		AddRow(61, "ALTER TABLE many_tables_test.t6 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(60, "ALTER TABLE many_tables_test.t5 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(59, "ALTER TABLE many_tables_test.t4 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(58, "ALTER TABLE many_tables_test.t3 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(57, "ALTER TABLE many_tables_test.t2 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(56, "ALTER TABLE many_tables_test.t1 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(55, "CREATE TABLE IF NOT EXISTS many_tables_test.t6(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(54, "CREATE TABLE IF NOT EXISTS many_tables_test.t5(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(53, "CREATE TABLE IF NOT EXISTS many_tables_test.t4(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(52, "CREATE TABLE IF NOT EXISTS many_tables_test.t3(i TINYINT, j INT UNIQUE KEY)"))
+
+	mock.ExpectQuery("ADMIN SHOW DDL JOBS 30 WHERE job_id = 59").
+		WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "DB_NAME", "TABLE_NAME", "JOB_TYPE", "SCHEMA_STATE", "SCHEMA_ID", "TABLE_ID", "ROW_COUNT", "CREATE_TIME", "START_TIME", "END_TIME", "STATE"}).
+			AddRow(59, "many_tables_test", "t4", "alter table", "public", 1, 59, 0, "2022-08-02 2:50:37", "2022-08-02 2:50:37", nil, "none"))
+
+	createTime, err = time.Parse(time.DateTime, "2022-08-02 2:50:38")
+	require.NoError(t, err)
+	status, err = getDDLStatus(context.Background(), db, "ALTER TABLE many_tables_test.t4 ADD x timestamp DEFAULT current_timestamp", createTime)
+	require.NoError(t, err)
+	require.Nil(t, status)
+
+	// test 3
+	// ddl query is not matched
+	mock.ExpectQuery(adminShowDDLJobQueries).WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "QUERY"}).
+		AddRow(61, "ALTER TABLE many_tables_test.t6 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(60, "ALTER TABLE many_tables_test.t5 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(59, "ALTER TABLE many_tables_test.t4 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(58, "ALTER TABLE many_tables_test.t3 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(57, "ALTER TABLE many_tables_test.t2 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(56, "ALTER TABLE many_tables_test.t1 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(55, "CREATE TABLE IF NOT EXISTS many_tables_test.t6(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(54, "CREATE TABLE IF NOT EXISTS many_tables_test.t5(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(53, "CREATE TABLE IF NOT EXISTS many_tables_test.t4(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(52, "CREATE TABLE IF NOT EXISTS many_tables_test.t3(i TINYINT, j INT UNIQUE KEY)"))
+
+	createTime, err = time.Parse(time.DateTime, "2022-08-03 12:35:00")
+	require.NoError(t, err)
+	status, err = getDDLStatus(context.Background(), db, "CREATE TABLE IF NOT EXISTS many_tables_test.t7(i TINYINT, j INT UNIQUE KEY)", createTime)
+	require.NoError(t, err)
+	require.Nil(t, status) // DDL does not exist
+
+	// test 5
+	// multi-schema change tests
+	mock.ExpectQuery(adminShowDDLJobQueries).WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "QUERY"}).
+		AddRow(59, "ALTER TABLE many_tables_test.t4 ADD y INT, ADD z INT").
+		AddRow(58, "ALTER TABLE many_tables_test.t3 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(57, "ALTER TABLE many_tables_test.t2 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(56, "ALTER TABLE many_tables_test.t1 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(55, "CREATE TABLE IF NOT EXISTS many_tables_test.t6(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(54, "CREATE TABLE IF NOT EXISTS many_tables_test.t5(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(53, "CREATE TABLE IF NOT EXISTS many_tables_test.t4(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(52, "CREATE TABLE IF NOT EXISTS many_tables_test.t3(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(51, "CREATE TABLE IF NOT EXISTS many_tables_test.t2(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(50, "CREATE TABLE IF NOT EXISTS many_tables_test.t1(i TINYINT, j INT UNIQUE KEY)"))
+
+	mock.ExpectQuery("ADMIN SHOW DDL JOBS 30 WHERE job_id = 59").WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "DB_NAME", "TABLE_NAME", "JOB_TYPE", "SCHEMA_STATE", "SCHEMA_ID", "TABLE_ID", "ROW_COUNT", "CREATE_TIME", "START_TIME", "END_TIME", "STATE"}).
+		AddRow(59, "many_tables_test", "t4", "alter table multi-schema change", "public", 1, 59, 0, "2022-08-02 2:51:39", "2022-08-02 2:51:39", nil, "running").
+		AddRow(59, "many_tables_test", "t4", "add column /* subjob */", "public", 1, 59, 123, nil, nil, nil, "done").
+		AddRow(59, "many_tables_test", "t4", "add column /* subjob */", "public", 1, 59, 456, nil, nil, nil, "done"))
+
+	createTime, err = time.Parse(time.DateTime, "2022-08-02 2:50:36")
+	require.NoError(t, err)
+	status, err = getDDLStatus(context.Background(), db, "ALTER TABLE many_tables_test.t4 ADD y INT, ADD z INT", createTime)
+	require.NoError(t, err)
+	require.Equal(t, model.JobStateRunning, status.state)
+	require.Equal(t, int64(123)+int64(456), status.rowCount)
 }

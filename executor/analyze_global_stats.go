@@ -63,6 +63,10 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 				continue
 			}
 			job := e.newAnalyzeHandleGlobalStatsJob(globalStatsID)
+			if job == nil {
+				logutil.BgLogger().Warn("cannot find the partitioned table, skip merging global stats", zap.Int64("tableID", globalStatsID.tableID))
+				continue
+			}
 			AddNewAnalyzeJob(e.ctx, job)
 			StartAnalyzeJob(e.ctx, job)
 			mergeStatsErr := func() error {
@@ -121,8 +125,14 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statistics.AnalyzeJob {
 	dom := domain.GetDomain(e.ctx)
 	is := dom.InfoSchema()
-	table, _ := is.TableByID(key.tableID)
-	db, _ := is.SchemaByTable(table.Meta())
+	table, ok := is.TableByID(key.tableID)
+	if !ok {
+		return nil
+	}
+	db, ok := is.SchemaByTable(table.Meta())
+	if !ok {
+		return nil
+	}
 	dbName := db.Name.String()
 	tableName := table.Meta().Name.String()
 	jobInfo := fmt.Sprintf("merge global stats for %v.%v columns", dbName, tableName)

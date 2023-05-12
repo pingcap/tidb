@@ -147,6 +147,14 @@
               "hide": false,
               "intervalFactor": 1,
               "legendFormat": "estimate-inuse",
+              "refId": "I"
+            },
+            {
+              "expr": "go_memstats_alloc_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "format": "time_series",
+              "hide": false,
+              "intervalFactor": 1,
+              "legendFormat": "go-memstats-inuse",
               "refId": "H"
             },
             {

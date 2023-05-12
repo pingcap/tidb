@@ -16,11 +16,6 @@
 
 check_cluster_version 4 0 0 'local backend' || exit 0
 
-# enable cluster index
-run_sql 'set @@global.tidb_enable_clustered_index = 1' || exit 0
-# wait for global variable cache invalid
-sleep 2
-
 set -euE
 
 # Populate the mydumper source
@@ -53,8 +48,3 @@ for BACKEND in local tidb; do
   run_sql 'ADMIN CHECKSUM TABLE `ch`.t'
   check_contains "Total_kvs: 6"
 done
-
-# restore global variables, other tests needs this to handle the _tidb_row_id column
-run_sql 'set @@global.tidb_enable_clustered_index = 0'
-# wait for global variable cache invalid
-sleep 2

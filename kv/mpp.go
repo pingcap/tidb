@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -150,9 +151,11 @@ type MPPDispatchRequest struct {
 type MPPClient interface {
 	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration) ([]MPPTaskMeta, error)
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration, tiflashcompute.DispatchPolicy) ([]MPPTaskMeta, error)
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
 	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppQueryID MPPQueryID, mppVersion MppVersion, memTracker *memory.Tracker) Response
+	// GetMPPStoreCount returns number of TiFlash stores if there is no error, else return (0, error)
+	GetMPPStoreCount() (int, error)
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

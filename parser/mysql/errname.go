@@ -975,4 +975,5 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrWarnOptimizerHintInvalidToken:    Message("Cannot use %s '%s' (tok = %d) in an optimizer hint", nil),
 	ErrWarnMemoryQuotaOverflow:          Message("Max value of MEMORY_QUOTA is %d bytes, ignore this invalid limit", nil),
 	ErrWarnOptimizerHintParseError:      Message("Optimizer hint syntax error at %v", nil),
+	ErrWarnOptimizerHintWrongPos:        Message("Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.", nil),
 }

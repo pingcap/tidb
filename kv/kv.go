@@ -34,6 +34,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"golang.org/x/exp/slices"
 )
 
@@ -51,7 +52,7 @@ var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
 	TxnEntrySizeLimit uint64 = config.DefTxnEntrySizeLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
-	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
+	TxnTotalSizeLimit = atomic.NewUint64(config.DefTxnTotalSizeLimit)
 )
 
 // Getter is the interface for the Get method.
@@ -203,7 +204,7 @@ type LockCtx = tikvstore.LockCtx
 type Transaction interface {
 	RetrieverMutator
 	AssertionProto
-	AggressiveLockingController
+	FairLockingController
 	// Size returns sum of keys and values length.
 	Size() int
 	// Mem returns the memory consumption of the transaction.
@@ -282,13 +283,13 @@ type AssertionProto interface {
 	SetAssertion(key []byte, assertion ...FlagsOp) error
 }
 
-// AggressiveLockingController is the interface that defines aggressive locking related operations.
-type AggressiveLockingController interface {
-	StartAggressiveLocking() error
-	RetryAggressiveLocking(ctx context.Context) error
-	CancelAggressiveLocking(ctx context.Context) error
-	DoneAggressiveLocking(ctx context.Context) error
-	IsInAggressiveLockingMode() bool
+// FairLockingController is the interface that defines fair locking related operations.
+type FairLockingController interface {
+	StartFairLocking() error
+	RetryFairLocking(ctx context.Context) error
+	CancelFairLocking(ctx context.Context) error
+	DoneFairLocking(ctx context.Context) error
+	IsInFairLockingMode() bool
 }
 
 // Client is used to send request to KV layer.
@@ -577,6 +578,9 @@ type Request struct {
 	LimitSize uint64
 	// StoreBusyThreshold is the threshold for the store to return ServerIsBusy
 	StoreBusyThreshold time.Duration
+
+	// ConnID stores the session connection id.
+	ConnID uint64
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

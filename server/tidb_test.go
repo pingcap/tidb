@@ -903,7 +903,6 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	}
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockDelayInnerSessionExecute", "return"))
 	var wg util.WaitGroupWrapper
 	for i := 0; i < count; i++ {
 		s := stmts[i]
@@ -912,11 +911,6 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-	time.Sleep(100 * time.Millisecond)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockDelayInnerSessionExecute"))
-
-	lst := ts.domain.InfoSyncer().GetSessionManager().GetInternalSessionStartTSList()
-	require.Equal(t, len(lst), 10)
 
 	wg.Wait()
 }
@@ -3003,7 +2997,7 @@ type mockProxyProtocolProxy struct {
 	clientAddr    string
 	backendIsSock bool
 	ln            net.Listener
-	run           bool
+	run           atomic.Bool
 }
 
 func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSock bool) *mockProxyProtocolProxy {
@@ -3013,7 +3007,6 @@ func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSo
 		clientAddr:    clientAddr,
 		backendIsSock: backendIsSock,
 		ln:            nil,
-		run:           false,
 	}
 }
 
@@ -3022,12 +3015,12 @@ func (p *mockProxyProtocolProxy) ListenAddr() net.Addr {
 }
 
 func (p *mockProxyProtocolProxy) Run() (err error) {
-	p.run = true
+	p.run.Store(true)
 	p.ln, err = net.Listen("tcp", p.frontend)
 	if err != nil {
 		return err
 	}
-	for p.run {
+	for p.run.Load() {
 		conn, err := p.ln.Accept()
 		if err != nil {
 			break
@@ -3038,7 +3031,7 @@ func (p *mockProxyProtocolProxy) Run() (err error) {
 }
 
 func (p *mockProxyProtocolProxy) Close() error {
-	p.run = false
+	p.run.Store(false)
 	if p.ln != nil {
 		return p.ln.Close()
 	}

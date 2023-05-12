@@ -1002,7 +1002,7 @@ func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, ne
 	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
 	tp := types.NewFieldType(mysql.TypeUnspecified)
-	types.DefaultParamTypeForValue(v.GetValue(), tp)
+	types.InferParamTypeFromDatum(&v.Datum, tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
 	if useCache || isPointExec || needParam {
 		value.ParamMarker = &ParamMarker{
@@ -1607,4 +1607,23 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessio
 
 	r.updateDigestInfo(queryResult)
 	return nil
+}
+
+// ExprsToStringsForDisplay convert a slice of Expression to a slice of string using Expression.String(), and
+// to make it better for display and debug, it also escapes the string to corresponding golang string literal,
+// which means using \t, \n, \x??, \u????, ... to represent newline, control character, non-printable character,
+// invalid utf-8 bytes and so on.
+func ExprsToStringsForDisplay(exprs []Expression) []string {
+	strs := make([]string, len(exprs))
+	for i, cond := range exprs {
+		quote := `"`
+		// We only need the escape functionality of strconv.Quote, the quoting is not needed,
+		// so we trim the \" prefix and suffix here.
+		strs[i] = strings.TrimSuffix(
+			strings.TrimPrefix(
+				strconv.Quote(cond.String()),
+				quote),
+			quote)
+	}
+	return strs
 }

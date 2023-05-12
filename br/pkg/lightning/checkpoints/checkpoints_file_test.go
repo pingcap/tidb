@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,7 +46,12 @@ func newFileCheckpointsDB(t *testing.T) *checkpoints.FileCheckpointsDB {
 		"db2": {
 			Name: "db2",
 			Tables: map[string]*checkpoints.TidbTableInfo{
-				"t3": {Name: "t3"},
+				"t3": {
+					Name: "t3",
+					Desired: &model.TableInfo{
+						Name: model.NewCIStr("t3"),
+					},
+				},
 			},
 		},
 	})
@@ -194,6 +200,9 @@ func TestGet(t *testing.T) {
 				Status: checkpoints.CheckpointStatusLoaded,
 				Chunks: []*checkpoints.ChunkCheckpoint{},
 			},
+		},
+		TableInfo: &model.TableInfo{
+			Name: model.NewCIStr("t3"),
 		},
 	}
 	require.Equal(t, expect, cp)

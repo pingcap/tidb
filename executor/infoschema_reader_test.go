@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -22,17 +23,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jarcoal/httpmock"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestInspectionTables(t *testing.T) {
@@ -98,7 +102,7 @@ func TestSchemataTables(t *testing.T) {
 	require.NoError(t, schemataTester.Session().Auth(&auth.UserIdentity{
 		Username: "schemata_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("1"))
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		[][]interface{}{})
@@ -170,6 +174,10 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustExec("CREATE TABLE t (`COL3` bit(1) NOT NULL,b year) ;")
 	tk.MustQuery("select column_type from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't';").
 		Check(testkit.Rows("bit(1)", "year(4)"))
+
+	// For issue: https://github.com/pingcap/tidb/issues/43379
+	tk.MustQuery("select ordinal_position from information_schema.columns where table_schema=database() and table_name='t' and column_name='b'").
+		Check(testkit.Rows("2"))
 }
 
 func TestEngines(t *testing.T) {
@@ -239,7 +247,7 @@ func TestDDLJobs(t *testing.T) {
 	require.NoError(t, DDLJobsTester.Session().Auth(&auth.UserIdentity{
 		Username: "DDL_JOBS_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	// Test the privilege of user for information_schema.ddl_jobs.
 	DDLJobsTester.MustQuery("select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
@@ -271,7 +279,7 @@ func TestKeyColumnUsage(t *testing.T) {
 	require.NoError(t, keyColumnTester.Session().Auth(&auth.UserIdentity{
 		Username: "key_column_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
 
 	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
@@ -293,7 +301,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, constraintsTester.Session().Auth(&auth.UserIdentity{
 		Username: "constraints_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
 
 	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
@@ -312,7 +320,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{
 		Username: "tester1",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk1.MustQuery("select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
 
 	// test the privilege of user with some privilege for information_schema
@@ -325,7 +333,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{
 		Username: "tester2",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk2.MustExec("set role r_columns_priv")
 	rows = tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
@@ -342,7 +350,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, tk3.Session().Auth(&auth.UserIdentity{
 		Username: "tester3",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk3.MustExec("set role r_all_priv")
 	rows = tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
@@ -360,7 +368,7 @@ func TestUserPrivilegesTable(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "usageuser",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def USAGE NO"))
 	// the usage row disappears when there is a non-dynamic privilege added
 	tk1.MustExec("GRANT SELECT ON *.* to usageuser")
@@ -582,7 +590,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	require.NoError(t, analyzeTester.Session().Auth(&auth.UserIdentity{
 		Username: "analyze_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	analyzeTester.MustQuery("show analyze status").Check([][]interface{}{})
 	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]interface{}{})
 
@@ -603,7 +611,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 		// test `End_time` field
 		str, ok := row[6].(string)
 		require.True(t, ok)
-		_, err := time.Parse("2006-01-02 15:04:05", str)
+		_, err := time.Parse(time.DateTime, str)
 		require.NoError(t, err)
 	}
 	rows2 := tk.MustQuery("show analyze status where TABLE_NAME='t1'").Sort().Rows()
@@ -647,9 +655,6 @@ func TestSequences(t *testing.T) {
 }
 
 func TestTiFlashSystemTableWithTiFlashV620(t *testing.T) {
-	httpmock.Activate()
-	defer httpmock.DeactivateAndReset()
-
 	instances := []string{
 		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
 		"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
@@ -659,26 +664,25 @@ func TestTiFlashSystemTableWithTiFlashV620(t *testing.T) {
 	require.NoError(t, failpoint.Enable(fpName, fpExpr))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
-	httpmock.RegisterResponder("GET", "http://127.0.0.1:7777/config",
-		httpmock.NewStringResponder(200, `
-{
-	"raftstore-proxy": {},
-	"engine-store":{
-		"http_port":8123,
-		"tcp_port":9000
-	}
-}
-	`))
+	mocker := newGetTiFlashSystemTableRequestMocker(t)
+	mocker.MockQuery(`SELECT * FROM system.dt_segments LIMIT 0, 1024`, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
+		require.EqualValues(t, req.Sql, "SELECT * FROM system.dt_segments LIMIT 0, 1024")
+		data, err := os.ReadFile("testdata/tiflash_v620_dt_segments.json")
+		require.NoError(t, err)
+		return &kvrpcpb.TiFlashSystemTableResponse{
+			Data: data,
+		}, nil
+	})
+	mocker.MockQuery(`SELECT * FROM system.dt_tables LIMIT 0, 1024`, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
+		require.EqualValues(t, req.Sql, "SELECT * FROM system.dt_tables LIMIT 0, 1024")
+		data, err := os.ReadFile("testdata/tiflash_v620_dt_tables.json")
+		require.NoError(t, err)
+		return &kvrpcpb.TiFlashSystemTableResponse{
+			Data: data,
+		}, nil
+	})
 
-	data, err := os.ReadFile("testdata/tiflash_v620_dt_segments.json")
-	require.NoError(t, err)
-	httpmock.RegisterResponder("GET", "http://127.0.0.1:8123?default_format=JSONCompact&query=SELECT+%2A+FROM+system.dt_segments+LIMIT+0%2C+1024", httpmock.NewBytesResponder(200, data))
-
-	data, err = os.ReadFile("testdata/tiflash_v620_dt_tables.json")
-	require.NoError(t, err)
-	httpmock.RegisterResponder("GET", "http://127.0.0.1:8123?default_format=JSONCompact&query=SELECT+%2A+FROM+system.dt_tables+LIMIT+0%2C+1024", httpmock.NewBytesResponder(200, data))
-
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select * from information_schema.TIFLASH_SEGMENTS;").Check(testkit.Rows(
 		"db_1 t_10 mysql tables_priv 10 0 1 [-9223372036854775808,9223372036854775807) <nil> 0 0 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 0 2032 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 127.0.0.1:3933",
@@ -696,9 +700,6 @@ func TestTiFlashSystemTableWithTiFlashV620(t *testing.T) {
 }
 
 func TestTiFlashSystemTableWithTiFlashV630(t *testing.T) {
-	httpmock.Activate()
-	defer httpmock.DeactivateAndReset()
-
 	instances := []string{
 		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
 		"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
@@ -708,22 +709,17 @@ func TestTiFlashSystemTableWithTiFlashV630(t *testing.T) {
 	require.NoError(t, failpoint.Enable(fpName, fpExpr))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
-	httpmock.RegisterResponder("GET", "http://127.0.0.1:7777/config",
-		httpmock.NewStringResponder(200, `
-{
-	"raftstore-proxy": {},
-	"engine-store":{
-		"http_port":8123,
-		"tcp_port":9000
-	}
-}
-	`))
+	mocker := newGetTiFlashSystemTableRequestMocker(t)
+	mocker.MockQuery(`SELECT * FROM system.dt_segments LIMIT 0, 1024`, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
+		require.EqualValues(t, req.Sql, "SELECT * FROM system.dt_segments LIMIT 0, 1024")
+		data, err := os.ReadFile("testdata/tiflash_v630_dt_segments.json")
+		require.NoError(t, err)
+		return &kvrpcpb.TiFlashSystemTableResponse{
+			Data: data,
+		}, nil
+	})
 
-	data, err := os.ReadFile("testdata/tiflash_v630_dt_segments.json")
-	require.NoError(t, err)
-	httpmock.RegisterResponder("GET", "http://127.0.0.1:8123?default_format=JSONCompact&query=SELECT+%2A+FROM+system.dt_segments+LIMIT+0%2C+1024", httpmock.NewBytesResponder(200, data))
-
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select * from information_schema.TIFLASH_SEGMENTS;").Check(testkit.Rows(
 		"db_1 t_10 mysql tables_priv 10 0 1 [-9223372036854775808,9223372036854775807) 0 0 0 <nil> 0 0 0 0 2 0 0 0 0 0 2032 3 0 0 1 1 0 0 0 0 127.0.0.1:3933",
@@ -740,9 +736,6 @@ func TestTiFlashSystemTableWithTiFlashV630(t *testing.T) {
 }
 
 func TestTiFlashSystemTableWithTiFlashV640(t *testing.T) {
-	httpmock.Activate()
-	defer httpmock.DeactivateAndReset()
-
 	instances := []string{
 		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
 		"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
@@ -752,22 +745,17 @@ func TestTiFlashSystemTableWithTiFlashV640(t *testing.T) {
 	require.NoError(t, failpoint.Enable(fpName, fpExpr))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
-	httpmock.RegisterResponder("GET", "http://127.0.0.1:7777/config",
-		httpmock.NewStringResponder(200, `
-{
-	"raftstore-proxy": {},
-	"engine-store":{
-		"http_port":8123,
-		"tcp_port":9000
-	}
-}
-	`))
+	mocker := newGetTiFlashSystemTableRequestMocker(t)
+	mocker.MockQuery(`SELECT * FROM system.dt_tables LIMIT 0, 1024`, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
+		require.EqualValues(t, req.Sql, "SELECT * FROM system.dt_tables LIMIT 0, 1024")
+		data, err := os.ReadFile("testdata/tiflash_v640_dt_tables.json")
+		require.NoError(t, err)
+		return &kvrpcpb.TiFlashSystemTableResponse{
+			Data: data,
+		}, nil
+	})
 
-	data, err := os.ReadFile("testdata/tiflash_v640_dt_tables.json")
-	require.NoError(t, err)
-	httpmock.RegisterResponder("GET", "http://127.0.0.1:8123?default_format=JSONCompact&query=SELECT+%2A+FROM+system.dt_tables+LIMIT+0%2C+1024", httpmock.NewBytesResponder(200, data))
-
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select * from information_schema.TIFLASH_TABLES;").Check(testkit.Rows(
 		"db_70 t_135 tpcc customer 135 0 4 3528714 2464079200 0 0.002329177144988231 1 0 929227 0.16169850346757514 0 8128 882178.5 616019800 4 8219 5747810 2054.75 1436952.5 0 4 3520495 2458331390 1601563417 880123.75 614582847.5 24 8 6 342.4583333333333 239492.08333333334 482 120.5 7303.9315352697095 5100272.593360996 0 0 0  0 0 0  0 0 0  0 127.0.0.1:3933",
@@ -881,4 +869,46 @@ func TestNullColumns(t *testing.T) {
 	tk.MustExec("CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`1.1.1.1` SQL SECURITY DEFINER VIEW `v_test` (`type`) AS SELECT NULL AS `type` FROM `t` AS `f`;")
 	tk.MustQuery("select * from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 'v_test';").
 		Check(testkit.Rows("def test v_test type 1 <nil> YES binary 0 0 <nil> <nil> <nil> <nil> <nil> binary(0)   select,insert,update,references  "))
+}
+
+// Code below are helper utilities for the test cases.
+
+type getTiFlashSystemTableRequestMocker struct {
+	tikv.Client
+	t        *testing.T
+	handlers map[string]func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error)
+}
+
+func (client *getTiFlashSystemTableRequestMocker) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdGetTiFlashSystemTable {
+		if handler, ok := client.handlers[req.Req.(*kvrpcpb.TiFlashSystemTableRequest).Sql]; ok {
+			resp, err := handler(req.GetTiFlashSystemTable())
+			if err != nil {
+				return nil, err
+			}
+			return &tikvrpc.Response{Resp: resp}, nil
+		}
+		// If we enter here, it means no handler is matching. We should fail!
+		require.Fail(client.t, fmt.Sprintf("Received request %s but no matching handler, maybe caused by unexpected query", req.Req.(*kvrpcpb.TiFlashSystemTableRequest).Sql))
+	}
+	return client.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+func (client *getTiFlashSystemTableRequestMocker) MockQuery(query string, fn func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error)) *getTiFlashSystemTableRequestMocker {
+	client.handlers[query] = fn
+	return client
+}
+
+func (client *getTiFlashSystemTableRequestMocker) AsOpt() mockstore.MockTiKVStoreOption {
+	return mockstore.WithClientHijacker(func(kvClient tikv.Client) tikv.Client {
+		client.Client = kvClient
+		return client
+	})
+}
+
+func newGetTiFlashSystemTableRequestMocker(t *testing.T) *getTiFlashSystemTableRequestMocker {
+	return &getTiFlashSystemTableRequestMocker{
+		handlers: make(map[string]func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error), 0),
+		t:        t,
+	}
 }

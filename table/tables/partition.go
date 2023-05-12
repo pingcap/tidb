@@ -99,7 +99,7 @@ type partitionedTable struct {
 	// Only used during Reorganize partition
 	// reorganizePartitions is the currently used partitions that are reorganized
 	reorganizePartitions map[int64]interface{}
-	// doubleWriteParittions are the partitions not visible, but we should double write to
+	// doubleWritePartitions are the partitions not visible, but we should double write to
 	doubleWritePartitions map[int64]interface{}
 	reorgPartitionExpr    *PartitionExpr
 }
@@ -339,7 +339,7 @@ type ForRangeColumnsPruning struct {
 	LessThan [][]*expression.Expression
 }
 
-func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
+func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser, colOffsets []int) (*ForRangeColumnsPruning, error) {
 	var res ForRangeColumnsPruning
 	res.LessThan = make([][]*expression.Expression, 0, len(defs))
 	for i := 0; i < len(defs); i++ {
@@ -354,6 +354,17 @@ func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDe
 			tmp, err := parseSimpleExprWithNames(p, ctx, defs[i].LessThan[j], schema, names)
 			if err != nil {
 				return nil, err
+			}
+			_, ok := tmp.(*expression.Constant)
+			if !ok {
+				return nil, dbterror.ErrPartitionConstDomain
+			}
+			// TODO: Enable this for all types!
+			// Currently it will trigger changes for collation differences
+			switch schema.Columns[colOffsets[j]].RetType.GetType() {
+			case mysql.TypeDatetime, mysql.TypeDate:
+				// Will also fold constant
+				tmp = expression.BuildCastFunction(ctx, tmp, schema.Columns[colOffsets[j]].RetType)
 			}
 			lessThanCols = append(lessThanCols, &tmp)
 		}
@@ -694,7 +705,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		ret.Expr = partExpr
 		ret.ForRangePruning = tmp
 	} else {
-		tmp, err := dataForRangeColumnsPruning(ctx, defs, schema, names, p)
+		tmp, err := dataForRangeColumnsPruning(ctx, defs, schema, names, p, offset)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -810,6 +821,29 @@ func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 		Expr:           partExpr,
 	}
 	return ret, nil
+}
+
+// Clone a copy of ForListPruning
+func (lp *ForListPruning) Clone() *ForListPruning {
+	ret := *lp
+	if ret.LocateExpr != nil {
+		ret.LocateExpr = lp.LocateExpr.Clone()
+	}
+	if ret.PruneExpr != nil {
+		ret.PruneExpr = lp.PruneExpr.Clone()
+	}
+	ret.PruneExprCols = make([]*expression.Column, 0, len(lp.PruneExprCols))
+	for i := range lp.PruneExprCols {
+		c := lp.PruneExprCols[i].Clone().(*expression.Column)
+		ret.PruneExprCols = append(ret.PruneExprCols, c)
+	}
+	ret.ColPrunes = make([]*ForListColumnPruning, 0, len(lp.ColPrunes))
+	for i := range lp.ColPrunes {
+		l := *lp.ColPrunes[i]
+		l.ExprCol = l.ExprCol.Clone().(*expression.Column)
+		ret.ColPrunes = append(ret.ColPrunes, &l)
+	}
+	return &ret
 }
 
 func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model.TableInfo, defs []model.PartitionDefinition, exprCols []*expression.Column,
@@ -1403,6 +1437,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	tblInfo.Partition.Definitions = tblInfo.Partition.AddingDefinitions
 	tblInfo.Partition.AddingDefinitions = nil
 	tblInfo.Partition.DroppingDefinitions = nil
+	tblInfo.Partition.Num = uint64(len(tblInfo.Partition.Definitions))
 	var tc TableCommon
 	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil))
 
@@ -1451,6 +1486,9 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 	tbl := t.GetPartition(pid)
 	recordID, err = tbl.AddRecord(ctx, r, opts...)
 	if err != nil {
+		return
+	}
+	if t.Meta().Partition.DDLState == model.StateDeleteOnly {
 		return
 	}
 	if _, ok := t.reorganizePartitions[pid]; ok {
@@ -1640,9 +1678,12 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 			return errors.Trace(err)
 		}
 		if newTo == newFrom {
-			// Update needs to be done in StateDeleteOnly as well
 			tbl = t.GetPartition(newTo)
-			err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+				err = tbl.RemoveRecord(ctx, h, currData)
+			} else {
+				err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			}
 			if err != nil {
 				return errors.Trace(err)
 			}

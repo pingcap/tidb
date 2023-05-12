@@ -223,7 +223,7 @@ var (
 	// PollTiFlashBackoffMinTick is the min tick before we try to update TiFlash replica availability for one table.
 	PollTiFlashBackoffMinTick TiFlashTick = 1
 	// PollTiFlashBackoffCapacity is the cache size of backoff struct.
-	PollTiFlashBackoffCapacity int = 1000
+	PollTiFlashBackoffCapacity = 1000
 	// PollTiFlashBackoffRate is growth rate of exponential backoff threshold.
 	PollTiFlashBackoffRate TiFlashTick = 1.5
 	// RefreshProgressMaxTableCount is the max count of table to refresh progress after available each poll.
@@ -584,7 +584,7 @@ func (d *ddl) PollTiFlashRoutine() {
 				}
 			}
 
-			sctx, err := d.sessPool.get()
+			sctx, err := d.sessPool.Get()
 			if err == nil {
 				if d.ownerManager.IsOwner() {
 					err := d.refreshTiFlashTicker(sctx, pollTiflashContext)
@@ -599,10 +599,10 @@ func (d *ddl) PollTiFlashRoutine() {
 				} else {
 					infosync.CleanTiFlashProgressCache()
 				}
-				d.sessPool.put(sctx)
+				d.sessPool.Put(sctx)
 			} else {
 				if sctx != nil {
-					d.sessPool.put(sctx)
+					d.sessPool.Put(sctx)
 				}
 				logutil.BgLogger().Error("failed to get session for pollTiFlashReplicaStatus", zap.Error(err))
 			}
