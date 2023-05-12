@@ -1463,11 +1463,9 @@ func TestPartialWriteIngestErrorWillPanic(t *testing.T) {
 }
 
 func TestPartialWriteIngestBusy(t *testing.T) {
-	log.InitLogger(&log.Config{Level: "debug"}, "debug")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// let lightning meet any error that will call convertStageTo(needRescan)
 	apiInvokeRecorder := map[string][]uint64{}
 	notLeaderResp := &sst.IngestResponse{
 		Error: &errorpb.Error{
