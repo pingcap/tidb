@@ -830,15 +830,7 @@ func (do *Domain) mdlCheckLoop() {
 				continue
 			}
 			logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
-			var err error
-			failpoint.Inject("mockUpdateMDLToETCDError", func(val failpoint.Value) {
-				if val.(bool) {
-					err = errors.New("mock update mdl to etcd error")
-				}
-			})
-			if err == nil {
-				err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
-			}
+			err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 			if err != nil {
 				jobNeedToSync = true
 				logutil.BgLogger().Warn("update self version failed", zap.Error(err))

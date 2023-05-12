@@ -1171,14 +1171,13 @@ func TestMDLUpdateEtcdFail(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/mockUpdateMDLToETCDError", `1*return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateMDLToETCDError", `3*return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/mockUpdateMDLToETCDError"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateMDLToETCDError"))
 	}()
 
-	tk2.MustExec("alter table test.t add column c int")
+	tk.MustExec("alter table test.t add column c int")
 }
