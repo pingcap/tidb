@@ -30,9 +30,6 @@ import (
 
 var _ Executor = &CTEExec{}
 
-// Only for test.
-var oomTestFlag = 0
-
 // CTEExec implements CTE.
 // Following diagram describes how CTEExec works.
 //
@@ -162,11 +159,6 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return e.resTbl.Error()
 		}
 		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
-		failpoint.Inject("testCTEPanic", func(_ failpoint.Value) {
-			if oomTestFlag == 1 {
-				oomTestFlag = 2
-			}
-		})
 		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
 		var iterOutAction *chunk.SpillDiskAction
 		if e.iterOutTbl != nil {
@@ -244,8 +236,10 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 		}
 	}()
 	failpoint.Inject("testCTEPanic", func(_ failpoint.Value) {
-		oomTestFlag = 1
-		panic("testCTEPanic")
+		// panic("testCTEPanic")
+		for i := 0; i < 100; i++ {
+			e.memTracker.Consume(1 * 1024 * 1024 * 1024)
+		}
 	})
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
@@ -450,12 +444,6 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 	parentDiskTracker *disk.Tracker) (actionSpill *chunk.SpillDiskAction) {
 	memTracker := tbl.GetMemTracker()
 	memTracker.SetLabel(memory.LabelForCTEStorage)
-	failpoint.Inject("testCTEPanic", func(_ failpoint.Value) {
-		if oomTestFlag == 2 {
-			memTracker.Consume(1)
-			ctx.GetSessionVars().MemTracker.NeedKill.Store(true)
-		}
-	})
 	memTracker.AttachTo(parentMemTracker)
 
 	diskTracker := tbl.GetDiskTracker()
