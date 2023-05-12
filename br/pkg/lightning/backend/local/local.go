@@ -1364,7 +1364,7 @@ func (local *Backend) executeJob(
 			job.lastRetryableErr = err
 			return nil
 		}
-		if job.stage == needRescan {
+		if job.stage != ingested {
 			return nil
 		}
 
