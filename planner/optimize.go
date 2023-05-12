@@ -279,6 +279,18 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 					sessVars.StmtCtx.AppendWarning(err)
 				}
 			}
+
+			// Override the resource group if necessary
+			// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
+			if curStmtHints.HasResourceGroup {
+				if variable.EnableResourceControl.Load() {
+					sessVars.ResourceGroupName = curStmtHints.ResourceGroup
+				} else {
+					err := infoschema.ErrResourceGroupSupportDisabled
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+			}
+
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
