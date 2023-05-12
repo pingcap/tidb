@@ -729,6 +729,8 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		SSLVersion:        sslVersion,
 		PID:               serverPID,
 		DB:                cc.dbname,
+		AuthMethod:        cc.authPlugin,
+		Attributes:        cc.attrs,
 	}
 	return connInfo
 }
