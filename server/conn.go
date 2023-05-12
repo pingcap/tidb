@@ -54,6 +54,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -293,6 +294,14 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		logutil.Logger(ctx).Debug("flush response to client failed", zap.Error(err))
 		return err
 	}
+
+	// With mysql --compression-algorithms=zlib,zstd both flags are set, the result is Zlib
+	if cc.capability&mysql.ClientCompress > 0 {
+		cc.pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
+	} else if cc.capability&mysql.ClientZstdCompressionAlgorithm > 0 {
+		cc.pkt.SetCompressionAlgorithm(mysql.CompressionZstd)
+	}
+
 	return err
 }
 
@@ -428,6 +437,7 @@ type handshakeResponse41 struct {
 	Auth       []byte
 	AuthPlugin string
 	Attrs      map[string]string
+	ZstdLevel  zstd.EncoderLevel
 }
 
 // parseHandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
@@ -516,8 +526,8 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
 			return nil
 		}
-		if num, null, off := parseLengthEncodedInt(data[offset:]); !null {
-			offset += off
+		if num, null, intOff := parseLengthEncodedInt(data[offset:]); !null {
+			offset += intOff // Length of variable length encoded integer itself in bytes
 			row := data[offset : offset+int(num)]
 			attrs, err := parseAttrs(row)
 			if err != nil {
@@ -525,7 +535,12 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 				return nil
 			}
 			packet.Attrs = attrs
+			offset += int(num) // Length of attributes
 		}
+	}
+
+	if packet.Capability&mysql.ClientZstdCompressionAlgorithm > 0 {
+		packet.ZstdLevel = zstd.EncoderLevelFromZstd(int(data[offset]))
 	}
 
 	return nil
@@ -639,6 +654,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.dbname = resp.DBName
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
+	cc.pkt.zstdLevel = resp.ZstdLevel
 
 	err = cc.handleAuthPlugin(ctx, &resp)
 	if err != nil {
@@ -1181,6 +1197,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
+		cc.pkt.compressedSequence = 0
 	}
 }
 

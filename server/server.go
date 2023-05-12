@@ -36,9 +36,8 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/http" //nolint:goimports
-	// For pprof
-	_ "net/http/pprof" // #nosec G108
+	"net/http"         //nolint:goimports
+	_ "net/http/pprof" // #nosec G108 for pprof
 	"os"
 	"os/user"
 	"reflect"
@@ -121,7 +120,8 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive | mysql.ClientDeprecateEOF
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive |
+	mysql.ClientDeprecateEOF | mysql.ClientCompress | mysql.ClientZstdCompressionAlgorithm
 
 // Server is the MySQL protocol server
 type Server struct {

@@ -140,7 +140,7 @@ const (
 	ClientLongFlag                                      // CLIENT_LONG_FLAG
 	ClientConnectWithDB                                 // CLIENT_CONNECT_WITH_DB
 	ClientNoSchema                                      // CLIENT_NO_SCHEMA
-	ClientCompress                                      // CLIENT_COMPRESS, Not supported: https://github.com/pingcap/tidb/issues/22605
+	ClientCompress                                      // CLIENT_COMPRESS
 	ClientODBC                                          // CLIENT_ODBC
 	ClientLocalFiles                                    // CLIENT_LOCAL_FILES
 	ClientIgnoreSpace                                   // CLIENT_IGNORE_SPACE
@@ -160,8 +160,8 @@ const (
 	ClientHandleExpiredPasswords                        // CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS, Not supported: https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_expired_passwords.html
 	ClientSessionTrack                                  // CLIENT_SESSION_TRACK, Not supported: https://github.com/pingcap/tidb/issues/35309
 	ClientDeprecateEOF                                  // CLIENT_DEPRECATE_EOF
-	// 1 << 25 == CLIENT_OPTIONAL_RESULTSET_METADATA
-	// 1 << 26 == CLIENT_ZSTD_COMPRESSION_ALGORITHM
+	ClientOptionalResultsetMetadata                     // CLIENT_OPTIONAL_RESULTSET_METADATA, Not supported: https://dev.mysql.com/doc/c-api/8.0/en/c-api-optional-metadata.html
+	ClientZstdCompressionAlgorithm                      // CLIENT_ZSTD_COMPRESSION_ALGORITHM
 	// 1 << 27 == CLIENT_QUERY_ATTRIBUTES
 	// 1 << 28 == MULTI_FACTOR_AUTHENTICATION
 	// 1 << 29 == CLIENT_CAPABILITY_EXTENSION
@@ -630,4 +630,13 @@ const (
 	CursorTypeReadOnly = 1 << iota
 	CursorTypeForUpdate
 	CursorTypeScrollable
+)
+
+const (
+	// CompressionNone is no compression in use
+	CompressionNone = iota
+	// CompressionZlib is zlib/deflate
+	CompressionZlib
+	// CompressionZstd is Facebook's Zstandard
+	CompressionZstd
 )
