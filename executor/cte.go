@@ -235,12 +235,7 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 			err = errors.Errorf("%v", r)
 		}
 	}()
-	failpoint.Inject("testCTEPanic", func(_ failpoint.Value) {
-		// panic("testCTEPanic")
-		for i := 0; i < 100; i++ {
-			e.memTracker.Consume(1 * 1024 * 1024 * 1024)
-		}
-	})
+	failpoint.Inject("testCTEPanic", nil)
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
 	chks := make([]*chunk.Chunk, 0, 10)
