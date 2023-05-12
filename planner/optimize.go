@@ -268,7 +268,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 					sessVars.StmtCtx.AppendWarning(err)
 				}
 			}
-
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
