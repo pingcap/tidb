@@ -1794,7 +1794,7 @@ type ConnectionInfo struct {
 
 const (
 	// ConnTypeSocket indicates socket without TLS.
-	ConnTypeSocket string = "Socket"
+	ConnTypeSocket string = "TCP"
 	// ConnTypeUnixSocket indicates Unix Socket.
 	ConnTypeUnixSocket string = "UnixSocket"
 	// ConnTypeTLS indicates socket with TLS.
