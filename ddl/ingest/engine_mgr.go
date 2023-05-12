@@ -85,7 +85,9 @@ func (bc *litBackendCtx) Unregister(jobID, indexID int64) {
 
 	ei.Clean()
 	bc.Delete(indexID)
-	bc.checkpointMgr.Close()
+	if bc.checkpointMgr != nil {
+		bc.checkpointMgr.Close()
+	}
 	bc.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
 	bc.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
 	bc.MemRoot.Release(StructSizeEngineInfo)
