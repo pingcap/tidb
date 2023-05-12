@@ -135,10 +135,10 @@ func (s *StorageRC) DerefAndClose() (err error) {
 		s.done = false
 		s.err = nil
 		s.iter = 0
-		s.rc = nil
 		if err = s.rc.Close(); err != nil {
 			return err
 		}
+		s.rc = nil
 	}
 	return nil
 }
