@@ -202,10 +202,6 @@ func (e *IndexReaderExecutor) Close() (err error) {
 		err = e.result.Close()
 	}
 
-	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
-		return nil
-	}
-
 	e.result = nil
 	e.kvRanges = e.kvRanges[:0]
 	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
