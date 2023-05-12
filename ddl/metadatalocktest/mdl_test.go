@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
@@ -1162,6 +1163,22 @@ func TestMDLPrepareFail(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	_, _, _, err := tk.Session().PrepareStmt("select b from t")
 	require.Error(t, err)
+
+	tk2.MustExec("alter table test.t add column c int")
+}
+
+func TestMDLUpdateEtcdFail(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/mockUpdateMDLToETCDError", `1*return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/mockUpdateMDLToETCDError"))
+	}()
 
 	tk2.MustExec("alter table test.t add column c int")
 }
