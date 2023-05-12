@@ -426,7 +426,7 @@ func TestLocatePartition(t *testing.T) {
 	wg := util.WaitGroupWrapper{}
 	exec := func(tk0 *testkit.TestKit) {
 		tk0.MustExec("use test")
-		tk0.MustQuery("desc select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows("TableReader_7 10.00 root partition:watch_event data:Selection_6]\n[└─Selection_6 10.00 cop[tikv]  eq(test.t.type, \"WatchEvent\")]\n[  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		tk0.MustQuery("desc select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows("TableReader_12 10.00 root  data:Projection_6]\n[└─Projection_6 10.00 cop[tikv]  test.t.id, test.t.type]\n[  └─Selection_11 10.00 cop[tikv]  eq(test.t.type, \"WatchEvent\")]\n[    └─TableFullScan_10 10000.00 cop[tikv] table:t, partition:watch_event keep order:false, stats:pseudo"))
 	}
 
 	run := func(num int) {

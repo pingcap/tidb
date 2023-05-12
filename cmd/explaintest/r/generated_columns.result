@@ -25,22 +25,26 @@ KEY `idx_a_b` (`a`,`b`)
 );
 EXPLAIN format = 'brief' SELECT a FROM sgc where a < 3;
 id	estRows	task	access object	operator info
-IndexReader	3323.33	root		index:IndexRangeScan
-└─IndexRangeScan	3323.33	cop[tikv]	table:sgc, index:idx_a(a)	range:[-inf,3), keep order:false, stats:pseudo
+IndexReader	3323.33	root		index:Projection
+└─Projection	3323.33	cop[tikv]		test.sgc.a
+  └─IndexRangeScan	3323.33	cop[tikv]	table:sgc, index:idx_a(a)	range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN format = 'brief' SELECT a, b FROM sgc where a < 3;
 id	estRows	task	access object	operator info
-IndexReader	3323.33	root		index:IndexRangeScan
-└─IndexRangeScan	3323.33	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
+IndexReader	3323.33	root		index:Projection
+└─Projection	3323.33	cop[tikv]		test.sgc.a, test.sgc.b
+  └─IndexRangeScan	3323.33	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN format = 'brief' SELECT a, b from sgc where b < 3;
 id	estRows	task	access object	operator info
-IndexReader	3323.33	root		index:Selection
-└─Selection	3323.33	cop[tikv]		lt(test.sgc.b, 3)
-  └─IndexFullScan	10000.00	cop[tikv]	table:sgc, index:idx_a_b(a, b)	keep order:false, stats:pseudo
+IndexReader	3323.33	root		index:Projection
+└─Projection	3323.33	cop[tikv]		test.sgc.a, test.sgc.b
+  └─Selection	3323.33	cop[tikv]		lt(test.sgc.b, 3)
+    └─IndexFullScan	10000.00	cop[tikv]	table:sgc, index:idx_a_b(a, b)	keep order:false, stats:pseudo
 EXPLAIN format = 'brief' SELECT a, b from sgc where a < 3 and b < 3;
 id	estRows	task	access object	operator info
-IndexReader	1104.45	root		index:Selection
-└─Selection	1104.45	cop[tikv]		lt(test.sgc.b, 3)
-  └─IndexRangeScan	3323.33	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
+IndexReader	1104.45	root		index:Projection
+└─Projection	1104.45	cop[tikv]		test.sgc.a, test.sgc.b
+  └─Selection	1104.45	cop[tikv]		lt(test.sgc.b, 3)
+    └─IndexRangeScan	3323.33	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 DROP TABLE IF EXISTS sgc1,
 sgc2;
 CREATE TABLE `sgc1` (
@@ -156,14 +160,16 @@ PARTITION max VALUES LESS THAN MAXVALUE);
 analyze table sgc3;
 EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a <= 1;
 id	estRows	task	access object	operator info
-TableReader	3323.33	root	partition:p0,p1	data:Selection
-└─Selection	3323.33	cop[tikv]		le(test.sgc3.a, 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:sgc3	keep order:false, stats:pseudo
+TableReader	3323.33	root	partition:p0,p1	data:Projection
+└─Projection	3323.33	cop[tikv]		test.sgc3.j, test.sgc3.a
+  └─Selection	3323.33	cop[tikv]		le(test.sgc3.a, 1)
+    └─TableFullScan	10000.00	cop[tikv]	table:sgc3	keep order:false, stats:pseudo
 EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a < 7;
 id	estRows	task	access object	operator info
-TableReader	3323.33	root	partition:all	data:Selection
-└─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
-  └─TableFullScan	10000.00	cop[tikv]	table:sgc3	keep order:false, stats:pseudo
+TableReader	3323.33	root	partition:all	data:Projection
+└─Projection	3323.33	cop[tikv]		test.sgc3.j, test.sgc3.a
+  └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+    └─TableFullScan	10000.00	cop[tikv]	table:sgc3	keep order:false, stats:pseudo
 set @@tidb_partition_prune_mode = @old_prune_mode;
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS (c+1) VIRTUAL, KEY(b), INDEX IDX(c, d));

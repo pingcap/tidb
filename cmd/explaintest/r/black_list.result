@@ -4,9 +4,10 @@ drop table if exists t;
 create table t (a int);
 explain format = 'brief' select * from t where a < 1;
 id	estRows	task	access object	operator info
-TableReader	3323.33	root		data:Selection
-└─Selection	3323.33	cop[tikv]		lt(test.t.a, 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	3323.33	root		data:Projection
+└─Projection	3323.33	cop[tikv]		test.t.a
+  └─Selection	3323.33	cop[tikv]		lt(test.t.a, 1)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 insert into mysql.opt_rule_blacklist values('predicate_push_down');
 admin reload opt_rule_blacklist;
 
@@ -20,9 +21,10 @@ admin reload opt_rule_blacklist;
 
 explain format = 'brief' select * from t where a < 1;
 id	estRows	task	access object	operator info
-TableReader	3323.33	root		data:Selection
-└─Selection	3323.33	cop[tikv]		lt(test.t.a, 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	3323.33	root		data:Projection
+└─Projection	3323.33	cop[tikv]		test.t.a
+  └─Selection	3323.33	cop[tikv]		lt(test.t.a, 1)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 insert into mysql.expr_pushdown_blacklist values('<', 'tikv,tiflash,tidb', 'for test');
 admin reload expr_pushdown_blacklist;
 
@@ -36,9 +38,10 @@ admin reload expr_pushdown_blacklist;
 
 explain format = 'brief' select * from t where a < 1;
 id	estRows	task	access object	operator info
-TableReader	3323.33	root		data:Selection
-└─Selection	3323.33	cop[tikv]		lt(test.t.a, 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	3323.33	root		data:Projection
+└─Projection	3323.33	cop[tikv]		test.t.a
+  └─Selection	3323.33	cop[tikv]		lt(test.t.a, 1)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 insert into mysql.expr_pushdown_blacklist values('lt', 'tikv,tiflash,tidb', 'for test');
 admin reload expr_pushdown_blacklist;
 
@@ -52,6 +55,7 @@ admin reload expr_pushdown_blacklist;
 
 explain format = 'brief' select * from t where a < 1;
 id	estRows	task	access object	operator info
-TableReader	3323.33	root		data:Selection
-└─Selection	3323.33	cop[tikv]		lt(test.t.a, 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	3323.33	root		data:Projection
+└─Projection	3323.33	cop[tikv]		test.t.a
+  └─Selection	3323.33	cop[tikv]		lt(test.t.a, 1)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

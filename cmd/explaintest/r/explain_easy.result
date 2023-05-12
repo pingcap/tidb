@@ -19,13 +19,14 @@ HashJoin	8000.00	root		semi join, equal:[eq(Column#13, Column#11)]
 │ └─TableReader	1.00	root		data:StreamAgg
 │   └─StreamAgg	1.00	cop[tikv]		funcs:sum(test.t3.a)->Column#16
 │     └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─Projection(Probe)	10000.00	root		test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
-  └─TableReader	10000.00	root		data:TableFullScan
+└─TableReader(Probe)	10000.00	root		data:Projection
+  └─Projection	10000.00	cop[tikv]		test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1;
 id	estRows	task	access object	operator info
-TableReader	10000.00	root		data:TableFullScan
-└─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		test.t1.c1, test.t1.c2, test.t1.c3
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 order by c2;
 id	estRows	task	access object	operator info
 IndexLookUp	10000.00	root		
@@ -34,16 +35,19 @@ IndexLookUp	10000.00	root
 explain format = 'brief' select * from t2 order by c2;
 id	estRows	task	access object	operator info
 Sort	10000.00	root		test.t2.c2
-└─TableReader	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader	10000.00	root		data:Projection
+  └─Projection	10000.00	cop[tikv]		test.t2.c1, test.t2.c2
+    └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where t1.c1 > 0;
 id	estRows	task	access object	operator info
-TableReader	3333.33	root		data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(0,+inf], keep order:false, stats:pseudo
+TableReader	3333.33	root		data:Projection
+└─Projection	3333.33	cop[tikv]		test.t1.c1, test.t1.c2, test.t1.c3
+  └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(0,+inf], keep order:false, stats:pseudo
 explain format = 'brief' select t1.c1, t1.c2 from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
-IndexReader	10.00	root		index:IndexRangeScan
-└─IndexRangeScan	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+IndexReader	10.00	root		index:Projection
+└─Projection	10.00	cop[tikv]		test.t1.c1, test.t1.c2
+  └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	estRows	task	access object	operator info
 HashJoin	4166.67	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
@@ -112,8 +116,8 @@ explain format = 'brief' select (select count(1) k from t1 s where s.c1 = t1.c1 
 id	estRows	task	access object	operator info
 Projection	12500.00	root		ifnull(Column#10, 0)->Column#10
 └─MergeJoin	12500.00	root		left outer join, left key:test.t1.c1, right key:test.t1.c1
-  ├─Projection(Build)	10000.00	root		1->Column#10, test.t1.c1
-  │ └─TableReader	10000.00	root		data:TableFullScan
+  ├─TableReader(Build)	10000.00	root		data:Projection
+  │ └─Projection	10000.00	cop[tikv]		1->Column#10, test.t1.c1
   │   └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:true, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
@@ -162,12 +166,14 @@ Limit	1.00	root		offset:0, count:1
       └─TableRangeScan	3.00	cop[tikv]	table:t4	range:(1,+inf], keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(null, t1.c1) from t1;
 id	estRows	task	access object	operator info
-TableReader	10000.00	root		data:TableFullScan
-└─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		test.t1.c1
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select if(10, t1.c1, t1.c2) from t1;
 id	estRows	task	access object	operator info
-TableReader	10000.00	root		data:TableFullScan
-└─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		test.t1.c1
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select c1 from t2 union select c1 from t2 union all select c1 from t2;
 id	estRows	task	access object	operator info
 Union	26000.00	root		
@@ -181,8 +187,9 @@ Union	26000.00	root
 │     └─IndexReader	8000.00	root		index:StreamAgg
 │       └─StreamAgg	8000.00	cop[tikv]		group by:test.t2.c1, 
 │         └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
-└─IndexReader	10000.00	root		index:IndexFullScan
-  └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+└─IndexReader	10000.00	root		index:Projection
+  └─Projection	10000.00	cop[tikv]		test.t2.c1
+    └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain format = 'brief' select c1 from t2 union all select c1 from t2 union select c1 from t2;
 id	estRows	task	access object	operator info
 HashAgg	24000.00	root		group by:Column#10, funcs:firstrow(Column#11)->Column#10
@@ -405,39 +412,42 @@ drop table if exists t;
 create table t(a int unsigned not null);
 explain format = 'brief' select t.a = '123455' from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		eq(test.t.a, 123455)->Column#3
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		eq(test.t.a, 123455)->Column#3
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select t.a > '123455' from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		gt(test.t.a, 123455)->Column#3
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		gt(test.t.a, 123455)->Column#3
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select t.a != '123455' from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		ne(test.t.a, 123455)->Column#3
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		ne(test.t.a, 123455)->Column#3
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select t.a = 12345678912345678998789678687678.111 from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		0->Column#3
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		0->Column#3
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a bigint, b bigint, index idx(a, b));
 explain format = 'brief' select * from t where a in (1, 2) and a in (1, 3);
 id	estRows	task	access object	operator info
-IndexReader	10.00	root		index:IndexRangeScan
-└─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx(a, b)	range:[1,1], keep order:false, stats:pseudo
+IndexReader	10.00	root		index:Projection
+└─Projection	10.00	cop[tikv]		test.t.a, test.t.b
+  └─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx(a, b)	range:[1,1], keep order:false, stats:pseudo
 explain format = 'brief' select * from t where b in (1, 2) and b in (1, 3);
 id	estRows	task	access object	operator info
-TableReader	10.00	root		data:Selection
-└─Selection	10.00	cop[tikv]		in(test.t.b, 1, 2), in(test.t.b, 1, 3)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	10.00	root		data:Projection
+└─Projection	10.00	cop[tikv]		test.t.a, test.t.b
+  └─Selection	10.00	cop[tikv]		in(test.t.b, 1, 2), in(test.t.b, 1, 3)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 1 and a = 1;
 id	estRows	task	access object	operator info
-IndexReader	10.00	root		index:IndexRangeScan
-└─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx(a, b)	range:[1,1], keep order:false, stats:pseudo
+IndexReader	10.00	root		index:Projection
+└─Projection	10.00	cop[tikv]		test.t.a, test.t.b
+  └─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx(a, b)	range:[1,1], keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 1 and a = 2;
 id	estRows	task	access object	operator info
 TableDual	0.00	root		rows:0
@@ -468,8 +478,8 @@ id	estRows	task	access object	operator info
 TableDual	0.00	root		rows:0
 explain format = 'brief' select null or a > 1 from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		or(<nil>, gt(test.t.a, 1))->Column#2
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		or(<nil>, gt(test.t.a, 1))->Column#2
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 1 for update;
 id	estRows	task	access object	operator info
@@ -481,21 +491,24 @@ begin;
 insert tb values ('1');
 explain format = 'brief' select * from ta where a = 1;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(cast(test.ta.a, double BINARY), 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		test.ta.a
+  └─Selection	8000.00	cop[tikv]		eq(cast(test.ta.a, double BINARY), 1)
+    └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 rollback;
 drop table if exists t1, t2;
 create table t1(a int, b int, c int, primary key(a, b));
 create table t2(a int, b int, c int, primary key(a));
 explain format = 'brief' select t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 id	estRows	task	access object	operator info
-IndexReader	10000.00	root		index:IndexFullScan
-└─IndexFullScan	10000.00	cop[tikv]	table:t1, index:PRIMARY(a, b)	keep order:false, stats:pseudo
+IndexReader	10000.00	root		index:Projection
+└─Projection	10000.00	cop[tikv]		test.t1.a, test.t1.b
+  └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:PRIMARY(a, b)	keep order:false, stats:pseudo
 explain format = 'brief' select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 id	estRows	task	access object	operator info
-IndexReader	10000.00	root		index:IndexFullScan
-└─IndexFullScan	10000.00	cop[tikv]	table:t1, index:PRIMARY(a, b)	keep order:false, stats:pseudo
+IndexReader	10000.00	root		index:Projection
+└─Projection	10000.00	cop[tikv]		test.t1.a, test.t1.b
+  └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:PRIMARY(a, b)	keep order:false, stats:pseudo
 CREATE TABLE `test01` (
 `id` bigint(20) NOT NULL AUTO_INCREMENT,
 `stat_date` int(11) NOT NULL DEFAULT '0',
@@ -532,43 +545,43 @@ drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
 explain format = 'brief' select ifnull(a, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		ifnull(test.t.a, 0)->Column#5
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		ifnull(test.t.a, 0)->Column#5
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(nb, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		cast(test.t.nb, bigint(11) BINARY)->Column#5
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		cast(test.t.nb, bigint(11) BINARY)->Column#5
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(nb, 0), ifnull(nc, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		cast(test.t.nb, bigint(11) BINARY)->Column#5, cast(test.t.nc, bigint(11) BINARY)->Column#6
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		cast(test.t.nb, bigint(11) BINARY)->Column#5, cast(test.t.nc, bigint(11) BINARY)->Column#6
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(a, 0), ifnull(nb, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		ifnull(test.t.a, 0)->Column#5, cast(test.t.nb, bigint(11) BINARY)->Column#6
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		ifnull(test.t.a, 0)->Column#5, cast(test.t.nb, bigint(11) BINARY)->Column#6
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(nb, 0), ifnull(nb, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		cast(test.t.nb, bigint(11) BINARY)->Column#5, cast(test.t.nb, bigint(11) BINARY)->Column#6
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		cast(test.t.nb, bigint(11) BINARY)->Column#5, cast(test.t.nb, bigint(11) BINARY)->Column#6
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select 1+ifnull(nb, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		plus(1, cast(test.t.nb, bigint(11) BINARY))->Column#5
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		plus(1, cast(test.t.nb, bigint(11) BINARY))->Column#5
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select 1+ifnull(a, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		plus(1, ifnull(test.t.a, 0))->Column#5
-└─TableReader	10000.00	root		data:TableFullScan
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		plus(1, ifnull(test.t.a, 0))->Column#5
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select 1+ifnull(nb, 0) from t where nb=1;
 id	estRows	task	access object	operator info
-Projection	10.00	root		plus(1, cast(test.t.nb, bigint(11) BINARY))->Column#5
-└─TableReader	10.00	root		data:Selection
+TableReader	10.00	root		data:Projection
+└─Projection	10.00	cop[tikv]		plus(1, cast(test.t.nb, bigint(11) BINARY))->Column#5
   └─Selection	10.00	cop[tikv]		eq(test.t.nb, 1)
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(ta.nb, 1) or ta.nb is null;
@@ -602,8 +615,8 @@ explain format = 'brief' select ifnull(t.nc, 1) in (select count(*) from t s , t
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#22
 └─Apply	10000.00	root		left outer semi join, equal:[eq(Column#23, Column#21)]
-  ├─Projection(Build)	10000.00	root		test.t.a, cast(test.t.nc, bigint(11) BINARY)->Column#23
-  │ └─TableReader	10000.00	root		data:TableFullScan
+  ├─TableReader(Build)	10000.00	root		data:Projection
+  │ └─Projection	10000.00	cop[tikv]		test.t.a, cast(test.t.nc, bigint(11) BINARY)->Column#23
   │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg(Probe)	10000.00	root		funcs:count(Column#25)->Column#21
     └─HashJoin	99900.00	root		inner join, equal:[eq(test.t.a, test.t.a)]
@@ -636,8 +649,8 @@ explain format = 'brief' select ifnull(t.a, 1) in (select count(*) from t s , t 
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#22
 └─Apply	10000.00	root		left outer semi join, equal:[eq(Column#23, Column#21)]
-  ├─Projection(Build)	10000.00	root		test.t.a, ifnull(test.t.a, 1)->Column#23
-  │ └─TableReader	10000.00	root		data:TableFullScan
+  ├─TableReader(Build)	10000.00	root		data:Projection
+  │ └─Projection	10000.00	cop[tikv]		test.t.a, ifnull(test.t.a, 1)->Column#23
   │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg(Probe)	10000.00	root		funcs:count(Column#25)->Column#21
     └─HashJoin	99900.00	root		inner join, equal:[eq(test.t.a, test.t.a)]
@@ -656,18 +669,19 @@ id	estRows	task	access object	operator info
 Point_Get	1.00	root	table:t	handle:0
 explain format = 'brief' select * from t where _tidb_rowid > 0;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		test.t.a
-└─TableReader	10000.00	root		data:TableRangeScan
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		test.t.a
   └─TableRangeScan	10000.00	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
 explain format = 'brief' select a, _tidb_rowid from t where a > 0;
 id	estRows	task	access object	operator info
-TableReader	3333.33	root		data:Selection
-└─Selection	3333.33	cop[tikv]		gt(test.t.a, 0)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	3333.33	root		data:Projection
+└─Projection	3333.33	cop[tikv]		test.t.a, test.t._tidb_rowid
+  └─Selection	3333.33	cop[tikv]		gt(test.t.a, 0)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where _tidb_rowid > 0 and a > 0;
 id	estRows	task	access object	operator info
-Projection	2666.67	root		test.t.a
-└─TableReader	2666.67	root		data:Selection
+TableReader	2666.67	root		data:Projection
+└─Projection	2666.67	cop[tikv]		test.t.a
   └─Selection	2666.67	cop[tikv]		gt(test.t.a, 0)
     └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
 drop table if exists t;
@@ -734,33 +748,38 @@ insert into t values (1, "1000-01-01"), (2, "1000-01-02"), (3, "1000-01-03");
 analyze table t;
 explain format = 'brief' select * from t where a = 1;
 id	estRows	task	access object	operator info
-TableReader	1.00	root		data:Selection
-└─Selection	1.00	cop[tikv]		eq(test.t.a, 00:00:01.000000)
-  └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
+TableReader	1.00	root		data:Projection
+└─Projection	1.00	cop[tikv]		test.t.a, test.t.b
+  └─Selection	1.00	cop[tikv]		eq(test.t.a, 00:00:01.000000)
+    └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where b = "1000-01-01";
 id	estRows	task	access object	operator info
-TableReader	1.00	root		data:Selection
-└─Selection	1.00	cop[tikv]		eq(test.t.b, 1000-01-01 00:00:00.000000)
-  └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
+TableReader	1.00	root		data:Projection
+└─Projection	1.00	cop[tikv]		test.t.a, test.t.b
+  └─Selection	1.00	cop[tikv]		eq(test.t.b, 1000-01-01 00:00:00.000000)
+    └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
 drop table t;
 create table t(a int);
 insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
 analyze table t with 1 buckets;
 explain format = 'brief' select * from t where a >= 3 and a <= 8;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		ge(test.t.a, 3), le(test.t.a, 8)
-  └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
+TableReader	0.00	root		data:Projection
+└─Projection	0.00	cop[tikv]		test.t.a
+  └─Selection	0.00	cop[tikv]		ge(test.t.a, 3), le(test.t.a, 8)
+    └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
 drop table t;
 create table t(a int, b int, index idx_ab(a, b));
 explain format = 'brief' select a, b from t where a in (1) order by b;
 id	estRows	task	access object	operator info
-IndexReader	10.00	root		index:IndexRangeScan
-└─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx_ab(a, b)	range:[1,1], keep order:true, stats:pseudo
+IndexReader	10.00	root		index:Projection
+└─Projection	10.00	cop[tikv]		test.t.a, test.t.b
+  └─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx_ab(a, b)	range:[1,1], keep order:true, stats:pseudo
 explain format = 'brief' select a, b from t where a = 1 order by b;
 id	estRows	task	access object	operator info
-IndexReader	10.00	root		index:IndexRangeScan
-└─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx_ab(a, b)	range:[1,1], keep order:true, stats:pseudo
+IndexReader	10.00	root		index:Projection
+└─Projection	10.00	cop[tikv]		test.t.a, test.t.b
+  └─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx_ab(a, b)	range:[1,1], keep order:true, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 explain format = 'brief' select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
@@ -777,20 +796,21 @@ create table t(a int, b int);
 explain format="dot" select * from t where a < 2;
 dot contents
 
-digraph TableReader_7 {
-subgraph cluster7{
+digraph TableReader_11 {
+subgraph cluster11{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"TableReader_7"
+"TableReader_11"
 }
-subgraph cluster6{
+subgraph cluster5{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_6" -> "TableFullScan_5"
+"Projection_5" -> "Selection_10"
+"Selection_10" -> "TableFullScan_9"
 }
-"TableReader_7" -> "Selection_6"
+"TableReader_11" -> "Projection_5"
 }
 
 drop table if exists t;
@@ -817,8 +837,8 @@ Projection	1.00	root		Column#11
   │ └─TableReader	10000.00	root		data:TableFullScan
   │   └─TableFullScan	10000.00	cop[tikv]	table:n	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
-    └─Projection	2.00	root		Column#7
-      └─TableReader	2.00	root		data:TableFullScan
+    └─TableReader	2.00	root		data:Projection
+      └─Projection	2.00	cop[tikv]		Column#7
         └─TableFullScan	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select (select sum((select count(a)))) from t;
 id	estRows	task	access object	operator info

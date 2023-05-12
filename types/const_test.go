@@ -150,11 +150,11 @@ func TestIssue22390(t *testing.T) {
 	tk.MustExec("create table tb5(a bigint, b bigint);")
 	tk.MustExec("insert into tb5 values (10, -9223372036854775808);")
 	err := tk.QueryToErr("select a - b from tb5;")
-	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
+	require.EqualError(t, err, "[tikv:1690]BIGINT value is out of range in '(Column#0 - Column#0)'")
 
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION';")
 	err = tk.QueryToErr("select a - b from tb5;")
-	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
+	require.EqualError(t, err, "[tikv:1690]BIGINT value is out of range in '(Column#0 - Column#0)'")
 }
 
 func TestIssue22442(t *testing.T) {

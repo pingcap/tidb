@@ -208,21 +208,30 @@ id	estRows	task	access object	operator info
 HashAgg	18000.00	root		group by:Column#32, funcs:sum(Column#31)->Column#30
 └─Projection	18000.00	root		cast(Column#28, decimal(10,0) BINARY)->Column#31, Column#29
   └─Union	18000.00	root		
-    ├─TableReader	2000.00	root		data:TableFullScan
-    │ └─TableFullScan	2000.00	cop[tikv]	table:tbl_001	keep order:false
-    ├─TableReader	2000.00	root		data:TableFullScan
-    │ └─TableFullScan	2000.00	cop[tikv]	table:tbl_002	keep order:false
-    ├─TableReader	2000.00	root		data:TableFullScan
-    │ └─TableFullScan	2000.00	cop[tikv]	table:tbl_003	keep order:false
-    ├─TableReader	2000.00	root		data:TableFullScan
-    │ └─TableFullScan	2000.00	cop[tikv]	table:tbl_004	keep order:false
-    ├─TableReader	2000.00	root		data:TableFullScan
-    │ └─TableFullScan	2000.00	cop[tikv]	table:tbl_005	keep order:false
-    ├─TableReader	2000.00	root		data:TableFullScan
-    │ └─TableFullScan	2000.00	cop[tikv]	table:tbl_006	keep order:false
-    ├─TableReader	2000.00	root		data:TableFullScan
-    │ └─TableFullScan	2000.00	cop[tikv]	table:tbl_007	keep order:false
-    ├─TableReader	2000.00	root		data:TableFullScan
-    │ └─TableFullScan	2000.00	cop[tikv]	table:tbl_008	keep order:false
-    └─TableReader	2000.00	root		data:TableFullScan
-      └─TableFullScan	2000.00	cop[tikv]	table:tbl_009	keep order:false
+    ├─TableReader	2000.00	root		data:Projection
+    │ └─Projection	2000.00	cop[tikv]		test.tbl_001.a, test.tbl_001.b
+    │   └─TableFullScan	2000.00	cop[tikv]	table:tbl_001	keep order:false
+    ├─TableReader	2000.00	root		data:Projection
+    │ └─Projection	2000.00	cop[tikv]		test.tbl_002.a, test.tbl_002.b
+    │   └─TableFullScan	2000.00	cop[tikv]	table:tbl_002	keep order:false
+    ├─TableReader	2000.00	root		data:Projection
+    │ └─Projection	2000.00	cop[tikv]		test.tbl_003.a, test.tbl_003.b
+    │   └─TableFullScan	2000.00	cop[tikv]	table:tbl_003	keep order:false
+    ├─TableReader	2000.00	root		data:Projection
+    │ └─Projection	2000.00	cop[tikv]		test.tbl_004.a, test.tbl_004.b
+    │   └─TableFullScan	2000.00	cop[tikv]	table:tbl_004	keep order:false
+    ├─TableReader	2000.00	root		data:Projection
+    │ └─Projection	2000.00	cop[tikv]		test.tbl_005.a, test.tbl_005.b
+    │   └─TableFullScan	2000.00	cop[tikv]	table:tbl_005	keep order:false
+    ├─TableReader	2000.00	root		data:Projection
+    │ └─Projection	2000.00	cop[tikv]		test.tbl_006.a, test.tbl_006.b
+    │   └─TableFullScan	2000.00	cop[tikv]	table:tbl_006	keep order:false
+    ├─TableReader	2000.00	root		data:Projection
+    │ └─Projection	2000.00	cop[tikv]		test.tbl_007.a, test.tbl_007.b
+    │   └─TableFullScan	2000.00	cop[tikv]	table:tbl_007	keep order:false
+    ├─TableReader	2000.00	root		data:Projection
+    │ └─Projection	2000.00	cop[tikv]		test.tbl_008.a, test.tbl_008.b
+    │   └─TableFullScan	2000.00	cop[tikv]	table:tbl_008	keep order:false
+    └─TableReader	2000.00	root		data:Projection
+      └─Projection	2000.00	cop[tikv]		test.tbl_009.a, test.tbl_009.b
+        └─TableFullScan	2000.00	cop[tikv]	table:tbl_009	keep order:false

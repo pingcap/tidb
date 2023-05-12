@@ -20,13 +20,14 @@ HashJoin	1600.00	root		semi join, equal:[eq(Column#13, Column#11)]
 │ └─TableReader	1.00	root		data:StreamAgg
 │   └─StreamAgg	1.00	cop[tikv]		funcs:sum(test.t3.a)->Column#16
 │     └─TableFullScan	2000.00	cop[tikv]	table:s	keep order:false
-└─Projection(Probe)	2000.00	root		test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
-  └─TableReader	2000.00	root		data:TableFullScan
+└─TableReader(Probe)	2000.00	root		data:Projection
+  └─Projection	2000.00	cop[tikv]		test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
     └─TableFullScan	2000.00	cop[tikv]	table:t3	keep order:false
 explain format = 'brief' select * from t1;
 id	estRows	task	access object	operator info
-TableReader	1999.00	root		data:TableFullScan
-└─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
+TableReader	1999.00	root		data:Projection
+└─Projection	1999.00	cop[tikv]		test.t1.c1, test.t1.c2, test.t1.c3
+  └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 order by c2;
 id	estRows	task	access object	operator info
 IndexLookUp	1999.00	root		
@@ -35,16 +36,19 @@ IndexLookUp	1999.00	root
 explain format = 'brief' select * from t2 order by c2;
 id	estRows	task	access object	operator info
 Sort	1985.00	root		test.t2.c2
-└─TableReader	1985.00	root		data:TableFullScan
-  └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
+└─TableReader	1985.00	root		data:Projection
+  └─Projection	1985.00	cop[tikv]		test.t2.c1, test.t2.c2
+    └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
 explain format = 'brief' select * from t1 where t1.c1 > 0;
 id	estRows	task	access object	operator info
-TableReader	1999.00	root		data:TableRangeScan
-└─TableRangeScan	1999.00	cop[tikv]	table:t1	range:(0,+inf], keep order:false
+TableReader	1999.00	root		data:Projection
+└─Projection	1999.00	cop[tikv]		test.t1.c1, test.t1.c2, test.t1.c3
+  └─TableRangeScan	1999.00	cop[tikv]	table:t1	range:(0,+inf], keep order:false
 explain format = 'brief' select t1.c1, t1.c2 from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:IndexRangeScan
-└─IndexRangeScan	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
+IndexReader	0.00	root		index:Projection
+└─Projection	0.00	cop[tikv]		test.t1.c1, test.t1.c2
+  └─IndexRangeScan	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
 explain format = 'brief' select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	estRows	task	access object	operator info
 HashJoin	2481.25	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
@@ -187,5 +191,6 @@ create table tbl(column1 int, column2 int, index idx(column1, column2));
 load stats 's/explain_easy_stats_tbl_dnf.json';
 explain format = 'brief' select * from tbl where (column1=0 and column2=1) or (column1=1 and column2=3) or (column1=2 and column2=5);
 id	estRows	task	access object	operator info
-IndexReader	3.00	root		index:IndexRangeScan
-└─IndexRangeScan	3.00	cop[tikv]	table:tbl, index:idx(column1, column2)	range:[0 1,0 1], [1 3,1 3], [2 5,2 5], keep order:false
+IndexReader	3.00	root		index:Projection
+└─Projection	3.00	cop[tikv]		test.tbl.column1, test.tbl.column2
+  └─IndexRangeScan	3.00	cop[tikv]	table:tbl, index:idx(column1, column2)	range:[0 1,0 1], [1 3,1 3], [2 5,2 5], keep order:false
