@@ -233,7 +233,7 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 			err = errors.Errorf("%v", r)
 		}
 	}()
-	failpoint.Inject("testCTEPanic", nil)
+	failpoint.Inject("testCTESeedPanic", nil)
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
 	chks := make([]*chunk.Chunk, 0, 10)
@@ -272,6 +272,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 			err = errors.Errorf("%v", r)
 		}
 	}()
+	failpoint.Inject("testCTERecursivePanic", nil)
 	if e.recursiveExec == nil || e.iterInTbl.NumChunks() == 0 {
 		return
 	}
