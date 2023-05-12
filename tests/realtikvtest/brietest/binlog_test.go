@@ -62,6 +62,9 @@ func TestForCoverage(t *testing.T) {
 	tk.MustExec("insert t values ()")
 
 	// Normal request will not cover txn.Seek.
+	tk.MustExec("set @@tidb_fast_check_table=false")
+	tk.MustExec("admin check table t")
+	tk.MustExec("set @@tidb_fast_check_table=true")
 	tk.MustExec("admin check table t")
 
 	// Cover dirty table operations in StateTxn.

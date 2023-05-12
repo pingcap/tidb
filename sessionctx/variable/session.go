@@ -1439,9 +1439,6 @@ type SessionVars struct {
 
 	// FastCheckTable is used to control whether fast check table is enabled.
 	FastCheckTable bool
-
-	// CheckTableInIndexLookup is used to control whether check table is enabled in index lookup.
-	CheckTableInIndexLookup bool
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session

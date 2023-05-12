@@ -2395,6 +2395,7 @@ func getCheckSum(se sessionctx.Context, sql string) ([]uint64, error) {
 func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
+	bucketSize := 1024
 
 	ctx := kv.WithInternalSourceType(context.TODO(), kv.InternalTxnAdmin)
 
@@ -2416,7 +2417,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	case w.e.table.Meta().IsCommonHandle:
 		pkColsInfo := w.e.table.Meta().GetPrimaryKey().Columns
 		for _, colInfo := range pkColsInfo {
-			pkCols = append(pkCols, colInfo.Name.O)
+			colStr := colInfo.Name.O
+			if colInfo.Length != types.UnspecifiedLength {
+				colStr += fmt.Sprintf("(%d)", colInfo.Length)
+			}
+			pkCols = append(pkCols, colStr)
 		}
 	case w.e.table.Meta().PKIsHandle:
 		pkCols = append(pkCols, w.e.table.Meta().GetPkName().O)
@@ -2424,47 +2429,62 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		pkCols = append(pkCols, model.ExtraHandleName.O)
 	}
 
-	indexCols := make([]string, len(idxInfo.Columns))
-	for i, col := range idxInfo.Columns {
-		indexCols[i] = col.Name.O
-	}
-
-	// build the SQL query string
-	var sb strings.Builder
-	sb.WriteString("bit_xor(md5(concat(")
+	// CheckSum of (handle + index columns).
+	var md5HandleAndIndexCol strings.Builder
+	md5HandleAndIndexCol.WriteString("md5(concat(")
 	for _, col := range pkCols {
-		sb.WriteString(col)
-		sb.WriteString(", ")
+		md5HandleAndIndexCol.WriteString(col)
+		md5HandleAndIndexCol.WriteString(", ")
 	}
-	for offset, col := range indexCols {
-		sb.WriteString("ifnull(")
-		sb.WriteString(col)
-		sb.WriteString(", 0x1")
-		sb.WriteString(")")
-		if offset != len(indexCols)-1 {
-			sb.WriteString(", ")
+	for offset, col := range idxInfo.Columns {
+		md5HandleAndIndexCol.WriteString("ifnull(")
+		md5HandleAndIndexCol.WriteString(col.Name.O)
+		if col.Length != types.UnspecifiedLength {
+			md5HandleAndIndexCol.WriteString(fmt.Sprintf("(%d)", col.Length))
+		}
+		md5HandleAndIndexCol.WriteString(", 0x1)")
+		if offset != len(idxInfo.Columns)-1 {
+			md5HandleAndIndexCol.WriteString(", ")
 		}
 	}
-	sb.WriteString(")))")
+	md5HandleAndIndexCol.WriteString("))")
 
-	groupStr := fmt.Sprintf("md5(%s)", pkCols[0])
+	// Used to group by and order.
+	var md5Handle strings.Builder
+	md5Handle.WriteString("md5(concat(")
+	for _, col := range pkCols {
+		md5Handle.WriteString(col)
+		md5Handle.WriteString(", ")
+	}
+	md5HandleAndIndexCol.WriteString("))")
 
-	tableRowCnt := w.e.rowCnt
+	handleColumnField := strings.Join(pkCols, ", ")
+	var indexColumnField strings.Builder
+	for offset, col := range idxInfo.Columns {
+		indexColumnField.WriteString(col.Name.O)
+		if col.Length != types.UnspecifiedLength {
+			indexColumnField.WriteString(fmt.Sprintf("(%d)", col.Length))
+		}
+		if offset != len(idxInfo.Columns)-1 {
+			indexColumnField.WriteString(", ")
+		}
+	}
+
+
+	tableRowCntToCheck := w.e.rowCnt
 
 	offset := 0
 	mod := 1
 	meetError := false
 
-	lookupCheckThreshold := int64(10000)
-	fullColCheck := len(indexCols) == len(w.e.table.Cols())
-	checkCheckSum := w.rowCnt > lookupCheckThreshold || fullColCheck
+	lookupCheckThreshold := int64(1000)
+	checkCheckSum := w.rowCnt > lookupCheckThreshold
 
-	for tableRowCnt > lookupCheckThreshold || fullColCheck {
-		// If the table row count is less than lookupCheckThreshold and the index contains all the column, check only once.
-		fullColCheck = false
+	for tableRowCntToCheck > 0 {
+		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", handleColumnField, offset, mod, bucketSize)
 
 		// compute table side checksum.
-		sql := fmt.Sprintf("select %s from %s.%s use index() group by ((%s - %d) %% 256) order by %s", sb.String(), w.e.dbName, w.e.table.Meta().Name, groupStr, offset, groupStr)
+		sql := fmt.Sprintf("select %s, count(*) from %s.%s use index() group by %s order by %s", md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, groupByKey, groupByKey)
 		logutil.BgLogger().Info("check table index on table side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
 		tableCheckSum, err := getCheckSum(se, sql)
 		if err != nil {
@@ -2473,7 +2493,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		}
 
 		// compute index side checksum.
-		sql = fmt.Sprintf("select %s from %s.%s use index(%s) group by ((%s - %d) %% 256) order by %s", sb.String(), w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupStr, offset, groupStr)
+		sql = fmt.Sprintf("select %s, count(*) from %s.%s use index(%s) group by %s order by %s", md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey, groupByKey)
 		logutil.BgLogger().Info("check table index on index side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
 		indexCheckSum, err := getCheckSum(se, sql)
 		if err != nil {
@@ -2490,9 +2510,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		for i, v := range tableCheckSum {
 			if v != indexCheckSum[i] {
 				offset += i * mod
-				mod *= 256
+				mod *= bucketSize
 				meetError = true
-				tableRowCnt /= 256
+				tableRowCntToCheck /= int64(bucketSize)
 				break
 			}
 		}
@@ -2501,36 +2521,50 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		}
 	}
 
-	sql := fmt.Sprintf("select * from %s.%s use index(%s) where (%s - %d) %% %d = 0", w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupStr, offset, mod)
-	if meetError && len(indexCols) == len(w.e.table.Cols()) {
-		// for index which contains all the table's column, we can't use indexLookup to check.
-		err = admin.ErrAdminCheckTable.GenWithStackByArgs(fmt.Sprintf("index is not consistent with table data, location hint: '%s', compare the result with the sql that using table scan", sql))
-		trySaveErr(err)
-		return
+	queryToRow := func(se sessionctx.Context, sql string) ([]chunk.Row, error) {
+		rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+		if err != nil {
+			return nil, err
+		}
+		row, err := sqlexec.DrainRecordSet(ctx, rs, 4096)
+		if err != nil {
+			return nil, err
+		}
+		err = rs.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("close result set failed", zap.Error(err))
+		}
+		return row, nil
 	}
 
-	// If there is an error, we use indexLookup to get the detailed information.
 	if meetError || !checkCheckSum {
-		save := se.GetSessionVars().CheckTableInIndexLookup
-		defer func() {
-			se.GetSessionVars().CheckTableInIndexLookup = save
-		}()
-		se.GetSessionVars().CheckTableInIndexLookup = true
-		rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+		indexSql := fmt.Sprintf("select %s, %s, %s from %s.%s use index(%s) where (%s - %d) /%d %% %d = 0 order by %s", , indexColSb.String(), md5HandleAndIndexCol.String()[8:len(md5HandleAndIndexCol.String())-1], w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupSb.String(), offset, mod, indexColSb.String())
+		tableSql := fmt.Sprintf("select %s, %s, %s from %s.%s use index() where (%s - %d) /%d %% %d = 0 order by %s", indexColSb.String(), md5HandleAndIndexCol.String()[8:len(md5HandleAndIndexCol.String())-1], w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupSb.String(), offset, mod, indexColSb.String())
+
+		idxRow, err := queryToRow(se, indexSql)
 		if err != nil {
 			trySaveErr(err)
 			return
 		}
-		defer func() {
-			err = rs.Close()
-			if err != nil {
-				logutil.BgLogger().Warn("close result set failed", zap.Error(err))
-			}
-		}()
-		_, err = sqlexec.DrainRecordSet(ctx, rs, 4096)
+		tblRow, err := queryToRow(se, tableSql)
 		if err != nil {
 			trySaveErr(err)
 			return
+		}
+		for i, row := range tblRow {
+			if i >= len(idxRow) {
+				// index side has less rows than table side.
+			} else {
+				tblCheckSum := row.GetUint64(row.Chunk().NumCols() - 1)
+				indeCheckSum := idxRow[i].GetUint64(idxRow[i].Chunk().NumCols() - 1)
+				if tblCheckSum != indeCheckSum {
+					// checksum not match.
+					w.e.err = errors.Errorf("checksum not match, table side checksum %d, index side checksum %d", tblCheckSum, indeCheckSum)
+					datums := make([]types.Datum, 0, row.Chunk().NumCols())
+					for tbl,
+				}
+			}
+
 		}
 	}
 }
