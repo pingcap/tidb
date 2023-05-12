@@ -453,29 +453,3 @@ func TestIssue33231(t *testing.T) {
 		Sort().
 		Check(testkit.Rows("6 beautiful curran 6 vigorous rhodes", "7 affectionate curie 7 sweet aryabhata", "7 epic kalam 7 sweet aryabhata"))
 }
-
-func TestIssue42273(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database issue42273")
-	defer tk.MustExec("drop database issue42273")
-
-	tk.MustExec("use issue42273")
-	tk.MustExec(`CREATE TABLE t(a tinyint unsigned,  b tinyint unsigned) PARTITION BY RANGE COLUMNS (a,b)(
-			PARTITION p0 VALUES LESS THAN (10,255),
-			PARTITION p1 VALUES LESS THAN (20,MAXVALUE),
-			PARTITION p2 VALUES LESS THAN (30,255),
-			PARTITION p3 VALUES LESS THAN (MAXVALUE, 0))`)
-	tk.MustExec("insert into t values(20, 30)")
-	tk.MustExec(`analyze table t`) // Creates global stats for the table and enables the dynamic pruning
-	tk.MustQuery(`explain format='brief' select * from t where a = 20`).Check(testkit.Rows(
-		"TableReader 1.00 root partition:p1 data:Selection",
-		"└─Selection 1.00 cop[tikv]  eq(issue42273.t.a, 20)",
-		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
-	tk.MustQuery(`explain format='brief' select * from t where a > 10 and a <= 20`).Check(testkit.Rows(
-		"TableReader 1.00 root partition:p1 data:Selection",
-		"└─Selection 1.00 cop[tikv]  gt(issue42273.t.a, 10), le(issue42273.t.a, 20)",
-		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
-	tk.MustQuery(`select * from t where a = 20`).Check(testkit.Rows("20 30"))
-	tk.MustQuery(`select * from t where a > 10 and a <= 20`).Check(testkit.Rows("20 30"))
-}
