@@ -70,11 +70,9 @@ func TestGetInstance(t *testing.T) {
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
-	instanceID, _ := dispatcher.GetEligibleInstance(serverNodes, 0)
-	require.Lenf(t, instanceID, 0, "instanceID:%d", instanceID)
 	require.EqualError(t, err, "not found instance")
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, 1)
-	require.Lenf(t, instanceIDs, 0, "instanceID:%d", instanceID)
+	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
 	require.NoError(t, err)
 
 	// test 2 servers
@@ -92,7 +90,7 @@ func TestGetInstance(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	serverNodes, err = dispatcher.GenerateSchedulerNodes(ctx)
 	require.NoError(t, err)
-	instanceID, err = dispatcher.GetEligibleInstance(serverNodes, 0)
+	instanceID := dispatcher.GetInstanceForSubtask(serverNodes, 0)
 	require.NoError(t, err)
 	if instanceID != uuids[0] && instanceID != uuids[1] {
 		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
@@ -290,8 +288,9 @@ func TestParallelCancelFlow(t *testing.T) {
 
 const taskTypeExample = "task_example"
 
-type NumberExampleHandle struct {
-}
+type NumberExampleHandle struct{}
+
+var _ dispatcher.TaskFlowHandle = (*NumberExampleHandle)(nil)
 
 func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
@@ -316,4 +315,8 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
+}
+
+func (h NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	return dispatcher.GenerateSchedulerNodes(ctx)
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/table/tables"
@@ -31,6 +32,8 @@ import (
 
 // FlowHandle is the dispatcher for load data.
 type FlowHandle struct{}
+
+var _ dispatcher.TaskFlowHandle = (*FlowHandle)(nil)
 
 // ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
 func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
@@ -74,6 +77,19 @@ func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gT
 	logutil.BgLogger().Info("process error flow", zap.ByteStrings("error message", receiveErr))
 	gTask.Error = receiveErr[0]
 	return nil, nil
+}
+
+// GetEligibleInstances implements dispatcher.TaskFlowHandle interface.
+func (h *FlowHandle) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
+	taskMeta := &TaskMeta{}
+	err := json.Unmarshal(gTask.Meta, taskMeta)
+	if err != nil {
+		return nil, err
+	}
+	if len(taskMeta.EligibleInstances) > 0 {
+		return taskMeta.EligibleInstances, nil
+	}
+	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
 func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {

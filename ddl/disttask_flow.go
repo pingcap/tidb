@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -29,6 +30,8 @@ import (
 type litBackfillFlowHandle struct {
 	d DDL
 }
+
+var _ dispatcher.TaskFlowHandle = (*litBackfillFlowHandle)(nil)
 
 // NewLitBackfillFlowHandle creates a new litBackfillFlowHandle.
 func NewLitBackfillFlowHandle(d DDL) dispatcher.TaskFlowHandle {
@@ -95,4 +98,8 @@ func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Tas
 	task.Error = firstErr
 
 	return nil, nil
+}
+
+func (h *litBackfillFlowHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	return dispatcher.GenerateSchedulerNodes(ctx)
 }

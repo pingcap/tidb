@@ -17,6 +17,7 @@ package loaddata
 import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 )
 
@@ -31,6 +32,11 @@ type TaskMeta struct {
 	Plan  importer.Plan
 	JobID int64
 	Stmt  string
+
+	// eligible instances to run this task, we run on all instances if it's empty.
+	// we only need this when run LOAD DATA without distributed option now, i.e.
+	// running on the instance that initiate the LOAD DATA.
+	EligibleInstances []*infosync.ServerInfo
 }
 
 // SubtaskMeta is the subtask of LoadData.
