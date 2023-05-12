@@ -19,6 +19,8 @@ Moreover, this resource control mechanism can be used by Resource Manage in the 
 
 ## Detailed Design
 
+Global Resource Control Architecture Overview
+
 ![resource control overview.png](imgs/resource-control-overview.png)
 
 **Resource Group** helps users to control over its resources, to enable or restrict resource consumption. resource groups have attributes that define the group. all attributes can be set at group creation time and  modified any time thereafter. The attributes define how many resource units in this group relative CPU, IO, Memory and so on.
@@ -56,7 +58,9 @@ SELECT /*+ RESOURCE_GROUP(resouce_group_name) */ * from table_name;
 
 The global admission control can be an independent module that is easy to use and compiled by TiDB. And also, it's possible to be an independent service. Because its local controller part may be installed to the SQL layer first, or it may be moved from the SQL layer to the proxy layer with the evolution. And it also will be related to the billing system in the future. Therefore, it should be as decoupled as possible.
 The subsystem can be enabled and disabled. Once enabled, it may bring some performance regression (1%~5% from TopSQL) due to the statistics and control overhead.
+
 Overview
+
 ![global quota control.png](imgs/global-quota-control.png)
 
 **Global Admission Controller(GAC):** The Global Admission Controller service centrally tracks the total consumption of the user or tenant in terms of tokens. And maintain the global token bucket with the setting refill rate(RU). It is also responsible for dynamically allocating and adjusting local token buckets. Global Admission Controller maintains some settings and consumption in the etcd, and uses etcd election to achieve high availability,
