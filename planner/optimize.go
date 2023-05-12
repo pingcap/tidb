@@ -180,17 +180,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	// Override the resource group if necessary
-	// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
-	if originStmtHints.HasResourceGroup {
-		if variable.EnableResourceControl.Load() {
-			sessVars.ResourceGroupName = originStmtHints.ResourceGroup
-		} else {
-			err := infoschema.ErrResourceGroupSupportDisabled
-			sessVars.StmtCtx.AppendWarning(err)
-		}
-	}
-
 	txnManger := sessiontxn.GetTxnManager(sctx)
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp core.Plan
@@ -280,17 +269,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				}
 			}
 
-			// Override the resource group if necessary
-			// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
-			if curStmtHints.HasResourceGroup {
-				if variable.EnableResourceControl.Load() {
-					sessVars.ResourceGroupName = curStmtHints.ResourceGroup
-				} else {
-					err := infoschema.ErrResourceGroupSupportDisabled
-					sessVars.StmtCtx.AppendWarning(err)
-				}
-			}
-
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
@@ -327,6 +305,18 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		// Restore the hint to avoid changing the stmt node.
 		hint.BindHint(stmtNode, originHints)
 	}
+
+	// Override the resource group if necessary
+	// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
+	if sessVars.StmtCtx.StmtHints.HasResourceGroup {
+		if variable.EnableResourceControl.Load() {
+			sessVars.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+		} else {
+			err := infoschema.ErrResourceGroupSupportDisabled
+			sessVars.StmtCtx.AppendWarning(err)
+		}
+	}
+
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
 		core.DebugTraceBestBinding(sctx, chosenBinding.Hint)
 	}
