@@ -31,6 +31,9 @@ import (
 
 var _ Executor = &CTEExec{}
 
+// Only for test.
+var oomTestFlag = 0
+
 // CTEExec implements CTE.
 // Following diagram describes how CTEExec works.
 //
@@ -160,6 +163,11 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return e.resTbl.Error()
 		}
 		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
+		failpoint.Inject("testCTEPanic", func(_ failpoint.Value) {
+			if oomTestFlag == 1 {
+				oomTestFlag = 2
+			}
+		})
 		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
 		var iterOutAction *chunk.SpillDiskAction
 		if e.iterOutTbl != nil {
@@ -231,6 +239,15 @@ func (e *CTEExec) Close() (err error) {
 }
 
 func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil && err == nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	failpoint.Inject("testCTEPanic", func(_ failpoint.Value) {
+		oomTestFlag = 1
+		panic("testCTEPanic")
+	})
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
 	chks := make([]*chunk.Chunk, 0, 10)
@@ -240,13 +257,13 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 		}
 		chk := tryNewCacheChunk(e.seedExec)
 		if err = Next(ctx, e.seedExec, chk); err != nil {
-			return err
+			return
 		}
 		if chk.NumRows() == 0 {
 			break
 		}
 		if chk, err = e.tryDedupAndAdd(chk, e.iterInTbl, e.hashTbl); err != nil {
-			return err
+			return
 		}
 		chks = append(chks, chk)
 	}
@@ -254,16 +271,21 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 	// Just adding is ok.
 	for _, chk := range chks {
 		if err = e.resTbl.Add(chk); err != nil {
-			return err
+			return
 		}
 	}
 	e.curIter++
 	e.iterInTbl.SetIter(e.curIter)
 
-	return nil
+	return
 }
 
 func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil && err == nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
 	if e.recursiveExec == nil || e.iterInTbl.NumChunks() == 0 {
 		return nil
 	}
@@ -429,6 +451,12 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 	parentDiskTracker *disk.Tracker) (actionSpill *chunk.SpillDiskAction) {
 	memTracker := tbl.GetMemTracker()
 	memTracker.SetLabel(memory.LabelForCTEStorage)
+	failpoint.Inject("testCTEPanic", func(_ failpoint.Value) {
+		if oomTestFlag == 2 {
+			memTracker.Consume(1)
+			ctx.GetSessionVars().MemTracker.NeedKill.Store(true)
+		}
+	})
 	memTracker.AttachTo(parentMemTracker)
 
 	diskTracker := tbl.GetDiskTracker()
