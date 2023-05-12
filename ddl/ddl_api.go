@@ -4232,7 +4232,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	fn := func(pi *model.PartitionInfo) (*model.PartitionInfo, error) {
+	getTruncatedParts := func(pi *model.PartitionInfo) (*model.PartitionInfo, error) {
 		if spec.OnAllPartitions {
 			return pi.Clone(), nil
 		}
@@ -4254,7 +4254,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		pi.Definitions = defs
 		return pi, nil
 	}
-	pi, err := fn(meta.GetPartitionInfo())
+	pi, err := getTruncatedParts(meta.GetPartitionInfo())
 	if err != nil {
 		return err
 	}
@@ -4279,7 +4279,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ident); err == nil {
-		if p, err := fn(tb.Meta().GetPartitionInfo()); err == nil {
+		if p, err := getTruncatedParts(tb.Meta().GetPartitionInfo()); err == nil {
 			d.preSplitAndScatter(ctx, tb.Meta(), p)
 		}
 	}
