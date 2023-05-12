@@ -236,7 +236,7 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 			err = errors.Errorf("%v", r)
 		}
 	}()
-	failpoint.Inject("testCTEPanic", nil)
+	failpoint.Inject("testCTESeedPanic", nil)
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
 	chks := make([]*chunk.Chunk, 0, 10)
@@ -275,8 +275,9 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 			err = errors.Errorf("%v", r)
 		}
 	}()
+	failpoint.Inject("testCTERecursivePanic", nil)
 	if e.recursiveExec == nil || e.iterInTbl.NumChunks() == 0 {
-		return nil
+		return
 	}
 
 	if e.curIter > e.ctx.GetSessionVars().CTEMaxRecursionDepth {
@@ -284,17 +285,17 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 	}
 
 	if e.limitDone(e.resTbl) {
-		return nil
+		return
 	}
 
 	for {
 		chk := tryNewCacheChunk(e.recursiveExec)
 		if err = Next(ctx, e.recursiveExec, chk); err != nil {
-			return err
+			return
 		}
 		if chk.NumRows() == 0 {
 			if err = e.setupTblsForNewIteration(); err != nil {
-				return err
+				return
 			}
 			if e.limitDone(e.resTbl) {
 				break
@@ -311,18 +312,18 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 			// Make sure iterInTbl is setup before Close/Open,
 			// because some executors will read iterInTbl in Open() (like IndexLookupJoin).
 			if err = e.recursiveExec.Close(); err != nil {
-				return err
+				return
 			}
 			if err = e.recursiveExec.Open(ctx); err != nil {
-				return err
+				return
 			}
 		} else {
 			if err = e.iterOutTbl.Add(chk); err != nil {
-				return err
+				return
 			}
 		}
 	}
-	return nil
+	return
 }
 
 // Get next chunk from resTbl for limit.
