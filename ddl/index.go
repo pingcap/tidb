@@ -36,6 +36,7 @@ import (
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -950,8 +951,28 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 }
 
 func errorIsRetryable(err error, job *model.Job) bool {
-	return !errors.ErrorEqual(err, dbterror.ErrReorgPanic) &&
-		job.ErrorCount+1 < variable.GetDDLErrorCountLimit()
+	if job.ErrorCount+1 >= variable.GetDDLErrorCountLimit() {
+		return false
+	}
+	originErr := errors.Cause(err)
+	if tErr, ok := originErr.(*terror.Error); ok {
+		sqlErr := terror.ToSQLError(tErr)
+		switch sqlErr.Code {
+		case errno.ErrPDServerTimeout,
+			errno.ErrTiKVServerBusy,
+			errno.ErrResolveLockTimeout,
+			errno.ErrInfoSchemaExpired,
+			errno.ErrInfoSchemaChanged,
+			errno.ErrWriteConflictInTiDB,
+			errno.ErrTxnRetryable,
+			errno.ErrWriteConflict:
+			return true
+		default:
+			return false
+		}
+	}
+	// For the unknown error, we should retry.
+	return true
 }
 
 func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
