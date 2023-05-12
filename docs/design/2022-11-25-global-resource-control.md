@@ -19,7 +19,7 @@ Moreover, this resource control mechanism can be used by Resource Manage in the 
 
 ## Detailed Design
 
-![resource control layout.png](imgs/resource-control-layout.png)
+![resource control overview.png](imgs/resource-control-overview.png)
 
 **Resource Group** helps users to control over its resources, to enable or restrict resource consumption. resource groups have attributes that define the group. all attributes can be set at group creation time and  modified any time thereafter. The attributes define how many resource units in this group relative CPU, IO, Memory and so on.
 resource groups can be assigned to different resource objects. such as session/users/tenant.
@@ -73,7 +73,7 @@ Here is to define a cost model relative to the actual cluster resource capacity.
 
 $$RU=\alpha_r + \beta_r * IOBytes + \gamma_r * CpuSecs$$
 
-The values of the coefficients α,β,γ can be different in different environment, they require datasets from various tests then regress and fit a solution(values) that best maps the actual resource usage.
+The values of the coefficients α,β,γ vary in different environment, they require datasets from various tests then regress and fit a solution(values) that best maps the actual resource usage.
 Currently, TiKV cannot control the IOPS well, the IO only considers the IO flow first. But we can continuously improve this model, such as adding IOPS, memory, etc. In addition, it is possible to subdivide the request type. such as distinguishing the consumption of the small query and big query, different query about: Update, Insert.
 
 ### Metering the Request unit
@@ -174,6 +174,7 @@ Storage(TiKV/Tiflash) cluster sharing with QoS guarantee is more challenging. In
 Resource Manager keeps the persisted metadata of resource groups. Resource Manager will translate that metadata information from abstract RUs into system resources like vCPU, read bandwidth, write bandwidth, etc to TiKV/Tiflash nodes.
 
 Metadata sync-up is bidirectional. Resource Manager notifies TiKV on resource group metadata change at DDL execution time via http API interface. And TiKV nodes inquire Resource Manager when local metadata is missing or might be stale. Resource group metadata is in memory only at TiKV nodes.
+
 #### Soft quota limiters
 
 We can specify the quota limits for some resource groups to prevent the overrun and for TiKV node protection, by reusing the front-end quota limiter (token bucket algorithm) framework of TiKV. With the quota limiter capping, requests from some resource group might be throttled even when the TiKV instance is not saturated.
