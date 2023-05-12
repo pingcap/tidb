@@ -84,8 +84,15 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 }
 
 func TestPausePDSchedulerScope(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK,
+		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
+	)
+	defer ts.Close()
 	tmpDir := t.TempDir()
+
 	cfg := config.NewConfig()
+	cfg.TiDB.Host = host
+	cfg.TiDB.StatusPort = port
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = "test"
 	cfg.Mydumper.SourceDir = tmpDir
@@ -102,6 +109,10 @@ func TestPausePDSchedulerScope(t *testing.T) {
 	cfg.TikvImporter.PausePDSchedulerScope = "TABLE"
 	require.NoError(t, cfg.Adjust(context.Background()))
 	require.Equal(t, config.PausePDSchedulerScopeTable, cfg.TikvImporter.PausePDSchedulerScope)
+
+	cfg.TikvImporter.PausePDSchedulerScope = "globAL"
+	require.NoError(t, cfg.Adjust(context.Background()))
+	require.Equal(t, config.PausePDSchedulerScopeGlobal, cfg.TikvImporter.PausePDSchedulerScope)
 }
 
 func TestAdjustPdAddrAndPortViaAdvertiseAddr(t *testing.T) {
