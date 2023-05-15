@@ -333,9 +333,9 @@ func (rc *Client) InitCheckpoint(
 	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
 }
 
-func (rc *Client) WaitForFinishCheckpoint(ctx context.Context) {
+func (rc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 	if rc.checkpointRunner != nil {
-		rc.checkpointRunner.WaitForFinish(ctx)
+		rc.checkpointRunner.WaitForFinish(ctx, flush)
 	}
 }
 
@@ -1326,11 +1326,14 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 
 func (rc *Client) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*LogFilesSkipMap, error) {
 	skipMap := NewLogFilesSkipMap()
-	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueType) {
-		// filter out the checkpoint data of dropped table
-		_, exists := downstreamIdset[off.TableID]
-		if exists {
-			skipMap.Insert(groupKey, off.Goff, off.Foff)
+	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+		for tableID, foffs := range off.Foffs {
+			// filter out the checkpoint data of dropped table
+			if _, exists := downstreamIdset[tableID]; exists {
+				for _, foff := range foffs {
+					skipMap.Insert(groupKey, off.Goff, foff)
+				}
+			}
 		}
 	})
 	if err != nil {
