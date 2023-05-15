@@ -911,18 +911,6 @@ func verifyCheckpoint(cfg *config.Config, taskCp *checkpoints.TaskCheckpoint) er
 		if cfg.TikvImporter.Backend == config.BackendLocal && cfg.TikvImporter.SortedKVDir != taskCp.SortedKVDir {
 			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "mydumper.sorted-kv-dir", cfg.TikvImporter.SortedKVDir, taskCp.SortedKVDir)
 		}
-
-		if cfg.TiDB.Host != taskCp.TiDBHost {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tidb.host", cfg.TiDB.Host, taskCp.TiDBHost)
-		}
-
-		if cfg.TiDB.Port != taskCp.TiDBPort {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tidb.port", cfg.TiDB.Port, taskCp.TiDBPort)
-		}
-
-		if cfg.TiDB.PdAddr != taskCp.PdAddr {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tidb.pd-addr", cfg.TiDB.PdAddr, taskCp.PdAddr)
-		}
 	}
 
 	return nil
@@ -1507,8 +1495,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			err       error
 		)
 
-		if !rc.taskMgr.CanPauseSchedulerByKeyRange() {
-			logTask.Info("removing PD leader&region schedulers")
+		if rc.cfg.TikvImporter.PausePDSchedulerScope == config.PausePDSchedulerScopeGlobal {
+			logTask.Info("pause pd scheduler of global scope")
 
 			restoreFn, err = rc.taskMgr.CheckAndPausePdSchedulers(ctx)
 			if err != nil {
@@ -2182,6 +2170,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			if err = rc.taskMgr.InitTask(ctx, estimatedDataSizeWithIndex, estimatedTiflashDataSize); err != nil {
 				return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 			}
+		}
+		if rc.cfg.TikvImporter.PausePDSchedulerScope == config.PausePDSchedulerScopeTable &&
+			!rc.taskMgr.CanPauseSchedulerByKeyRange() {
+			return errors.New("target cluster don't support pause-pd-scheduler-scope=table, the minimal version required is 6.1.0")
 		}
 		if rc.cfg.App.CheckRequirements {
 			needCheck := true

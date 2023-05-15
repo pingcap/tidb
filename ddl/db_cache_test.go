@@ -264,7 +264,7 @@ func TestIssue34069(t *testing.T) {
 	defer sem.Disable()
 
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test;")
 	tk.MustExec("create table t_34069 (t int);")
 	// No error when SEM is enabled.

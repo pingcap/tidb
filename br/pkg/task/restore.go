@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	pconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -197,7 +198,10 @@ type RestoreConfig struct {
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
 
-	UseCheckpoint bool `json:"use-checkpoint" toml:"use-checkpoint"`
+	UseCheckpoint                     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
+	checkpointSnapshotRestoreTaskName string `json:"-" toml:"-"`
+	checkpointLogRestoreTaskName      string `json:"-" toml:"-"`
+	checkpointTaskInfoClusterID       uint64 `json:"-" toml:"-"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -425,6 +429,19 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	cfg.Config.Concurrency = cfg.PitrConcurrency
 }
 
+// generateLogRestoreTaskName generates the log restore taskName for checkpoint
+func (cfg *RestoreConfig) generateLogRestoreTaskName(clusterID, startTS, restoreTs uint64) string {
+	cfg.checkpointTaskInfoClusterID = clusterID
+	cfg.checkpointLogRestoreTaskName = fmt.Sprintf("%d/%d.%d", clusterID, startTS, restoreTs)
+	return cfg.checkpointLogRestoreTaskName
+}
+
+// generateSnapshotRestoreTaskName generates the snapshot restore taskName for checkpoint
+func (cfg *RestoreConfig) generateSnapshotRestoreTaskName(clusterID uint64) string {
+	cfg.checkpointSnapshotRestoreTaskName = fmt.Sprint(clusterID)
+	return cfg.checkpointSnapshotRestoreTaskName
+}
+
 func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
@@ -512,6 +529,22 @@ func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF fun
 	return register.Close, errors.Trace(err)
 }
 
+func removeCheckpointDataForSnapshotRestore(ctx context.Context, storageName string, taskName string, config *Config) error {
+	_, s, err := GetStorage(ctx, storageName, config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(checkpoint.RemoveCheckpointDataForRestore(ctx, s, taskName))
+}
+
+func removeCheckpointDataForLogRestore(ctx context.Context, storageName string, taskName string, clusterID uint64, config *Config) error {
+	_, s, err := GetStorage(ctx, storageName, config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(checkpoint.RemoveCheckpointDataForLogRestore(ctx, s, taskName, clusterID))
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
@@ -537,10 +570,41 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = cfg.KeyspaceName
 	})
+
+	var restoreError error
 	if IsStreamRestore(cmdName) {
-		return RunStreamRestore(c, g, cmdName, cfg)
+		restoreError = RunStreamRestore(c, g, cmdName, cfg)
+	} else {
+		restoreError = runRestore(c, g, cmdName, cfg)
 	}
-	return runRestore(c, g, cmdName, cfg)
+	if restoreError != nil {
+		return errors.Trace(restoreError)
+	}
+	// Clear the checkpoint data
+	if cfg.UseCheckpoint {
+		if len(cfg.checkpointLogRestoreTaskName) > 0 {
+			log.Info("start to remove checkpoint data for log restore")
+			err = removeCheckpointDataForLogRestore(c, cfg.Config.Storage, cfg.checkpointLogRestoreTaskName, cfg.checkpointTaskInfoClusterID, &cfg.Config)
+			if err != nil {
+				log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
+			}
+		}
+		if len(cfg.checkpointSnapshotRestoreTaskName) > 0 {
+			log.Info("start to remove checkpoint data for snapshot restore.")
+			var storage string
+			if IsStreamRestore(cmdName) {
+				storage = cfg.FullBackupStorage
+			} else {
+				storage = cfg.Config.Storage
+			}
+			err = removeCheckpointDataForSnapshotRestore(c, storage, cfg.checkpointSnapshotRestoreTaskName, &cfg.Config)
+			if err != nil {
+				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
+			}
+		}
+		log.Info("all the checkpoint data is removed.")
+	}
+	return nil
 }
 
 func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
@@ -645,6 +709,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	if client.IsIncremental() {
 		// don't support checkpoint for the ddl restore
+		log.Info("the incremental snapshot restore doesn't support checkpoint mode, so unuse checkpoint.")
 		cfg.UseCheckpoint = false
 	}
 
@@ -667,14 +732,18 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		log.Info("finish removing pd scheduler")
 	}()
 
-	tree, restoreSchedulersFromCheckpoint, err := client.InitCheckpoint(ctx, s, mgr, schedulersConfig, cfg.UseCheckpoint)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if restoreSchedulersFromCheckpoint != nil {
-		restoreSchedulers = restoreSchedulersFromCheckpoint
-	}
+	var checkpointSetWithTableID map[int64]map[string]struct{}
 	if cfg.UseCheckpoint {
+		taskName := cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, s, taskName, schedulersConfig, cfg.UseCheckpoint)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if restoreSchedulersConfigFromCheckpoint != nil {
+			restoreSchedulers = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
+		}
+		checkpointSetWithTableID = sets
+
 		defer func() {
 			// need to flush the whole checkpoint data so that br can quickly jump to
 			// the log kv restore step when the next retry.
@@ -852,13 +921,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		int64(rangeSize+len(files)+len(tables)),
 		!cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency, client.GetCheckpointRunner())
+	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
 	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
-	batcher.SetCheckpoint(tree)
+	batcher.SetCheckpoint(checkpointSetWithTableID)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
 	go restoreTableStream(ctx, rangeStream, batcher, errCh)
@@ -1026,13 +1095,12 @@ func restoreTableStream(
 	batcher *restore.Batcher,
 	errCh chan<- error,
 ) {
-	// We cache old tables so that we can 'batch' recover TiFlash and tables.
-	oldTables := []*metautil.Table{}
+	oldTableCount := 0
 	defer func() {
 		// when things done, we must clean pending requests.
 		batcher.Close()
 		log.Info("doing postwork",
-			zap.Int("table count", len(oldTables)),
+			zap.Int("table count", oldTableCount),
 		)
 	}()
 
@@ -1045,7 +1113,7 @@ func restoreTableStream(
 			if !ok {
 				return
 			}
-			oldTables = append(oldTables, t.OldTable)
+			oldTableCount += 1
 
 			batcher.Add(t)
 		}

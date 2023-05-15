@@ -32,8 +32,8 @@ func newOpeartorCommand() *cobra.Command {
 
 func newPauseGcCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "pause-gc",
-		Short: "pause gc to the ts until the program exits.",
+		Use:   "pause-gc-and-schedulers",
+		Short: "pause gc and schedulers to the ts until the program exits.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := operator.PauseGcConfig{}
@@ -41,7 +41,7 @@ func newPauseGcCommand() *cobra.Command {
 				return err
 			}
 			ctx := GetDefaultContext()
-			return operator.PauseGC(ctx, &cfg)
+			return operator.PauseGCAndScheduler(ctx, &cfg)
 		},
 	}
 	operator.DefineFlagsForPauseGcConfig(cmd.Flags())
