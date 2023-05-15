@@ -1283,7 +1283,6 @@ func (local *Backend) startWorker(
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
 				jobWg.Add(len(jobs) - 1)
 				for _, j := range jobs {
-					j.retryCount = job.retryCount
 					jobOutCh <- j
 				}
 			}
