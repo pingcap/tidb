@@ -59,14 +59,24 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
+	vars := (&cc.ctx).GetSessionVars()
+	if vars.MemTracker.BytesConsumed() > 512<<20 {
+		logutil.BgLogger().Warn("tracker already consumed a lot of memory before executing", zap.String("session-tracker-bytes-tree", vars.MemTracker.String()))
+	}
+
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
+		if vars.MemTracker.BytesConsumed() > 512<<20 || vars.StmtCtx.MemTracker.BytesConsumed() > 512<<20 {
+			logutil.BgLogger().Error("fail to execute stmt due to OOM", zap.Error(err), zap.String("session-tracker-bytes-tree", vars.MemTracker.String()), zap.String("stmtctx-tracker-bytes-tree", vars.StmtCtx.MemTracker.String()))
+		}
 		return err
 	}
 	data := make([]byte, 4, 128)
@@ -274,8 +284,14 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		sql = planCacheStmt.StmtText
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
+	if vars.MemTracker.BytesConsumed() > 512<<20 {
+		logutil.BgLogger().Warn("tracker already consumed a lot of memory before executing", zap.String("session-tracker-bytes-tree", vars.MemTracker.String()))
+	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if err != nil {
+		if vars.MemTracker.BytesConsumed() > 512<<20 || vars.StmtCtx.MemTracker.BytesConsumed() > 512<<20 {
+			logutil.BgLogger().Error("fail to execute stmt due to OOM", zap.Error(err), zap.String("session-tracker-bytes-tree", vars.MemTracker.String()), zap.String("stmtctx-tracker-bytes-tree", vars.StmtCtx.MemTracker.String()))
+		}
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
