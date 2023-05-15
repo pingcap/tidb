@@ -106,6 +106,8 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 		cm.updateCheckpointLoop()
 		cm.updaterWg.Done()
 	}()
+	logutil.BgLogger().Info("[ddl-ingest] create checkpoint manager",
+		zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 	return cm, nil
 }
 
@@ -195,6 +197,8 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 func (s *CheckpointManager) Close() {
 	s.updaterExitCh <- struct{}{}
 	s.updaterWg.Wait()
+	logutil.BgLogger().Info("[ddl-ingest] close checkpoint manager",
+		zap.Int64("jobID", s.jobID), zap.Int64("indexID", s.indexID))
 }
 
 // Sync syncs the checkpoint.
