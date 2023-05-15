@@ -330,10 +330,7 @@ func WrapKey2String(key []byte) string {
 const mysqlSchemaID = int64(1)
 
 func isSysDB(dbID int64) bool {
-	if dbID == mysqlSchemaID {
-		return true
-	}
-	return false
+	return dbID == mysqlSchemaID
 }
 
 // HasSysDB checks if it has a system database.
@@ -342,15 +339,28 @@ func HasSysDB(job *model.Job) (bool, error) {
 	switch job.Type {
 	case model.ActionRenameTable:
 		var oldSchemaID int64
-		if err := model.DecodeArgs(job, &oldSchemaID); err != nil {
-			return false, errors.Trace(err)
+		if len(job.Args) == 0 {
+			if err := model.DecodeArgs(job, &oldSchemaID); err != nil {
+				return false, errors.Trace(err)
+			}
+		} else {
+			oldSchemaID = job.Args[0].(int64)
 		}
 		return isSysDB(job.SchemaID) || isSysDB(oldSchemaID), nil
 	case model.ActionRenameTables:
+		if len(job.Args) > 0 && len(job.Args) < 2 {
+			return false, errors.Errorf("job args len:%d is wrong", len(job.Args))
+		}
+
 		oldSchemaIDs := []int64{}
 		newSchemaIDs := []int64{}
-		if err := model.DecodeArgs(job, &oldSchemaIDs, &newSchemaIDs); err != nil {
-			return false, errors.Trace(err)
+		if len(job.Args) == 0 {
+			if err := model.DecodeArgs(job, &oldSchemaIDs, &newSchemaIDs); err != nil {
+				return false, errors.Trace(err)
+			}
+		} else {
+			oldSchemaIDs = job.Args[0].([]int64)
+			newSchemaIDs = job.Args[1].([]int64)
 		}
 		for _, id := range oldSchemaIDs {
 			if isSysDB(id) {
@@ -364,10 +374,18 @@ func HasSysDB(job *model.Job) (bool, error) {
 		}
 		return false, nil
 	case model.ActionExchangeTablePartition:
+		if len(job.Args) > 0 && len(job.Args) < 2 {
+			return false, errors.Errorf("job args len:%d is wrong", len(job.Args))
+		}
+
 		var defID int64
 		var ptSchemaID int64
-		if err := model.DecodeArgs(job, &defID, &ptSchemaID); err != nil {
-			return false, errors.Trace(err)
+		if len(job.Args) == 0 {
+			if err := model.DecodeArgs(job, &defID, &ptSchemaID); err != nil {
+				return false, errors.Trace(err)
+			}
+		} else if len(job.Args) >= 2 {
+			ptSchemaID = job.Args[1].(int64)
 		}
 		return isSysDB(job.SchemaID) || isSysDB(ptSchemaID), nil
 	}
