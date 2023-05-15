@@ -145,6 +145,17 @@ func releaseLock(se *concurrency.Session, ctx context.Context, key string) error
 func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
+	fnCtx, fnCancel := context.WithCancel(context.Background())
+	defer fnCancel()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			b.d.notifyReorgWorkerJobStateChange(b.job)
+		case <-fnCtx.Done():
+		}
+	}()
+
 	d := b.d
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask, sm)
@@ -240,7 +251,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 		}
 	}()
 
-	_, _, err = b.bc.Flush(b.index.ID, true)
+	_, _, err = b.bc.Flush(b.index.ID, ingest.FlushModeForceGlobal)
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())

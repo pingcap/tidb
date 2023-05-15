@@ -1537,6 +1537,39 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
+func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128), key c(c)) partition by range (id) (
+		partition p0 values less than (10), 
+		partition p1 values less than MAXVALUE)`)
+	re := tk.MustQuery("show table t1 regions")
+	rows := re.Rows()
+	require.Len(t, rows, 2)
+	tk.MustExec(`alter table t1 truncate partition p0`)
+	re = tk.MustQuery("show table t1 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 2)
+
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec(`CREATE TABLE t2(id bigint(20) NOT NULL AUTO_INCREMENT, PRIMARY KEY (id) NONCLUSTERED) SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 PARTITION BY RANGE (id) (
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (20),
+		PARTITION p3 VALUES LESS THAN (MAXVALUE))`)
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 24)
+	tk.MustExec(`alter table t2 truncate partition p3`)
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 24)
+}
+
 func TestCreateTableWithKeyPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
@@ -4256,10 +4289,10 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 			time.Sleep(30 * time.Millisecond)
 		}
 	}
-	var errCount int32
+	var errCount atomic.Int32
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
-			atomic.AddInt32(&errCount, 1)
+			errCount.Add(1)
 		}
 	}
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -4269,7 +4302,7 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 	go backgroundExec(store, "test", "alter table test.t truncate partition p0;", done2)
 	<-done1
 	<-done2
-	require.LessOrEqual(t, errCount, int32(1))
+	require.LessOrEqual(t, errCount.Load(), int32(1))
 }
 
 func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
