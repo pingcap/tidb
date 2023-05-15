@@ -52,6 +52,7 @@ const (
 	// BackgroundSubtaskTableSQL is the CREATE TABLE SQL of `tidb_background_subtask`.
 	BackgroundSubtaskTableSQL = "create table " + BackgroundSubtaskTable + `(
 		id bigint not null auto_increment primary key,
+		step int,
 		namespace varchar(256),
 		task_key varchar(256),
 		ddl_physical_tid bigint(20),

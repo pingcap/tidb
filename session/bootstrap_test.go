@@ -2178,3 +2178,33 @@ func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T
 	require.Equal(t, int64(0), row.GetInt64(0))
 	require.Equal(t, int64(0), row.GetInt64(1))
 }
+
+func TestTiDBUpgradeToVer145(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ver144 := version144
+	seV144 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver144))
+	require.NoError(t, err)
+	mustExec(t, seV144, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver144))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV144)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver144), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV144)
+	require.NoError(t, err)
+	require.Less(t, int64(ver144), ver)
+	dom.Close()
+}
