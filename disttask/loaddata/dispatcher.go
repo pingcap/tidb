@@ -99,7 +99,7 @@ func (*FlowHandle) postProcess(ctx context.Context, handle dispatcher.TaskHandle
 		}
 	}()
 
-	metas, err := handle.GetPreviousSubtaskMetas(ctx, gTask.ID, gTask.Step)
+	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
 	if err != nil {
 		return err
 	}

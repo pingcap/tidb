@@ -147,6 +147,8 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 		return nil, err
 	}
 
+	sharedVars.mu.Lock()
+	defer sharedVars.mu.Unlock()
 	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
 	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
 	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
