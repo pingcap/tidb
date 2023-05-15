@@ -370,7 +370,6 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 					return
 				}
 			}
-
 		}
 		require.FailNow(t, "not found in the original data")
 	}
