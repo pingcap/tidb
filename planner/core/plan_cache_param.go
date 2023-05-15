@@ -173,10 +173,9 @@ func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
 		// TODO: add a sync.Pool for type.FieldType and expression.Constant here.
 		tp := new(types.FieldType)
 		types.InferParamTypeFromDatum(&p.Datum, tp)
-		exprs = append(exprs, &expression.Constant{
-			Value:   p.Datum,
-			RetType: tp,
-		})
+		con := &expression.Constant{RetType: tp}
+		p.Datum.Copy(&con.Value)
+		exprs = append(exprs, con)
 	}
 	return exprs
 }
