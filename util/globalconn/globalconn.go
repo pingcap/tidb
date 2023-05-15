@@ -72,11 +72,11 @@ func (g *GCID) ToConnID() uint64 {
 	var id uint64
 	if g.Is64bits {
 		id |= 0x1
-		id |= g.LocalConnID & MaxLocalConnID64 << 1 // 40 bits local connID.
-		id |= g.ServerID & MaxServerID64 << 41      // 22 bits serverID.
+		id |= (g.LocalConnID & MaxLocalConnID64) << 1 // 40 bits local connID.
+		id |= (g.ServerID & MaxServerID64) << 41      // 22 bits serverID.
 	} else {
-		id |= g.LocalConnID & MaxLocalConnID32 << 1 // 20 bits local connID.
-		id |= g.ServerID & MaxServerID32 << 21      // 11 bits serverID.
+		id |= (g.LocalConnID & MaxLocalConnID32) << 1 // 20 bits local connID.
+		id |= (g.ServerID & MaxServerID32) << 21      // 11 bits serverID.
 	}
 	return id
 }
