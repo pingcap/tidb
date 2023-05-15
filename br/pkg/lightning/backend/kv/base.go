@@ -322,6 +322,11 @@ func (e *BaseKVEncoder) LogEvalGenExprFailed(row []types.Datum, colInfo *model.C
 	)
 }
 
+// TruncateWarns resets the warnings in session context.
+func (e *BaseKVEncoder) TruncateWarns() {
+	e.SessionCtx.Vars.StmtCtx.TruncateWarnings(0)
+}
+
 func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column,
 	genCols []GeneratedCol) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)

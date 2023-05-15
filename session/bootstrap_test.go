@@ -59,7 +59,7 @@ func TestBootstrap(t *testing.T) {
 	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
 	r.Close()
 
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
 
 	mustExec(t, se, "use test")
 
@@ -690,7 +690,7 @@ func TestForIssue23387(t *testing.T) {
 	require.NoError(t, err)
 
 	se := CreateSessionAndSetID(t, store)
-	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
+	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"), nil)
 	mustExec(t, se, "create user quatest")
 	dom.Close()
 	// Upgrade to a newer version, check the user's privilege.
@@ -700,7 +700,7 @@ func TestForIssue23387(t *testing.T) {
 	defer dom.Close()
 
 	se = CreateSessionAndSetID(t, store)
-	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
+	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"), nil)
 	rs, err := exec(se, "show grants for quatest")
 	require.NoError(t, err)
 	rows, err := ResultSetToStringSlice(context.Background(), se, rs)
