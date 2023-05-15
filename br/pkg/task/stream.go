@@ -1296,7 +1296,7 @@ func restoreStream(
 		}
 		defer func() {
 			log.Info("wait for flush checkpoint...")
-			checkpointRunner.WaitForFinish(ctx)
+			checkpointRunner.WaitForFinish(ctx, !gcDisabledRestorable)
 		}()
 	}
 

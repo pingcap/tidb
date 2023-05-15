@@ -179,7 +179,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	checkpointRunner.WaitForFinish(ctx)
+	checkpointRunner.WaitForFinish(ctx, true)
 
 	checker := func(groupKey string, resp checkpoint.BackupValueType) {
 		require.NotNil(t, resp)
@@ -268,7 +268,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	checkpointRunner.WaitForFinish(ctx)
+	checkpointRunner.WaitForFinish(ctx, true)
 
 	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
 		require.NotNil(t, resp)
@@ -349,9 +349,9 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 		}
 	}
 
-	checkpointRunner.WaitForFinish(ctx)
+	checkpointRunner.WaitForFinish(ctx, true)
 
-	checker := func(metaKey string, resp checkpoint.LogRestoreValueType) {
+	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) {
 		require.NotNil(t, resp)
 		d, ok := data[metaKey]
 		if !ok {
@@ -361,9 +361,16 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 		fs, ok := d[resp.Goff]
 		require.True(t, ok)
 		for _, f := range fs {
-			if f.foff == resp.Foff && f.table == resp.TableID {
-				return
+			foffs, exists := resp.Foffs[f.table]
+			if !exists {
+				continue
 			}
+			for _, foff := range foffs {
+				if f.foff == foff {
+					return
+				}
+			}
+
 		}
 		require.FailNow(t, "not found in the original data")
 	}
@@ -407,5 +414,5 @@ func TestCheckpointRunnerLock(t *testing.T) {
 	_, err = checkpoint.StartCheckpointBackupRunnerForTest(ctx, s, cipher, 5*time.Second, NewMockTimer(40, 10))
 	require.Error(t, err)
 
-	runner.WaitForFinish(ctx)
+	runner.WaitForFinish(ctx, true)
 }
