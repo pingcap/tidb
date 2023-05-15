@@ -528,6 +528,7 @@
       "br/pkg/lightning/": "br/pkg/lightning/",
       "config/": "config/",
       "executor/aggregate.go": "executor/aggregate.go",
+      "executor/analyze_utils.go": "executor/analyze_utils.go",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/backfilling.go": "ddl/backfilling.go",
