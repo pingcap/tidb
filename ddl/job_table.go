@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/kv"
@@ -595,7 +597,7 @@ func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) er
 
 // getDDLReorgHandle gets DDL reorg handle.
 func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
-	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id, reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
 	rows, err := se.Execute(ctx, sql, "get_handle")
 	if err != nil {
@@ -613,6 +615,20 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 	startKey = rows[0].GetBytes(2)
 	endKey = rows[0].GetBytes(3)
 	physicalTableID = rows[0].GetInt64(4)
+	if !rows[0].IsNull(5) {
+		rawReorgMeta := rows[0].GetBytes(5)
+		var reorgMeta ingest.JobReorgMeta
+		err = json.Unmarshal(rawReorgMeta, &reorgMeta)
+		if err != nil {
+			return nil, nil, nil, 0, errors.Trace(err)
+		}
+		if cp := reorgMeta.Checkpoint; cp != nil {
+			logutil.BgLogger().Info("[ddl-ingest] resume physical table ID from checkpoint",
+				zap.Int64("job ID", job.ID), zap.Int64("old physical ID", physicalTableID),
+				zap.Int64("checkpoint physical ID", cp.PhysicalID))
+			physicalTableID = cp.PhysicalID
+		}
+	}
 	return
 }
 

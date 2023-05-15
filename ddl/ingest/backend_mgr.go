@@ -150,6 +150,9 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	}
 	bc.unregisterAll(jobID)
 	bc.backend.Close()
+	if bc.checkpointMgr != nil {
+		bc.checkpointMgr.Close()
+	}
 	m.memRoot.Release(StructSizeBackendCtx)
 	m.Delete(jobID)
 	m.memRoot.ReleaseWithTag(EncodeBackendTag(jobID))

@@ -114,3 +114,24 @@ func TestIngestCopSenderErr(t *testing.T) {
 	jobTp := rows[0][3].(string)
 	require.True(t, strings.Contains(jobTp, "txn-merge"), jobTp)
 }
+
+func TestIngestPartitionRowCount(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer injectMockBackendMgr(t, store)()
+
+	tk.MustExec(`create table t (a int, b int, c int as (b+10), d int as (b+c),
+		primary key (a) clustered) partition by range (a) (
+    		partition p0 values less than (1),
+    		partition p1 values less than (2),
+    		partition p2 values less than MAXVALUE);`)
+	tk.MustExec("insert into t (a, b) values (0, 0), (1, 1), (2, 2);")
+	tk.MustExec("alter table t add index idx(d);")
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	//nolint: forcetypeassert
+	rowCount := rows[0][7].(string)
+	require.Equal(t, "3", rowCount)
+	tk.MustExec("admin check table t;")
+}
