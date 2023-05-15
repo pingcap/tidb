@@ -559,7 +559,8 @@
       "extension/": "extension code",
       "resourcemanager/": "resourcemanager code",
       "keyspace/": "keyspace code",
-      "owner/": "owner code"
+      "owner/": "owner code",
+      "timer/": "timer code"
     }
   },
   "shift": {
@@ -977,7 +978,8 @@
       "keyspace/": "keyspace code",
       "server/": "server code",
       "owner/": "owner code",
-      "meta": "meta code"
+      "meta": "meta code",
+      "timer/": "timer code"
     }
   },
   "SA1029": {
