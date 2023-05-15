@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -70,6 +71,7 @@ type copReqSenderPool struct {
 	tasksCh       chan *reorgBackfillTask
 	chunkSender   chunkSender
 	checkpointMgr *ingest.CheckpointManager
+	sessPool      *sess.Pool
 
 	ctx    context.Context
 	copCtx *copContext
@@ -92,10 +94,17 @@ type copReqSender struct {
 func (c *copReqSender) run() {
 	p := c.senderPool
 	defer p.wg.Done()
-	var curTaskID int
 	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
-		p.chunkSender.AddTask(idxRecResult{id: curTaskID, err: dbterror.ErrReorgPanic})
+		p.chunkSender.AddTask(idxRecResult{err: dbterror.ErrReorgPanic})
 	}, false)
+	sessCtx, err := p.sessPool.Get()
+	if err != nil {
+		logutil.BgLogger().Error("[ddl-ingest] copReqSender get session from pool failed", zap.Error(err))
+		p.chunkSender.AddTask(idxRecResult{err: err})
+		return
+	}
+	se := sess.NewSession(sessCtx)
+	defer p.sessPool.Put(sessCtx)
 	for {
 		if util.HasCancelled(c.ctx) {
 			return
@@ -110,18 +119,22 @@ func (c *copReqSender) run() {
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
 			continue
 		}
-		curTaskID = task.id
-		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
-			zap.Int("id", task.id), zap.String("task", task.String()))
-		ver, err := p.store.CurrentVersion(kv.GlobalTxnScope)
+		err := scanRecords(p, task, se)
 		if err != nil {
 			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
 			return
 		}
-		rs, err := p.copCtx.buildTableScan(p.ctx, ver.Ver, task.startKey, task.excludedEndKey())
+	}
+}
+
+func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
+	logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
+		zap.Int("id", task.id), zap.String("task", task.String()))
+
+	return wrapInBeginRollback(se, func(startTS uint64) error {
+		rs, err := p.copCtx.buildTableScan(p.ctx, startTS, task.startKey, task.excludedEndKey())
 		if err != nil {
-			p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
-			return
+			return err
 		}
 		failpoint.Inject("mockCopSenderPanic", func(val failpoint.Value) {
 			if val.(bool) {
@@ -136,10 +149,9 @@ func (c *copReqSender) run() {
 			srcChk := p.getChunk()
 			done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk)
 			if err != nil {
-				p.chunkSender.AddTask(idxRecResult{id: task.id, err: err})
 				p.recycleChunk(srcChk)
 				terror.Call(rs.Close)
-				return
+				return err
 			}
 			if p.checkpointMgr != nil {
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
@@ -151,11 +163,27 @@ func (c *copReqSender) run() {
 			p.chunkSender.AddTask(idxRs)
 		}
 		terror.Call(rs.Close)
+		return nil
+	})
+}
+
+func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
+	err := se.Begin()
+	if err != nil {
+		return errors.Trace(err)
 	}
+	defer se.Rollback()
+	var startTS uint64
+	sessVars := se.GetSessionVars()
+	sessVars.TxnCtxMu.Lock()
+	startTS = sessVars.TxnCtx.StartTS
+	sessVars.TxnCtxMu.Unlock()
+	return f(startTS)
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage,
-	taskCh chan *reorgBackfillTask, checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
+	taskCh chan *reorgBackfillTask, sessPool *sess.Pool,
+	checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
@@ -169,6 +197,7 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Stora
 		senders:       make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
 		wg:            sync.WaitGroup{},
 		srcChkPool:    srcChkPool,
+		sessPool:      sessPool,
 		checkpointMgr: checkpointMgr,
 	}
 }
