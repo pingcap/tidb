@@ -1077,6 +1077,7 @@ AAAAAAAAAAAA5gm5Mg==
 		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'"},
 		{"calibrate resource START_TIME '2023-04-01 13:00:00',END_TIME='2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'"},
 		{"calibrate resource START_TIME '2023-04-01 13:00:00',DURATION='20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' DURATION '20m'"},
+		{"calibrate resource DURATION='20m' START_TIME '2023-04-01 13:00:00'", true, "CALIBRATE RESOURCE DURATION '20m' START_TIME '2023-04-01 13:00:00'"},
 		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME='2023-04-01 16:00:00',DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'"},
 		{"calibrate resource workload", false, ""},
 		{"calibrate resource workload tpcc", true, "CALIBRATE RESOURCE WORKLOAD TPCC"},
@@ -3700,10 +3701,23 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000 BURSTABLE"},
 		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 3000"},
 		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 4000"},
+		// This case is expected in parser test but not in actual ddl job.
+		{"alter resource group x BURSTABLE", true, "ALTER RESOURCE GROUP `x` BURSTABLE"},
 		{"alter resource group x ru_per_sec=200000 BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000 BURSTABLE"},
 		{"alter resource group x followers=0", false, ""},
 		{"alter resource group x ru_per_sec=20 priority=MID BURSTABLE", false, ""},
 		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20 PRIORITY = HIGH BURSTABLE"},
+
+		{"alter resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s' ACTION DRYRUN", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10s' ACTION DRYRUN"},
+		{"alter resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10m' ACTION COOLDOWN", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10m' ACTION COOLDOWN"},
+		{"alter resource group x ru_per_sec=1000 ACTION KILL QUERY LIMIT EXEC_ELAPSED_IN_SEC '10m'", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 ACTION KILL QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10m'"},
+		{"alter resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s' WATCH SIMILAR DURATION '10m' ACTION COOLDOWN", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10s' WATCH SIMILAR DURATION = '10m' ACTION COOLDOWN"},
+		{"alter resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s' ACTION COOLDOWN WATCH EXACT DURATION '10m'", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10s' ACTION COOLDOWN WATCH EXACT DURATION = '10m'"},
+		// This case is expected in parser test but not in actual ddl job.
+		{"alter resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s'", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10s'"},
+		{"alter resource group x ru_per_sec=1000 QUERY EXEC_ELAPSED_IN_SEC '10s'", false, ""},
+		{"alter resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s' ACTION DRYRUN ACTION KILL", false, ""},
+		{"alter resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s' ACTION COOLDOWN WATCH EXACT ", false, ""},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
 		{"drop resource group if exists x;", true, "DROP RESOURCE GROUP IF EXISTS `x`"},

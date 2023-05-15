@@ -27,6 +27,7 @@ package parser
 
 import (
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/ast"
@@ -779,6 +780,12 @@ import (
 	low                   "LOW"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
+	execElapsedInSec      "EXEC_ELAPSED_IN_SEC"
+	dryRun				  "DRYRUN"
+	cooldown              "COOLDOWN"
+	watch                 "WATCH"
+	similar               "SIMILAR"
+
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -1438,6 +1445,11 @@ import (
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
+	DirectResourceGroupRunawayOption       "Subset of anonymous or direct resource group runaway option"
+	ResourceGroupRunawayActionOption       "Resource group runaway action option"
+	ResourceGroupRunawayWatchOption        "Resource group runaway watch option"
+	ResourceGroupRunawayOptionList         "Anomymous or direct resource group runaway option list"
+	ResourceGroupRunawayOption			   "Optional runaway settings"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
@@ -1718,6 +1730,87 @@ ResourceGroupPriorityOption:
 |	"HIGH"
 	{
 		$$ = uint64(16)
+	}
+
+ResourceGroupRunawayOption:
+	{
+		$$ = []*ast.ResourceGroupRunawayOption{}
+	}
+|	ResourceGroupRunawayOptionList
+	{
+		$$ =  $1.([]*ast.ResourceGroupRunawayOption)
+	}
+
+ResourceGroupRunawayOptionList:
+	DirectResourceGroupRunawayOption
+	{
+		$$ = []*ast.ResourceGroupRunawayOption{$1.(*ast.ResourceGroupRunawayOption)}
+	}
+|	ResourceGroupRunawayOptionList DirectResourceGroupRunawayOption
+	{
+		if $1.([]*ast.ResourceGroupRunawayOption)[0].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp ||
+			(len($1.([]*ast.ResourceGroupRunawayOption)) > 1 && $1.([]*ast.ResourceGroupRunawayOption)[1].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.ResourceGroupRunawayOption), $2.(*ast.ResourceGroupRunawayOption))
+	}
+|	ResourceGroupRunawayOptionList ',' DirectResourceGroupRunawayOption
+	{
+		if $1.([]*ast.ResourceGroupRunawayOption)[0].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp ||
+			(len($1.([]*ast.ResourceGroupRunawayOption)) > 1 && $1.([]*ast.ResourceGroupRunawayOption)[1].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.ResourceGroupRunawayOption), $3.(*ast.ResourceGroupRunawayOption))
+	}
+
+ResourceGroupRunawayWatchOption:
+	"EXACT"
+	{
+		$$ = uint64(model.WatchExact)
+	}
+|	"SIMILAR"
+	{
+		$$ = uint64(model.WatchSimilar)
+	}
+
+ResourceGroupRunawayActionOption:
+	"DRYRUN"
+	{
+		$$ = uint64(model.RunawayActionDryRun)
+	}
+|	"COOLDOWN"
+	{
+		$$ = uint64(model.RunawayActionCooldown)
+	}
+|	"KILL"
+	{
+		$$ = uint64(model.RunawayActionKill)
+	}
+
+DirectResourceGroupRunawayOption:
+	"QUERY" "LIMIT" "EXEC_ELAPSED_IN_SEC" EqOpt stringLit
+	{
+		_, err := time.ParseDuration($5)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The EXEC_ELAPSED_IN_SEC option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayExecuteElapsed, StrValue: $5}
+	}
+|	"ACTION" EqOpt ResourceGroupRunawayActionOption
+	{
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayAction, UintValue: $3.(uint64)}
+	}
+|	"WATCH" ResourceGroupRunawayWatchOption "DURATION" EqOpt stringLit
+	{
+		_, err := time.ParseDuration($5)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The WATCH DURATION option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: $5, UintValue: $2.(uint64)}
 	}
 
 DirectResourceGroupOption:
@@ -14408,22 +14501,24 @@ DropPolicyStmt:
 	}
 
 CreateResourceGroupStmt:
-	"CREATE" "RESOURCE" "GROUP" IfNotExists ResourceGroupName ResourceGroupOptionList
+	"CREATE" "RESOURCE" "GROUP" IfNotExists ResourceGroupName ResourceGroupOptionList ResourceGroupRunawayOption
 	{
 		$$ = &ast.CreateResourceGroupStmt{
 			IfNotExists:             $4.(bool),
 			ResourceGroupName:       model.NewCIStr($5),
 			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
+			ResourceGroupRunawayOptionList: $7.([]*ast.ResourceGroupRunawayOption),
 		}
 	}
 
 AlterResourceGroupStmt:
-	"ALTER" "RESOURCE" "GROUP" IfExists ResourceGroupName ResourceGroupOptionList
+	"ALTER" "RESOURCE" "GROUP" IfExists ResourceGroupName ResourceGroupOptionList ResourceGroupRunawayOption
 	{
 		$$ = &ast.AlterResourceGroupStmt{
 			IfExists:                $4.(bool),
 			ResourceGroupName:       model.NewCIStr($5),
 			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
+			ResourceGroupRunawayOptionList: $7.([]*ast.ResourceGroupRunawayOption),
 		}
 	}
 

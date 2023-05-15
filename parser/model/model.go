@@ -1832,20 +1832,85 @@ func (p *PlacementSettings) Clone() *PlacementSettings {
 	return &cloned
 }
 
+type RunawayElapsedType uint64
+
+const (
+	ElapsedWallType RunawayElapsedType = iota
+)
+
+type RunawayActionType uint64
+
+const (
+	RunawayActionNone RunawayActionType = iota
+	RunawayActionDryRun
+	RunawayActionCooldown
+	RunawayActionKill
+)
+
+type RunawayWatchType uint64
+
+const (
+	WatchExact RunawayWatchType = iota
+	WatchSimilar
+)
+
+// RunawayWatchValueToName converts the runaway watch value to corresponding name
+func RunawayWatchValueToName(value uint64) string {
+	switch RunawayWatchType(value) {
+	case WatchExact:
+		return "EXACT"
+	case WatchSimilar:
+		return "SIMILAR"
+	default:
+		return "EXACT"
+	}
+}
+
+type RunawayOptionType int
+
+const (
+	RunawayExecuteElapsed RunawayElapsedType = iota
+	RunawayAction
+	RunawayWatch
+)
+
+// RunawayActionValueToName converts the runaway action value to corresponding name
+func RunawayActionValueToName(value uint64) string {
+	switch RunawayActionType(value) {
+	case RunawayActionDryRun:
+		return "DRYRUN"
+	case RunawayActionCooldown:
+		return "COOLDOWN"
+	case RunawayActionKill:
+		return "KILL"
+	default:
+		return "None"
+	}
+}
+
 // ResourceGroupRefInfo is the struct to refer the resource group.
 type ResourceGroupRefInfo struct {
 	ID   int64 `json:"id"`
 	Name CIStr `json:"name"`
 }
 
+// ResourceGroupRunawaySettings is the runaway settings of the resource group
+type ResourceGroupRunawaySettings struct {
+	ExecElapsedTimeMs uint64 `json:"exec_elapsed_time_ms"`
+	Action            uint64 `json:"action"`
+	WatchType         uint64 `json:"watch_type"`
+	WatchDurationMs   uint64 `json:"watch_duration_ms"`
+}
+
 // ResourceGroupSettings is the settings of the resource group
 type ResourceGroupSettings struct {
-	RURate           uint64 `json:"ru_per_sec"`
-	Priority         uint64 `json:"priority"`
-	CPULimiter       string `json:"cpu_limit"`
-	IOReadBandwidth  string `json:"io_read_bandwidth"`
-	IOWriteBandwidth string `json:"io_write_bandwidth"`
-	BurstLimit       int64  `json:"burst_limit"`
+	RURate           uint64                        `json:"ru_per_sec"`
+	Priority         uint64                        `json:"priority"`
+	CPULimiter       string                        `json:"cpu_limit"`
+	IOReadBandwidth  string                        `json:"io_read_bandwidth"`
+	IOWriteBandwidth string                        `json:"io_write_bandwidth"`
+	BurstLimit       int64                         `json:"burst_limit"`
+	Runaway          *ResourceGroupRunawaySettings `json:"runaway"`
 }
 
 // NewResourceGroupSettings creates a new ResourceGroupSettings.

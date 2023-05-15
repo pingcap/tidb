@@ -1574,9 +1574,10 @@ func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 type CreateResourceGroupStmt struct {
 	ddlNode
 
-	IfNotExists             bool
-	ResourceGroupName       model.CIStr
-	ResourceGroupOptionList []*ResourceGroupOption
+	IfNotExists                    bool
+	ResourceGroupName              model.CIStr
+	ResourceGroupOptionList        []*ResourceGroupOption
+	ResourceGroupRunawayOptionList []*ResourceGroupRunawayOption
 }
 
 // Restore implements Node interface.
@@ -1591,7 +1592,13 @@ func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	for i, option := range n.ResourceGroupOptionList {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing CreatePlacementPolicy TableOption: [%v]", i)
+			return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
+		}
+	}
+	for i, option := range n.ResourceGroupRunawayOptionList {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
 		}
 	}
 	return nil
@@ -2152,7 +2159,48 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 		case ResourceBurstableOpiton:
 			ctx.WriteKeyWord("BURSTABLE")
 		default:
-			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
+			return errors.Errorf("invalid ResourceGroupOption: %d", n.Tp)
+		}
+		return nil
+	}
+	// WriteSpecialComment
+	return ctx.WriteWithSpecialComments(tidb.FeatureIDResourceGroup, fn)
+}
+
+type RunawayOptionType int
+
+const (
+	RunawayExecuteElapsed RunawayOptionType = iota
+	RunawayAction
+	RunawayWatch
+)
+
+// ResourceGroupRunawayOption is used for parsing resource group runaway rule option.
+type ResourceGroupRunawayOption struct {
+	Tp        RunawayOptionType
+	StrValue  string
+	UintValue uint64
+}
+
+func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
+	fn := func() error {
+		switch n.Tp {
+		case RunawayExecuteElapsed:
+			ctx.WriteKeyWord("QUERY LIMIT EXEC_ELAPSED_IN_SEC ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case RunawayAction:
+			ctx.WriteKeyWord("ACTION ")
+			ctx.WriteKeyWord(model.RunawayActionValueToName(n.UintValue))
+		case RunawayWatch:
+			ctx.WriteKeyWord("WATCH ")
+			ctx.WriteKeyWord(model.RunawayWatchValueToName(n.UintValue))
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("DURATION ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		default:
+			return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
 		}
 		return nil
 	}
@@ -4456,9 +4504,10 @@ func (n *AlterPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 type AlterResourceGroupStmt struct {
 	ddlNode
 
-	ResourceGroupName       model.CIStr
-	IfExists                bool
-	ResourceGroupOptionList []*ResourceGroupOption
+	ResourceGroupName              model.CIStr
+	IfExists                       bool
+	ResourceGroupOptionList        []*ResourceGroupOption
+	ResourceGroupRunawayOptionList []*ResourceGroupRunawayOption
 }
 
 func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
@@ -4470,7 +4519,13 @@ func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	for i, option := range n.ResourceGroupOptionList {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing AlterResourceStmt Options: [%v]", i)
+			return errors.Annotatef(err, "An error occurred while splicing AlterResourceGroupStmt Options: [%v]", i)
+		}
+	}
+	for i, option := range n.ResourceGroupRunawayOptionList {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing AlterResourceGroupStmt TableOption: [%v]", i)
 		}
 	}
 	return nil
