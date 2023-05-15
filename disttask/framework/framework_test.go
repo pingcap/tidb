@@ -31,15 +31,19 @@ import (
 type testFlowHandle struct {
 }
 
-func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ [][]byte) (metas [][]byte, retryable bool, err error) {
+func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepOne
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
-		}, false, nil
+		}, nil
 	}
-	return nil, false, nil
+	return nil, nil
+}
+
+func (*testFlowHandle) ProcessFinishFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (err error) {
+	return nil
 }
 
 func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {

@@ -416,6 +416,8 @@ type BackendConfig struct {
 	// the minimum value is 128.
 	MaxOpenFiles int
 	KeyspaceName string
+	// the scope when pause PD schedulers.
+	PausePDSchedulerScope config.PausePDSchedulerScope
 }
 
 // NewBackendConfig creates a new BackendConfig.
@@ -437,6 +439,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		ShouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
 		MaxOpenFiles:            maxOpenFiles,
 		KeyspaceName:            keyspaceName,
+		PausePDSchedulerScope:   cfg.TikvImporter.PausePDSchedulerScope,
 	}
 }
 
@@ -1410,7 +1413,8 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 		return err
 	}
 
-	if len(regionRanges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
+	if len(regionRanges) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+		log.FromContext(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 

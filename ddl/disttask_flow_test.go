@@ -47,9 +47,8 @@ func TestBackfillFlowHandle(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	metas, retryable, err := handler.ProcessNormalFlow(context.Background(), nil, gTask, nil)
+	metas, err := handler.ProcessNormalFlow(context.Background(), nil, gTask)
 	require.NoError(t, err)
-	require.False(t, retryable)
 	require.Equal(t, proto.StepOne, gTask.Step)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
 	for i, par := range tblInfo.Partition.Definitions {
@@ -60,9 +59,8 @@ func TestBackfillFlowHandle(t *testing.T) {
 
 	// test partition table ProcessNormalFlow after step1 finished
 	gTask.State = proto.TaskStateRunning
-	metas, retryable, err = handler.ProcessNormalFlow(context.Background(), nil, gTask, nil)
+	metas, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
 	require.NoError(t, err)
-	require.False(t, retryable)
 	require.Equal(t, 0, len(metas))
 
 	// test partition table ProcessErrFlow
@@ -77,9 +75,8 @@ func TestBackfillFlowHandle(t *testing.T) {
 	// test normal table not supported yet
 	tk.MustExec("create table t1(id int primary key, v int)")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.BackfillTaskType)
-	_, retryable, err = handler.ProcessNormalFlow(context.Background(), nil, gTask, nil)
+	_, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
 	require.EqualError(t, err, "Non-partition table not supported yet")
-	require.False(t, retryable)
 }
 
 func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, taskType string) *proto.Task {
