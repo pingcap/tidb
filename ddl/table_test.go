@@ -479,9 +479,11 @@ func TestRenameTableIntermediateState(t *testing.T) {
 		hook := &ddl.TestDDLCallback{Do: dom}
 		runInsert := false
 		fn := func(job *model.Job) {
-			if job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
+			if job.Type == model.ActionRenameTable &&
+				job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
 				_, err := tk2.Exec(tc.insertSQL)
 				if len(tc.errMsg) > 0 {
+					assert.NotNil(t, err)
 					assert.Equal(t, tc.errMsg, err.Error())
 				} else {
 					assert.NoError(t, err)
