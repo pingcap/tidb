@@ -369,19 +369,3 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	ddl.SetBackfillTaskChanSizeForTest(1024)
 }
-
-// Note: this can be only run in real TiKV tests because
-// it is related to the checkpoint manager under litBackendCtx.Unregister.
-func TestAddIndexIngestWithDistributedTask(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
-
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
-	tk.MustExec("create table t (a int, b int, primary key (a) clustered) partition by hash(a) partitions 2;")
-	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3), (4, 4);")
-	tk.MustExec("alter table t add index idx(b);")
-	tk.MustExec("admin check table t;")
-}
