@@ -3567,8 +3567,8 @@ def go_deps():
         name = "com_github_prometheus_tsdb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/tsdb",
-        sum = "h1:w1tAGxsBMLkuGrFMhqgcCeBkM5d1YI24udArs+aASuQ=",
-        version = "v0.8.0",
+        sum = "h1:If5rVCMTp6W2SiRAQFlbpJNgVlgMEd+U2GZckwK38ic=",
+        version = "v0.10.0",
     )
     go_repository(
         name = "com_github_puerkitobio_purell",
