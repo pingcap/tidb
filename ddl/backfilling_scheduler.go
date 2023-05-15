@@ -489,7 +489,6 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		result.scanCount = count
 		result.nextKey = nextKey
 	}
-	w.metricCounter.Add(float64(count))
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)
 	}
