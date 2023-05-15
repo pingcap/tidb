@@ -85,11 +85,6 @@ func (bc *litBackendCtx) Unregister(jobID, indexID int64) {
 
 	ei.Clean()
 	bc.Delete(indexID)
-	logutil.BgLogger().Info("try to close checkpoint manager",
-		zap.Int64("job ID", jobID), zap.Int64("index ID", indexID))
-	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.Close()
-	}
 
 	bc.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
 	bc.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
@@ -112,8 +107,6 @@ func (bc *litBackendCtx) ResetWorkers(jobID, indexID int64) {
 
 // unregisterAll delete all engineInfo from the engineManager.
 func (bc *litBackendCtx) unregisterAll(jobID int64) {
-	logutil.BgLogger().Info("unregister all engineInfo",
-		zap.Int64("job ID", jobID), zap.Int("engine count", len(bc.Keys())))
 	for _, idxID := range bc.Keys() {
 		bc.Unregister(jobID, idxID)
 	}

@@ -1100,7 +1100,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			logutil.BgLogger().Info("[ddl-ingest] try to unregister backend context", zap.String("reorgTp", job.ReorgMeta.ReorgTp.String()))
 			if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 				ingest.LitBackCtxMgr.Unregister(job.ID)
 			}
