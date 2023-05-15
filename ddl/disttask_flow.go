@@ -38,20 +38,20 @@ func NewLitBackfillFlowHandle(d DDL) dispatcher.TaskFlowHandle {
 }
 
 // ProcessNormalFlow processes the normal flow.
-func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ [][]byte) (metas [][]byte, retryable bool, err error) {
+func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State != proto.TaskStatePending {
 		// This flow has only one step, finish task when it is not pending
-		return nil, false, nil
+		return nil, nil
 	}
 
 	var globalTaskMeta BackfillGlobalMeta
 	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	d, ok := h.d.(*ddl)
 	if !ok {
-		return nil, false, errors.New("The getDDL result should be the type of *ddl")
+		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
 
 	job := &globalTaskMeta.Job
@@ -61,11 +61,11 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 		return err
 	})
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
 
 	if tblInfo.Partition == nil {
-		return nil, false, errors.New("Non-partition table not supported yet")
+		return nil, errors.New("Non-partition table not supported yet")
 	}
 
 	defs := tblInfo.Partition.Definitions
@@ -82,14 +82,18 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 
 		metaBytes, err := json.Marshal(subTaskMeta)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 
 	gTask.Step = proto.StepOne
-	return subTaskMetas, false, nil
+	return subTaskMetas, nil
+}
+
+func (*litBackfillFlowHandle) ProcessFinishFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (err error) {
+	return nil
 }
 
 func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr [][]byte) (meta []byte, err error) {
