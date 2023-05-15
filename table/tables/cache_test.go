@@ -472,7 +472,7 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 
 	// This line is a hack, if auth user string is "", the statement summary is skipped,
 	// so it's added to make the later code been covered.
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 
 	tk.MustExec("drop table if exists wait_tb1")
 	tk.MustExec("create table wait_tb1(id int)")
