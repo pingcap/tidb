@@ -486,7 +486,6 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		result.totalCount = cnt
 		result.nextKey = nextKey
 		result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
-		count = cnt
 	} else {
 		result.addedCount = count
 		result.scanCount = count
