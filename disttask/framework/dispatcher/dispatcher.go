@@ -16,7 +16,6 @@ package dispatcher
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -278,14 +277,14 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 				break
 			}
-			if stepIsFinished && len(errStr) == 0 {
+			// process finish flow if task finish a step.
+			if stepIsFinished && len(errStr) == 0 && gTask.State == proto.TaskStateRunning {
 				logutil.BgLogger().Info("detect task, this task finished a step",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State), zap.Int64("step", gTask.Step))
 				if err := d.processFinishFlow(gTask); err != nil {
 					errStr = [][]byte{[]byte(err.Error())}
 				}
 			}
-
 			if isFinished := d.processFlow(gTask, errStr); isFinished {
 				logutil.BgLogger().Info("detect task, this task is finished",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
@@ -449,13 +448,8 @@ func (d *dispatcher) processFinishFlow(gTask *proto.Task) (err error) {
 		return err
 	}
 	previousSubtaskMetas := make([][]byte, 0, len(previousSubtasks))
-	for _, meta := range previousSubtaskMetas {
-		bs, err := json.Marshal(meta)
-		if err != nil {
-			logutil.BgLogger().Warn("marshal previous succeed subtask failed", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-			return err
-		}
-		previousSubtaskMetas = append(previousSubtaskMetas, bs)
+	for _, subtask := range previousSubtasks {
+		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
 	}
 	if err := handle.ProcessFinishFlow(d.ctx, d, gTask, previousSubtaskMetas); err != nil {
 		logutil.BgLogger().Warn("process finish flow failed", zap.Error(err))
