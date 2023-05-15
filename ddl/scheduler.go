@@ -121,6 +121,17 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
+	fnCtx, fnCancel := context.WithCancel(context.Background())
+	defer fnCancel()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			b.d.notifyReorgWorkerJobStateChange(b.job)
+		case <-fnCtx.Done():
+		}
+	}()
+
 	d := b.d
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask, sm)
@@ -188,7 +199,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	}
 	ingestScheduler.close(false)
 
-	_, _, err = b.bc.Flush(b.index.ID, true)
+	_, _, err = b.bc.Flush(b.index.ID, ingest.FlushModeForceGlobal)
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
@@ -200,8 +211,8 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 }
 
 // OnSubtaskFinished implements the Scheduler interface.
-func (*backfillSchedulerHandle) OnSubtaskFinished(context.Context, []byte) error {
-	return nil
+func (*backfillSchedulerHandle) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+	return meta, nil
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler interface.
