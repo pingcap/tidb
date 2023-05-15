@@ -34,16 +34,17 @@ import (
 )
 
 type backfillSchedulerHandle struct {
-	d           *ddl
-	db          *model.DBInfo
-	index       *model.IndexInfo
-	job         *model.Job
-	bc          ingest.BackendCtx
-	ptbl        table.PhysicalTable
-	jc          *JobContext
-	eleTypeKey  []byte
-	totalRowCnt int64
-	isPartition bool
+	d             *ddl
+	db            *model.DBInfo
+	index         *model.IndexInfo
+	job           *model.Job
+	bc            ingest.BackendCtx
+	ptbl          table.PhysicalTable
+	jc            *JobContext
+	eleTypeKey    []byte
+	totalRowCnt   int64
+	isPartition   bool
+	stepForImport bool
 }
 
 // BackfillGlobalMeta is the global task meta for backfilling index.
@@ -69,7 +70,7 @@ func (b *BackfillMinimalTask) IsMinimalTask() {
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
-func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, error) {
+func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl, stepForImport bool) (scheduler.Scheduler, error) {
 	bh := &backfillSchedulerHandle{d: d}
 
 	bgm := &BackfillGlobalMeta{}
@@ -92,12 +93,6 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, e
 	physicalTable := tbl.(table.PhysicalTable)
 	bh.ptbl = physicalTable
 
-	d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
-	d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-	jobCtx := d.jobContext(jobMeta.ID)
-	bh.jc = jobCtx
-
-	// Build reader.
 	indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleID)
 	if indexInfo == nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
@@ -106,11 +101,21 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, e
 	}
 	bh.index = indexInfo
 
+	if stepForImport {
+		bh.stepForImport = true
+		return bh, nil
+	}
+
+	d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
+	d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
+	jobCtx := d.jobContext(jobMeta.ID)
+	bh.jc = jobCtx
+
 	return bh, nil
 }
 
 // InitSubtaskExecEnv implements the Scheduler interface.
-func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
+func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning init subtask exec env")
 	d := b.d
 
@@ -120,6 +125,9 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 		return err
 	}
 	b.bc = bc
+	if b.stepForImport {
+		return b.doImportWithDistributedLock(ctx)
+	}
 	return nil
 }
 
@@ -141,9 +149,44 @@ func releaseLock(se *concurrency.Session, ctx context.Context, key string) error
 	return nil
 }
 
+func (b *backfillSchedulerHandle) doImportWithDistributedLock(ctx context.Context) error {
+	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", b.job.ID, b.index.ID)
+	se, _ := concurrency.NewSession(b.d.etcdCli)
+	err := acquireLock(se, ctx, distLockKey)
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("[ddl] acquire lock success")
+	defer func() {
+		err = releaseLock(se, ctx, distLockKey)
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] release lock error", zap.Error(err))
+		}
+		logutil.BgLogger().Info("[ddl] release lock success")
+		err = se.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] close session error", zap.Error(err))
+		}
+	}()
+
+	_, _, err = b.bc.Flush(b.index.ID, ingest.FlushModeForceGlobal)
+	if err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
+		}
+		logutil.BgLogger().Error("[ddl] flush error", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
 // SplitSubtask implements the Scheduler interface.
 func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
+
+	if b.stepForImport {
+		return nil, nil
+	}
 
 	fnCtx, fnCancel := context.WithCancel(context.Background())
 	defer fnCancel()
@@ -232,34 +275,14 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	}
 	ingestScheduler.close(false)
 
-	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", b.job.ID, b.index.ID)
-	se, _ := concurrency.NewSession(d.etcdCli)
-	err = acquireLock(se, ctx, distLockKey)
-	if err != nil {
-		return nil, err
+	if consumer.getResult() != nil {
+		return nil, consumer.getResult()
 	}
-	logutil.BgLogger().Info("[ddl] acquire lock success")
-	defer func() {
-		err = releaseLock(se, ctx, distLockKey)
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] release lock error", zap.Error(err))
-		}
-		logutil.BgLogger().Info("[ddl] release lock success")
-		err = se.Close()
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] close session error", zap.Error(err))
-		}
-	}()
 
-	_, _, err = b.bc.Flush(b.index.ID, ingest.FlushModeForceGlobal)
-	if err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
-		}
-		logutil.BgLogger().Error("[ddl] flush error", zap.Error(err))
-		return nil, err
+	if b.isPartition {
+		return nil, b.doImportWithDistributedLock(ctx)
 	}
-	return nil, consumer.getResult()
+	return nil, nil
 }
 
 // OnSubtaskFinished implements the Scheduler interface.
@@ -271,7 +294,9 @@ func (*backfillSchedulerHandle) OnSubtaskFinished(context.Context, []byte) error
 func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
 
-	b.bc.Unregister(b.job.ID, b.index.ID)
+	if b.isPartition || b.stepForImport {
+		b.bc.Unregister(b.job.ID, b.index.ID)
+	}
 	return nil
 }
 

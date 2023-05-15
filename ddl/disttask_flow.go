@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -45,11 +44,6 @@ func NewLitBackfillFlowHandle(d DDL) dispatcher.TaskFlowHandle {
 
 // ProcessNormalFlow processes the normal flow.
 func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State != proto.TaskStatePending {
-		// This flow has only one step, finish task when it is not pending
-		return nil, nil
-	}
-
 	var globalTaskMeta BackfillGlobalMeta
 	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
@@ -62,20 +56,34 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 
 	job := &globalTaskMeta.Job
 	var tblInfo *model.TableInfo
-	err = kv.RunInNewTxn(d.ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		tblInfo, err = meta.NewMeta(txn).GetTable(job.SchemaID, job.TableID)
 		return err
 	})
 
 	var subTaskMetas [][]byte
 	if tblInfo.Partition == nil {
-		startKey, endKey := tablecodec.GetTableHandleKeyRange(tblInfo.ID)
-		regionCache := d.store.(helper.Storage).GetRegionCache()
-		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
-		if err != nil {
-			return nil, err
+		switch gTask.Step {
+		case proto.StepOne:
+			serverNodes, err := dispatcher.GenerateSchedulerNodes(d.ctx)
+			if err != nil {
+				return nil, err
+			}
+			subTaskMetas = make([][]byte, 0, len(serverNodes))
+			dummyMeta := &BackfillSubTaskMeta{}
+			metaBytes, err := json.Marshal(dummyMeta)
+			if err != nil {
+				return nil, err
+			}
+			for range serverNodes {
+				subTaskMetas = append(subTaskMetas, metaBytes)
+			}
+			gTask.Step = proto.StepTwo
+			return subTaskMetas, nil
+		case proto.StepTwo:
+			return nil, nil
+		default:
 		}
-
 		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
 		if err != nil {
 			return nil, err
@@ -84,9 +92,14 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		startKey, endKey, err = getTableRange(d.jobContext(job.ID), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
+		startKey, endKey, err := getTableRange(d.jobContext(job.ID), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		regionCache := d.store.(helper.Storage).GetRegionCache()
+		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
+		if err != nil {
+			return nil, err
 		}
 
 		subTaskMetas = make([][]byte, 0, 100)
@@ -95,7 +108,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 		//	return nil, err
 		//}
 		regionBatch := len(recordRegionMetas) / 20
-		//regionBatch += 1
+		regionBatch += 1
 		sort.Slice(recordRegionMetas, func(i, j int) bool {
 			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 		})
@@ -119,6 +132,11 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 			subTaskMetas = append(subTaskMetas, metaBytes)
 		}
 	} else {
+		if gTask.State != proto.TaskStatePending {
+			// This flow for partition table has only one step, finish task when it is not pending
+			return nil, nil
+		}
+
 		defs := tblInfo.Partition.Definitions
 		physicalIDs := make([]int64, len(defs))
 		for i := range defs {
