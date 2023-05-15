@@ -53,6 +53,7 @@ var (
 // paramReplacer is an ast.Visitor that replaces all values with `?` and collects them.
 type paramReplacer struct {
 	params []*driver.ValueExpr
+	values []types.Datum
 }
 
 func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -74,10 +75,11 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			return in, false
 		}
 	case *driver.ValueExpr:
+		var v types.Datum
+		n.Copy(&v)
 		pr.params = append(pr.params, n)
+		pr.values = append(pr.values, v)
 		param := paramMakerPool.Get().(*driver.ParamMarkerExpr)
-		param.Offset = len(pr.params) - 1 // offset is used as order in non-prepared plan cache.
-		n.Datum.Copy(&param.Datum)        // init the ParamMakerExpr's Datum
 		return param, true
 	}
 	return in, false
@@ -89,12 +91,14 @@ func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 func (pr *paramReplacer) Reset() {
 	pr.params = make([]*driver.ValueExpr, 0, 4)
+	pr.values = make([]types.Datum, 0, 4)
 }
 
 // GetParamSQLFromAST returns the parameterized SQL of this AST.
 // NOTICE: this function does not modify the original AST.
-func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
-	paramSQL, params, err = ParameterizeAST(ctx, sctx, stmt)
+func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, paramVals []types.Datum, err error) {
+	var params []*driver.ValueExpr
+	paramSQL, params, paramVals, err = ParameterizeAST(ctx, sctx, stmt)
 	if err != nil {
 		return "", nil, err
 	}
@@ -105,7 +109,7 @@ func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.S
 // ParameterizeAST parameterizes this StmtNode.
 // e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23].
 // NOTICE: this function may modify the input stmt.
-func ParameterizeAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
+func ParameterizeAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, paramVals []types.Datum, err error) {
 	pr := paramReplacerPool.Get().(*paramReplacer)
 	pCtx := paramCtxPool.Get().(*format.RestoreCtx)
 	defer func() {
@@ -116,9 +120,9 @@ func ParameterizeAST(ctx context.Context, sctx sessionctx.Context, stmt ast.Stmt
 	}()
 	stmt.Accept(pr)
 	if err := stmt.Restore(pCtx); err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
-	paramSQL, params = pCtx.In.(*bytes.Buffer).String(), pr.params
+	paramSQL, params, paramVals = pCtx.In.(*bytes.Buffer).String(), pr.params, pr.values
 	return
 }
 
@@ -167,14 +171,14 @@ func RestoreASTWithParams(ctx context.Context, _ sessionctx.Context, stmt ast.St
 }
 
 // Params2Expressions converts these parameters to an expression list.
-func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
-	exprs := make([]expression.Expression, 0, len(params))
-	for _, p := range params {
+func Params2Expressions(paramVals []types.Datum) []expression.Expression {
+	exprs := make([]expression.Expression, 0, len(paramVals))
+	for _, p := range paramVals {
 		// TODO: add a sync.Pool for type.FieldType and expression.Constant here.
 		tp := new(types.FieldType)
-		types.InferParamTypeFromDatum(&p.Datum, tp)
+		types.InferParamTypeFromDatum(&p, tp)
 		exprs = append(exprs, &expression.Constant{
-			Value:   p.Datum,
+			Value:   p,
 			RetType: tp,
 		})
 	}
