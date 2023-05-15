@@ -60,7 +60,7 @@ func (w *worker) runTask(ctx context.Context, t task) (retErr error) {
 	logTask := w.logger.With(
 		zap.Stringer("startKey", t.startKey),
 		zap.Stringer("initialEndKey", t.endKey),
-	).Begin(zap.InfoLevel, "[dup-detector] runTask")
+	).Begin(zap.InfoLevel, "run task")
 
 	var processedKeys int64
 
