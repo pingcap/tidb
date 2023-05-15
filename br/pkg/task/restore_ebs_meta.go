@@ -224,7 +224,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		err         error
 		totalSize   int64
 	)
-	ec2Session, err = aws.NewEC2Session(h.cfg.CloudAPIConcurrency)
+	ec2Session, err = aws.NewEC2Session(h.cfg.CloudAPIConcurrency, h.cfg.S3.Region)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}

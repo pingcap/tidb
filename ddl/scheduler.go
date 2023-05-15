@@ -121,6 +121,17 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
 func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	logutil.BgLogger().Info("[ddl] lightning split subtask")
 
+	fnCtx, fnCancel := context.WithCancel(context.Background())
+	defer fnCancel()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			b.d.notifyReorgWorkerJobStateChange(b.job)
+		case <-fnCtx.Done():
+		}
+	}()
+
 	d := b.d
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask, sm)
