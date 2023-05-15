@@ -16,7 +16,6 @@ package dispatcher
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -278,13 +277,6 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 				break
 			}
-			if stepIsFinished && len(errStr) == 0 {
-				logutil.BgLogger().Info("detect task, this task finished a step",
-					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State), zap.Int64("step", gTask.Step))
-				if err := d.processFinishFlow(gTask); err != nil {
-					errStr = [][]byte{[]byte(err.Error())}
-				}
-			}
 
 			if isFinished := d.processFlow(gTask, errStr); isFinished {
 				logutil.BgLogger().Info("detect task, this task is finished",
@@ -434,34 +426,6 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
 	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
-}
-
-func (d *dispatcher) processFinishFlow(gTask *proto.Task) (err error) {
-	// Generate the needed global task meta and subTask meta.
-	handle := GetTaskFlowHandle(gTask.Type)
-	if handle == nil {
-		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
-	}
-	previousSubtasks, err := d.taskMgr.GetSucceedSubtasksByStep(gTask.ID, gTask.Step)
-	if err != nil {
-		logutil.BgLogger().Warn("get previous succeed subtask failed", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-		return err
-	}
-	previousSubtaskMetas := make([][]byte, 0, len(previousSubtasks))
-	for _, meta := range previousSubtaskMetas {
-		bs, err := json.Marshal(meta)
-		if err != nil {
-			logutil.BgLogger().Warn("marshal previous succeed subtask failed", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-			return err
-		}
-		previousSubtaskMetas = append(previousSubtaskMetas, bs)
-	}
-	if err := handle.ProcessFinishFlow(d.ctx, d, gTask, previousSubtaskMetas); err != nil {
-		logutil.BgLogger().Warn("process finish flow failed", zap.Error(err))
-		return err
-	}
-	return nil
 }
 
 // GetEligibleInstance gets an eligible instance.
