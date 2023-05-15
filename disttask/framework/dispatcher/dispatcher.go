@@ -63,6 +63,8 @@ type Dispatch interface {
 type TaskHandle interface {
 	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
 	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
+	// GetPreviousSubtaskMetas gets previous subtask metas.
+	GetPreviousSubtaskMetas(ctx context.Context, gTaskID int64, step int64) ([][]byte, error)
 }
 
 func (d *dispatcher) getRunningGTaskCnt() int {
@@ -277,14 +279,7 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 				break
 			}
-			// process finish flow if task finish a step.
-			if stepIsFinished && len(errStr) == 0 && gTask.State == proto.TaskStateRunning {
-				logutil.BgLogger().Info("detect task, this task finished a step",
-					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State), zap.Int64("step", gTask.Step))
-				if err := d.processFinishFlow(gTask); err != nil {
-					errStr = [][]byte{[]byte(err.Error())}
-				}
-			}
+
 			if isFinished := d.processFlow(gTask, errStr); isFinished {
 				logutil.BgLogger().Info("detect task, this task is finished",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
@@ -435,29 +430,6 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
 }
 
-func (d *dispatcher) processFinishFlow(gTask *proto.Task) (err error) {
-	// Generate the needed global task meta and subTask meta.
-	handle := GetTaskFlowHandle(gTask.Type)
-	if handle == nil {
-		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
-	}
-	previousSubtasks, err := d.taskMgr.GetSucceedSubtasksByStep(gTask.ID, gTask.Step)
-	if err != nil {
-		logutil.BgLogger().Warn("get previous succeed subtask failed", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-		return err
-	}
-	previousSubtaskMetas := make([][]byte, 0, len(previousSubtasks))
-	for _, subtask := range previousSubtasks {
-		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
-	}
-	if err := handle.ProcessFinishFlow(d.ctx, d, gTask, previousSubtaskMetas); err != nil {
-		logutil.BgLogger().Warn("process finish flow failed", zap.Error(err))
-		return err
-	}
-	return nil
-}
-
 // GetEligibleInstance gets an eligible instance.
 func GetEligibleInstance(serverNodes []*infosync.ServerInfo, pos int) (string, error) {
 	if pos >= len(serverNodes) && pos < 0 {
@@ -509,4 +481,17 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 		}
 	}
 	return ids, nil
+}
+
+func (d *dispatcher) GetPreviousSubtaskMetas(ctx context.Context, gTaskID int64, step int64) ([][]byte, error) {
+	previousSubtasks, err := d.taskMgr.GetSucceedSubtasksByStep(gTaskID, step)
+	if err != nil {
+		logutil.BgLogger().Warn("get previous succeed subtask failed", zap.Int64("ID", gTaskID), zap.Int64("step", step))
+		return nil, err
+	}
+	previousSubtaskMetas := make([][]byte, 0, len(previousSubtasks))
+	for _, subtask := range previousSubtasks {
+		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
+	}
+	return previousSubtaskMetas, nil
 }

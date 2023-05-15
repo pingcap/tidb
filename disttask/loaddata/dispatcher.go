@@ -35,7 +35,7 @@ import (
 type FlowHandle struct{}
 
 // ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
-func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+func (h *FlowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -45,6 +45,9 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandl
 
 	switch gTask.Step {
 	case Import:
+		if err := h.postProcess(ctx, handle, gTask); err != nil {
+			return nil, err
+		}
 		gTask.State = proto.TaskStateSucceed
 		return nil, nil
 	default:
@@ -71,16 +74,6 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandl
 	return metaBytes, nil
 }
 
-// ProcessFinishFlow implements dispatcher.ProcessFinishFlow interface.
-func (h *FlowHandle) ProcessFinishFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, previousSubtaskMetas [][]byte) error {
-	switch gTask.Step {
-	case Import:
-		return h.postProcess(ctx, gTask, previousSubtaskMetas)
-	default:
-		return nil
-	}
-}
-
 // ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
 func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
 	logutil.BgLogger().Info("process error flow", zap.ByteStrings("error message", receiveErr))
@@ -89,7 +82,7 @@ func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gT
 }
 
 // postProcess does the post processing for the task.
-func (*FlowHandle) postProcess(ctx context.Context, gTask *proto.Task, metas [][]byte) error {
+func (*FlowHandle) postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) error {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -106,6 +99,11 @@ func (*FlowHandle) postProcess(ctx context.Context, gTask *proto.Task, metas [][
 		}
 	}()
 
+	metas, err := handle.GetPreviousSubtaskMetas(ctx, gTask.ID, gTask.Step)
+	if err != nil {
+		return err
+	}
+
 	subtaskMetas := make([]*SubtaskMeta, 0, len(metas))
 	for _, bs := range metas {
 		var subtaskMeta SubtaskMeta
@@ -114,6 +112,8 @@ func (*FlowHandle) postProcess(ctx context.Context, gTask *proto.Task, metas [][
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
+
+	logutil.BgLogger().Info("post process", zap.Any("task_meta", taskMeta), zap.Any("subtask_metas", subtaskMetas))
 
 	return verifyChecksum(ctx, tableImporter, subtaskMetas)
 }
