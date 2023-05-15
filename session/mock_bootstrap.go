@@ -110,8 +110,10 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 		logutil.BgLogger().Info("mock upgrade exec", zap.String("sql", sql))
 		// Make test faster.
 		if intest.InTest {
+			// for UT
 			time.Sleep(5 * time.Millisecond)
 		} else {
+			// for IT
 			time.Sleep(30 * time.Millisecond)
 		}
 	}

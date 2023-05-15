@@ -381,21 +381,9 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		job.ID = ids[i]
 		setJobStateToQueueing(job)
 
-		if d.stateSyncer.IsUpgradingState() {
-			hasSysDB, err := util.HasSysDB(job)
-			if err != nil {
-				task.cacheErr = err
-				logutil.BgLogger().Warn("[ddl] check has system DB failed", zap.Stringer("job", job), zap.Error(err))
-				continue
-			}
-			if !hasSysDB {
-				if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
-					logutil.BgLogger().Warn("[ddl] pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
-					task.cacheErr = err
-					continue
-				}
-				logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job))
-			}
+		d.setJobPausingForUpgrade(se, task, job)
+		if task.cacheErr != nil {
+			continue
 		}
 
 		jobTasks = append(jobTasks, job)
@@ -404,6 +392,25 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	return insertDDLJobs2Table(sess.NewSession(se), true, jobTasks...)
+}
+
+func (d *ddl) setJobPausingForUpgrade(se sessionctx.Context, task *limitJobTask, job *model.Job) {
+	if d.stateSyncer.IsUpgradingState() {
+		hasSysDB, err := util.HasSysDB(job)
+		if err != nil {
+			task.cacheErr = err
+			logutil.BgLogger().Warn("[ddl] check has system DB failed", zap.Stringer("job", job), zap.Error(err))
+			return
+		}
+		if !hasSysDB {
+			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+				logutil.BgLogger().Warn("[ddl] pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
+				task.cacheErr = err
+				return
+			}
+			logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job))
+		}
+	}
 }
 
 func injectFailPointForGetJob(job *model.Job) {
