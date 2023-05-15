@@ -16,6 +16,7 @@ package asyncloaddata
 
 import (
 	"encoding/json"
+	"sync"
 
 	"go.uber.org/atomic"
 )
@@ -37,6 +38,8 @@ type PhysicalImportProgress struct {
 	// EncodeFileSize is the size of the file that has finished KV encoding in bytes.
 	// it should equal to SourceFileSize eventually.
 	EncodeFileSize atomic.Int64
+
+	LastInsertID LastInsertID
 }
 
 // Progress is the progress of the LOAD DATA task.
@@ -84,4 +87,26 @@ func ProgressFromJSON(bs []byte) (*Progress, error) {
 	var p Progress
 	err := json.Unmarshal(bs, &p)
 	return &p, err
+}
+
+type LastInsertID struct {
+	mu sync.RWMutex
+	id uint64
+}
+
+func (lastInsertID *LastInsertID) Store(id uint64) {
+	if id == 0 {
+		return
+	}
+	lastInsertID.mu.Lock()
+	defer lastInsertID.mu.Unlock()
+	if lastInsertID.id == 0 || id < lastInsertID.id {
+		lastInsertID.id = id
+	}
+}
+
+func (lastInsertID *LastInsertID) Load() uint64 {
+	lastInsertID.mu.RLock()
+	defer lastInsertID.mu.RUnlock()
+	return lastInsertID.id
 }

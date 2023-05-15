@@ -35,7 +35,7 @@ func (e *ImportSubtaskExecutor) Run(ctx context.Context) error {
 	logutil.BgLogger().Info("subtask executor run", zap.Any("task", e.task))
 	chunkCheckpoint := toChunkCheckpoint(e.task.Chunk)
 	sharedVars := e.task.SharedVars
-	if err := importer.ProcessChunk(ctx, &chunkCheckpoint, sharedVars.TableImporter, sharedVars.DataEngine, sharedVars.IndexEngine, logutil.BgLogger()); err != nil {
+	if err := importer.ProcessChunk(ctx, &chunkCheckpoint, sharedVars.TableImporter, sharedVars.DataEngine, sharedVars.IndexEngine, sharedVars.Progress, logutil.BgLogger()); err != nil {
 		return err
 	}
 

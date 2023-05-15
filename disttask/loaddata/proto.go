@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 )
 
@@ -31,9 +32,10 @@ const (
 // TaskMeta is the task of LoadData.
 // All the field should be serializable.
 type TaskMeta struct {
-	Plan  importer.Plan
-	JobID int64
-	Stmt  string
+	Plan    importer.Plan
+	JobID   int64
+	Stmt    string
+	Metrics Metrics
 }
 
 // SubtaskMeta is the subtask of LoadData.
@@ -44,6 +46,7 @@ type SubtaskMeta struct {
 	ID       int32
 	Chunks   []Chunk
 	Checksum Checksum
+	Metrics  Metrics
 }
 
 // SharedVars is the shared variables between subtask and minimal tasks.
@@ -53,6 +56,7 @@ type SharedVars struct {
 	TableImporter *importer.TableImporter
 	DataEngine    *backend.OpenedEngine
 	IndexEngine   *backend.OpenedEngine
+	Progress      *asyncloaddata.Progress
 
 	mu       sync.Mutex
 	Checksum *verification.KVChecksum
@@ -86,4 +90,12 @@ type Checksum struct {
 	Sum  uint64
 	KVs  uint64
 	Size uint64
+}
+
+// Metrics records the metrics information.
+// This portion of the code may be implemented uniformly in the framework in the future.
+type Metrics struct {
+	ReadRowCnt   uint64
+	LoadedRowCnt uint64
+	LastInsertID uint64
 }

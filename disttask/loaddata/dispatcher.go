@@ -108,7 +108,12 @@ func (*FlowHandle) postProcess(ctx context.Context, gTask *proto.Task, metas [][
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
 
-	return verifyChecksum(ctx, tableImporter, subtaskMetas)
+	if err := verifyChecksum(ctx, tableImporter, subtaskMetas); err != nil {
+		return err
+	}
+
+	updateMetrics(taskMeta, subtaskMetas)
+	return updateMeta(gTask, taskMeta)
 }
 
 func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, subtaskMetas []*SubtaskMeta) error {
@@ -122,6 +127,26 @@ func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, 
 	}
 	logutil.BgLogger().Info("local checksum", zap.Object("checksum", &localChecksum))
 	return tableImporter.VerifyChecksum(ctx, localChecksum)
+}
+
+func updateMetrics(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta) {
+	for _, subtaskMeta := range subtaskMetas {
+		taskMeta.Metrics.ReadRowCnt += subtaskMeta.Metrics.ReadRowCnt
+		taskMeta.Metrics.LoadedRowCnt += subtaskMeta.Metrics.LoadedRowCnt
+		if taskMeta.Metrics.LastInsertID == 0 || subtaskMeta.Metrics.LastInsertID < taskMeta.Metrics.LastInsertID {
+			taskMeta.Metrics.LastInsertID = subtaskMeta.Metrics.LastInsertID
+		}
+	}
+	logutil.BgLogger().Info("update metrics", zap.Any("task_meta", taskMeta))
+}
+
+func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
+	bs, err := json.Marshal(taskMeta)
+	if err != nil {
+		return err
+	}
+	gTask.Meta = bs
+	return nil
 }
 
 func buildTableImporter(ctx context.Context, taskMeta *TaskMeta) (*importer.TableImporter, error) {

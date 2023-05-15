@@ -197,9 +197,6 @@ type TableImporter struct {
 	logger          *zap.Logger
 	regionSplitSize int64
 	regionSplitKeys int64
-	// the smallest auto-generated ID in current import.
-	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	lastInsertID uint64
 }
 
 var _ JobImporter = &TableImporter{}
@@ -232,7 +229,7 @@ func (ti *TableImporter) Result() JobImportResult {
 	return JobImportResult{
 		Msg:          msg,
 		Affected:     ti.Progress.LoadedRowCnt.Load(),
-		LastInsertID: ti.lastInsertID,
+		LastInsertID: ti.Progress.LastInsertID.Load(),
 	}
 }
 
@@ -472,9 +469,11 @@ func (ti *TableImporter) preprocessAndImportEngines(ctx context.Context) (err er
 		if err2 != nil {
 			return err2
 		}
-		if err2 = ti.ImportAndCleanup(ctx, dataClosedEngine); err2 != nil {
+		kvCount, err2 := ti.ImportAndCleanup(ctx, dataClosedEngine)
+		if err2 != nil {
 			return err2
 		}
+		ti.Progress.LoadedRowCnt.Add(uint64(kvCount))
 
 		failpoint.Inject("AfterImportDataEngine", nil)
 		failpoint.Inject("SyncAfterImportDataEngine", func() {
@@ -487,7 +486,8 @@ func (ti *TableImporter) preprocessAndImportEngines(ctx context.Context) (err er
 	if err3 != nil {
 		return errors.Trace(err3)
 	}
-	return ti.ImportAndCleanup(ctx, closedIndexEngine)
+	_, err = ti.ImportAndCleanup(ctx, closedIndexEngine)
+	return err
 }
 
 func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *backend.OpenedEngine, engineID int32, chunks []*checkpoints.ChunkCheckpoint) (*backend.ClosedEngine, error) {
@@ -506,31 +506,21 @@ func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *back
 }
 
 // ImportAndCleanup imports the engine and cleanup the engine data.
-func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
+func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
+	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
 		// each row is encoded into 1 data key
-		kvCount := ti.backend.GetImportedKVCount(closedEngine.GetUUID())
-		ti.Progress.LoadedRowCnt.Add(uint64(kvCount))
+		kvCount = ti.backend.GetImportedKVCount(closedEngine.GetUUID())
 	}
 	// todo: if we need support checkpoint, engine should not be cleanup if import failed.
 	cleanupErr := closedEngine.Cleanup(ctx)
-	return multierr.Combine(importErr, cleanupErr)
+	return kvCount, multierr.Combine(importErr, cleanupErr)
 }
 
 // Close implements the io.Closer interface.
 func (ti *TableImporter) Close() error {
 	ti.backend.Close()
 	return nil
-}
-
-func (ti *TableImporter) setLastInsertID(id uint64) {
-	// todo: if we run concurrently, we should use atomic operation here.
-	if id == 0 {
-		return
-	}
-	if ti.lastInsertID == 0 || id < ti.lastInsertID {
-		ti.lastInsertID = id
-	}
 }

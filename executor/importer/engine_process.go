@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"go.uber.org/zap"
 )
 
@@ -75,6 +76,7 @@ func ProcessChunk(
 	tableImporter *TableImporter,
 	dataEngine,
 	indexEngine *backend.OpenedEngine,
+	progress *asyncloaddata.Progress,
 	logger *zap.Logger,
 ) error {
 	// if the key are ordered, LocalWrite can optimize the writing.
@@ -136,14 +138,13 @@ func ProcessChunk(
 		indexWriter: indexWriter,
 		encoder:     encoder,
 		kvCodec:     tableImporter.kvStore.GetCodec(),
-		progress:    tableImporter.Progress,
+		progress:    progress,
 	}
 	// todo: process in parallel
 	err = cp.process(ctx)
 	if err != nil {
 		return err
 	}
-	tableImporter.setLastInsertID(encoder.GetLastInsertID())
 	return nil
 }
 
@@ -154,7 +155,7 @@ func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.Op
 		task.End(zap.ErrorLevel, err)
 	}()
 	for _, chunk := range ep.chunks {
-		if err = ProcessChunk(ctx, chunk, ep.tableImporter, dataEngine, ep.indexEngine, ep.logger); err != nil {
+		if err = ProcessChunk(ctx, chunk, ep.tableImporter, dataEngine, ep.indexEngine, ep.tableImporter.Progress, ep.logger); err != nil {
 			return err
 		}
 	}

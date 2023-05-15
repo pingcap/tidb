@@ -1,4 +1,3 @@
-// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -101,6 +100,7 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 		TableImporter: s.tableImporter,
 		DataEngine:    dataEngine,
 		IndexEngine:   indexEngine,
+		Progress:      asyncloaddata.NewProgress(s.taskMeta.Plan.ImportMode == importer.LogicalImportMode),
 		Checksum:      &verification.KVChecksum{},
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
@@ -134,22 +134,30 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 	}
 
 	logutil.BgLogger().Info("import data engine", zap.Any("id", subtaskMeta.ID))
-	if closedEngine, err := sharedVars.DataEngine.Close(ctx); err != nil {
+	closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
+	if err != nil {
 		return nil, err
-	} else if err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
+	}
+	dataKVCount, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
+	if err != nil {
 		return nil, err
 	}
 
 	logutil.BgLogger().Info("import index engine", zap.Any("id", subtaskMeta.ID))
 	if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
 		return nil, err
-	} else if err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
+	} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
 		return nil, err
 	}
 
 	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
 	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
 	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
+	subtaskMeta.Metrics = Metrics{
+		ReadRowCnt:   sharedVars.Progress.ReadRowCnt.Load(),
+		LoadedRowCnt: uint64(dataKVCount),
+		LastInsertID: sharedVars.Progress.LastInsertID.Load(),
+	}
 	return json.Marshal(subtaskMeta)
 }
 
