@@ -35,6 +35,7 @@ go_test(
     ],
     embed = [":admin"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//config",
         "//sessionctx/variable",
