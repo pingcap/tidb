@@ -18,7 +18,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/go-ldap/ldap/v3"
@@ -119,7 +121,7 @@ func (impl *ldapAuthImpl) initializeCAPool() error {
 }
 
 func (impl *ldapAuthImpl) connectionFactory() (pools.Resource, error) {
-	address := fmt.Sprintf("%s:%d", impl.ldapServerHost, impl.ldapServerPort)
+	address := net.JoinHostPort(impl.ldapServerHost, strconv.FormatUint(uint64(impl.ldapServerPort), 10))
 
 	// It's fine to load these two TLS configurations one-by-one (but not guarded by a single lock), because there isn't
 	// a way to set two variables atomically.
