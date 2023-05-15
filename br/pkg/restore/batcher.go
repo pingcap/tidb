@@ -92,7 +92,8 @@ func (b *Batcher) contextCleaner(ctx context.Context, tables <-chan []CreatedTab
 				return
 			}
 			for _, tbl := range tbls {
-				b.outCh <- &tbl
+				cloneTable := tbl
+				b.outCh <- &cloneTable
 			}
 		}
 	}

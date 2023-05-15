@@ -1629,14 +1629,15 @@ func concurrentHandleTablesCh(
 			if !ok {
 				return
 			}
+			cloneTable := tbl
 			worker := workers.ApplyWorker()
 			eg.Go(func() error {
 				defer workers.RecycleWorker(worker)
-				err := processFun(ectx, tbl)
+				err := processFun(ectx, cloneTable)
 				if err != nil {
 					return err
 				}
-				outCh <- tbl
+				outCh <- cloneTable
 				return nil
 			})
 		}
@@ -1751,35 +1752,35 @@ func (rc *Client) execChecksum(
 func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "UpdateStats")
+	workers := utils.NewWorkerPool(1, "UpdateStats")
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
-		table := tbl.OldTable
+		oldTable := tbl.OldTable
 		// Not need to return err when failed because of update analysis-meta
 		restoreTS, err := rc.GetTSWithRetry(ctx)
 		if err != nil {
 			log.Error("getTS failed", zap.Error(err))
 		} else {
 			log.Info("start update metas",
-				zap.Stringer("table", table.Info.Name),
-				zap.Stringer("db", table.DB.Name))
-			err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, tbl.OldTable.TotalKvs)
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name))
+			err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, oldTable.TotalKvs)
 			if err != nil {
 				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
 			}
 		}
 
-		if table.Stats != nil {
+		if oldTable.Stats != nil {
 			log.Info("start loads analyze after validate checksum",
-				zap.Int64("old id", tbl.OldTable.Info.ID),
+				zap.Int64("old id", oldTable.Info.ID),
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
-			if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
-				log.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
+			if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), oldTable.Stats); err != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
 			}
 			log.Info("restore stat done",
-				zap.Stringer("table", table.Info.Name),
-				zap.Stringer("db", table.DB.Name),
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
 		}
 		return nil
@@ -1814,6 +1815,9 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 			return nil
 		}
 		if rc.dom != nil {
+			log.Info("table has tiflash replica, start sync..",
+				zap.Stringer("table", tbl.OldTable.Info.Name),
+				zap.Stringer("db", tbl.OldTable.DB.Name))
 			for {
 				progress, err := infosync.CalculateTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, tiFlashStores)
 				if err != nil {
@@ -1825,7 +1829,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 					log.Info("tiflash replica synced",
 						zap.Stringer("table", tbl.OldTable.Info.Name),
 						zap.Stringer("db", tbl.OldTable.DB.Name))
-					return nil
+					break
 				}
 				// just wait for next check
 				time.Sleep(10 * time.Second)
