@@ -55,8 +55,6 @@ type Dispatch interface {
 	Start()
 	// GetAllSchedulerIDs gets handles the task's all available instances.
 	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
-	// GetPreviousSubtaskMetas gets previous subtask metas.
-	GetPreviousSubtaskMetas(ctx context.Context, gTaskID int64, step int64) ([][]byte, error)
 	// Stop stops the dispatcher.
 	Stop()
 }
@@ -65,6 +63,8 @@ type Dispatch interface {
 type TaskHandle interface {
 	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
 	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
+	// GetPreviousSubtaskMetas gets previous subtask metas.
+	GetPreviousSubtaskMetas(ctx context.Context, gTaskID int64, step int64) ([][]byte, error)
 }
 
 func (d *dispatcher) getRunningGTaskCnt() int {
