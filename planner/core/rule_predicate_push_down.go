@@ -988,13 +988,26 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 	if !p.isOuterMostCTE {
 		return predicates, p.self
 	}
-	if len(predicates) == 0 {
+	pushedPredicates := make([]expression.Expression, len(predicates))
+	copy(pushedPredicates, predicates)
+	// The filter might change the correlated status of the cte.
+	// We forbid the push down that makes the change for now.
+	// Will support it later.
+	if !p.cte.IsInApply {
+		for i := len(pushedPredicates) - 1; i >= 0; i-- {
+			if len(expression.ExtractCorColumns(pushedPredicates[i])) == 0 {
+				continue
+			}
+			pushedPredicates = append(pushedPredicates[0:i], pushedPredicates[i+1:]...)
+		}
+	}
+	if len(pushedPredicates) == 0 {
 		p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.NewOne())
 		return predicates, p.self
 	}
 	newPred := make([]expression.Expression, 0, len(predicates))
-	for i := range predicates {
-		newPred = append(newPred, predicates[i].Clone())
+	for i := range pushedPredicates {
+		newPred = append(newPred, pushedPredicates[i].Clone())
 		ResolveExprAndReplace(newPred[i], p.cte.ColumnMap)
 	}
 	p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.ComposeCNFCondition(p.ctx, newPred...))

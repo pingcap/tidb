@@ -1880,7 +1880,7 @@ func TestCompareBuiltin(t *testing.T) {
 
 	result = tk.MustQuery("select coalesce(NULL, a), coalesce(NULL, b, a), coalesce(c, NULL, a, b), coalesce(d, NULL), coalesce(d, c), coalesce(NULL, NULL, e, 1), coalesce(f), coalesce(1, a, b, c, d, e, f) from t2")
 	// coalesce(col_bit) is not same with MySQL, because it's a bug of MySQL(https://bugs.mysql.com/bug.php?id=103289&thanks=4)
-	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x00\x15 1", time.Now().In(tk.Session().GetSessionVars().Location()).Format("2006-01-02"))))
+	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x00\x15 1", time.Now().In(tk.Session().GetSessionVars().Location()).Format(time.DateOnly))))
 
 	// nullif
 	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
@@ -7676,7 +7676,7 @@ func TestCastJSONTimeDuration(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(i INT, j JSON)")
 
-	nowDate := time.Now().Format("2006-01-02")
+	nowDate := time.Now().Format(time.DateOnly)
 
 	// DATE/DATETIME/TIME will be automatically converted to json date/datetime/duration
 	tk.MustExec("insert into t values (0, DATE('1998-06-13'))")

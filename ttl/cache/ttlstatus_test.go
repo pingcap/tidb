@@ -80,7 +80,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"last_job_start_time",
 			"'2022-12-01 16:49:01'",
 			func(table *cache.TableStatus) {
-				expectedTime, err := time.ParseInLocation("2006-01-02 15:04:05", "2022-12-01 16:49:01", timeZone)
+				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:49:01", timeZone)
 				assert.NoError(t, err)
 				assert.Equal(t, expectedTime, table.LastJobStartTime)
 			},
@@ -89,7 +89,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"last_job_finish_time",
 			"'2022-12-01 16:50:01'",
 			func(table *cache.TableStatus) {
-				expectedTime, err := time.ParseInLocation("2006-01-02 15:04:05", "2022-12-01 16:50:01", timeZone)
+				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:50:01", timeZone)
 				assert.NoError(t, err)
 				assert.Equal(t, expectedTime, table.LastJobFinishTime)
 			},
@@ -98,7 +98,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"last_job_ttl_expire",
 			"'2022-12-01 16:51:01'",
 			func(table *cache.TableStatus) {
-				expectedTime, err := time.ParseInLocation("2006-01-02 15:04:05", "2022-12-01 16:51:01", timeZone)
+				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:51:01", timeZone)
 				assert.NoError(t, err)
 				assert.Equal(t, expectedTime, table.LastJobTTLExpire)
 			},
@@ -122,7 +122,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"current_job_owner_hb_time",
 			"'2022-12-01 16:52:01'",
 			func(table *cache.TableStatus) {
-				expectedTime, err := time.ParseInLocation("2006-01-02 15:04:05", "2022-12-01 16:52:01", timeZone)
+				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:52:01", timeZone)
 				assert.NoError(t, err)
 				assert.Equal(t, expectedTime, table.CurrentJobOwnerHBTime)
 			},
@@ -131,7 +131,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"current_job_start_time",
 			"'2022-12-01 16:53:01'",
 			func(table *cache.TableStatus) {
-				expectedTime, err := time.ParseInLocation("2006-01-02 15:04:05", "2022-12-01 16:53:01", timeZone)
+				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:53:01", timeZone)
 				assert.NoError(t, err)
 				assert.Equal(t, expectedTime, table.CurrentJobStartTime)
 			},
@@ -140,7 +140,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"current_job_ttl_expire",
 			"'2022-12-01 16:54:01'",
 			func(table *cache.TableStatus) {
-				expectedTime, err := time.ParseInLocation("2006-01-02 15:04:05", "2022-12-01 16:54:01", timeZone)
+				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:54:01", timeZone)
 				assert.NoError(t, err)
 				assert.Equal(t, expectedTime, table.CurrentJobTTLExpire)
 			},
@@ -161,7 +161,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"current_job_status_update_time",
 			"'2022-12-01 16:55:01'",
 			func(table *cache.TableStatus) {
-				expectedTime, err := time.ParseInLocation("2006-01-02 15:04:05", "2022-12-01 16:55:01", timeZone)
+				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:55:01", timeZone)
 				assert.NoError(t, err)
 				assert.Equal(t, expectedTime, table.CurrentJobStatusUpdateTime)
 			},

@@ -19,9 +19,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/model"
+	"go.uber.org/zap"
 )
 
 type LogRestoreKeyType = string
@@ -38,8 +41,6 @@ func (l LogRestoreValueType) IdentKey() []byte {
 	return []byte(fmt.Sprint(l.Goff, '.', l.Foff, '.', l.TableID))
 }
 
-type LogRestoreRunner = CheckpointRunner[LogRestoreKeyType, LogRestoreValueType]
-
 // only for test
 func StartCheckpointLogRestoreRunnerForTest(
 	ctx context.Context,
@@ -47,11 +48,11 @@ func StartCheckpointLogRestoreRunnerForTest(
 	cipher *backuppb.CipherInfo,
 	tick time.Duration,
 	taskName string,
-) (*LogRestoreRunner, error) {
+) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
-	runner.startCheckpointMainLoop(ctx, tick, 0)
+	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
 }
 
@@ -59,18 +60,18 @@ func StartCheckpointRunnerForLogRestore(ctx context.Context,
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	taskName string,
-) (*LogRestoreRunner, error) {
+) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, 0)
+	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
 	return runner, nil
 }
 
 func AppendRangeForLogRestore(
 	ctx context.Context,
-	r *LogRestoreRunner,
+	r *CheckpointRunner[LogRestoreKeyType, LogRestoreValueType],
 	groupKey LogRestoreKeyType,
 	tableID int64,
 	goff int,
@@ -166,4 +167,36 @@ func ExistsCheckpointTaskInfo(
 	clusterID uint64,
 ) (bool, error) {
 	return s.FileExists(ctx, getCheckpointTaskInfoPathByID(clusterID))
+}
+
+func removeCheckpointTaskInfoForLogRestore(ctx context.Context, s storage.ExternalStorage, clusterID uint64) error {
+	fileName := getCheckpointTaskInfoPathByID(clusterID)
+	exists, err := s.FileExists(ctx, fileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !exists {
+		log.Warn("the task info file doesn't exist", zap.String("file", fileName))
+		return nil
+	}
+
+	return s.DeleteFile(ctx, fileName)
+}
+
+func RemoveCheckpointDataForLogRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+	clusterID uint64,
+) error {
+	if err := removeCheckpointTaskInfoForLogRestore(ctx, s, clusterID); err != nil {
+		return errors.Annotatef(err,
+			"failed to remove the task info file: clusterId is %d, taskName is %s",
+			clusterID,
+			taskName,
+		)
+	}
+	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
+	return removeCheckpointData(ctx, s, prefix)
 }

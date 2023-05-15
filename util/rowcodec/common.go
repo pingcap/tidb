@@ -309,7 +309,7 @@ func appendDatumForChecksum(buf []byte, dat *data.Datum, typ byte) (out []byte, 
 	defer func() {
 		if x := recover(); x != nil {
 			// catch panic when datum and type mismatch
-			err = errors.Annotate(x.(error), "encode datum for checksum")
+			err = errors.Annotatef(x.(error), "encode datum(%s) as %s for checksum", dat.String(), types.TypeStr(typ))
 		}
 	}()
 	if dat.IsNull() {
