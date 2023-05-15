@@ -21,9 +21,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func TestHasSysDB(t *testing.T) {
@@ -75,9 +73,7 @@ func TestHasSysDB(t *testing.T) {
 	var isJobFirstState bool
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		isJobFirstState = job.ID != jobID
-		logutil.BgLogger().Warn("test--------------------------", zap.Int64("job.ID", job.ID), zap.Int64("jobID", jobID))
 		if isJobFirstState {
-			logutil.BgLogger().Warn(fmt.Sprintf("test----------------- job:%v, ddl:%v", job.Query, ddlCases[cnt].ddl))
 			hasSysDB, err := util.HasSysDB(job)
 			require.NoError(t, err)
 			require.Equal(t, ddlCases[cnt].isSysDB, hasSysDB, ddlCases[cnt].ddl)
@@ -92,7 +88,6 @@ func TestHasSysDB(t *testing.T) {
 	}
 	ret := tk.MustQuery(fmt.Sprintf("select * from mysql.tidb_ddl_history order by job_id desc limit %d", len(ddlCases)))
 	for _, row := range ret.Rows() {
-		logutil.BgLogger().Warn(fmt.Sprintf("test----------------- id:%v, row:%v", row[0], row[1]))
 		jobBinary := []byte(row[1].(string))
 		job := model.Job{}
 		err := job.Decode(jobBinary)

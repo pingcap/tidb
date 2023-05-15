@@ -571,21 +571,11 @@ func (job *Job) Decode(b []byte) error {
 	return errors.Trace(err)
 }
 
-// DecodeArgs decodes a job's RawArgs which doesn't affect the job's Args.
-func DecodeArgs(job *Job, args ...interface{}) error {
-	fmt.Printf("xxx ================================== zzz, job:%s, raw args:%#v, len:%d\n",
-		job.String(), len(job.RawArgs), len(args))
-	_, err := decodeArgs(job, args...)
-	return errors.Trace(err)
-}
-
 func decodeArgs(job *Job, args ...interface{}) ([]interface{}, error) {
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
 		return nil, errors.Trace(err)
 	}
-	fmt.Printf("xxx ================================== zzz, job:%s, raw args:%#v\n",
-		job.String(), rawArgs)
 
 	sz := len(rawArgs)
 	if sz > len(args) {
@@ -594,12 +584,8 @@ func decodeArgs(job *Job, args ...interface{}) ([]interface{}, error) {
 
 	for i := 0; i < sz; i++ {
 		if err := json.Unmarshal(rawArgs[i], args[i]); err != nil {
-			fmt.Printf("xxx ================================== xxx, job:%s, no.%d, raw args:%#v, args:%#v, err:%v\n",
-				job.String(), i, rawArgs[i], args[i], err)
 			return nil, errors.Trace(err)
 		}
-		fmt.Printf("xxx ================================== yyy, job:%s, no.%d, raw args:%#v, args:%#v\n",
-			job.String(), i, rawArgs[i], args[i])
 	}
 	return args[:sz], nil
 }
@@ -612,6 +598,12 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 	}
 	job.Args = args
 	return nil
+}
+
+// DecodeArgs decodes a job's RawArgs which doesn't affect the job's Args.
+func DecodeArgs(job *Job, args ...interface{}) error {
+	_, err := decodeArgs(job, args...)
+	return errors.Trace(err)
 }
 
 // String implements fmt.Stringer interface.

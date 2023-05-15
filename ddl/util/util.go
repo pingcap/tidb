@@ -338,7 +338,6 @@ func isSysDB(dbID int64) bool {
 
 // HasSysDB checks if it has a system database.
 func HasSysDB(job *model.Job) (bool, error) {
-	logutil.BgLogger().Warn("*************************************************************************")
 	// TODO: Handle for the schema ID is 0, like ActionCreatePlacementPolicy.
 	switch job.Type {
 	case model.ActionRenameTable:
@@ -346,8 +345,6 @@ func HasSysDB(job *model.Job) (bool, error) {
 		if err := model.DecodeArgs(job, &oldSchemaID); err != nil {
 			return false, errors.Trace(err)
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx ================================== 111, query:%s, dbID:%d, rawArgs:%v, args:%#v",
-			job.Query, oldSchemaID, job.RawArgs, job.Args))
 		return isSysDB(job.SchemaID) || isSysDB(oldSchemaID), nil
 	case model.ActionRenameTables:
 		oldSchemaIDs := []int64{}
@@ -355,7 +352,6 @@ func HasSysDB(job *model.Job) (bool, error) {
 		if err := model.DecodeArgs(job, &oldSchemaIDs, &newSchemaIDs); err != nil {
 			return false, errors.Trace(err)
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx ================================== 111, query:%s, oldIDs:%v, newIDs:%v, args:%#v", job.Query, oldSchemaIDs, newSchemaIDs, job.Args))
 		for _, id := range oldSchemaIDs {
 			if isSysDB(id) {
 				return true, nil
@@ -366,7 +362,6 @@ func HasSysDB(job *model.Job) (bool, error) {
 				return true, nil
 			}
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx ================================== 111, query:%s, args:%#v", job.Query, job.Args))
 		return false, nil
 	case model.ActionExchangeTablePartition:
 		var defID int64
@@ -374,9 +369,7 @@ func HasSysDB(job *model.Job) (bool, error) {
 		if err := model.DecodeArgs(job, &defID, &ptSchemaID); err != nil {
 			return false, errors.Trace(err)
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx ================================== 111, query:%s, args:%#v", job.Query, job.Args))
 		return isSysDB(job.SchemaID) || isSysDB(ptSchemaID), nil
 	}
-	logutil.BgLogger().Warn(fmt.Sprintf("xxx ================================== 111, query:%s, dbID:%d, args:%#v, isSys:%v", job.Query, job.SchemaID, job.Args, isSysDB(job.SchemaID)))
 	return isSysDB(job.SchemaID), nil
 }
