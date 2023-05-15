@@ -427,6 +427,10 @@ generate_grafana_scripts:
 
 bazel_ci_prepare:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
 
 bazel_prepare:
 	bazel run //:gazelle
