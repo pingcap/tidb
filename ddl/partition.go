@@ -358,6 +358,11 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 			failpoint.Return(true, nil)
 		}
 	})
+	failpoint.Inject("mockWaitTiFlashReplicaOK", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(false, nil)
+		}
+	})
 
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
@@ -1880,6 +1885,9 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				return ver, errors.Trace(err)
 			}
 		}
+		if tblInfo.TiFlashReplica != nil {
+			removeTiFlashAvailablePartitionIDs(tblInfo, physicalTableIDs)
+		}
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{physicalTableIDs}
@@ -1896,6 +1904,23 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
 	return ver, errors.Trace(err)
+}
+
+func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) {
+	// Remove the partitions
+	ids := tblInfo.TiFlashReplica.AvailablePartitionIDs
+	// Rarely called, so OK to take some time, to make it easy
+	for _, id := range pids {
+		for i, avail := range ids {
+			if id == avail {
+				tmp := ids[:i]
+				tmp = append(tmp, ids[i+1:]...)
+				ids = tmp
+				break
+			}
+		}
+	}
+	tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 }
 
 // onTruncateTablePartition truncates old partition meta.
@@ -1949,16 +1974,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 		tblInfo.TiFlashReplica.Available = false
 		// Set partition replica become unavailable.
-		for _, oldID := range oldIDs {
-			for i, id := range tblInfo.TiFlashReplica.AvailablePartitionIDs {
-				if id == oldID {
-					newIDs := tblInfo.TiFlashReplica.AvailablePartitionIDs[:i]
-					newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
-					tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
-					break
-				}
-			}
-		}
+		removeTiFlashAvailablePartitionIDs(tblInfo, oldIDs)
 	}
 
 	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
