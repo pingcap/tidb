@@ -2249,6 +2249,37 @@ func TestNonPreparedPlanCacheUnicode(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestNonPreparedPlanCacheXXX(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`create table cycle (pk int not null primary key, sk int not null, val int)`)
+	for i := 1; i <= 30; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into cycle values (%d, %d, %d)`, i, i, i))
+	}
+
+	fmt.Println(">>>>>>>>>>>>>>>>>> run")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+			for i := 0; i < 20000; i++ {
+				x := rand.Intn(30) + 1
+				tk.MustQuery(fmt.Sprintf(`select (val) from cycle where sk = %d`, x)).Check(testkit.Rows(fmt.Sprintf("%d", x)))
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
 func TestNonPreparedPlanCacheAutoStmtRetry(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
