@@ -24,10 +24,7 @@ import (
 
 // TaskFlowHandle is used to control the process operations for each global task.
 type TaskFlowHandle interface {
-	// ProcessNormalFlow processes the normal flow.
-	// It receives the previous subtask metas to do some post-processing.
-	// returns the new subtask metas and whether the error is retryable.
-	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, prevSubtaskMetas [][]byte) (subtaskMetas [][]byte, retryable bool, err error)
+	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
 	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr [][]byte) (subtaskMeta []byte, err error)
 }
 

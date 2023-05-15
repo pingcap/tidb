@@ -33,18 +33,18 @@ import (
 type FlowHandle struct{}
 
 // ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
-func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ [][]byte) ([][]byte, bool, error) {
+func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Any("task_meta", taskMeta), zap.Any("step", gTask.Step))
 
 	switch gTask.Step {
 	case Import:
 		gTask.State = proto.TaskStateSucceed
-		return nil, false, nil
+		return nil, nil
 	default:
 	}
 
@@ -54,19 +54,19 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandl
 	//	}
 	subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	logutil.BgLogger().Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
 	metaBytes := make([][]byte, 0, len(subtaskMetas))
 	for _, subtaskMeta := range subtaskMetas {
 		bs, err := json.Marshal(subtaskMeta)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		metaBytes = append(metaBytes, bs)
 	}
 	gTask.Step = Import
-	return metaBytes, false, nil
+	return metaBytes, nil
 }
 
 // ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
