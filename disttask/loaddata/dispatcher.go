@@ -81,6 +81,11 @@ func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gT
 	return nil, nil
 }
 
+// IsRetryableErr implements dispatcher.IsRetryableErr interface.
+func (*FlowHandle) IsRetryableErr(error) bool {
+	return false
+}
+
 // postProcess does the post processing for the task.
 func (*FlowHandle) postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) error {
 	taskMeta := &TaskMeta{}
