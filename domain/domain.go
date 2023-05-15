@@ -677,7 +677,6 @@ func (do *Domain) mdlCheckLoop() {
 			if !variable.EnableMDL.Load() {
 				continue
 			}
-<<<<<<< HEAD
 
 			do.mdlCheckTableInfo.mu.Lock()
 			maxVer := do.mdlCheckTableInfo.newestVer
@@ -687,15 +686,6 @@ func (do *Domain) mdlCheckLoop() {
 				// Schema doesn't change, and no job to check in the last run.
 				do.mdlCheckTableInfo.mu.Unlock()
 				continue
-=======
-			logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
-			err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
-			if err != nil {
-				jobNeedToSync = true
-				logutil.BgLogger().Warn("update self version failed", zap.Error(err))
-			} else {
-				jobCache[jobID] = ver
->>>>>>> cde395dc597 (ddl, domain: fix a bug which causes MDL blocking (#43781))
 			}
 
 			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
@@ -741,6 +731,7 @@ func (do *Domain) mdlCheckLoop() {
 				logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
 				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 				if err != nil {
+					jobNeedToSync = true
 					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
 				} else {
 					jobCache[jobID] = ver
