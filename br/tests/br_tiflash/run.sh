@@ -36,7 +36,6 @@ if ! run_sql "ALTER TABLE $DB.kv SET TIFLASH REPLICA 1"; then
 fi
 
 
-
 i=0
 while ! [ $(run_sql "select * from information_schema.tiflash_replica" | grep "PROGRESS" | sed "s/[^0-9]//g") -eq 1 ]; do
     i=$(( i + 1 ))
@@ -52,10 +51,14 @@ rm -rf "/${TEST_DIR}/$DB"
 run_br backup full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 run_sql "DROP DATABASE $DB"
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
+run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --wait-tiflash-ready=true
 
-# wating for TiFlash sync
-sleep 100
+# check TiFlash sync
+if ! [ $(run_sql "select * from information_schema.tiflash_replica" | grep "PROGRESS" | sed "s/[^0-9]//g") -eq 1 ]; then
+    echo "restore didn't wait tiflash synced after set --wait-tiflash-ready=true."
+    exit 1
+done
+
 AFTER_BR_COUNT=`run_sql "SELECT count(*) FROM $DB.kv;" | sed -n "s/[^0-9]//g;/^[0-9]*$/p" | tail -n1`
 if [ "$AFTER_BR_COUNT" -ne "$RECORD_COUNT" ]; then
     echo "failed to restore, before: $RECORD_COUNT; after: $AFTER_BR_COUNT"

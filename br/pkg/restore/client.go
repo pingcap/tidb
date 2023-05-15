@@ -1832,7 +1832,9 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 					break
 				}
 				// just wait for next check
-				time.Sleep(10 * time.Second)
+				// tiflash check the progress every 2s
+				// we can wait 2.5x times
+				time.Sleep(5 * time.Second)
 			}
 		} else {
 			// unreachable, current we have initial domain in mgr.
@@ -1840,7 +1842,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 		}
 		return nil
 	}, func() {
-		log.Info("all tiflash replica synce")
+		log.Info("all tiflash replica synced")
 	})
 	return outCh
 }
