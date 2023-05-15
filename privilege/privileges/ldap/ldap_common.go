@@ -121,7 +121,7 @@ func (impl *ldapAuthImpl) initializeCAPool() error {
 }
 
 func (impl *ldapAuthImpl) connectionFactory() (pools.Resource, error) {
-	address := net.JoinHostPort(impl.ldapServerHost, strconv.FormatUint(uint64(impl.ldapServerPort)))
+	address := net.JoinHostPort(impl.ldapServerHost, strconv.FormatUint(uint64(impl.ldapServerPort), 10))
 
 	// It's fine to load these two TLS configurations one-by-one (but not guarded by a single lock), because there isn't
 	// a way to set two variables atomically.
