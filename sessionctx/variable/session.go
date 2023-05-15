@@ -397,8 +397,6 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	}
 	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
 	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
-	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
-	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
 	cachedTables := make(map[int64]interface{}, len(tc.CachedTables))
 	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
