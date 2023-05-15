@@ -45,13 +45,19 @@ function run_with() {
 
 rm -rf $TEST_DIR/lightning.log
 run_with "local" "tests/$TEST_NAME/config-pause-global.toml"
-grep -Fq 'pause pd scheduler of global scope' $TEST_DIR/lightning.log
-! grep -Fq 'pause pd scheduler of global scope' $TEST_DIR/lightning.log
+grep -F 'pause pd scheduler of global scope' $TEST_DIR/lightning.log
+if grep -F 'pause pd scheduler of table scope' $TEST_DIR/lightning.log; then
+	echo "should not contain 'table scope'"
+	exit 1
+fi
 
 rm -rf $TEST_DIR/lightning.log
 run_with "local" "tests/$TEST_NAME/config.toml"
-! grep -Fq 'pause pd scheduler of global scope' $TEST_DIR/lightning.log
-grep -Fq 'pause pd scheduler of global scope' $TEST_DIR/lightning.log
+grep -F 'pause pd scheduler of table scope' $TEST_DIR/lightning.log
+if grep -F 'pause pd scheduler of global scope' $TEST_DIR/lightning.log; then
+	echo "should not contain 'global scope'"
+	exit 1
+fi
 
 run_with "tidb" "tests/$TEST_NAME/config.toml"
 
