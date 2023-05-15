@@ -66,6 +66,9 @@ func (m *MockBackendCtxMgr) Unregister(jobID int64) {
 		err := mCtx.sessCtx.CommitTxn(context.Background())
 		logutil.BgLogger().Info("mock backend mgr unregister", zap.Int64("jobID", jobID), zap.Error(err))
 		delete(m.runningJobs, jobID)
+		if mCtx.checkpointMgr != nil {
+			mCtx.checkpointMgr.Close()
+		}
 	}
 }
 
