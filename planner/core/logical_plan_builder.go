@@ -4906,7 +4906,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	if err != nil {
 		return nil, err
 	}
-
+	setIsInApplyForCTE(innerPlan, join.Schema())
 	ap := &LogicalApply{LogicalJoin: *join}
 	ap.tp = plancodec.TypeApply
 	ap.self = ap
