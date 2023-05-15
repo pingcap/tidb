@@ -83,6 +83,38 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 	require.Equal(t, "123.45.67.89:1234", cfg.TiDB.PdAddr)
 }
 
+func TestPausePDSchedulerScope(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK,
+		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
+	)
+	defer ts.Close()
+	tmpDir := t.TempDir()
+
+	cfg := config.NewConfig()
+	cfg.TiDB.Host = host
+	cfg.TiDB.StatusPort = port
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.SortedKVDir = "test"
+	cfg.Mydumper.SourceDir = tmpDir
+	require.Equal(t, config.PausePDSchedulerScopeTable, cfg.TikvImporter.PausePDSchedulerScope)
+
+	cfg.TikvImporter.PausePDSchedulerScope = ""
+	err := cfg.Adjust(context.Background())
+	require.ErrorContains(t, err, "pause-pd-scheduler-scope is invalid")
+
+	cfg.TikvImporter.PausePDSchedulerScope = "xxx"
+	err = cfg.Adjust(context.Background())
+	require.ErrorContains(t, err, "pause-pd-scheduler-scope is invalid")
+
+	cfg.TikvImporter.PausePDSchedulerScope = "TABLE"
+	require.NoError(t, cfg.Adjust(context.Background()))
+	require.Equal(t, config.PausePDSchedulerScopeTable, cfg.TikvImporter.PausePDSchedulerScope)
+
+	cfg.TikvImporter.PausePDSchedulerScope = "globAL"
+	require.NoError(t, cfg.Adjust(context.Background()))
+	require.Equal(t, config.PausePDSchedulerScopeGlobal, cfg.TikvImporter.PausePDSchedulerScope)
+}
+
 func TestAdjustPdAddrAndPortViaAdvertiseAddr(t *testing.T) {
 	ts, host, port := startMockServer(t, http.StatusOK,
 		`{"port":6666,"advertise-address":"121.212.121.212:5555","path":"34.34.34.34:3434"}`,
