@@ -1370,6 +1370,10 @@ func (local *Backend) executeJob(
 			job.lastRetryableErr = err
 			return nil
 		}
+		// if the job.stage successfully converted into "ingested", it means
+		// these data are ingested into TiKV so we handle remaining data.
+		// For other job.stage, the job should be sent back to caller to retry
+		// later.
 		if job.stage != ingested {
 			return nil
 		}
