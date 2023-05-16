@@ -1996,7 +1996,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have generated columns are not supported",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
-		"skip non-prepared plan-cache: get a TableDual plan",
+		"skip non-prepared plan-cache: some parameters may be overwritten when constant propagation",
 	}
 
 	all := append(supported, unsupported...)
