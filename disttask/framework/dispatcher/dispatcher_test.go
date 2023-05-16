@@ -313,11 +313,11 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 	return metas, nil
 }
 
-func (n NumberExampleHandle) ProcessFinishFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (err error) {
-	return nil
-}
-
 func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
+}
+
+func (NumberExampleHandle) IsRetryableErr(error) bool {
+	return true
 }

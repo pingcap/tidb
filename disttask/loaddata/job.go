@@ -140,6 +140,7 @@ func submitGlobalTaskAndRun(ctx context.Context, taskKey, taskType string, concu
 	for {
 		select {
 		case <-ctx.Done():
+			logutil.BgLogger().Warn("context done", zap.Error(ctx.Err()))
 			return ctx.Err()
 		case <-ticker.C:
 			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)

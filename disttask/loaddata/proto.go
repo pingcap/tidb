@@ -51,7 +51,7 @@ type SubtaskMeta struct {
 
 // SharedVars is the shared variables between subtask and minimal tasks.
 // This is because subtasks cannot directly obtain the results of the minimal subtask.
-// All the field should be concurrent safe.
+// All the fields should be concurrent safe.
 type SharedVars struct {
 	TableImporter *importer.TableImporter
 	DataEngine    *backend.OpenedEngine

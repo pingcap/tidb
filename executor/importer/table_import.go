@@ -312,6 +312,7 @@ func (ti *TableImporter) localChecksum() verify.KVChecksum {
 	return localChecksum
 }
 
+// VerifyChecksum verify the checksum of the table.
 func (ti *TableImporter) VerifyChecksum(ctx context.Context, localChecksum verify.KVChecksum) (err error) {
 	task := log.BeginTask(ti.logger, "verify checksum")
 	defer func() {
