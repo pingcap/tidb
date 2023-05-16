@@ -71,12 +71,26 @@ const (
 func (g *GCID) ToConnID() uint64 {
 	var id uint64
 	if g.Is64bits {
+		if g.LocalConnID > MaxLocalConnID64 {
+			panic(fmt.Sprintf("unexpected localConnID %d exceeds %d", g.LocalConnID, MaxLocalConnID64))
+		}
+		if g.ServerID > MaxServerID64 {
+			panic(fmt.Sprintf("unexpected serverID %d exceeds %d", g.ServerID, MaxServerID64))
+		}
+
 		id |= 0x1
-		id |= (g.LocalConnID & MaxLocalConnID64) << 1 // 40 bits local connID.
-		id |= (g.ServerID & MaxServerID64) << 41      // 22 bits serverID.
+		id |= g.LocalConnID << 1 // 40 bits local connID.
+		id |= g.ServerID << 41   // 22 bits serverID.
 	} else {
-		id |= (g.LocalConnID & MaxLocalConnID32) << 1 // 20 bits local connID.
-		id |= (g.ServerID & MaxServerID32) << 21      // 11 bits serverID.
+		if g.LocalConnID > MaxLocalConnID32 {
+			panic(fmt.Sprintf("unexpected localConnID %d exceeds %d", g.LocalConnID, MaxLocalConnID32))
+		}
+		if g.ServerID > MaxServerID32 {
+			panic(fmt.Sprintf("unexpected serverID %d exceeds %d", g.ServerID, MaxServerID32))
+		}
+
+		id |= g.LocalConnID << 1 // 20 bits local connID.
+		id |= g.ServerID << 21   // 11 bits serverID.
 	}
 	return id
 }

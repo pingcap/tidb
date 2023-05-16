@@ -24,16 +24,85 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestGlobalConnID(t *testing.T) {
+func TestToConnID(t *testing.T) {
 	assert := assert.New(t)
 
-	gcid := globalconn.GCID{
-		Is64bits:    true,
-		ServerID:    1001,
-		LocalConnID: 123,
+	type Case struct {
+		gcid        globalconn.GCID
+		shouldPanic bool
+		expected    uint64
 	}
-	assert.Equal((uint64(1001)<<41)|(uint64(123)<<1)|1, gcid.ToConnID())
 
+	cases := []Case{
+		{
+			gcid: globalconn.GCID{
+				Is64bits:    true,
+				ServerID:    1001,
+				LocalConnID: 123,
+			},
+			shouldPanic: false,
+			expected:    (uint64(1001) << 41) | (uint64(123) << 1) | 1,
+		},
+		{
+			gcid: globalconn.GCID{
+				Is64bits:    true,
+				ServerID:    1 << 22,
+				LocalConnID: 123,
+			},
+			shouldPanic: true,
+			expected:    0,
+		},
+		{
+			gcid: globalconn.GCID{
+				Is64bits:    true,
+				ServerID:    1001,
+				LocalConnID: 1 << 40,
+			},
+			shouldPanic: true,
+			expected:    0,
+		},
+		{
+			gcid: globalconn.GCID{
+				Is64bits:    false,
+				ServerID:    1001,
+				LocalConnID: 123,
+			},
+			shouldPanic: false,
+			expected:    (uint64(1001) << 21) | (uint64(123) << 1),
+		},
+		{
+			gcid: globalconn.GCID{
+				Is64bits:    false,
+				ServerID:    1 << 11,
+				LocalConnID: 123,
+			},
+			shouldPanic: true,
+			expected:    0,
+		},
+		{
+			gcid: globalconn.GCID{
+				Is64bits:    false,
+				ServerID:    1001,
+				LocalConnID: 1 << 20,
+			},
+			shouldPanic: true,
+			expected:    0,
+		},
+	}
+
+	for _, c := range cases {
+		if c.shouldPanic {
+			assert.Panics(func() {
+				c.gcid.ToConnID()
+			})
+		} else {
+			assert.Equal(c.expected, c.gcid.ToConnID())
+		}
+	}
+}
+
+func TestGlobalConnID(t *testing.T) {
+	assert := assert.New(t)
 	var (
 		err         error
 		isTruncated bool
