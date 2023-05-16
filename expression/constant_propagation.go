@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"errors"
+
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -278,6 +280,9 @@ func (s *propConstSolver) propagateColumnEQ() {
 }
 
 func (s *propConstSolver) setConds2ConstFalse() {
+	if MaybeOverOptimized4PlanCache(s.ctx, s.conditions) {
+		s.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("some parameters may be overwritten when constant propagation"))
+	}
 	s.conditions = []Expression{&Constant{
 		Value:   types.NewDatum(false),
 		RetType: types.NewFieldType(mysql.TypeTiny),
