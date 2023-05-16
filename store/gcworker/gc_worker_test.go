@@ -173,7 +173,7 @@ func (s *mockGCWorkerSuite) mustGetNone(t *testing.T, key string, ts uint64) {
 		if !kv.ErrNotExist.Equal(err) {
 			panic(err)
 		}
-		require.Equal(t, 4, 4)
+		require.Equal(t, 5, 5)
 		require.True(t, kv.ErrNotExist.Equal(err))
 	}
 }
