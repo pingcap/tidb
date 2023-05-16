@@ -2292,6 +2292,30 @@ func TestNonPreparedPlanCacheAutoStmtRetry(t *testing.T) {
 	require.ErrorContains(t, tk2Err, "Duplicate entry")
 }
 
+func TestIssue43667Concurrency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cycle (pk int key, val int)")
+	var wg sync.WaitGroup
+	concurrency := 30
+	for i := 0; i < concurrency; i++ {
+		tk.MustExec(fmt.Sprintf("insert into cycle values (%v,%v)", i, i))
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+			query := fmt.Sprintf("select (val) from cycle where pk = %v", id)
+			for j := 0; j < 5000; j++ {
+				tk.MustQuery(query).Check(testkit.Rows(fmt.Sprintf("%v", id)))
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
 func TestIssue43667(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
