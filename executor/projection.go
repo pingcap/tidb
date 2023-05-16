@@ -84,6 +84,7 @@ type ProjectionExec struct {
 // Open implements the Executor Open interface.
 func (e *ProjectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
+		e.prepared = false
 		return err
 	}
 	failpoint.Inject("mockProjectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
