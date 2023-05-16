@@ -57,7 +57,7 @@ run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --wait-tiflash-read
 if ! [ $(run_sql "select * from information_schema.tiflash_replica" | grep "PROGRESS" | sed "s/[^0-9]//g") -eq 1 ]; then
     echo "restore didn't wait tiflash synced after set --wait-tiflash-ready=true."
     exit 1
-done
+fi
 
 AFTER_BR_COUNT=`run_sql "SELECT count(*) FROM $DB.kv;" | sed -n "s/[^0-9]//g;/^[0-9]*$/p" | tail -n1`
 if [ "$AFTER_BR_COUNT" -ne "$RECORD_COUNT" ]; then
