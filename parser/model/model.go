@@ -1835,13 +1835,13 @@ func (p *PlacementSettings) Clone() *PlacementSettings {
 	return &cloned
 }
 
-type RunawayElapsedType uint64
+type RunawayElapsedType int32
 
 const (
 	ElapsedWallType RunawayElapsedType = iota
 )
 
-type RunawayActionType uint64
+type RunawayActionType int32
 
 const (
 	RunawayActionNone RunawayActionType = iota
@@ -1850,7 +1850,7 @@ const (
 	RunawayActionKill
 )
 
-type RunawayWatchType uint64
+type RunawayWatchType int32
 
 const (
 	WatchExact RunawayWatchType = iota
@@ -1858,7 +1858,7 @@ const (
 )
 
 // RunawayWatchValueToName converts the runaway watch value to corresponding name
-func RunawayWatchValueToName(value uint64) string {
+func RunawayWatchValueToName(value int32) string {
 	switch RunawayWatchType(value) {
 	case WatchExact:
 		return "EXACT"
@@ -1878,7 +1878,7 @@ const (
 )
 
 // RunawayActionValueToName converts the runaway action value to corresponding name
-func RunawayActionValueToName(value uint64) string {
+func RunawayActionValueToName(value int32) string {
 	switch RunawayActionType(value) {
 	case RunawayActionDryRun:
 		return "DRYRUN"

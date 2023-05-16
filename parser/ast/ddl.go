@@ -2182,9 +2182,9 @@ const (
 
 // ResourceGroupRunawayOption is used for parsing resource group runaway rule option.
 type ResourceGroupRunawayOption struct {
-	Tp        RunawayOptionType
-	StrValue  string
-	UintValue uint64
+	Tp       RunawayOptionType
+	StrValue string
+	IntValue int32
 }
 
 func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
@@ -2196,10 +2196,10 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 		case RunawayAction:
 			ctx.WriteKeyWord("ACTION ")
-			ctx.WriteKeyWord(model.RunawayActionValueToName(n.UintValue))
+			ctx.WriteKeyWord(model.RunawayActionValueToName(n.IntValue))
 		case RunawayWatch:
 			ctx.WriteKeyWord("WATCH ")
-			ctx.WriteKeyWord(model.RunawayWatchValueToName(n.UintValue))
+			ctx.WriteKeyWord(model.RunawayWatchValueToName(n.IntValue))
 			ctx.WritePlain(" ")
 			ctx.WriteKeyWord("DURATION ")
 			ctx.WritePlain("= ")

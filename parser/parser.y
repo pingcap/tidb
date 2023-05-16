@@ -1772,25 +1772,25 @@ ResourceGroupRunawayOptionList:
 ResourceGroupRunawayWatchOption:
 	"EXACT"
 	{
-		$$ = uint64(model.WatchExact)
+		$$ = int32(model.WatchExact)
 	}
 |	"SIMILAR"
 	{
-		$$ = uint64(model.WatchSimilar)
+		$$ = int32(model.WatchSimilar)
 	}
 
 ResourceGroupRunawayActionOption:
 	"DRYRUN"
 	{
-		$$ = uint64(model.RunawayActionDryRun)
+		$$ = int32(model.RunawayActionDryRun)
 	}
 |	"COOLDOWN"
 	{
-		$$ = uint64(model.RunawayActionCooldown)
+		$$ = int32(model.RunawayActionCooldown)
 	}
 |	"KILL"
 	{
-		$$ = uint64(model.RunawayActionKill)
+		$$ = int32(model.RunawayActionKill)
 	}
 
 DirectResourceGroupRunawayOption:
@@ -1805,7 +1805,7 @@ DirectResourceGroupRunawayOption:
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayAction, UintValue: $3.(uint64)}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayAction, IntValue: $3.(int32)}
 	}
 |	"WATCH" ResourceGroupRunawayWatchOption "DURATION" EqOpt stringLit
 	{
@@ -1814,7 +1814,7 @@ DirectResourceGroupRunawayOption:
 			yylex.AppendError(yylex.Errorf("The WATCH DURATION option is not a valid duration: %s", err.Error()))
 			return 1
 		}
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: $5, UintValue: $2.(uint64)}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: $5, IntValue: $2.(int32)}
 	}
 
 DirectResourceGroupOption:
