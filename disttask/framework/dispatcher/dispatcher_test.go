@@ -117,7 +117,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID:      gTaskID,
 		SchedulerID: serverIDs[1],
 	}
-	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
@@ -129,7 +129,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID:      gTaskID,
 		SchedulerID: serverIDs[0],
 	}
-	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)

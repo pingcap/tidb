@@ -98,6 +98,9 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 	inputRows := getCardinality(p.children[0], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().ProjectionConcurrency())
+	if concurrency == 0 {
+		concurrency = 1 // un-parallel execution
+	}
 
 	projCost := filterCostVer2(option, inputRows, p.Exprs, cpuFactor)
 
