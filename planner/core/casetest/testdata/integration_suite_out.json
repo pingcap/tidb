@@ -3831,13 +3831,13 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
           "      └─HashJoin 32.00 mpp[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10), other cond:gt(test.fact_t.col1, test.d1_t.value)",
-          "        ├─ExchangeReceiver(Build) 16.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
-          "        │   └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "        │     └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false",
-          "        └─ExchangeReceiver(Probe) 4.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
-          "            └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false"
+          "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
+          "        │   └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
+          "        └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
+          "            └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
         ]
       },
       {

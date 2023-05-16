@@ -826,6 +826,14 @@ func TestDMLStmt(t *testing.T) {
 		{"admin checksum table t1, t2;", true, "ADMIN CHECKSUM TABLE `t1`, `t2`"},
 		{"admin cancel ddl jobs 1", true, "ADMIN CANCEL DDL JOBS 1"},
 		{"admin cancel ddl jobs 1, 2", true, "ADMIN CANCEL DDL JOBS 1, 2"},
+		{"admin pause ddl jobs 1, 3", true, "ADMIN PAUSE DDL JOBS 1, 3"},
+		{"admin pause ddl jobs 5", true, "ADMIN PAUSE DDL JOBS 5"},
+		{"admin pause ddl jobs", false, "ADMIN PAUSE DDL JOBS"},
+		{"admin pause ddl jobs str_not_num", false, "ADMIN PAUSE DDL JOBS str_not_num"},
+		{"admin resume ddl jobs 1, 2", true, "ADMIN RESUME DDL JOBS 1, 2"},
+		{"admin resume ddl jobs 3", true, "ADMIN RESUME DDL JOBS 3"},
+		{"admin resume ddl jobs", false, "ADMIN RESUME DDL JOBS"},
+		{"admin resume ddl jobs str_not_num", false, "ADMIN RESUME DDL JOBS str_not_num"},
 		{"admin recover index t1 idx_a", true, "ADMIN RECOVER INDEX `t1` idx_a"},
 		{"admin cleanup index t1 idx_a", true, "ADMIN CLEANUP INDEX `t1` idx_a"},
 		{"admin show slow top 3", true, "ADMIN SHOW SLOW TOP 3"},
@@ -5708,6 +5716,13 @@ func TestGeneratedColumn(t *testing.T) {
 			require.Error(t, err)
 		}
 	}
+
+	_, _, err := p.Parse("create table t1 (a int, b int as (a + 1) default 10);", "", "")
+	require.Equal(t, err.Error(), "[ddl:1221]Incorrect usage of DEFAULT and generated column")
+	_, _, err = p.Parse("create table t1 (a int, b int as (a + 1) on update now());", "", "")
+	require.Equal(t, err.Error(), "[ddl:1221]Incorrect usage of ON UPDATE and generated column")
+	_, _, err = p.Parse("create table t1 (a int, b int as (a + 1) auto_increment);", "", "")
+	require.Equal(t, err.Error(), "[ddl:1221]Incorrect usage of AUTO_INCREMENT and generated column")
 }
 
 func TestSetTransaction(t *testing.T) {

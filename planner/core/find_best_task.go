@@ -323,6 +323,17 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 		taskType = property.RootTaskType
 	case *copTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
 		taskType = property.CopSingleReadTaskType
+
+		// TiFlash can run cop task as well, check whether this cop task will run on TiKV or TiFlash.
+		if t.(*copTask).tablePlan != nil {
+			leafNode := t.(*copTask).tablePlan
+			for len(leafNode.Children()) > 0 {
+				leafNode = leafNode.Children()[0]
+			}
+			if tblScan, isScan := leafNode.(*PhysicalTableScan); isScan && tblScan.StoreType == kv.TiFlash {
+				taskType = property.MppTaskType
+			}
+		}
 	case *mppTask:
 		taskType = property.MppTaskType
 	default:
@@ -1485,7 +1496,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
-			Columns:         ds.Columns,
+			Columns:         util.CloneColInfos(ds.Columns),
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			DBName:          ds.DBName,
@@ -2445,7 +2456,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
-		Columns:          ds.Columns,
+		Columns:          util.CloneColInfos(ds.Columns),
 		Index:            idx,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,

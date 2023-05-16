@@ -55,13 +55,14 @@ go_test(
         "checkpoint_test.go",
         "env_test.go",
         "integration_test.go",
+        "main_test.go",
         "mem_root_test.go",
     ],
+    embed = [":ingest"],
     flaky = True,
     race = "on",
-    shard_count = 10,
+    shard_count = 11,
     deps = [
-        ":ingest",
         "//config",
         "//ddl",
         "//ddl/internal/session",
@@ -77,5 +78,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

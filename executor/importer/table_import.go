@@ -129,6 +129,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		ShouldCheckWriteStall: true,
 		MaxOpenFiles:          int(util.GenRLimit()),
 		KeyspaceName:          keySpaceName,
+		PausePDSchedulerScope: config.PausePDSchedulerScopeTable,
 	}
 
 	tableMeta := &mydump.MDTableMeta{
@@ -269,7 +270,7 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEnc
 		Table:  ti.encTable,
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
-	return newTableKVEncoder(cfg, ti.ColumnAssignments, ti.ColumnsAndUserVars, ti.FieldMappings, ti.InsertColumns)
+	return newTableKVEncoder(cfg, ti)
 }
 
 func (ti *TableImporter) importTable(ctx context.Context) (err error) {
