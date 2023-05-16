@@ -15,6 +15,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
@@ -1904,6 +1905,35 @@ func BenchmarkAutoIncrement(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		mustExecute(se, "insert into auto_inc values ()")
+	}
+	b.StopTimer()
+}
+
+func BenchmarkNestedExpression(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (a varchar(128), b date, c int as (dayofmonth(b)))")
+	var buf bytes.Buffer
+	buf.WriteString("select * from t where 1=0 ")
+	for i := 0; i < 1024; i++ {
+		fmt.Fprintf(&buf, " or (t.a = '%d' and t.c = %d)", i, i%30)
+	}
+	alloc := chunk.NewAllocator()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, buf.String())
+		if rs != nil {
+			_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
+		}
+		if err != nil {
+			b.Fatal(err)
+		}
+		alloc.Reset()
 	}
 	b.StopTimer()
 }

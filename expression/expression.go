@@ -786,18 +786,25 @@ type VarAssignment struct {
 
 // splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
 func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
-	//nolint: revive
-	switch v := onExpr.(type) {
-	case *ScalarFunction:
-		if v.FuncName.L == funcName {
-			var ret []Expression
-			for _, arg := range v.GetArgs() {
-				ret = append(ret, splitNormalFormItems(arg, funcName)...)
+	ret := make([]Expression, 0, 1)
+	stack := make([]Expression, 0, 5)
+	stack = append(stack, onExpr)
+	for len(stack) > 0 {
+		curr := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		switch v := curr.(type) {
+		case *ScalarFunction:
+			if v.FuncName.L == funcName {
+				args := v.GetArgs()
+				for i := len(args) - 1; i >= 0; i-- {
+					stack = append(stack, args[i])
+				}
+				continue
 			}
-			return ret
 		}
+		ret = append(ret, curr)
 	}
-	return []Expression{onExpr}
+	return ret
 }
 
 // SplitCNFItems splits CNF items.

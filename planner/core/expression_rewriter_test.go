@@ -15,6 +15,8 @@
 package core_test
 
 import (
+	"fmt"
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -404,4 +406,59 @@ func TestColResolutionPriBetweenOuterAndNatureJoin(t *testing.T) {
 	tk.MustExec("INSERT INTO t0 VALUES (-12);")
 	tk.MustQuery("SELECT v0.c0 AS c0 FROM  v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7)));").Check(testkit.Rows())
 	tk.MustQuery("SELECT COUNT(v0.c0) AS c0 FROM v0 WHERE EXISTS(SELECT v0.c0 AS c0 FROM v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7))));").Check(testkit.Rows("0"))
+}
+
+func TestSplitNormalForm(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	table := []struct {
+		string
+		bool
+	}{
+		{"true", true},
+		{"false", false},
+		{"1=1", true},
+		{"1<2", true},
+		{"1>2", false},
+	}
+
+	andFn := func(x, y bool) bool {
+		return x && y
+	}
+	orFn := func(x, y bool) bool {
+		return x || y
+	}
+	var op func(x, y bool) bool
+
+	tmp := table[rand.Intn(len(table))]
+	expr, res := tmp.string, tmp.bool
+	for i := 0; i < 50; i++ {
+		for j := 0; j < rand.Intn(20); j++ {
+			tmp = table[rand.Intn(len(table))]
+
+			var conn string
+			if rand.Intn(2) == 0 {
+				conn = " and "
+				op = andFn
+			} else {
+				conn = " or "
+				op = orFn
+			}
+
+			if rand.Intn(2) == 0 {
+				expr = fmt.Sprintf("(%s) %s %s", expr, conn, tmp.string)
+				res = op(res, tmp.bool)
+			} else {
+				expr = fmt.Sprintf("%s %s (%s)", tmp.string, conn, expr)
+				res = op(tmp.bool, res)
+			}
+		}
+		if res {
+			tk.MustQuery(fmt.Sprintf("select %s", expr)).Check(testkit.Rows("1"))
+		} else {
+			tk.MustQuery(fmt.Sprintf("select %s", expr)).Check(testkit.Rows("0"))
+		}
+	}
 }
