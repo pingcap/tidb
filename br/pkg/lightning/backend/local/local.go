@@ -395,7 +395,9 @@ type BackendConfig struct {
 	ConnCompressType config.CompressionType
 	// concurrency of generateJobForRange and import(write & ingest) workers
 	WorkerConcurrency int
-	KVWriteBatchSize  int
+	// batch kv count and size when writing to TiKV
+	KVWriteBatchCount int
+	KVWriteBatchSize  int64
 	CheckpointEnabled bool
 	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
 	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
@@ -428,7 +430,8 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
-		KVWriteBatchSize:        cfg.TikvImporter.SendKVPairs,
+		KVWriteBatchCount:       cfg.TikvImporter.SendKVPairs,
+		KVWriteBatchSize:        int64(cfg.TikvImporter.SendKVSize),
 		CheckpointEnabled:       cfg.Checkpoint.Enable,
 		MemTableSize:            int(cfg.TikvImporter.EngineMemCacheSize),
 		LocalWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),

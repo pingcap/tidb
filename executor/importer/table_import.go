@@ -115,6 +115,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		MaxConnPerStore:   config.DefaultRangeConcurrency,
 		ConnCompressType:  config.CompressionNone,
 		WorkerConcurrency: config.DefaultRangeConcurrency * 2,
+		KVWriteBatchCount: config.KVWriteBatchCount,
 		KVWriteBatchSize:  config.KVWriteBatchSize,
 		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
 		// set to false when we fix it.

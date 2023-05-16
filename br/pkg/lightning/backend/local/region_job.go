@@ -177,6 +177,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
+	kvBatchCount := local.KVWriteBatchCount
 	kvBatchSize := local.KVWriteBatchSize
 	bufferPool := local.bufferPool
 	writeLimiter := local.writeLimiter
@@ -254,7 +255,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 
 	bytesBuf := bufferPool.NewBuffer()
 	defer bytesBuf.Destroy()
-	pairs := make([]*sst.Pair, 0, kvBatchSize)
+	pairs := make([]*sst.Pair, 0, kvBatchCount)
 	count := 0
 	size := int64(0)
 	totalSize := int64(0)
@@ -265,8 +266,6 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	if j.regionSplitSize <= int64(config.SplitRegionSize) {
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
-	// Set a lower flush limit to make the speed of write more smooth.
-	flushLimit := int64(writeLimiter.Limit() / 10)
 
 	flushKVs := func() error {
 		for i := range clients {
@@ -278,6 +277,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				return annotateErr(err, allPeers[i])
 			}
 		}
+		failpoint.Inject("waitAfterWrite", nil)
 		return nil
 	}
 
@@ -305,7 +305,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		size += kvSize
 		totalSize += kvSize
 
-		if count >= kvBatchSize || size >= flushLimit {
+		if count >= kvBatchCount || size >= kvBatchSize {
 			if err := flushKVs(); err != nil {
 				return errors.Trace(err)
 			}
