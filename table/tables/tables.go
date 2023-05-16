@@ -882,7 +882,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			}
 		}
 	})
-	if setPresume && !txn.IsPessimistic() {
+	// batch-check guarantees the existence of key itself.
+	if setPresume && !txn.IsPessimistic() || sctx.GetSessionVars().StmtCtx.BatchCheck {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
 	} else {
 		err = txn.SetAssertion(key, kv.SetAssertNotExist)
