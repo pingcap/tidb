@@ -281,6 +281,17 @@ func (pe *PartitionExpr) GetPartColumnsForKeyPartition(columns []*expression.Col
 	return partCols, colLen
 }
 
+// LocateKeyPartitionWithSPC is used to locate the destination partition for key
+// partition table has single partition column(SPC). It's called in FastPlan process.
+func (pe *PartitionExpr) LocateKeyPartitionWithSPC(pi *model.PartitionInfo,
+	r []types.Datum) (int, error) {
+	col := &expression.Column{}
+	*col = *pe.KeyPartCols[0]
+	col.Index = 0
+	kp := &ForKeyPruning{KeyPartCols: []*expression.Column{col}}
+	return kp.LocateKeyPartition(pi.Num, r)
+}
+
 // LocateKeyPartition is the common interface used to locate the destination partition
 func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (int, error) {
 	h := crc32.NewIEEE()

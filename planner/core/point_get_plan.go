@@ -1818,7 +1818,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		if len(pi.Columns) == 1 {
 			for i, pair := range pairs {
 				if pi.Columns[0].L == pair.colName {
-					pos, err := partitionExpr.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
+					pos, err := partitionExpr.LocateKeyPartitionWithSPC(pi, []types.Datum{pair.value})
 					if err != nil {
 						return nil, 0, 0, false
 					}
