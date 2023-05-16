@@ -101,8 +101,8 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if intest.InTest && ctx.Value(core.PLAN_CACHE_KEY_TEST_ISSUE_43667) != nil { // update the AST in the middle of the process
-		ctx.Value(core.PLAN_CACHE_KEY_TEST_ISSUE_43667).(func(stmt ast.StmtNode))(stmt)
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue43667) != nil { // update the AST in the middle of the process
+		ctx.Value(core.PlanCacheKeyTestIssue43667).(func(stmt ast.StmtNode))(stmt)
 	}
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
 	paramExprs := core.Params2Expressions(paramsVals)
