@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/stretchr/testify/require"
@@ -2276,6 +2278,28 @@ func TestNonPreparedPlanCacheAutoStmtRetry(t *testing.T) {
 	require.NoError(t, err)
 	wg.Wait()
 	require.ErrorContains(t, tk2Err, "Duplicate entry")
+}
+
+func TestIssue43667(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`create table cycle (pk int not null primary key, sk int not null, val int)`)
+	tk.MustExec(`insert into cycle values (4, 4, 4)`)
+	tk.MustExec(`insert into cycle values (7, 7, 7)`)
+
+	tk.MustQuery(`select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
+	tk.MustQuery(`select (val) from cycle where pk = 7`).Check(testkit.Rows("7"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	updateAST := func(stmt ast.StmtNode) {
+		v := stmt.(*ast.SelectStmt).Where.(*ast.BinaryOperationExpr).R.(*driver.ValueExpr)
+		v.Datum.SetInt64(7)
+	}
+
+	tctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestIssue43667, updateAST)
+	tk.MustQueryWithContext(tctx, `select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
 }
 
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
