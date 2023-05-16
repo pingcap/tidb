@@ -38,7 +38,8 @@ type PhysicalImportProgress struct {
 	// EncodeFileSize is the size of the file that has finished KV encoding in bytes.
 	// it should equal to SourceFileSize eventually.
 	EncodeFileSize atomic.Int64
-
+	// LastInsertID is the smallest auto-generated ID in current import.
+	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
 	LastInsertID LastInsertID
 }
 
@@ -89,11 +90,13 @@ func ProgressFromJSON(bs []byte) (*Progress, error) {
 	return &p, err
 }
 
+// LastInsertID is the smallest auto-generated ID in current import.
 type LastInsertID struct {
 	mu sync.RWMutex
 	id uint64
 }
 
+// Store stores the id if it's smaller than the current one.
 func (lastInsertID *LastInsertID) Store(id uint64) {
 	if id == 0 {
 		return
@@ -105,6 +108,7 @@ func (lastInsertID *LastInsertID) Store(id uint64) {
 	}
 }
 
+// Load loads the last insert id.
 func (lastInsertID *LastInsertID) Load() uint64 {
 	lastInsertID.mu.RLock()
 	defer lastInsertID.mu.RUnlock()
