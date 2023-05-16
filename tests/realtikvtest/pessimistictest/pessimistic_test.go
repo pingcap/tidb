@@ -3432,13 +3432,12 @@ func TestIssue42937(t *testing.T) {
 	tk.MustQuery("select id, v from t order by id").Check(testkit.Rows("1 10", "2 20", "3 31", "4 41"))
 	tk.MustExec("update t set v = 0 where id = 1")
 
-	require.NoError(t, failpoint.Enable("tikvclient/beforeCommit", `1*return("delay")`))
+	require.NoError(t, failpoint.Enable("tikvclient/beforeCommit", `1*return("delay(500)")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("tikvclient/beforeCommit"))
 	}()
 
 	ch = mustExecAsync(tk, "commit")
-	time.Sleep(time.Second * 1)
 	mustTimeout(t, ch, time.Millisecond*100)
 
 	require.NoError(t, failpoint.Disable("tikvclient/twoPCShortLockTTL"))
@@ -3446,9 +3445,6 @@ func TestIssue42937(t *testing.T) {
 
 	tk2.MustExec("insert into t values (5, 11)")
 
-	time.Sleep(time.Second * 5)
-
-	// tk is supposed to fail to keep the consistency
 	mustRecv(t, ch)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows(
