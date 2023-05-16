@@ -4133,7 +4133,7 @@ func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
 	}
 }
 
-func (c *colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
+func (*colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
 }
 
@@ -4333,22 +4333,22 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	return p, nil
 }
 
-func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
+func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	p := &LoadStats{Path: ld.Path}
 	return p
 }
 
-func (b *PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
+func (*PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
 	p := &LockStats{Tables: ld.Tables}
 	return p
 }
 
-func (b *PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
+func (*PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
 	p := &UnlockStats{Tables: ld.Tables}
 	return p
 }
 
-func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
+func (*PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 	p := &IndexAdvise{
 		IsLocal:        node.IsLocal,
 		Path:           node.Path,
