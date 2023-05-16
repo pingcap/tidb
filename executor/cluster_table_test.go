@@ -399,7 +399,7 @@ func TestFunctionEncodeSQLDigest(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("drop table if exists test_func_encode_sql_digest")
 	tk.MustExec("create table test_func_encode_sql_digest(id int primary key, v int)")
 
