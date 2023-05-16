@@ -338,6 +338,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		util.WithRecovery(
 			func() {
 				failpoint.Inject("testIndexMergePanicPartialIndexWorker", nil)
+				is := e.partialPlans[workID][0].(*plannercore.PhysicalIndexScan)
 				worker := &partialIndexWorker{
 					stats:              e.stats,
 					idxID:              e.getPartitalPlanID(workID),
@@ -348,10 +349,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					memTracker:         e.memTracker,
 					partitionTableMode: e.partitionTableMode,
 					prunedPartitions:   e.prunedPartitions,
-					byItems:            e.byItems,
+					byItems:            is.ByItems,
 					pushedLimit:        e.pushedLimit,
 				}
-
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
 					var err error
@@ -466,7 +466,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					ranges:           e.ranges[workID],
 					netDataSize:      e.partialNetDataSizes[workID],
 					keepOrder:        ts.KeepOrder,
-					byItems:          e.byItems,
+					byItems:          ts.ByItems,
 				}
 
 				worker := &partialTableWorker{
@@ -479,7 +479,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					memTracker:         e.memTracker,
 					partitionTableMode: e.partitionTableMode,
 					prunedPartitions:   e.prunedPartitions,
-					byItems:            e.byItems,
+					byItems:            ts.ByItems,
 					pushedLimit:        e.pushedLimit,
 				}
 

@@ -366,6 +366,12 @@ func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
 			return err
 		}
 	}
+	if p.HandleCols != nil && p.KeepOrder {
+		p.HandleCols, err = p.HandleCols.ResolveIndices(p.schema)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

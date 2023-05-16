@@ -8497,13 +8497,13 @@
       {
         "SQL": "select * from t where a = 1 or b = 1 order by c limit 2",
         "Plan": [
-          "Projection 19.99 root  test.t.a, test.t.b, test.t.c",
-          "└─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "Projection 2.00 root  test.t.a, test.t.b, test.t.c",
+          "└─IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",
           "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │ └─IndexRangeScan 2.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:true, stats:pseudo",
           "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │ └─IndexRangeScan 2.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -8546,13 +8546,13 @@
       {
         "SQL": "select * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2",
         "Plan": [
-          "Projection 10.10 root  test.t.a, test.t.b, test.t.c",
-          "└─IndexMerge 10.10 root  type: union, limit embedded(offset:0, count:2)",
+          "Projection 2.00 root  test.t.a, test.t.b, test.t.c",
+          "└─IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",
           "  ├─Limit(Build) 0.10 cop[tikv]  offset:0, count:2",
           "  │ └─IndexRangeScan 0.10 cop[tikv] table:t, index:idx(a, c) range:[1 2,1 2], keep order:true, stats:pseudo",
           "  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │ └─IndexRangeScan 2.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 10.10 cop[tikv] table:t keep order:false, stats:pseudo"
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -8606,24 +8606,24 @@
       {
         "SQL": "select * from tcommon where a = 1 or b = 1 order by c limit 2",
         "Plan": [
-          "IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
+          "│ └─TableRangeScan 1.00 cop[tikv] table:tcommon range:[1,1], keep order:true, stats:pseudo",
           "├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "│ └─TableRangeScan 2.00 cop[tikv] table:tcommon range:[1,1], keep order:true, stats:pseudo",
-          "├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "│ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "└─TableRowIDScan(Probe) 19.99 cop[tikv] table:tcommon keep order:false, stats:pseudo"
+          "│ └─IndexRangeScan 10.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 2.00 cop[tikv] table:tcommon keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
       {
         "SQL": "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2",
         "Plan": [
-          "IndexMerge 11.00 root  type: union, limit embedded(offset:0, count:2)",
-          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
-          "│ └─TableRangeScan 1.00 cop[tikv] table:tcommon range:[1 2,1 2], keep order:true, stats:pseudo",
+          "IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",
+          "├─Limit(Build) 0.18 cop[tikv]  offset:0, count:2",
+          "│ └─TableRangeScan 0.18 cop[tikv] table:tcommon range:[1 2,1 2], keep order:true, stats:pseudo",
           "├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "│ └─IndexRangeScan 2.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "└─TableRowIDScan(Probe) 11.00 cop[tikv] table:tcommon keep order:false, stats:pseudo"
+          "│ └─IndexRangeScan 10.00 cop[tikv] table:tcommon, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 2.00 cop[tikv] table:tcommon keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -8632,34 +8632,34 @@
         "Plan": [
           "TopN 2.00 root  test.thash.c, offset:0, count:2",
           "└─PartitionUnion 8.00 root  ",
-          "  ├─Projection 19.99 root  test.thash.a, test.thash.b, test.thash.c",
-          "  │ └─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "  ├─Projection 2.00 root  test.thash.a, test.thash.b, test.thash.c",
+          "  │ └─IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",
           "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p0, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   │ └─IndexRangeScan 10.00 cop[tikv] table:thash, partition:p0, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
           "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p0, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "  │   └─TableRowIDScan(Probe) 19.99 cop[tikv] table:thash, partition:p0 keep order:false, stats:pseudo",
-          "  ├─Projection 19.99 root  test.thash.a, test.thash.b, test.thash.c",
-          "  │ └─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "  │   │ └─IndexRangeScan 10.00 cop[tikv] table:thash, partition:p0, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   └─TableRowIDScan(Probe) 2.00 cop[tikv] table:thash, partition:p0 keep order:false, stats:pseudo",
+          "  ├─Projection 2.00 root  test.thash.a, test.thash.b, test.thash.c",
+          "  │ └─IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",
           "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p1, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   │ └─IndexRangeScan 10.00 cop[tikv] table:thash, partition:p1, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
           "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p1, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "  │   └─TableRowIDScan(Probe) 19.99 cop[tikv] table:thash, partition:p1 keep order:false, stats:pseudo",
-          "  ├─Projection 19.99 root  test.thash.a, test.thash.b, test.thash.c",
-          "  │ └─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "  │   │ └─IndexRangeScan 10.00 cop[tikv] table:thash, partition:p1, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   └─TableRowIDScan(Probe) 2.00 cop[tikv] table:thash, partition:p1 keep order:false, stats:pseudo",
+          "  ├─Projection 2.00 root  test.thash.a, test.thash.b, test.thash.c",
+          "  │ └─IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",
           "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p2, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   │ └─IndexRangeScan 10.00 cop[tikv] table:thash, partition:p2, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
           "  │   ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "  │   │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p2, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "  │   └─TableRowIDScan(Probe) 19.99 cop[tikv] table:thash, partition:p2 keep order:false, stats:pseudo",
-          "  └─Projection 19.99 root  test.thash.a, test.thash.b, test.thash.c",
-          "    └─IndexMerge 19.99 root  type: union, limit embedded(offset:0, count:2)",
+          "  │   │ └─IndexRangeScan 10.00 cop[tikv] table:thash, partition:p2, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  │   └─TableRowIDScan(Probe) 2.00 cop[tikv] table:thash, partition:p2 keep order:false, stats:pseudo",
+          "  └─Projection 2.00 root  test.thash.a, test.thash.b, test.thash.c",
+          "    └─IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",
           "      ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "      │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p3, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "      │ └─IndexRangeScan 10.00 cop[tikv] table:thash, partition:p3, index:idx_ac(a, c) range:[1,1], keep order:true, stats:pseudo",
           "      ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-          "      │ └─IndexRangeScan 2.00 cop[tikv] table:thash, partition:p3, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
-          "      └─TableRowIDScan(Probe) 19.99 cop[tikv] table:thash, partition:p3 keep order:false, stats:pseudo"
+          "      │ └─IndexRangeScan 10.00 cop[tikv] table:thash, partition:p3, index:idx_bc(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "      └─TableRowIDScan(Probe) 2.00 cop[tikv] table:thash, partition:p3 keep order:false, stats:pseudo"
         ],
         "Warning": [
           "Warning 1105 disable dynamic pruning due to thash has no global stats"

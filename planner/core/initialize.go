@@ -404,6 +404,7 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
+		p.HandleCols = p.TablePlans[0].(*PhysicalTableScan).HandleCols
 	} else {
 		switch p.PartialPlans[0][0].(type) {
 		case *PhysicalTableScan:
@@ -411,6 +412,14 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 		default:
 			is := p.PartialPlans[0][0].(*PhysicalIndexScan)
 			p.schema = is.dataSourceSchema
+		}
+	}
+	if p.KeepOrder {
+		switch x := p.PartialPlans[0][0].(type) {
+		case *PhysicalTableScan:
+			p.ByItems = x.ByItems
+		case *PhysicalIndexScan:
+			p.ByItems = x.ByItems
 		}
 	}
 	return &p
