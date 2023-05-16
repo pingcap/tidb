@@ -777,7 +777,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 
 	if job.IsCancelled() {
 		defer d.unlockSchemaVersion(job.ID)
-		w.sess.Rollback()
+		w.sess.Reset()
 		err = w.HandleJobDone(d, job, t)
 		return 0, err
 	}
@@ -789,7 +789,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		// then shouldn't discard the KV modification.
 		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 		// Otherwise, we should discard the KV modification when running job.
-		w.sess.Rollback()
+		w.sess.Reset()
 		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 		// Result in the retry duration is up to 2 * lease.
 		schemaVer = 0
