@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/topsql"
@@ -96,12 +97,15 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil, false, nil
 	}
 
-	paramSQL, params, err := core.GetParamSQLFromAST(ctx, sctx, stmt)
+	paramSQL, paramsVals, err := core.GetParamSQLFromAST(ctx, sctx, stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
+	if intest.InTest && ctx.Value(core.PLAN_CACHE_KEY_TEST_ISSUE_43667) != nil { // update the AST in the middle of the process
+		ctx.Value(core.PLAN_CACHE_KEY_TEST_ISSUE_43667).(func(stmt ast.StmtNode))(stmt)
+	}
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
-	paramExprs := core.Params2Expressions(params)
+	paramExprs := core.Params2Expressions(paramsVals)
 
 	if val == nil {
 		// Create a new AST upon this parameterized SQL instead of using the original AST.
