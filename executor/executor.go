@@ -2409,11 +2409,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	}
 
 	se, err := w.e.base().getSysSession()
+	se.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	if err != nil {
 		trySaveErr(err)
 		return
 	}
-	defer w.e.base().releaseSysSession(ctx, se)
+	defer func() {
+		se.GetSessionVars().OptimizerUseInvisibleIndexes = false
+		w.e.base().releaseSysSession(ctx, se)
+	}()
 
 	var pkCols []string
 	var pkTypes []*types.FieldType
@@ -2445,9 +2449,14 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	}
 	for offset, col := range idxInfo.Columns {
 		md5HandleAndIndexCol.WriteString("ifnull(")
-		md5HandleAndIndexCol.WriteString(col.Name.O)
-		if col.Length != types.UnspecifiedLength {
-			md5HandleAndIndexCol.WriteString(fmt.Sprintf("(%d)", col.Length))
+		tblCol := w.table.Meta().Columns[col.Offset]
+		if tblCol.IsGenerated() && !tblCol.GeneratedStored {
+			md5HandleAndIndexCol.WriteString(tblCol.GeneratedExprString)
+		} else {
+			md5HandleAndIndexCol.WriteString(col.Name.O)
+			if col.Length != types.UnspecifiedLength {
+				md5HandleAndIndexCol.WriteString(fmt.Sprintf("(%d)", col.Length))
+			}
 		}
 		md5HandleAndIndexCol.WriteString(", 0x1)")
 		if offset != len(idxInfo.Columns)-1 {
