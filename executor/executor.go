@@ -17,6 +17,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"math"
 	"runtime/pprof"
 	"strconv"
@@ -2364,12 +2366,13 @@ type checkIndexWorker struct {
 	e          *FastCheckTableExec
 }
 
-func getCheckSum(se sessionctx.Context, sql string) ([]uint64, error) {
+type groupByChecksum struct {
+	checksum uint64
+	count    int64
+}
+
+func getCheckSum(se sessionctx.Context, sql string) (map[uint64]groupByChecksum, error) {
 	ctx := kv.WithInternalSourceType(context.TODO(), kv.InternalTxnAdmin)
-	_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
-	if err != nil {
-		return nil, err
-	}
 	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return nil, err
@@ -2384,11 +2387,11 @@ func getCheckSum(se sessionctx.Context, sql string) ([]uint64, error) {
 	if err != nil {
 		return nil, err
 	}
-	checkSum := make([]uint64, len(rows))
-	for i, row := range rows {
-		checkSum[i] = row.GetUint64(0)
+	checksums := make(map[uint64]groupByChecksum, len(rows))
+	for _, row := range rows {
+		checksums[row.GetUint64(2)] = groupByChecksum{checksum: row.GetUint64(0), count: row.GetInt64(1)}
 	}
-	return checkSum, nil
+	return checksums, nil
 }
 
 // HandleTask implements the Worker interface.
@@ -2413,6 +2416,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	defer w.e.base().releaseSysSession(ctx, se)
 
 	var pkCols []string
+	var pkTypes []*types.FieldType
+	var primaryIdx *model.IndexInfo
 	switch {
 	case w.e.table.Meta().IsCommonHandle:
 		pkColsInfo := w.e.table.Meta().GetPrimaryKey().Columns
@@ -2423,8 +2428,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			}
 			pkCols = append(pkCols, colStr)
 		}
+		primaryIdx = tables.FindPrimaryIndex(w.table.Meta())
 	case w.e.table.Meta().PKIsHandle:
 		pkCols = append(pkCols, w.e.table.Meta().GetPkName().O)
+		primaryIdx = tables.FindPrimaryIndex(w.table.Meta())
 	default: // support decoding _tidb_rowid.
 		pkCols = append(pkCols, model.ExtraHandleName.O)
 	}
@@ -2470,55 +2477,73 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		}
 	}
 
-
 	tableRowCntToCheck := w.e.rowCnt
 
 	offset := 0
 	mod := 1
 	meetError := false
 
-	lookupCheckThreshold := int64(1000)
-	checkCheckSum := w.rowCnt > lookupCheckThreshold
+	lookupCheckThreshold := int64(100)
+	checkOnce := false
 
-	for tableRowCntToCheck > 0 {
+	_, err = se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+	if err != nil {
+		trySaveErr(err)
+		return
+	}
+
+	for tableRowCntToCheck > lookupCheckThreshold || !checkOnce {
+		checkOnce = true
 		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", handleColumnField, offset, mod, bucketSize)
 
 		// compute table side checksum.
-		sql := fmt.Sprintf("select %s, count(*) from %s.%s use index() group by %s order by %s", md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, groupByKey, groupByKey)
+		sql := fmt.Sprintf("select %s, %s, count(*) from %s.%s use index() group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, groupByKey)
 		logutil.BgLogger().Info("check table index on table side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
-		tableCheckSum, err := getCheckSum(se, sql)
+		tableCheckSumMap, err := getCheckSum(se, sql)
 		if err != nil {
 			trySaveErr(err)
 			return
 		}
 
 		// compute index side checksum.
-		sql = fmt.Sprintf("select %s, count(*) from %s.%s use index(%s) group by %s order by %s", md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey, groupByKey)
+		sql = fmt.Sprintf("select %s, %s, count(*) from %s.%s use index(%s) group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey)
 		logutil.BgLogger().Info("check table index on index side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
-		indexCheckSum, err := getCheckSum(se, sql)
+		indexCheckSumMap, err := getCheckSum(se, sql)
 		if err != nil {
 			trySaveErr(err)
 			return
 		}
 
-		// compare checksum.
-		if len(tableCheckSum) != len(indexCheckSum) {
-			meetError = true
-			break
-		}
+		currentOffset := 0
 
-		for i, v := range tableCheckSum {
-			if v != indexCheckSum[i] {
-				offset += i * mod
-				mod *= bucketSize
+		// Every checksum in table side should be the same as the index side.
+		for bucket, tableCheckSum := range tableCheckSumMap {
+			if indexCheckSum, ok := indexCheckSumMap[bucket]; !ok || tableCheckSum.checksum != indexCheckSum.checksum {
+				currentOffset = int(bucket)
+				tableRowCntToCheck = tableCheckSum.count
 				meetError = true
-				tableRowCntToCheck /= int64(bucketSize)
 				break
 			}
 		}
+
+		if !meetError && len(indexCheckSumMap) > len(tableCheckSumMap) {
+			// Every checksum in index side should be the same as the index side.
+			for bucket, indexCheckSum := range indexCheckSumMap {
+				if _, ok := tableCheckSumMap[bucket]; !ok {
+					currentOffset = int(bucket)
+					tableRowCntToCheck = indexCheckSum.count
+					meetError = true
+					break
+				}
+			}
+		}
+
 		if !meetError {
 			break
 		}
+
+		offset += currentOffset * mod
+		mod *= bucketSize
 	}
 
 	queryToRow := func(se sessionctx.Context, sql string) ([]chunk.Row, error) {
@@ -2537,9 +2562,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		return row, nil
 	}
 
-	if meetError || !checkCheckSum {
-		indexSql := fmt.Sprintf("select %s, %s, %s from %s.%s use index(%s) where (%s - %d) /%d %% %d = 0 order by %s", , indexColSb.String(), md5HandleAndIndexCol.String()[8:len(md5HandleAndIndexCol.String())-1], w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupSb.String(), offset, mod, indexColSb.String())
-		tableSql := fmt.Sprintf("select %s, %s, %s from %s.%s use index() where (%s - %d) /%d %% %d = 0 order by %s", indexColSb.String(), md5HandleAndIndexCol.String()[8:len(md5HandleAndIndexCol.String())-1], w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupSb.String(), offset, mod, indexColSb.String())
+	if meetError {
+		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", handleColumnField, offset, mod, bucketSize)
+		indexSql := fmt.Sprintf("select %s, %s, %s from %s.%s use index(%s) where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey, handleColumnField)
+		tableSql := fmt.Sprintf("select %s, %s, %s from %s.%s use index() where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, groupByKey, handleColumnField)
 
 		idxRow, err := queryToRow(se, indexSql)
 		if err != nil {
@@ -2551,20 +2577,118 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			trySaveErr(err)
 			return
 		}
-		for i, row := range tblRow {
-			if i >= len(idxRow) {
-				// index side has less rows than table side.
-			} else {
-				tblCheckSum := row.GetUint64(row.Chunk().NumCols() - 1)
-				indeCheckSum := idxRow[i].GetUint64(idxRow[i].Chunk().NumCols() - 1)
-				if tblCheckSum != indeCheckSum {
-					// checksum not match.
-					w.e.err = errors.Errorf("checksum not match, table side checksum %d, index side checksum %d", tblCheckSum, indeCheckSum)
-					datums := make([]types.Datum, 0, row.Chunk().NumCols())
-					for tbl,
+
+		getHandleFromRow := func(row chunk.Row) (kv.Handle, error) {
+			handleDatum := make([]types.Datum, 0)
+			for i, t := range pkTypes {
+				handleDatum = append(handleDatum, row.GetDatum(i, t))
+			}
+			if w.table.Meta().IsCommonHandle {
+				tablecodec.TruncateIndexValues(w.table.Meta(), primaryIdx, handleDatum)
+				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx, nil, handleDatum...)
+				if err != nil {
+					return nil, err
 				}
+				return kv.NewCommonHandle(handleBytes)
+			}
+			return kv.IntHandle(row.GetInt64(0)), nil
+		}
+		getValueFromRow := func(row chunk.Row) ([]types.Datum, error) {
+			valueDatum := make([]types.Datum, 0)
+			for i, t := range idxInfo.Columns {
+				valueDatum = append(valueDatum, row.GetDatum(i+len(pkCols), &w.table.Meta().Columns[t.Offset].FieldType))
+			}
+			return valueDatum, nil
+		}
+
+		ir := func() *consistency.Reporter {
+			return &consistency.Reporter{
+				HandleEncode: func(handle kv.Handle) kv.Key {
+					return tablecodec.EncodeRecordKey(w.table.RecordPrefix(), handle)
+				},
+				IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
+					var idx table.Index
+					for _, v := range w.table.Indices() {
+						if strings.EqualFold(v.Meta().Name.String(), idxInfo.Name.O) {
+							idx = v
+							break
+						}
+					}
+					if idx == nil {
+						return nil
+					}
+					k, _, err := idx.GenIndexKey(w.sctx.GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+					if err != nil {
+						return nil
+					}
+					return k
+				},
+				Tbl:  w.table.Meta(),
+				Idx:  idxInfo,
+				Sctx: w.sctx,
+			}
+		}
+
+		getCheckSum := func(row chunk.Row) uint64 {
+			return row.GetUint64(len(pkCols) + len(idxInfo.Columns))
+		}
+
+		var handle kv.Handle
+		var tableRecord *consistency.RecordData
+		var indexRecord *consistency.RecordData
+		i := 0
+		j := 0
+		for i < len(tblRow) || j < len(idxRow) {
+			if i+1 == len(tblRow) {
+				// No more rows in table side.
+				tableRecord = nil
+			} else {
+				handle, err = getHandleFromRow(tblRow[i])
+				if err != nil {
+					trySaveErr(err)
+					return
+				}
+				value, err := getValueFromRow(tblRow[i])
+				if err != nil {
+					trySaveErr(err)
+					return
+				}
+				tableRecord = &consistency.RecordData{Handle: handle, Values: value}
+			}
+			if j+1 == len(idxRow) {
+				// No more rows in index side.
+				indexRecord = nil
+			} else {
+				indexHandle, err := getHandleFromRow(idxRow[i])
+				if err != nil {
+					trySaveErr(err)
+					return
+				}
+				indexValue, err := getValueFromRow(idxRow[i])
+				if err != nil {
+					trySaveErr(err)
+					return
+				}
+				indexRecord = &consistency.RecordData{Handle: indexHandle, Values: indexValue}
 			}
 
+			if tableRecord == nil {
+				err = ir().ReportAdminCheckInconsistent(context.TODO(), indexRecord.Handle, indexRecord, tableRecord)
+			} else if indexRecord == nil {
+				err = ir().ReportAdminCheckInconsistent(context.TODO(), tableRecord.Handle, indexRecord, tableRecord)
+			} else if tableRecord.Handle.Equal(indexRecord.Handle) && getCheckSum(tblRow[i]) != getCheckSum(idxRow[j]) {
+				err = ir().ReportAdminCheckInconsistent(context.TODO(), tableRecord.Handle, indexRecord, tableRecord)
+			} else if !tableRecord.Handle.Equal(indexRecord.Handle) {
+				if tableRecord.Handle.Compare(indexRecord.Handle) < 0 {
+					err = ir().ReportAdminCheckInconsistent(context.TODO(), tableRecord.Handle, nil, tableRecord)
+				} else {
+					err = ir().ReportAdminCheckInconsistent(context.TODO(), indexRecord.Handle, indexRecord, nil)
+				}
+			}
+			if err != nil {
+				trySaveErr(err)
+				return
+			}
 		}
 	}
 }
