@@ -2389,7 +2389,7 @@ func getCheckSum(se sessionctx.Context, sql string) (map[uint64]groupByChecksum,
 	}
 	checksums := make(map[uint64]groupByChecksum, len(rows))
 	for _, row := range rows {
-		checksums[row.GetUint64(2)] = groupByChecksum{checksum: row.GetUint64(0), count: row.GetInt64(1)}
+		checksums[row.GetUint64(1)] = groupByChecksum{checksum: row.GetUint64(0), count: row.GetInt64(2)}
 	}
 	return checksums, nil
 }
@@ -2438,7 +2438,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 	// CheckSum of (handle + index columns).
 	var md5HandleAndIndexCol strings.Builder
-	md5HandleAndIndexCol.WriteString("md5(concat(")
+	md5HandleAndIndexCol.WriteString("crc32(md5(concat(")
 	for _, col := range pkCols {
 		md5HandleAndIndexCol.WriteString(col)
 		md5HandleAndIndexCol.WriteString(", ")
@@ -2454,16 +2454,18 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			md5HandleAndIndexCol.WriteString(", ")
 		}
 	}
-	md5HandleAndIndexCol.WriteString("))")
+	md5HandleAndIndexCol.WriteString(")))")
 
 	// Used to group by and order.
 	var md5Handle strings.Builder
 	md5Handle.WriteString("md5(concat(")
-	for _, col := range pkCols {
+	for i, col := range pkCols {
 		md5Handle.WriteString(col)
-		md5Handle.WriteString(", ")
+		if i != len(pkCols)-1 {
+			md5Handle.WriteString(", ")
+		}
 	}
-	md5HandleAndIndexCol.WriteString("))")
+	md5Handle.WriteString("))")
 
 	handleColumnField := strings.Join(pkCols, ", ")
 	var indexColumnField strings.Builder
@@ -2494,10 +2496,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 	for tableRowCntToCheck > lookupCheckThreshold || !checkOnce {
 		checkOnce = true
-		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", handleColumnField, offset, mod, bucketSize)
+		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
 
 		// compute table side checksum.
-		sql := fmt.Sprintf("select %s, %s, count(*) from %s.%s use index() group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, groupByKey)
+		sql := fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s.%s use index() group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, groupByKey)
 		logutil.BgLogger().Info("check table index on table side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
 		tableCheckSumMap, err := getCheckSum(se, sql)
 		if err != nil {
@@ -2506,7 +2508,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		}
 
 		// compute index side checksum.
-		sql = fmt.Sprintf("select %s, %s, count(*) from %s.%s use index(%s) group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey)
+		sql = fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s.%s use index(%s) group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey)
 		logutil.BgLogger().Info("check table index on index side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
 		indexCheckSumMap, err := getCheckSum(se, sql)
 		if err != nil {
@@ -2563,7 +2565,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	}
 
 	if meetError {
-		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", handleColumnField, offset, mod, bucketSize)
+		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
 		indexSql := fmt.Sprintf("select %s, %s, %s from %s.%s use index(%s) where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey, handleColumnField)
 		tableSql := fmt.Sprintf("select %s, %s, %s from %s.%s use index() where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, groupByKey, handleColumnField)
 
