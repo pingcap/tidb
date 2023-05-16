@@ -64,6 +64,9 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/ttl/ttlworker.(*ttlScanWorker).loop"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/ttl/client.(*mockClient).WatchCommand.func1"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/ttl/ttlworker.(*JobManager).jobLoop"),
 	}
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()
