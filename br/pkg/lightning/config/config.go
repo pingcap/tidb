@@ -427,6 +427,33 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	}
 }
 
+// PausePDSchedulerScope the scope when pausing pd schedulers.
+type PausePDSchedulerScope string
+
+// constants for PausePDSchedulerScope.
+const (
+	// PausePDSchedulerScopeTable pause scheduler by adding schedule=deny label to target key range of the table.
+	PausePDSchedulerScopeTable PausePDSchedulerScope = "table"
+	// PausePDSchedulerScopeGlobal pause scheduler by remove global schedulers.
+	// schedulers removed includes:
+	// 	- balance-leader-scheduler
+	// 	- balance-hot-region-scheduler
+	// 	- balance-region-scheduler
+	// 	- shuffle-leader-scheduler
+	// 	- shuffle-region-scheduler
+	// 	- shuffle-hot-region-scheduler
+	// and we also set configs below:
+	// 	- max-merge-region-keys = 0
+	// 	- max-merge-region-size = 0
+	// 	- leader-schedule-limit = min(40, <store-count> * <current value of leader-schedule-limit>)
+	// 	- region-schedule-limit = min(40, <store-count> * <current value of region-schedule-limit>)
+	// 	- max-snapshot-count = min(40, <store-count> * <current value of max-snapshot-count>)
+	// 	- enable-location-replacement = false
+	// 	- max-pending-peer-count = math.MaxInt32
+	// see br/pkg/pdutil/pd.go for more detail.
+	PausePDSchedulerScopeGlobal PausePDSchedulerScope = "global"
+)
+
 // DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
 type DuplicateResolutionAlgorithm int
 
@@ -730,6 +757,8 @@ type TikvImporter struct {
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
+	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
+	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 }
 
 // Checkpoint is the config for checkpoint.
@@ -915,13 +944,14 @@ func NewConfig() *Config {
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
-			Backend:             "",
-			OnDuplicate:         ReplaceOnDup,
-			MaxKVPairs:          4096,
-			SendKVPairs:         KVWriteBatchSize,
-			RegionSplitSize:     0,
-			DiskQuota:           ByteSize(math.MaxInt64),
-			DuplicateResolution: DupeResAlgNone,
+			Backend:               "",
+			OnDuplicate:           ReplaceOnDup,
+			MaxKVPairs:            4096,
+			SendKVPairs:           KVWriteBatchSize,
+			RegionSplitSize:       0,
+			DiskQuota:             ByteSize(math.MaxInt64),
+			DuplicateResolution:   DupeResAlgNone,
+			PausePDSchedulerScope: PausePDSchedulerScopeTable,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -1120,6 +1150,13 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if err := rule.Valid(); err != nil {
 			return common.ErrInvalidConfig.Wrap(err).GenWithStack("file route rule is invalid")
 		}
+	}
+
+	lowerCaseScope := strings.ToLower(string(cfg.TikvImporter.PausePDSchedulerScope))
+	cfg.TikvImporter.PausePDSchedulerScope = PausePDSchedulerScope(lowerCaseScope)
+	if cfg.TikvImporter.PausePDSchedulerScope != PausePDSchedulerScopeTable &&
+		cfg.TikvImporter.PausePDSchedulerScope != PausePDSchedulerScopeGlobal {
+		return common.ErrInvalidConfig.GenWithStack("pause-pd-scheduler-scope is invalid, allowed value include: table, global")
 	}
 
 	if err := cfg.CheckAndAdjustTiDBPort(ctx, mustHaveInternalConnections); err != nil {

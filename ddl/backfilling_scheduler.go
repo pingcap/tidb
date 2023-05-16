@@ -434,7 +434,7 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
-	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.checkpointMgr), nil
+	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
 func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
@@ -483,13 +483,11 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		result.totalCount = cnt
 		result.nextKey = nextKey
 		result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
-		count = cnt
 	} else {
 		result.addedCount = count
 		result.scanCount = count
 		result.nextKey = nextKey
 	}
-	w.metricCounter.Add(float64(count))
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)
 	}

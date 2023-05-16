@@ -73,7 +73,8 @@ func parseTime(s string) (time.Time, error) {
 	return time.Unix(0, i), nil
 }
 
-func (p *dumpFileGcChecker) gcDumpFiles(gcDurationDefault, gcDurationForCapture time.Duration) {
+// GCDumpFiles periodically cleans the outdated files for plan replayer and plan trace.
+func (p *dumpFileGcChecker) GCDumpFiles(gcDurationDefault, gcDurationForCapture time.Duration) {
 	p.Lock()
 	defer p.Unlock()
 	for _, path := range p.paths {
@@ -127,8 +128,8 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gc
 
 func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	exec := sctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx1, fmt.Sprintf("delete from mysql.plan_replayer_status where token = %v", token))
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, "delete from mysql.plan_replayer_status where token = %?", token)
 	if err != nil {
 		logutil.BgLogger().Warn("delete mysql.plan_replayer_status record failed", zap.String("token", token), zap.Error(err))
 	}
