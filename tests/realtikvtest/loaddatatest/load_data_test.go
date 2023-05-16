@@ -837,7 +837,6 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH thread=2, import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareDistTaskVar(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT, c int);`)
