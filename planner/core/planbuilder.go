@@ -867,7 +867,7 @@ func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) 
 	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
 }
 
-func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
+func (*PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
 	exe := &Change{
 		ChangeStmt: v,
 	}
@@ -1167,7 +1167,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 }
 
 // detectAggInExprNode detects an aggregate function in its exprs.
-func (b *PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
+func (*PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
 	for _, expr := range exprs {
 		if ast.HasAggFlag(expr) {
 			return true
@@ -1177,7 +1177,7 @@ func (b *PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
-func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
+func (*PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
 	}
