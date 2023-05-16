@@ -416,6 +416,11 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
 		logutil.Logger(w.logCtx).Warn("[ddl] update DDL job failed", zap.String("job", job.String()), zap.Error(err))
+		w.sess.Rollback()
+		err1 := w.sess.Begin()
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
 		job.Error = toTError(err)
