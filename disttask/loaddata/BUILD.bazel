@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "loaddata",
@@ -22,11 +22,27 @@ go_library(
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
         "//disttask/framework/storage",
+        "//domain/infosync",
         "//executor/asyncloaddata",
         "//executor/importer",
         "//table/tables",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "loaddata_test",
+    timeout = "short",
+    srcs = ["dispatcher_test.go"],
+    embed = [":loaddata"],
+    flaky = True,
+    deps = [
+        "//disttask/framework/proto",
+        "//domain/infosync",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
     ],
 )
