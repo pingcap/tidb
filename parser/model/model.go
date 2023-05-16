@@ -1780,6 +1780,10 @@ func writeSettingIntegerToBuilder(sb *strings.Builder, item string, value uint64
 	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=%d", item, value))
 }
 
+func writeSettingDurationToBuilder(sb *strings.Builder, item string, dur time.Duration) {
+	writeSettingStringToBuilder(sb, item, dur.String())
+}
+
 func (p *PlacementSettings) String() string {
 	sb := new(strings.Builder)
 	if len(p.PrimaryRegion) > 0 {
@@ -1900,8 +1904,8 @@ type ResourceGroupRefInfo struct {
 // ResourceGroupRunawaySettings is the runaway settings of the resource group
 type ResourceGroupRunawaySettings struct {
 	ExecElapsedTimeMs uint64 `json:"exec_elapsed_time_ms"`
-	Action            uint64 `json:"action"`
-	WatchType         uint64 `json:"watch_type"`
+	Action            int32  `json:"action"`
+	WatchType         int32  `json:"watch_type"`
 	WatchDurationMs   uint64 `json:"watch_duration_ms"`
 }
 
@@ -1968,6 +1972,15 @@ func (p *ResourceGroupSettings) String() string {
 	if p.BurstLimit < 0 {
 		writeSettingItemToBuilder(sb, "BURSTABLE")
 	}
+	if p.Runaway != nil {
+		writeSettingDurationToBuilder(sb, "QUERY LIMIT EXEC_ELAPSED_IN_SEC", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond)
+		writeSettingItemToBuilder(sb, "ACTION="+RunawayActionValueToName(p.Runaway.Action))
+		if p.Runaway.WatchDurationMs > 0 {
+			writeSettingItemToBuilder(sb, "WATCH "+RunawayWatchValueToName(p.Runaway.WatchType))
+			writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
+		}
+	}
+
 	return sb.String()
 }
 

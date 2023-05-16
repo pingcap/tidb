@@ -3086,6 +3086,35 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 	return nil
 }
 
+// SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
+func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, typ ast.RunawayOptionType, stringVal string, intVal int32) error {
+	if resourceGroupSettings.Runaway == nil {
+		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
+	}
+	settings := resourceGroupSettings.Runaway
+	switch typ {
+	case ast.RunawayExecuteElapsed:
+		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
+		dur, err := time.ParseDuration(stringVal)
+		if err != nil {
+			return err
+		}
+		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
+	case ast.RunawayAction:
+		settings.Action = intVal
+	case ast.RunawayWatch:
+		settings.WatchType = intVal
+		dur, err := time.ParseDuration(stringVal)
+		if err != nil {
+			return err
+		}
+		settings.WatchDurationMs = uint64(dur.Milliseconds())
+	default:
+		return errors.Trace(errors.New("unknown runaway option type"))
+	}
+	return nil
+}
+
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	var ttlOptionsHandled bool
@@ -7944,7 +7973,7 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
 	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: &model.ResourceGroupSettings{}}
-	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList)
+	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList, stmt.ResourceGroupRunawayOptionList)
 	if err != nil {
 		return err
 	}
@@ -8026,10 +8055,16 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 	return err
 }
 
-func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
+func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption, runawayOptions []*ast.ResourceGroupRunawayOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	for _, opt := range options {
 		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, opt := range runawayOptions {
+		err := SetDirectResourceGroupRunawayOption(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
 		if err != nil {
 			return nil, err
 		}
@@ -8052,7 +8087,7 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 		}
 		return err
 	}
-	newGroupInfo, err := buildResourceGroup(group, stmt.ResourceGroupOptionList)
+	newGroupInfo, err := buildResourceGroup(group, stmt.ResourceGroupOptionList, stmt.ResourceGroupRunawayOptionList)
 	if err != nil {
 		return errors.Trace(err)
 	}
