@@ -28,7 +28,7 @@ type IngestIndexInfo struct {
 	SchemaName model.CIStr
 	TableName  model.CIStr
 	ColumnList string
-	ColumnArgs []string
+	ColumnArgs []interface{}
 	IsPrimary  bool
 	IndexInfo  *model.IndexInfo
 	Updated    bool
@@ -131,7 +131,7 @@ func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
 					continue
 				}
 				var columnListBuilder strings.Builder
-				var columnListArgs []string = make([]string, 0, len(indexInfo.Columns))
+				var columnListArgs []interface{} = make([]interface{}, 0, len(indexInfo.Columns))
 				var isFirst bool = true
 				for _, column := range indexInfo.Columns {
 					if !isFirst {

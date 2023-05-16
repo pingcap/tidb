@@ -3177,7 +3177,7 @@ func (rc *Client) generateRepairIngestIndexSQLs(
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
 			addSQL  strings.Builder
-			addArgs []string = make([]string, 0, 5+len(info.ColumnArgs))
+			addArgs []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
 		)
 		if info.IsPrimary {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
@@ -3282,7 +3282,7 @@ NEXTSQL:
 			}
 		}
 		// create the repaired index when first execution or not found it
-		if err := rc.db.se.ExecuteInternal(ctx, sql.AddSQL, []interface{}{sql.AddArgs}...); err != nil {
+		if err := rc.db.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
 			return errors.Trace(err)
 		}
 		w.Inc()
