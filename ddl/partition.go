@@ -433,6 +433,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	var enable bool
 	switch s.Tp {
 	case model.PartitionTypeRange:
+<<<<<<< HEAD
 		if s.Sub == nil {
 			enable = true
 		}
@@ -445,14 +446,33 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		if s.Sub == nil {
 			enable = true
 		}
+=======
+		enable = true
+>>>>>>> 7a442947a91 (ddl: Only warn of subpartitions, still allow first level partitioning (#41207))
 	case model.PartitionTypeList:
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		// Partition by hash and key is enabled by default.
+		if s.Sub != nil {
+			// Subpartitioning only allowed with Range or List
+			return ast.ErrSubpartition
+		}
+		// Note that linear hash is simply ignored, and creates non-linear hash/key.
+		if s.Linear {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
+		}
+		if s.Tp == model.PartitionTypeHash || len(s.ColumnNames) != 0 {
+			enable = true
+		}
 	}
 
 	if !enable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
+	}
+	if s.Sub != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
 	}
 
 	pi := &model.PartitionInfo{
