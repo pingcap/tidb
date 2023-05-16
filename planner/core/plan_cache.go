@@ -43,6 +43,11 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
+var (
+	// PLAN_CACHE_KEY_TEST_ISSUE_43667 is for test.
+	PLAN_CACHE_KEY_TEST_ISSUE_43667 struct{}
+)
+
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
