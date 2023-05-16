@@ -66,11 +66,6 @@ func (s *Session) Rollback() {
 	s.RollbackTxn(context.Background())
 }
 
-// Reset resets the session.
-func (s *Session) Reset() {
-	s.StmtRollback(context.Background(), false)
-}
-
 // Execute executes a query.
 func (s *Session) Execute(ctx context.Context, query string, label string) ([]chunk.Row, error) {
 	startTime := time.Now()
