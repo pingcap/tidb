@@ -28,23 +28,39 @@ cat <<EOF >"$TEST_DIR/data/test.t-schema.sql"
 CREATE TABLE test.t (a varchar(1024));
 EOF
 
-# Generate 5 rows.
+#
+# test send-kv-pairs
+#
 set +x
-for i in {1..5}; do
+for i in {1..100}; do
   echo "$i" >>"$TEST_DIR/data/test.t.0.csv"
 done
 set -x
 
 rm -rf $TEST_DIR/lightning.log
-start=$(date +%s)
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/waitAfterWrite=sleep(1000)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/afterFlushKVs=return(true)"
 run_lightning --backend local -d "$TEST_DIR/data" --config "tests/$TEST_NAME/kv-count.toml"
-end=$(date +%s)
-take=$((end - start))
-# there are 5 kvs, should take more than 5s
-if [ $take -lt 5 ]; then
-  echo "send-kv-pairs test failed."
-  exit 1
-fi
-check_contains 'send-kv-pairs\":1,' $TEST_DIR/lightning.log
-check_contains 'send-kv-size\":1,' $TEST_DIR/lightning.log
+check_contains 'afterFlushKVs count=20,' $TEST_DIR/lightning.log
+check_not_contains 'afterFlushKVs count=1,' $TEST_DIR/lightning.log
+check_contains 'send-kv-pairs\":20,' $TEST_DIR/lightning.log
+check_contains 'send-kv-size\":16384,' $TEST_DIR/lightning.log
+
+#
+# test send-kv-size
+#
+rm -rf $TEST_DIR/data/test.t.0.csv
+run_sql "truncate table test.t;"
+set +x
+for i in {1..5}; do
+  echo "abcdefghijklmnopqrstuvwxyz0123456789" >>"$TEST_DIR/data/test.t.0.csv"
+done
+set -x
+
+rm -rf $TEST_DIR/lightning.log
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/afterFlushKVs=return(true)"
+run_lightning --backend local -d "$TEST_DIR/data" --config "tests/$TEST_NAME/kv-size.toml"
+# each kv is 64b, so each kv is a batch
+check_contains 'afterFlushKVs count=1,' $TEST_DIR/lightning.log
+check_not_contains 'afterFlushKVs count=20,' $TEST_DIR/lightning.log
+check_contains 'send-kv-pairs\":32768,' $TEST_DIR/lightning.log
+check_contains 'send-kv-size\":10,' $TEST_DIR/lightning.log

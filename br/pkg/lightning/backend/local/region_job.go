@@ -17,6 +17,7 @@ package local
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -277,7 +278,9 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				return annotateErr(err, allPeers[i])
 			}
 		}
-		failpoint.Inject("waitAfterWrite", nil)
+		failpoint.Inject("afterFlushKVs", func() {
+			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
+		})
 		return nil
 	}
 
