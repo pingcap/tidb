@@ -734,15 +734,12 @@ func TestAddKeyPartitionStates(t *testing.T) {
 		syncChan <- true
 	}()
 	waitFor := func(i int, s string) {
-		for true {
-			//res := tk4.MustQuery(`admin show ddl jobs`).Rows()
-			//res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + dbName + `'`).Rows()
+		for {
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = 't' and job_type like 'alter table%'`).Rows()
 			if len(res) == 1 && res[0][i] == s {
 				break
-			} else {
-				gotime.Sleep(10 * gotime.Millisecond)
 			}
+			gotime.Sleep(10 * gotime.Millisecond)
 		}
 	}
 	waitFor(4, "delete only")
