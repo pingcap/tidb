@@ -2298,7 +2298,7 @@ func TestIssue43667(t *testing.T) {
 		v.Datum.SetInt64(7)
 	}
 
-	tctx := context.WithValue(context.Background(), plannercore.PLAN_CACHE_KEY_TEST_ISSUE_43667, updateAST)
+	tctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestIssue43667, updateAST)
 	tk.MustQueryWithContext(tctx, `select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
 }
 
