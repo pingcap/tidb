@@ -1963,3 +1963,69 @@ func TestDoImport(t *testing.T) {
 		}
 	}
 }
+
+func TestRegionJobResetRetryCounter(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 1
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs")
+	})
+
+	// test that job need rescan when ingest
+
+	initRanges := []Range{
+		{start: []byte{'c'}, end: []byte{'d'}},
+	}
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		{"c", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					engine:     &Engine{},
+					injected:   getNeedRescanWhenIngestBehaviour(),
+					retryCount: maxWriteAndIngestRetryTimes,
+				},
+				{
+					keyRange:   Range{start: []byte{'c', '2'}, end: []byte{'d'}},
+					engine:     &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+					retryCount: maxWriteAndIngestRetryTimes,
+				},
+			},
+		},
+		{"c", "c2"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					engine:   &Engine{},
+					injected: getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	l := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 2,
+		},
+	}
+	e := &Engine{}
+	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.NoError(t, err)
+	for _, v := range fakeRegionJobs {
+		for _, job := range v.jobs {
+			require.Len(t, job.injected, 0)
+		}
+	}
+}
