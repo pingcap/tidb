@@ -78,7 +78,7 @@ const (
 	defaultRetryBackoffTime = 3 * time.Second
 	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
-	maxWriteAndIngestRetryTimes = 5
+	maxWriteAndIngestRetryTimes = 30
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute

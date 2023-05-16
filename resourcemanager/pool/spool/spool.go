@@ -135,7 +135,7 @@ func (p *Pool) run(fn func()) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				logutil.BgLogger().Error("recover panic", zap.Any("recover", r), zap.Stack("stack"))
+				logutil.BgLogger().Error("recover panic", zap.Any("recover", r))
 			}
 			p.wg.Done()
 			p.running.Add(-1)

@@ -103,12 +103,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 		}
 
 		subTaskMetas = make([][]byte, 0, 100)
-		//tidbs, err := infoschema.GetTiDBServerInfo(nil)
-		//if err != nil {
-		//	return nil, err
-		//}
-		regionBatch := len(recordRegionMetas) / 20
-		regionBatch += 1
+		regionBatch := 20
 		sort.Slice(recordRegionMetas, func(i, j int) bool {
 			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 		})
