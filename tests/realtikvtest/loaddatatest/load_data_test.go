@@ -17,13 +17,18 @@ package loaddatatest
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/disttask/loaddata"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -837,6 +842,9 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH thread=2, import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
+	if distributed {
+		s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	}
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT, c int);`)
@@ -864,4 +872,19 @@ func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed boo
 		"8 880 123",
 		"9 990 123",
 	))
+	if distributed {
+		pool := pools.NewResourcePool(func() (pools.Resource, error) {
+			return s.tk.Session(), nil
+		}, 1, 1, time.Second)
+		defer pool.Close()
+		taskManager := storage.NewTaskManager(context.Background(), pool)
+		subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), loaddata.Import)
+		s.NoError(err)
+		s.Len(subtasks, 1)
+		serverInfo, err := infosync.GetServerInfo()
+		s.NoError(err)
+		for _, st := range subtasks {
+			s.Equal(serverInfo.ID, st.SchedulerID)
+		}
+	}
 }
