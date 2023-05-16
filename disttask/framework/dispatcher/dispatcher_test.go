@@ -317,6 +317,6 @@ func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Task
 	return nil, nil
 }
 
-func (h NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }

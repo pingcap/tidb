@@ -48,7 +48,7 @@ func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle
 	return nil, nil
 }
 
-func (h *testFlowHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*testFlowHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
