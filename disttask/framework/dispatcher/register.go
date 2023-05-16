@@ -25,8 +25,8 @@ import (
 
 // TaskFlowHandle is used to control the process operations for each global task.
 type TaskFlowHandle interface {
-	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (metas [][]byte, err error)
-	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr [][]byte) (meta []byte, err error)
+	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
+	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr [][]byte) (subtaskMeta []byte, err error)
 	// GetEligibleInstances is used to get the eligible instances for the global task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
 	GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error)

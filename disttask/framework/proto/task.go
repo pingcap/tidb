@@ -76,6 +76,7 @@ func (t *Task) IsFinished() bool {
 // Each task is divided into multiple subtasks by dispatcher.
 type Subtask struct {
 	ID   int64
+	Step int64
 	Type string
 	// taken from task_key of the subtask table
 	TaskID int64

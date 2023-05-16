@@ -72,8 +72,8 @@ func (t *testScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto
 	}, nil
 }
 
-func (t *testScheduler) OnSubtaskFinished(_ context.Context, _ []byte) error {
-	return nil
+func (t *testScheduler) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+	return meta, nil
 }
 
 type testSubtaskExecutor struct {

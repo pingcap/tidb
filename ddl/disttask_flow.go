@@ -63,6 +63,9 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 		tblInfo, err = meta.NewMeta(txn).GetTable(job.SchemaID, job.TableID)
 		return err
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	if tblInfo.Partition == nil {
 		return nil, errors.New("Non-partition table not supported yet")

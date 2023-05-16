@@ -291,7 +291,7 @@ func (info *tableHintInfo) ifPreferTiKV(tableName *hintTableInfo) *hintTableInfo
 // Which it joins on with depend on sequence of traverse
 // and without reorder, user might adjust themselves.
 // This is similar to MySQL hints.
-func (info *tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []hintTableInfo) bool {
+func (*tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []hintTableInfo) bool {
 	hintMatched := false
 	for _, table := range tables {
 		for i, curEntry := range hintTables {
@@ -696,7 +696,7 @@ type PlanBuilderOpt interface {
 type PlanBuilderOptNoExecution struct{}
 
 // Apply implements the interface PlanBuilderOpt.
-func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
+func (PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 	builder.disableSubQueryPreprocessing = true
 }
 
@@ -704,7 +704,7 @@ func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 type PlanBuilderOptAllowCastArray struct{}
 
 // Apply implements the interface PlanBuilderOpt.
-func (p PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
+func (PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
 	builder.allowBuildCastArray = true
 }
 
@@ -867,7 +867,7 @@ func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) 
 	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
 }
 
-func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
+func (*PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
 	exe := &Change{
 		ChangeStmt: v,
 	}
@@ -1167,7 +1167,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 }
 
 // detectAggInExprNode detects an aggregate function in its exprs.
-func (b *PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
+func (*PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
 	for _, expr := range exprs {
 		if ast.HasAggFlag(expr) {
 			return true
@@ -1177,7 +1177,7 @@ func (b *PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
-func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
+func (*PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
 	}
@@ -1204,7 +1204,7 @@ func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
+func (*PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	for _, f := range sel.Fields.Fields {
 		if ast.HasWindowFlag(f.Expr) {
 			return true
@@ -3939,7 +3939,7 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 	return onDupColSet, nil
 }
 
-func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column, err error) {
+func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column, err error) {
 	if len(insertStmt.Columns) > 0 {
 		// This branch is for the following scenarios:
 		// 1. `INSERT INTO tbl_name (col_name [, col_name] ...) {VALUES | VALUE} (value_list) [, (value_list)] ...`,
@@ -4133,7 +4133,7 @@ func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
 	}
 }
 
-func (c *colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
+func (*colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
 }
 
@@ -4333,22 +4333,22 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	return p, nil
 }
 
-func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
+func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	p := &LoadStats{Path: ld.Path}
 	return p
 }
 
-func (b *PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
+func (*PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
 	p := &LockStats{Tables: ld.Tables}
 	return p
 }
 
-func (b *PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
+func (*PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
 	p := &UnlockStats{Tables: ld.Tables}
 	return p
 }
 
-func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
+func (*PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 	p := &IndexAdvise{
 		IsLocal:        node.IsLocal,
 		Path:           node.Path,
@@ -4936,7 +4936,7 @@ const (
 // buildTrace builds a trace plan. Inside this method, it first optimize the
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
-func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
+func (*PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	p := &Trace{
 		StmtNode:             trace.Stmt,
 		Format:               trace.Format,
@@ -5341,7 +5341,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	return
 }
 
-func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
+func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 	schema := newColumnsWithNames(1)
