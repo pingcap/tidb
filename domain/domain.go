@@ -1389,10 +1389,8 @@ func generateSubtaskExecID(ctx context.Context, ID string) string {
 	if err != nil || len(serverInfos) == 0 {
 		return ""
 	}
-	for _, serverNode := range serverInfos {
-		if serverNode.ID == ID {
-			return disttaskutil.GenerateExecID(serverNode.IP, serverNode.Port)
-		}
+	if serverNode, ok := serverInfos[ID]; ok {
+		return disttaskutil.GenerateExecID(serverNode.IP, serverNode.Port)
 	}
 	return ""
 }
