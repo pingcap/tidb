@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -2140,6 +2141,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 		return nil, err
 	}
 	checker := privilege.GetPrivilegeManager(sctx)
+
 	for _, chunkRow := range chunkRows {
 		dbName := chunkRow.GetString(0)
 		tableName := chunkRow.GetString(1)
@@ -2164,6 +2166,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 			}
 			endTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
+
 		state := chunkRow.GetEnum(7).String()
 		var failReason interface{}
 		if !chunkRow.IsNull(8) {
@@ -2174,21 +2177,76 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 		if !chunkRow.IsNull(10) {
 			procID = chunkRow.GetUint64(10)
 		}
+		var RemainingDuration *time.Duration
+		if state == statistics.AnalyzeRunning {
+			RemainingDuration, err = getRemainDurationForAnalyzeStatusHelper(sctx, startTime, dbName, tableName, partitionName, processedRows)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		rows = append(rows, types.MakeDatums(
-			dbName,        // TABLE_SCHEMA
-			tableName,     // TABLE_NAME
-			partitionName, // PARTITION_NAME
-			jobInfo,       // JOB_INFO
-			processedRows, // ROW_COUNT
-			startTime,     // START_TIME
-			endTime,       // END_TIME
-			state,         // STATE
-			failReason,    // FAIL_REASON
-			instance,      // INSTANCE
-			procID,        // PROCESS_ID
+			dbName,            // TABLE_SCHEMA
+			tableName,         // TABLE_NAME
+			partitionName,     // PARTITION_NAME
+			jobInfo,           // JOB_INFO
+			processedRows,     // ROW_COUNT
+			startTime,         // START_TIME
+			endTime,           // END_TIME
+			state,             // STATE
+			failReason,        // FAIL_REASON
+			instance,          // INSTANCE
+			procID,            // PROCESS_ID
+			RemainingDuration, // TABLE_REMAINING_TIME
 		))
 	}
 	return
+}
+
+func getRemainDurationForAnalyzeStatusHelper(
+	sctx sessionctx.Context, startTime interface{},
+	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, error) {
+	var RemainingDuration time.Duration = time.Duration(0)
+	if startTime != nil {
+		startTime, ok := startTime.(types.Time)
+		if !ok {
+			return nil, errors.New("invalid start time")
+		}
+		start, err := startTime.GoTime(time.UTC)
+		if err != nil {
+			return nil, err
+		}
+		duration := time.Now().UTC().Sub(start)
+		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+		tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+		if err != nil {
+			return nil, err
+		}
+		var tid int64
+		if partitionName != "" {
+			pt := tb.Meta().GetPartitionInfo()
+			tid = pt.GetPartitionIDByName(partitionName)
+		} else {
+			tid = tb.Meta().ID
+		}
+		if tid > 0 {
+			tikvStore, ok := sctx.GetStore().(helper.Storage)
+			if ok {
+				regionStats := &helper.PDRegionStats{}
+				pdHelper := helper.NewHelper(tikvStore)
+				err := pdHelper.GetPDRegionStats(tid, regionStats, true)
+				if err != nil {
+					return nil, err
+				}
+				totalCnt := regionStats.Count
+				remainline := int64(totalCnt) - processedRows
+				speed := (processedRows / duration.Milliseconds())
+				i := remainline / speed
+				RemainingDuration = time.Duration(i) * time.Millisecond
+			}
+		}
+	}
+	return &RemainingDuration, nil
 }
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
