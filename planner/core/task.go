@@ -897,20 +897,27 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 		}
 	}
 
-	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
-	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
-	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
-	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
-	//  but updating it here is not safe, so do not sink Limit into this IndexLookUp in this case now.
-	if p.Schema().Len() != reader.Schema().Len() {
-		return false
-	}
-
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
 		return false
 	}
+
+	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
+	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
+	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
+	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
+	// So we add an extra projection to solve the problem.
+	if p.Schema().Len() != reader.Schema().Len() {
+		extraProj := PhysicalProjection{
+			Exprs: expression.Column2Exprs(p.schema.Columns),
+		}.Init(p.SCtx(), p.statsInfo(), p.blockOffset, nil)
+		extraProj.SetSchema(p.schema)
+		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
+		extraProj.SetChildren(root.p)
+		root.p = extraProj
+	}
+
 	reader.PushedLimit = &PushedDownLimit{
 		Offset: p.Offset,
 		Count:  p.Count,
