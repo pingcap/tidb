@@ -432,7 +432,7 @@ func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d 
 		if len(pi.Columns) > 1 {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		partIdx, err := partitionExpr.LocateKeyPartitionWithSPC(pi, []types.Datum{d})
+		partIdx, err := partitionExpr.LocateKeyPartition(pi.Num, []types.Datum{d})
 		if err != nil {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
