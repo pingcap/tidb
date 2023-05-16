@@ -1364,6 +1364,8 @@ func (t IndexType) String() string {
 		return "HASH"
 	case IndexTypeRtree:
 		return "RTREE"
+	case IndexTypeHypo:
+		return "HYPO"
 	default:
 		return ""
 	}
@@ -1375,6 +1377,7 @@ const (
 	IndexTypeBtree
 	IndexTypeHash
 	IndexTypeRtree
+	IndexTypeHypo
 )
 
 // IndexInfo provides meta data describing a DB index.

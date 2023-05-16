@@ -1357,6 +1357,16 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		}
 	}
 
+	// consider hypo-indexes
+	hypoIndexes := ctx.GetSessionVars().HypoIndexes
+	if hypoIndexes != nil {
+		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][tblName.L] != nil {
+			for _, index := range hypoIndexes[dbName.L][tblName.L] {
+				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+			}
+		}
+	}
+
 	hasScanHint, hasUseOrForce := false, false
 	available := make([]*util.AccessPath, 0, len(publicPaths))
 	ignored := make([]*util.AccessPath, 0, len(publicPaths))
