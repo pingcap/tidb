@@ -3151,34 +3151,45 @@ const (
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
 )
 
-// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
-func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage) error {
-	dom, err := g.GetDomain(storage)
-	if err != nil {
-		return errors.Trace(err)
+func (rc *Client) generateRepairIngestIndexSQLs(
+	ctx context.Context,
+	ingestRecorder *ingestrec.IngestRecorder,
+	allSchema []*model.DBInfo,
+	taskName string,
+) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
+	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
+	if rc.useCheckpoint {
+		exists, err := checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.storage, taskName)
+		if err != nil {
+			return sqls, false, errors.Trace(err)
+		}
+		if exists {
+			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.storage, taskName)
+			if err != nil {
+				return sqls, false, errors.Trace(err)
+			}
+			sqls = checkpointSQLs.SQLs
+			return sqls, true, nil
+		}
 	}
-	info := dom.InfoSchema()
-	allSchema := info.AllSchemas()
+
 	ingestRecorder.UpdateIndexInfo(allSchema)
-	console := glue.GetConsole(g)
-	err = ingestRecorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
+	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
-			addSQL        strings.Builder
-			addArgs       []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
-			progressTitle string        = fmt.Sprintf("repair ingest index %s for table %s.%s", info.IndexInfo.Name.O, info.SchemaName, info.TableName)
+			addSQL  strings.Builder
+			addArgs []string = make([]string, 0, 5+len(info.ColumnArgs))
 		)
-		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
 		if info.IsPrimary {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
-			addArgs = append(addArgs, info.SchemaName, info.TableName)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else if info.IndexInfo.Unique {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
-			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
-			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		}
 		// USING BTREE/HASH/RTREE
@@ -3200,10 +3211,78 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 			addSQL.WriteString(" VISIBLE")
 		}
 
-		if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, info.SchemaName, info.TableName, info.IndexInfo.Name.O); err != nil {
+		sqls = append(sqls, checkpoint.CheckpointIngestIndexRepairSQL{
+			IndexID:    indexID,
+			SchemaName: info.SchemaName,
+			TableName:  info.TableName,
+			IndexName:  info.IndexInfo.Name.O,
+			AddSQL:     addSQL.String(),
+			AddArgs:    addArgs,
+		})
+
+		return nil
+	}); err != nil {
+		return sqls, false, errors.Trace(err)
+	}
+
+	if rc.useCheckpoint {
+		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.storage, &checkpoint.CheckpointIngestIndexRepairSQLs{
+			SQLs: sqls,
+		}, taskName); err != nil {
+			return sqls, false, errors.Trace(err)
+		}
+	}
+	return sqls, false, nil
+}
+
+// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
+func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage, taskName string) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, info.AllSchemas(), taskName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	console := glue.GetConsole(g)
+NEXTSQL:
+	for _, sql := range sqls {
+		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
+		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
+
+		tableInfo, err := info.TableByName(sql.SchemaName, sql.TableName)
+		if err != nil {
 			return errors.Trace(err)
 		}
-		if err := rc.db.se.ExecuteInternal(ctx, addSQL.String(), addArgs...); err != nil {
+		oldIndexIDFound := false
+		if fromCheckpoint {
+		NEXTINDEX:
+			for _, idx := range tableInfo.Indices() {
+				indexInfo := idx.Meta()
+				if indexInfo.ID == sql.IndexID {
+					// the original index id is not dropped
+					oldIndexIDFound = true
+					break NEXTINDEX
+				}
+				if indexInfo.Name.O == sql.IndexName {
+					// find the same name index, but not the same index id,
+					// which means the repaired index id is created
+					continue NEXTSQL
+				}
+			}
+		}
+		// only when first execution or old index id is not dropped
+		if !fromCheckpoint || oldIndexIDFound {
+			if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// create the repaired index when first execution or not found it
+		if err := rc.db.se.ExecuteInternal(ctx, sql.AddSQL, []interface{}{sql.AddArgs}...); err != nil {
 			return errors.Trace(err)
 		}
 		w.Inc()
@@ -3212,7 +3291,8 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 		}
 		w.Close()
 		return nil
-	})
+	}
+
 	return errors.Trace(err)
 }
 
