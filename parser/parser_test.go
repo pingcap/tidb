@@ -3701,6 +3701,16 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=3000 burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 3000 BURSTABLE"},
 		{"create resource group x burstable ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 4000"},
 		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20 PRIORITY = LOW BURSTABLE"},
+		{"create resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s' ACTION DRYRUN", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10s' ACTION DRYRUN"},
+		{"create resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10m' ACTION COOLDOWN", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10m' ACTION COOLDOWN"},
+		{"create resource group x ru_per_sec=1000 ACTION KILL QUERY LIMIT EXEC_ELAPSED_IN_SEC '10m'", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000 ACTION KILL QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10m'"},
+		{"create resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s' WATCH SIMILAR DURATION '10m' ACTION COOLDOWN", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10s' WATCH SIMILAR DURATION = '10m' ACTION COOLDOWN"},
+		{"create resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s' ACTION COOLDOWN WATCH EXACT DURATION '10m'", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10s' ACTION COOLDOWN WATCH EXACT DURATION = '10m'"},
+		// This case is expected in parser test but not in actual ddl job.
+		{"create resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s'", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC = '10s'"},
+		{"create resource group x ru_per_sec=1000 QUERY EXEC_ELAPSED_IN_SEC '10s'", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s' ACTION DRYRUN ACTION KILL", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC '10s' ACTION COOLDOWN WATCH EXACT ", false, ""},
 
 		{"alter resource group x cpu ='8c'", false, ""},
 		{"alter resource group x region ='us, 3'", false, ""},
