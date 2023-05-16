@@ -25,10 +25,10 @@ import (
 
 // IngestIndexInfo records the information used to generate index drop/re-add SQL.
 type IngestIndexInfo struct {
-	SchemaName string
-	TableName  string
+	SchemaName model.CIStr
+	TableName  model.CIStr
 	ColumnList string
-	ColumnArgs []interface{}
+	ColumnArgs []string
 	IsPrimary  bool
 	IndexInfo  *model.IndexInfo
 	Updated    bool
@@ -131,7 +131,7 @@ func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
 					continue
 				}
 				var columnListBuilder strings.Builder
-				var columnListArgs []interface{} = make([]interface{}, 0, len(indexInfo.Columns))
+				var columnListArgs []string = make([]string, 0, len(indexInfo.Columns))
 				var isFirst bool = true
 				for _, column := range indexInfo.Columns {
 					if !isFirst {
@@ -159,8 +159,8 @@ func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
 				index.ColumnList = columnListBuilder.String()
 				index.ColumnArgs = columnListArgs
 				index.IndexInfo = indexInfo
-				index.SchemaName = dbInfo.Name.O
-				index.TableName = tblInfo.Name.O
+				index.SchemaName = dbInfo.Name
+				index.TableName = tblInfo.Name
 				index.Updated = true
 			}
 		}

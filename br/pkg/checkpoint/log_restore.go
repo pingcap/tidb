@@ -91,10 +91,15 @@ func AppendRangeForLogRestore(
 
 const (
 	CheckpointTaskInfoForLogRestorePathFormat = CheckpointDir + "/restore-%d/taskInfo.meta"
+	CheckpointIngestIndexRepairSQLPathFormat  = CheckpointDir + "/restore-%s/ingest-repair.meta"
 )
 
 func getCheckpointTaskInfoPathByID(clusterID uint64) string {
 	return fmt.Sprintf(CheckpointTaskInfoForLogRestorePathFormat, clusterID)
+}
+
+func getCheckpointIngestIndexRepairPathByTaskName(taskName string) string {
+	return fmt.Sprintf(CheckpointIngestIndexRepairSQLPathFormat, taskName)
 }
 
 // A progress type for snapshot + log restore.
@@ -182,6 +187,46 @@ func removeCheckpointTaskInfoForLogRestore(ctx context.Context, s storage.Extern
 	}
 
 	return s.DeleteFile(ctx, fileName)
+}
+
+type CheckpointIngestIndexRepairSQL struct {
+	IndexID    int64       `json:"index-id"`
+	SchemaName model.CIStr `json:"schema-name"`
+	TableName  model.CIStr `json:"table-name"`
+	IndexName  string      `json:"index-name"`
+	AddSQL     string      `json:"add-sql"`
+	AddArgs    []string    `json:"add-args"`
+}
+
+type CheckpointIngestIndexRepairSQLs struct {
+	SQLs []CheckpointIngestIndexRepairSQL
+}
+
+func LoadCheckpointIngestIndexRepairSQLs(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+) (*CheckpointIngestIndexRepairSQLs, error) {
+	m := &CheckpointIngestIndexRepairSQLs{}
+	err := loadCheckpointMeta(ctx, s, getCheckpointIngestIndexRepairPathByTaskName(taskName), m)
+	return m, err
+}
+
+func ExistsCheckpointIngestIndexRepairSQLs(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+) (bool, error) {
+	return s.FileExists(ctx, getCheckpointIngestIndexRepairPathByTaskName(taskName))
+}
+
+func SaveCheckpointIngestIndexRepairSQLs(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	meta *CheckpointIngestIndexRepairSQLs,
+	taskName string,
+) error {
+	return saveCheckpointMetadata(ctx, s, meta, getCheckpointIngestIndexRepairPathByTaskName(taskName))
 }
 
 func RemoveCheckpointDataForLogRestore(
