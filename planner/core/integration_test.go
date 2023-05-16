@@ -3196,59 +3196,6 @@ func TestIssue29834(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range"))
 }
 
-func TestIssue29221(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_index_merge=on;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b));")
-	tk.MustExec("set @@session.sql_select_limit=3;")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
-		"Limit 3.00 root  offset:0, count:3",
-		"└─IndexMerge 3.00 root  type: union",
-		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
-		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
-		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
-		"Limit 3.00 root  offset:0, count:3",
-		"└─IndexMerge 3.00 root  type: union",
-		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
-		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
-		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustExec("set @@session.sql_select_limit=18446744073709551615;")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
-		"IndexMerge 19.99 root  type: union",
-		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
-		"└─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
-		"Limit 3.00 root  offset:0, count:3",
-		"└─IndexMerge 3.00 root  type: union",
-		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
-		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
-		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
-		"IndexMerge 19.99 root  type: union",
-		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
-		"└─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
-		"Limit 3.00 root  offset:0, count:3",
-		"└─IndexMerge 3.00 root  type: union",
-		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
-		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
-		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-}
-
 func TestLimitPushDown(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

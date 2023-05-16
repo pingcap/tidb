@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,4 +83,38 @@ func TestIssue43645(t *testing.T) {
 
 	rs := tk.MustQuery("WITH tmp AS (SELECT t2.* FROM t2) select (SELECT tmp.col1 FROM tmp WHERE tmp.id=t1.id ) col1, (SELECT tmp.col2 FROM tmp WHERE tmp.id=t1.id ) col2, (SELECT tmp.col3 FROM tmp WHERE tmp.id=t1.id ) col3 from t1;")
 	rs.Sort().Check(testkit.Rows("a aa aaa", "b bb bbb", "c cc ccc"))
+}
+
+func TestIssue29221(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_index_merge=on;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("set @@session.sql_select_limit=3;")
+	var input []string
+	var output []struct {
+		SQL           string
+		ExplainResult []string
+	}
+	issueTestData := GetIssueTestData()
+	issueTestData.LoadTestCases(t, &input, &output)
+
+	for i, in := range input {
+		if len(in) < 7 || in[:7] != "explain" {
+			tk.MustExec(in)
+			testdata.OnRecord(func() {
+				output[i].SQL = in
+				output[i].ExplainResult = nil
+			})
+			continue
+		}
+		result := tk.MustQuery(in)
+		testdata.OnRecord(func() {
+			output[i].SQL = in
+			output[i].ExplainResult = testdata.ConvertRowsToStrings(result.Rows())
+		})
+		result.Check(testkit.Rows(output[i].ExplainResult...))
+	}
 }
