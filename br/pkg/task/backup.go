@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -19,6 +20,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -57,7 +59,6 @@ const (
 
 	defaultBackupConcurrency = 4
 	maxBackupConcurrency     = 256
-	checkpointDefaultGCTTL   = 72 * 60 // 72 minutes
 )
 
 const (
@@ -65,6 +66,7 @@ const (
 	DBBackupCmd    = "Database Backup"
 	TableBackupCmd = "Table Backup"
 	RawBackupCmd   = "Raw Backup"
+	TxnBackupCmd   = "Txn Backup"
 	EBSBackupCmd   = "EBS Backup"
 )
 
@@ -184,20 +186,9 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		cfg.UseCheckpoint = false
 		log.Info("since incremental backup is used, turn off checkpoint mode")
 	}
-	if cfg.UseBackupMetaV2 {
-		// TODO: compatible with backup meta v2, maybe just clean the meta files
-		cfg.UseCheckpoint = false
-		log.Info("since backup meta v2 is used, turn off checkpoint mode")
-	}
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	// if use checkpoint and gcTTL is the default value
-	// update gcttl to checkpoint's default gc ttl
-	if cfg.UseCheckpoint && gcTTL == utils.DefaultBRGCSafePointTTL {
-		gcTTL = checkpointDefaultGCTTL
-		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", gcTTL))
 	}
 	cfg.GCTTL = gcTTL
 	cfg.Concurrency, err = flags.GetUint32(flagConcurrency)
@@ -365,6 +356,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// if use noop as external storage, turn off the checkpoint mode
+	if u.GetNoop() != nil {
+		log.Info("since noop external storage is used, turn off checkpoint mode")
+		cfg.UseCheckpoint = false
+	}
 	skipStats := cfg.IgnoreStats
 	// For backup, Domain is not needed if user ignores stats.
 	// Domain loads all table info into memory. By skipping Domain, we save
@@ -428,6 +424,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	err = client.SetLockFile(ctx)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// if use checkpoint and gcTTL is the default value
+	// update gcttl to checkpoint's default gc ttl
+	if cfg.UseCheckpoint && cfg.GCTTL == utils.DefaultBRGCSafePointTTL {
+		cfg.GCTTL = utils.DefaultCheckpointGCSafePointTTL
+		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", cfg.GCTTL))
 	}
 	client.SetGCTTL(cfg.GCTTL)
 
@@ -514,11 +516,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Add keyspace prefix to BackupRequest
-	for i := range ranges {
-		start, end := ranges[i].StartKey, ranges[i].EndKey
-		ranges[i].StartKey, ranges[i].EndKey = mgr.GetStorage().GetCodec().EncodeRange(start, end)
-	}
 
 	// Metafile size should be less than 64MB.
 	metawriter := metautil.NewMetaWriter(client.GetStorage(),
@@ -603,11 +600,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			ctx, cmdName, int64(len(ranges)), !cfg.LogProgress)
 	}
 
-	progressCount := 0
+	progressCount := uint64(0)
 	progressCallBack := func(callBackUnit backup.ProgressUnit) {
 		if unit == callBackUnit {
 			updateCh.Inc()
-			progressCount++
+			atomic.AddUint64(&progressCount, 1)
 			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
 				log.Info("failpoint progress-call-back injected")
 				if fileName, ok := v.(string); ok {
@@ -615,7 +612,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 					if osErr != nil {
 						log.Warn("failed to create file", zap.Error(osErr))
 					}
-					msg := []byte(fmt.Sprintf("%s:%d\n", unit, progressCount))
+					msg := []byte(fmt.Sprintf("%s:%d\n", unit, atomic.LoadUint64(&progressCount)))
 					_, err = f.Write(msg)
 					if err != nil {
 						log.Warn("failed to write data to file", zap.Error(err))
@@ -633,6 +630,13 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			if !gcSafePointKeeperRemovable {
 				log.Info("wait for flush checkpoint...")
 				client.WaitForFinishCheckpoint(ctx)
+			} else {
+				log.Info("start to remove checkpoint data for backup")
+				if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
+					log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
+				} else {
+					log.Info("the checkpoint data for backup is removed.")
+				}
 			}
 		}()
 	}

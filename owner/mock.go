@@ -17,8 +17,10 @@ package owner
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl/util"
 )
 
 var _ Manager = &mockManager{}
@@ -77,6 +79,13 @@ func (m *mockManager) GetOwnerID(_ context.Context) (string, error) {
 	return "", errors.New("no owner")
 }
 
+var mockOwnerOpValue = OpNone
+
+func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
+	mockOwnerOpValue = op
+	return nil
+}
+
 // CampaignOwner implements Manager.CampaignOwner interface.
 func (m *mockManager) CampaignOwner() error {
 	m.toBeOwner()
@@ -101,6 +110,49 @@ func (m *mockManager) SetBeOwnerHook(hook func()) {
 }
 
 // CampaignCancel implements Manager.CampaignCancel interface
-func (m *mockManager) CampaignCancel() {
+func (*mockManager) CampaignCancel() {
 	// do nothing
+}
+
+func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {
+	checkIsOwner := func(m *ownerManager, checkTrue bool) error {
+		// 5s
+		for i := 0; i < 100; i++ {
+			if m.IsOwner() == checkTrue {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if m.IsOwner() != checkTrue {
+			return errors.Errorf("expect manager state:%v", checkTrue)
+		}
+		return nil
+	}
+
+	needCheckOwner := false
+	switch mockCal {
+	case "delOwnerKeyAndNotOwner":
+		m.CampaignCancel()
+		// Make sure the manager is not owner. And it will exit campaignLoop.
+		err := checkIsOwner(m, false)
+		if err != nil {
+			return err
+		}
+	case "onlyDelOwnerKey":
+		needCheckOwner = true
+	}
+
+	err := util.DeleteKeyFromEtcd(ownerKey, m.etcdCli, 1, keyOpDefaultTimeout)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if needCheckOwner {
+		// Mock the manager become not owner because the owner is deleted(like TTL is timeout).
+		// And then the manager campaigns the owner again, and become the owner.
+		err = checkIsOwner(m, true)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

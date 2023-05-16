@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -150,13 +151,13 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
-		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
-		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
 	return nil
 }

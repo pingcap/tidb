@@ -113,8 +113,17 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString(", stats:pseudo")
+	if !normalized {
+		if p.usedStatsInfo != nil {
+			str := p.usedStatsInfo.FormatForExplain()
+			if len(str) > 0 {
+				buffer.WriteString(", ")
+				buffer.WriteString(str)
+			}
+		} else if p.stats.StatsVersion == statistics.PseudoVersion {
+			// This branch is not needed in fact, we add this to prevent test result changes under planner/cascades/
+			buffer.WriteString(", stats:pseudo")
+		}
 	}
 	return buffer.String()
 }
@@ -204,13 +213,35 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
+	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
+		buffer.WriteString("pushed down filter:")
+		if len(p.lateMaterializationFilterCondition) > 0 {
+			if normalized {
+				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.lateMaterializationFilterCondition))
+			} else {
+				buffer.Write(expression.SortedExplainExpressionList(p.lateMaterializationFilterCondition))
+			}
+		} else {
+			buffer.WriteString("empty")
+		}
+		buffer.WriteString(", ")
+	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString(", stats:pseudo")
+	if !normalized {
+		if p.usedStatsInfo != nil {
+			str := p.usedStatsInfo.FormatForExplain()
+			if len(str) > 0 {
+				buffer.WriteString(", ")
+				buffer.WriteString(str)
+			}
+		} else if p.stats.StatsVersion == statistics.PseudoVersion {
+			// This branch is not needed in fact, we add this to prevent test result changes under planner/cascades/
+			buffer.WriteString(", stats:pseudo")
+		}
 	}
 	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		buffer.WriteString(", PartitionTableScan:true")
@@ -292,10 +323,20 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
+	var str strings.Builder
 	if p.IsIntersectionType {
-		return "type: intersection"
+		str.WriteString("type: intersection")
+	} else {
+		str.WriteString("type: union")
 	}
-	return "type: union"
+	if p.PushedLimit != nil {
+		str.WriteString(", limit embedded(offset:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
+		str.WriteString(", count:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
+		str.WriteString(")")
+	}
+	return str.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -351,12 +392,14 @@ func (p *PhysicalSort) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("offset:")
-	str.WriteString(strconv.FormatUint(p.Offset, 10))
-	str.WriteString(", count:")
-	str.WriteString(strconv.FormatUint(p.Count, 10))
-	return str.String()
+	buffer := bytes.NewBufferString("")
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	} else {
+		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+	}
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -947,12 +990,14 @@ func (lt *LogicalTopN) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("offset:")
-	str.WriteString(strconv.FormatUint(p.Offset, 10))
-	str.WriteString(", count:")
-	str.WriteString(strconv.FormatUint(p.Count, 10))
-	return str.String()
+	buffer := bytes.NewBufferString("")
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	} else {
+		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+	}
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.

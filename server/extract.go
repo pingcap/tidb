@@ -148,15 +148,26 @@ func buildExtractPlanTask(req *http.Request) (*domain.ExtractTask, bool, error) 
 			return nil, false, err
 		}
 	}
-	isDumpStr := req.URL.Query().Get(pIsDump)
-	isDump, err := strconv.ParseBool(isDumpStr)
-	if err != nil {
-		isDump = false
-	}
+	isDump := extractBoolParam(pIsDump, false, req)
+
 	return &domain.ExtractTask{
 		ExtractType:     domain.ExtractPlanType,
 		IsBackgroundJob: false,
 		Begin:           begin,
 		End:             end,
+		SkipStats:       extractBoolParam(pIsSkipStats, false, req),
+		UseHistoryView:  extractBoolParam(pIsHistoryView, true, req),
 	}, isDump, nil
+}
+
+func extractBoolParam(param string, defaultValue bool, req *http.Request) bool {
+	str := req.URL.Query().Get(param)
+	if len(str) < 1 {
+		return defaultValue
+	}
+	v, err := strconv.ParseBool(str)
+	if err != nil {
+		return defaultValue
+	}
+	return v
 }

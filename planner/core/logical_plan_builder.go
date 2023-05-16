@@ -44,6 +44,7 @@ import (
 	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -399,8 +400,9 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			}
 		}
 		// `TableName` is not a select block, so we do not need to handle it.
-		if !isTableName && b.ctx.GetSessionVars().PlannerSelectBlockAsName != nil {
-			b.ctx.GetSessionVars().PlannerSelectBlockAsName[p.SelectBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
+		if !isTableName && b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load() != nil {
+			plannerSelectBlockAsName := *(b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load())
+			plannerSelectBlockAsName[p.SelectBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
@@ -570,7 +572,7 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 			}
 		}
 		blockOffset := p.SelectBlockOffset()
-		blockAsNames := p.SCtx().GetSessionVars().PlannerSelectBlockAsName
+		blockAsNames := *(p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load())
 		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
 		if blockOffset != parentOffset && blockAsNames != nil && blockAsNames[blockOffset].TableName.L != "" {
 			blockOffset = parentOffset
@@ -829,6 +831,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	// Add join reorder flag regardless of inner join or outer join.
 	b.optFlag = b.optFlag | flagJoinReOrder
+	b.optFlag |= flagPredicateSimplification
 
 	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left, false)
 	if err != nil {
@@ -1134,6 +1137,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, error) {
 	b.optFlag |= flagPredicatePushDown
 	b.optFlag |= flagDeriveTopNFromWindow
+	b.optFlag |= flagPredicateSimplification
 	if b.curClause != havingClause {
 		b.curClause = whereClause
 	}
@@ -4303,28 +4307,46 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 // 3. statistics is outdated.
 func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
-
+	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
+	var statsTbl *statistics.Table
+	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ctx)
+		defer func() {
+			debugTraceGetStatsTbl(ctx,
+				tblInfo,
+				pid,
+				statsHandle == nil,
+				usePartitionStats,
+				countIs0,
+				pseudoStatsForUninitialized,
+				pseudoStatsForOutdated,
+				statsTbl,
+			)
+			debugtrace.LeaveContextCommon(ctx)
+		}()
+	}
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
 		return statistics.PseudoTable(tblInfo)
 	}
 
-	var statsTbl *statistics.Table
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetTableStats(tblInfo, handle.WithTableStatsByQuery())
 	} else {
+		usePartitionStats = true
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
 	}
 
 	// 2. table row count from statistics is zero.
-	if statsTbl.Count == 0 {
+	if statsTbl.RealtimeCount == 0 {
+		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
 		return statistics.PseudoTable(tblInfo)
 	}
 
 	// 3. statistics is uninitialized or outdated.
-	pseudoStatsForUninitialized := !statsTbl.IsInitialized()
-	pseudoStatsForOutdated := ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() && statsTbl.IsOutdated()
+	pseudoStatsForUninitialized = !statsTbl.IsInitialized()
+	pseudoStatsForOutdated = ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() && statsTbl.IsOutdated()
 	if pseudoStatsForUninitialized || pseudoStatsForOutdated {
 		tbl := *statsTbl
 		tbl.Pseudo = true
@@ -4460,6 +4482,7 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 }
 
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
+	b.optFlag |= flagPredicateSimplification
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()
 
@@ -5171,13 +5194,14 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	hintProcessor.QbNameMap = currentQbNameMap
 
 	originHintProcessor := b.hintProcessor
-	originPlannerSelectBlockAsName := b.ctx.GetSessionVars().PlannerSelectBlockAsName
+	originPlannerSelectBlockAsName := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	b.hintProcessor = hintProcessor
-	b.ctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
+	newPlannerSelectBlockAsName := make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
+	b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
 	defer func() {
 		b.hintProcessor.HandleUnusedViewHints()
 		b.hintProcessor = originHintProcessor
-		b.ctx.GetSessionVars().PlannerSelectBlockAsName = originPlannerSelectBlockAsName
+		b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
 	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
@@ -6302,10 +6326,10 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	// If it has paramMarker and is in prepare stmt. We don't need to eval it since its value is not decided yet.
 	if !checker.InPrepareStmt {
 		// Do not raise warnings for truncate.
-		oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate
-		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+		oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Load()
+		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
 		uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
-		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = oriIgnoreTruncate
+		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(oriIgnoreTruncate)
 		if uVal < 0 || isNull || err != nil {
 			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
@@ -7066,8 +7090,8 @@ func hasMPPJoinHints(preferJoinType uint) bool {
 	return (preferJoinType&preferBCJoin > 0) || (preferJoinType&preferShuffleJoin > 0)
 }
 
-// checkHint4MPPModeAvailable is used to check if the specified join hint is available under MPP mode.
-func checkHint4MPPModeAvailable(preferJoinType uint) bool {
+// isJoinHintSupportedInMPPMode is used to check if the specified join hint is available under MPP mode.
+func isJoinHintSupportedInMPPMode(preferJoinType uint) bool {
 	if preferJoinType == 0 {
 		return true
 	}
@@ -7121,9 +7145,9 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 		// 1. Handle the WITH clause if exists.
 		if x.With != nil {
 			l := len(b.outerCTEs)
+			sw := x.With
 			defer func() {
 				b.outerCTEs = b.outerCTEs[:l]
-				sw := x.With
 				x.With = sw
 			}()
 			err := b.buildWith(ctx, x.With)

@@ -29,36 +29,36 @@ import (
 	"github.com/pingcap/tidb/util/filter"
 )
 
-// MockSourceFile defines a mock source file.
-type MockSourceFile struct {
+// SourceFile defines a mock source file.
+type SourceFile struct {
 	FileName  string
 	Data      []byte
 	TotalSize int
 }
 
-// MockTableSourceData defines a mock source information for a table.
-type MockTableSourceData struct {
+// TableSourceData defines a mock source information for a table.
+type TableSourceData struct {
 	DBName     string
 	TableName  string
-	SchemaFile *MockSourceFile
-	DataFiles  []*MockSourceFile
+	SchemaFile *SourceFile
+	DataFiles  []*SourceFile
 }
 
-// MockDBSourceData defines a mock source information for a database.
-type MockDBSourceData struct {
+// DBSourceData defines a mock source information for a database.
+type DBSourceData struct {
 	Name   string
-	Tables map[string]*MockTableSourceData
+	Tables map[string]*TableSourceData
 }
 
-// MockImportSource defines a mock import source
-type MockImportSource struct {
-	dbSrcDataMap  map[string]*MockDBSourceData
+// ImportSource defines a mock import source
+type ImportSource struct {
+	dbSrcDataMap  map[string]*DBSourceData
 	dbFileMetaMap map[string]*mydump.MDDatabaseMeta
 	srcStorage    storage.ExternalStorage
 }
 
-// NewMockImportSource creates a MockImportSource object.
-func NewMockImportSource(dbSrcDataMap map[string]*MockDBSourceData) (*MockImportSource, error) {
+// NewImportSource creates a ImportSource object.
+func NewImportSource(dbSrcDataMap map[string]*DBSourceData) (*ImportSource, error) {
 	ctx := context.Background()
 	dbFileMetaMap := make(map[string]*mydump.MDDatabaseMeta)
 	mapStore := storage.NewMemStorage()
@@ -139,7 +139,7 @@ func NewMockImportSource(dbSrcDataMap map[string]*MockDBSourceData) (*MockImport
 		}
 		dbFileMetaMap[dbName] = dbMeta
 	}
-	return &MockImportSource{
+	return &ImportSource{
 		dbSrcDataMap:  dbSrcDataMap,
 		dbFileMetaMap: dbFileMetaMap,
 		srcStorage:    mapStore,
@@ -147,17 +147,17 @@ func NewMockImportSource(dbSrcDataMap map[string]*MockDBSourceData) (*MockImport
 }
 
 // GetStorage gets the External Storage object on the mock source.
-func (m *MockImportSource) GetStorage() storage.ExternalStorage {
+func (m *ImportSource) GetStorage() storage.ExternalStorage {
 	return m.srcStorage
 }
 
 // GetDBMetaMap gets the Mydumper database metadata map on the mock source.
-func (m *MockImportSource) GetDBMetaMap() map[string]*mydump.MDDatabaseMeta {
+func (m *ImportSource) GetDBMetaMap() map[string]*mydump.MDDatabaseMeta {
 	return m.dbFileMetaMap
 }
 
 // GetAllDBFileMetas gets all the Mydumper database metadatas on the mock source.
-func (m *MockImportSource) GetAllDBFileMetas() []*mydump.MDDatabaseMeta {
+func (m *ImportSource) GetAllDBFileMetas() []*mydump.MDDatabaseMeta {
 	result := make([]*mydump.MDDatabaseMeta, len(m.dbFileMetaMap))
 	i := 0
 	for _, dbMeta := range m.dbFileMetaMap {
@@ -175,46 +175,46 @@ type StorageInfo struct {
 	RegionCount   int
 }
 
-// MockTableInfo defines a mock table structure information for a mock target.
-type MockTableInfo struct {
+// TableInfo defines a mock table structure information for a mock target.
+type TableInfo struct {
 	RowCount   int
 	TableModel *model.TableInfo
 }
 
-// MockTableInfo defines a mock target information.
-type MockTargetInfo struct {
+// TargetInfo defines a mock target information.
+type TargetInfo struct {
 	MaxReplicasPerRegion int
 	EmptyRegionCountMap  map[uint64]int
 	StorageInfos         []StorageInfo
 	sysVarMap            map[string]string
-	dbTblInfoMap         map[string]map[string]*MockTableInfo
+	dbTblInfoMap         map[string]map[string]*TableInfo
 }
 
-// NewMockTargetInfo creates a MockTargetInfo object.
-func NewMockTargetInfo() *MockTargetInfo {
-	return &MockTargetInfo{
+// NewTargetInfo creates a TargetInfo object.
+func NewTargetInfo() *TargetInfo {
+	return &TargetInfo{
 		StorageInfos: []StorageInfo{},
 		sysVarMap:    make(map[string]string),
-		dbTblInfoMap: make(map[string]map[string]*MockTableInfo),
+		dbTblInfoMap: make(map[string]map[string]*TableInfo),
 	}
 }
 
 // SetSysVar sets the system variables of the mock target.
-func (t *MockTargetInfo) SetSysVar(key string, value string) {
+func (t *TargetInfo) SetSysVar(key string, value string) {
 	t.sysVarMap[key] = value
 }
 
 // SetTableInfo sets the table structure information of the mock target.
-func (t *MockTargetInfo) SetTableInfo(schemaName string, tableName string, tblInfo *MockTableInfo) {
+func (t *TargetInfo) SetTableInfo(schemaName string, tableName string, tblInfo *TableInfo) {
 	if _, ok := t.dbTblInfoMap[schemaName]; !ok {
-		t.dbTblInfoMap[schemaName] = make(map[string]*MockTableInfo)
+		t.dbTblInfoMap[schemaName] = make(map[string]*TableInfo)
 	}
 	t.dbTblInfoMap[schemaName][tableName] = tblInfo
 }
 
 // FetchRemoteTableModels fetches the table structures from the remote target.
 // It implements the TargetInfoGetter interface.
-func (t *MockTargetInfo) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+func (t *TargetInfo) FetchRemoteTableModels(_ context.Context, schemaName string) ([]*model.TableInfo, error) {
 	resultInfos := []*model.TableInfo{}
 	tblMap, ok := t.dbTblInfoMap[schemaName]
 	if !ok {
@@ -229,7 +229,7 @@ func (t *MockTargetInfo) FetchRemoteTableModels(ctx context.Context, schemaName 
 
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
 // It implements the TargetInfoGetter interface.
-func (t *MockTargetInfo) GetTargetSysVariablesForImport(ctx context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
+func (t *TargetInfo) GetTargetSysVariablesForImport(_ context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
 	result := make(map[string]string)
 	for k, v := range t.sysVarMap {
 		result[k] = v
@@ -239,7 +239,7 @@ func (t *MockTargetInfo) GetTargetSysVariablesForImport(ctx context.Context, _ .
 
 // GetReplicationConfig gets the replication config on the target.
 // It implements the TargetInfoGetter interface.
-func (t *MockTargetInfo) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
+func (t *TargetInfo) GetReplicationConfig(_ context.Context) (*pdtypes.ReplicationConfig, error) {
 	replCount := t.MaxReplicasPerRegion
 	if replCount <= 0 {
 		replCount = 1
@@ -251,7 +251,7 @@ func (t *MockTargetInfo) GetReplicationConfig(ctx context.Context) (*pdtypes.Rep
 
 // GetStorageInfo gets the storage information on the target.
 // It implements the TargetInfoGetter interface.
-func (t *MockTargetInfo) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error) {
+func (t *TargetInfo) GetStorageInfo(_ context.Context) (*pdtypes.StoresInfo, error) {
 	resultStoreInfos := make([]*pdtypes.StoreInfo, len(t.StorageInfos))
 	for i, storeInfo := range t.StorageInfos {
 		resultStoreInfos[i] = &pdtypes.StoreInfo{
@@ -277,7 +277,7 @@ func (t *MockTargetInfo) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInf
 
 // GetEmptyRegionsInfo gets the region information of all the empty regions on the target.
 // It implements the TargetInfoGetter interface.
-func (t *MockTargetInfo) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
+func (t *TargetInfo) GetEmptyRegionsInfo(_ context.Context) (*pdtypes.RegionsInfo, error) {
 	totalEmptyRegions := []pdtypes.RegionInfo{}
 	totalEmptyRegionCount := 0
 	for storeID, storeEmptyRegionCount := range t.EmptyRegionCountMap {
@@ -304,7 +304,7 @@ func (t *MockTargetInfo) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.Regi
 
 // IsTableEmpty checks whether the specified table on the target DB contains data or not.
 // It implements the TargetInfoGetter interface.
-func (t *MockTargetInfo) IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error) {
+func (t *TargetInfo) IsTableEmpty(_ context.Context, schemaName string, tableName string) (*bool, error) {
 	var result bool
 	tblInfoMap, ok := t.dbTblInfoMap[schemaName]
 	if !ok {
@@ -316,12 +316,12 @@ func (t *MockTargetInfo) IsTableEmpty(ctx context.Context, schemaName string, ta
 		result = true
 		return &result, nil
 	}
-	result = (tblInfo.RowCount == 0)
+	result = tblInfo.RowCount == 0
 	return &result, nil
 }
 
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.
 // It implements the TargetInfoGetter interface.
-func (t *MockTargetInfo) CheckVersionRequirements(ctx context.Context) error {
+func (*TargetInfo) CheckVersionRequirements(_ context.Context) error {
 	return nil
 }

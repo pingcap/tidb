@@ -66,8 +66,13 @@ type TiDBStatement struct {
 	boundParams [][]byte
 	paramsType  []byte
 	ctx         *TiDBContext
-	rs          ResultSet
-	sql         string
+	// this result set should have been closed before stored here. Only the `fetchedRows` are used here. This field is
+	// not moved out to reuse the logic inside functions `writeResultSet...`
+	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
+	rs  ResultSet
+	sql string
+
+	hasActiveCursor bool
 }
 
 // ID implements PreparedStatement ID method.
@@ -147,12 +152,7 @@ func (ts *TiDBStatement) Reset() {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
 	}
-
-	// closing previous ResultSet if it exists
-	if ts.rs != nil {
-		terror.Call(ts.rs.Close)
-		ts.rs = nil
-	}
+	ts.hasActiveCursor = false
 }
 
 // Close implements PreparedStatement Close method.
@@ -172,23 +172,28 @@ func (ts *TiDBStatement) Close() error {
 			}
 			bindSQL, _ := core.GetBindSQL4PlanCache(ts.ctx, preparedObj)
 			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
-				preparedObj.PreparedAst.SchemaVersion, 0, bindSQL)
+				preparedObj.PreparedAst.SchemaVersion, 0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 			if err != nil {
 				return err
 			}
 			if !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				ts.ctx.GetPlanCache(false).Delete(cacheKey)
+				ts.ctx.GetSessionPlanCache().Delete(cacheKey)
 			}
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
-
-	// close ResultSet associated with this statement
-	if ts.rs != nil {
-		terror.Call(ts.rs.Close)
-	}
 	return nil
+}
+
+// GetCursorActive implements PreparedStatement GetCursorActive method.
+func (ts *TiDBStatement) GetCursorActive() bool {
+	return ts.hasActiveCursor
+}
+
+// SetCursorActive implements PreparedStatement SetCursorActive method.
+func (ts *TiDBStatement) SetCursorActive(fetchEnd bool) {
+	ts.hasActiveCursor = fetchEnd
 }
 
 // OpenCtx implements IDriver.
@@ -356,8 +361,8 @@ func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.
 				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have bound params")
 			}
 		}
-		if rs := stmt.GetResultSet(); rs != nil && !rs.IsClosed() {
-			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have open result sets")
+		if stmt.GetCursorActive() {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have unfetched rows")
 		}
 		preparedStmtInfo.ParamTypes = stmt.GetParamsType()
 	}
@@ -478,46 +483,6 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 		}
 	}
 	return trs.columns
-}
-
-// rsWithHooks wraps a ResultSet with some hooks (currently only onClosed).
-type rsWithHooks struct {
-	ResultSet
-	onClosed func()
-}
-
-// Close implements ResultSet#Close
-func (rs *rsWithHooks) Close() error {
-	closed := rs.IsClosed()
-	err := rs.ResultSet.Close()
-	if !closed && rs.onClosed != nil {
-		rs.onClosed()
-	}
-	return err
-}
-
-// OnFetchReturned implements fetchNotifier#OnFetchReturned
-func (rs *rsWithHooks) OnFetchReturned() {
-	if impl, ok := rs.ResultSet.(fetchNotifier); ok {
-		impl.OnFetchReturned()
-	}
-}
-
-// Unwrap returns the underlying result set
-func (rs *rsWithHooks) Unwrap() ResultSet {
-	return rs.ResultSet
-}
-
-// unwrapResultSet likes errors.Cause but for ResultSet
-func unwrapResultSet(rs ResultSet) ResultSet {
-	var unRS ResultSet
-	if u, ok := rs.(interface{ Unwrap() ResultSet }); ok {
-		unRS = u.Unwrap()
-	}
-	if unRS == nil {
-		return rs
-	}
-	return unwrapResultSet(unRS)
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {

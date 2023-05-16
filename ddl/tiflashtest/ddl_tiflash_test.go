@@ -41,12 +41,15 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -146,12 +149,12 @@ func (s *tiflashContext) CheckFlashback(tk *testkit.TestKit, t *testing.T) {
 	require.NotNil(t, tb)
 	if tb.Meta().Partition != nil {
 		for _, e := range tb.Meta().Partition.Definitions {
-			ruleName := fmt.Sprintf("table-%v-r", e.ID)
+			ruleName := infosync.MakeRuleID(e.ID)
 			_, ok := s.tiflash.GetPlacementRule(ruleName)
 			require.True(t, ok)
 		}
 	} else {
-		ruleName := fmt.Sprintf("table-%v-r", tb.Meta().ID)
+		ruleName := infosync.MakeRuleID(tb.Meta().ID)
 		_, ok := s.tiflash.GetPlacementRule(ruleName)
 		require.True(t, ok)
 	}
@@ -368,7 +371,7 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	s.CheckFlashback(tk, t)
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
-	r, ok := s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
+	r, ok := s.tiflash.GetPlacementRule(infosync.MakeRuleID(tb.Meta().ID))
 	require.NotNil(t, r)
 	require.True(t, ok)
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
@@ -377,7 +380,7 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	require.NoError(t, err)
 	replica := tb.Meta().TiFlashReplica
 	require.Nil(t, replica)
-	r, ok = s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
+	r, ok = s.tiflash.GetPlacementRule(infosync.MakeRuleID(tb.Meta().ID))
 	require.Nil(t, r)
 	require.False(t, ok)
 }
@@ -556,7 +559,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res := s.tiflash.CheckPlacementRule(*expectRule)
+	res := s.tiflash.CheckPlacementRule(expectRule)
 	require.True(t, res)
 
 	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
@@ -568,7 +571,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	defer fCancelPD()
 	tk.MustExec("drop table ddltiflash")
 	expectRule = infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res = s.tiflash.CheckPlacementRule(*expectRule)
+	res = s.tiflash.CheckPlacementRule(expectRule)
 	require.True(t, res)
 }
 
@@ -612,7 +615,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res := s.tiflash.CheckPlacementRule(*expectRule)
+	res := s.tiflash.CheckPlacementRule(expectRule)
 	require.True(t, res)
 
 	ChangeGCSafePoint(tk, time.Now().Add(-time.Hour), "true", "10m0s")
@@ -622,7 +625,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 
 	// Wait GC
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
-	res = s.tiflash.CheckPlacementRule(*expectRule)
+	res = s.tiflash.CheckPlacementRule(expectRule)
 	require.False(t, res)
 }
 
@@ -643,7 +646,7 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
-	res := s.tiflash.CheckPlacementRule(*expectRule)
+	res := s.tiflash.CheckPlacementRule(expectRule)
 	require.False(t, res)
 }
 
@@ -1350,4 +1353,110 @@ func TestTiFlashAvailableAfterDownOneStore(t *testing.T) {
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	CheckTableAvailable(s.dom, t, 1, []string{})
+}
+
+// TestDLLCallback copied from ddl.TestDDLCallback, but smaller
+type TestDDLCallback struct {
+	*ddl.BaseCallback
+	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
+	// domain to reload schema before your ddl stepping into the next state change.
+	Do ddl.DomainReloader
+
+	// Only need this for now
+	OnJobRunBeforeExported func(*model.Job)
+}
+
+// OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
+func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
+	logutil.BgLogger().Info("on job run before", zap.String("job", job.String()))
+	if tc.OnJobRunBeforeExported != nil {
+		tc.OnJobRunBeforeExported(job)
+		return
+	}
+
+	tc.BaseCallback.OnJobRunBefore(job)
+}
+
+func TestTiFlashReorgPartition(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	fCancel := TempDisableEmulatorGC()
+	defer fCancel()
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+
+	tk.MustExec(`create table ddltiflash (id int, vc varchar(255), i int, key (vc), key(i,vc))` +
+		` partition by range (id)` +
+		` (partition p0 values less than (1000000), partition p1 values less than (2000000))`)
+	tk.MustExec(`alter table ddltiflash set tiflash replica 1`)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	CheckTableAvailable(s.dom, t, 1, []string{})
+	tb := external.GetTableByName(t, tk, "test", "ddltiflash")
+	firstPartitionID := tb.Meta().Partition.Definitions[0].ID
+	ruleName := fmt.Sprintf("table-%v-r", firstPartitionID)
+	_, ok := s.tiflash.GetPlacementRule(ruleName)
+	require.True(t, ok)
+
+	// Note that the mock TiFlash does not have any data or regions, so the wait for regions being available will fail
+	dom := domain.GetDomain(tk.Session())
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := &TestDDLCallback{Do: dom}
+	dom.DDL().SetHook(hook)
+	done := false
+
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if !done && job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteOnly {
+			// Let it fail once (to check that code path) then increase the count to skip retry
+			if job.ErrorCount > 0 {
+				job.ErrorCount = 1000
+				done = true
+			}
+		}
+	}
+	tk.MustContainErrMsg(`alter table ddltiflash reorganize partition p0 into (partition p0 values less than (500000), partition p500k values less than (1000000))`, "[ddl] add partition wait for tiflash replica to complete")
+
+	done = false
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if !done && job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteOnly {
+			// Let it fail once (to check that code path) then mock the regions into the partitions
+			if job.ErrorCount > 0 {
+				// Add the tiflash stores as peers for the new regions, to fullfil the check
+				// in checkPartitionReplica
+				pdCli := s.store.(tikv.Storage).GetRegionCache().PDClient()
+				var dummy []model.CIStr
+				partInfo := &model.PartitionInfo{}
+				_ = job.DecodeArgs(&dummy, &partInfo)
+				ctx := context.Background()
+				stores, _ := pdCli.GetAllStores(ctx)
+				for _, pd := range partInfo.Definitions {
+					startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
+					regions, _ := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+					for i := range regions {
+						// similar as storeHasEngineTiFlashLabel
+						for _, store := range stores {
+							for _, label := range store.Labels {
+								if label.Key == placement.EngineLabelKey && label.Value == placement.EngineLabelTiFlash {
+									s.cluster.MockRegionManager.AddPeer(regions[i].Meta.Id, store.Id, 1)
+									break
+								}
+							}
+						}
+					}
+				}
+				done = true
+			}
+		}
+	}
+	tk.MustExec(`alter table ddltiflash reorganize partition p0 into (partition p0 values less than (500000), partition p500k values less than (1000000))`)
+	tk.MustExec(`admin check table ddltiflash`)
+	_, ok = s.tiflash.GetPlacementRule(ruleName)
+	require.True(t, ok)
+	gcWorker, err := gcworker.NewMockGCWorker(s.store)
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	_, ok = s.tiflash.GetPlacementRule(ruleName)
+	require.False(t, ok)
+	tk.MustExec(`drop table ddltiflash`)
 }

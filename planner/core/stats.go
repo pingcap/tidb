@@ -18,15 +18,21 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -62,13 +68,13 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	}
 	statsTable := statistics.PseudoTable(p.TableInfo)
 	stats := &property.StatsInfo{
-		RowCount:     float64(statsTable.Count),
+		RowCount:     float64(statsTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
 		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo.Columns, p.schema.Columns),
 		StatsVersion: statistics.PseudoVersion,
 	}
 	for _, col := range selfSchema.Columns {
-		stats.ColNDVs[col.UniqueID] = float64(statsTable.Count)
+		stats.ColNDVs[col.UniqueID] = float64(statsTable.RealtimeCount)
 	}
 	p.stats = stats
 	return p.stats, nil
@@ -159,15 +165,39 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 	return profile, nil
 }
 
+// getTotalRowCount returns the total row count, which is obtained when collecting colHist.
+func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) int64 {
+	if colHist.IsFullLoad() {
+		return int64(colHist.TotalRowCount())
+	}
+	// If colHist is not fully loaded, we may still get its total row count from other index/column stats.
+	for _, idx := range statsTbl.Indices {
+		if idx.IsFullLoad() && idx.LastUpdateVersion == colHist.LastUpdateVersion {
+			return int64(idx.TotalRowCount())
+		}
+	}
+	for _, col := range statsTbl.Columns {
+		if col.IsFullLoad() && col.LastUpdateVersion == colHist.LastUpdateVersion {
+			return int64(col.TotalRowCount())
+		}
+	}
+	return 0
+}
+
 // getColumnNDV computes estimated NDV of specified column using the original
 // histogram of `DataSource` which is retrieved from storage(not the derived one).
 func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	hist, ok := ds.statisticTable.Columns[colID]
-	if ok && hist.Count > 0 {
-		factor := float64(ds.statisticTable.Count) / float64(hist.Count)
-		ndv = float64(hist.Histogram.NDV) * factor
+	if ok && hist.IsStatsInitialized() {
+		ndv = float64(hist.Histogram.NDV)
+		// TODO: a better way to get the total row count derived from the last analyze.
+		analyzeCount := getTotalRowCount(ds.statisticTable, hist)
+		if analyzeCount > 0 {
+			factor := float64(ds.statisticTable.RealtimeCount) / float64(analyzeCount)
+			ndv *= factor
+		}
 	} else {
-		ndv = float64(ds.statisticTable.Count) * distinctFactor
+		ndv = float64(ds.statisticTable.RealtimeCount) * distinctFactor
 	}
 	return ndv
 }
@@ -217,6 +247,36 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	return ndvs
 }
 
+func init() {
+	// To handle cycle import, we have to define this function here.
+	statistics.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
+}
+
+// getTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.
+func getTblInfoForUsedStatsByPhysicalID(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo) {
+	fullName = "tableID " + strconv.FormatInt(id, 10)
+
+	is := domain.GetDomain(sctx).InfoSchema()
+	var tbl table.Table
+	var partDef *model.PartitionDefinition
+
+	tbl, ok := is.TableByID(id)
+	if !ok {
+		tbl, _, partDef = is.FindTableByPartitionID(id)
+	}
+	if tbl == nil || tbl.Meta() == nil {
+		return
+	}
+	tblInfo = tbl.Meta()
+	fullName = tblInfo.Name.O
+	if partDef != nil {
+		fullName += " " + partDef.Name.O
+	} else if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+		fullName += " global"
+	}
+	return
+}
+
 func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	if ds.tableStats != nil {
 		// Reload GroupNDVs since colGroups may have changed.
@@ -227,7 +287,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.physicalTableID)
 	}
 	tableStats := &property.StatsInfo{
-		RowCount:     float64(ds.statisticTable.Count),
+		RowCount:     float64(ds.statisticTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, ds.schema.Len()),
 		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
 		StatsVersion: ds.statisticTable.Version,
@@ -235,6 +295,17 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	if ds.statisticTable.Pseudo {
 		tableStats.StatsVersion = statistics.PseudoVersion
 	}
+
+	statsRecord := ds.ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
+	name, tblInfo := getTblInfoForUsedStatsByPhysicalID(ds.ctx, ds.physicalTableID)
+	statsRecord[ds.physicalTableID] = &stmtctx.UsedStatsInfoForTable{
+		Name:          name,
+		TblInfo:       tblInfo,
+		Version:       tableStats.StatsVersion,
+		RealtimeCount: tableStats.HistColl.RealtimeCount,
+		ModifyCount:   tableStats.HistColl.ModifyCount,
+	}
+
 	for _, col := range ds.schema.Columns {
 		tableStats.ColNDVs[col.UniqueID] = ds.getColumnNDV(col.ID)
 	}
@@ -244,6 +315,10 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 }
 
 func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
+	}
 	selectivity, nodes, err := ds.tableStats.HistColl.Selectivity(ds.ctx, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
@@ -259,6 +334,10 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 // We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
 // to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
 func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
+	}
 	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	var (
@@ -387,6 +466,10 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		ds.stats = ds.tableStats.Scale(selectivity)
 		return ds.stats, nil
 	}
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
+	}
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
@@ -412,7 +495,29 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		return nil, err
 	}
 
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugTraceAccessPaths(ds.ctx, ds.possibleAccessPaths)
+	}
+	ds.accessPathMinSelectivity = getMinSelectivityFromPaths(ds.possibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
+
 	return ds.stats, nil
+}
+
+func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64) float64 {
+	minSelectivity := 1.0
+	if totalRowCount <= 0 {
+		return minSelectivity
+	}
+	for _, path := range paths {
+		// For table path and index merge path, AccessPath.CountAfterIndex is not set and meaningless,
+		// but we still consider their AccessPath.CountAfterAccess.
+		if path.IsTablePath() || path.PartialIndexPaths != nil {
+			minSelectivity = mathutil.Min(minSelectivity, path.CountAfterAccess/totalRowCount)
+			continue
+		}
+		minSelectivity = mathutil.Min(minSelectivity, path.CountAfterIndex/totalRowCount)
+	}
+	return minSelectivity
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.

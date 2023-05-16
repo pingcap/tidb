@@ -322,29 +322,24 @@ func (p *LogicalJoin) updateEQCond() {
 	// combination of <stu.name NAEQ exam.name> and <exam.stu_id EQ stu.id> for join key is little complicated for now.
 	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
 	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
-		for i := len(p.OtherConditions) - 1; i >= 0; i-- {
-			need2Remove := false
-			if eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {
-				// not a naaj operator, continue.
-				if !expression.IsEQCondFromIn(eqCond) {
-					continue
-				}
+		var otherCond expression.CNFExprs
+		for i := 0; i < len(p.OtherConditions); i++ {
+			eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction)
+			if ok && eqCond.FuncName.L == ast.EQ && expression.IsEQCondFromIn(eqCond) {
 				// here must be a EQCondFromIn.
 				lExpr, rExpr := eqCond.GetArgs()[0], eqCond.GetArgs()[1]
 				if expression.ExprFromSchema(lExpr, lChild.Schema()) && expression.ExprFromSchema(rExpr, rChild.Schema()) {
 					lNAKeys = append(lNAKeys, lExpr)
 					rNAKeys = append(rNAKeys, rExpr)
-					need2Remove = true
 				} else if expression.ExprFromSchema(lExpr, rChild.Schema()) && expression.ExprFromSchema(rExpr, lChild.Schema()) {
 					lNAKeys = append(lNAKeys, rExpr)
 					rNAKeys = append(rNAKeys, lExpr)
-					need2Remove = true
 				}
+				continue
 			}
-			if need2Remove {
-				p.OtherConditions = append(p.OtherConditions[:i], p.OtherConditions[i+1:]...)
-			}
+			otherCond = append(otherCond, p.OtherConditions[i])
 		}
+		p.OtherConditions = otherCond
 		// here is for cases like: select (a+1, b*3) not in (select a,b from t2) from t1.
 		adjustKeyForm(lNAKeys, rNAKeys, true)
 	}
@@ -993,13 +988,26 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 	if !p.isOuterMostCTE {
 		return predicates, p.self
 	}
-	if len(predicates) == 0 {
+	pushedPredicates := make([]expression.Expression, len(predicates))
+	copy(pushedPredicates, predicates)
+	// The filter might change the correlated status of the cte.
+	// We forbid the push down that makes the change for now.
+	// Will support it later.
+	if !p.cte.IsInApply {
+		for i := len(pushedPredicates) - 1; i >= 0; i-- {
+			if len(expression.ExtractCorColumns(pushedPredicates[i])) == 0 {
+				continue
+			}
+			pushedPredicates = append(pushedPredicates[0:i], pushedPredicates[i+1:]...)
+		}
+	}
+	if len(pushedPredicates) == 0 {
 		p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.NewOne())
 		return predicates, p.self
 	}
 	newPred := make([]expression.Expression, 0, len(predicates))
-	for i := range predicates {
-		newPred = append(newPred, predicates[i].Clone())
+	for i := range pushedPredicates {
+		newPred = append(newPred, pushedPredicates[i].Clone())
 		ResolveExprAndReplace(newPred[i], p.cte.ColumnMap)
 	}
 	p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.ComposeCNFCondition(p.ctx, newPred...))

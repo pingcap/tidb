@@ -320,6 +320,7 @@ type BatchPointGetPlan struct {
 	IdxColLens       []int
 	PartitionColPos  int
 	PartitionExpr    *tables.PartitionExpr
+	PartitionIDs     []int64 // pre-calculated partition IDs for Handles or IndexValues
 	KeepOrder        bool
 	Desc             bool
 	Lock             bool
@@ -328,7 +329,7 @@ type BatchPointGetPlan struct {
 	cost             float64
 
 	// SinglePart indicates whether this BatchPointGetPlan is just for a single partition, instead of the whole partition table.
-	// If the BatchPointGetPlan is built in fast path, this value if false; if the plan is generated in physical optimization for a partition,
+	// If the BatchPointGetPlan is built in fast path, this value is false; if the plan is generated in physical optimization for a partition,
 	// this value would be true. This value would decide the behavior of BatchPointGetExec, i.e, whether to compute the table ID of the partition
 	// on the fly.
 	SinglePart bool
@@ -534,8 +535,8 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 		return nil
 	}
 
-	ctx.GetSessionVars().PlanID = 0
-	ctx.GetSessionVars().PlanColumnID = 0
+	ctx.GetSessionVars().PlanID.Store(0)
+	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		defer func() {
@@ -708,15 +709,16 @@ func newBatchPointGetPlan(
 		if len(partitionInfos) == 0 {
 			partitionInfos = nil
 		}
-
-		return BatchPointGetPlan{
+		p := &BatchPointGetPlan{
 			TblInfo:        tbl,
 			Handles:        handles,
 			HandleParams:   handleParams,
 			HandleType:     &handleCol.FieldType,
 			PartitionExpr:  partitionExpr,
 			PartitionInfos: partitionInfos,
-		}.Init(ctx, statsInfo, schema, names, 0)
+		}
+
+		return p.Init(ctx, statsInfo, schema, names, 0)
 	}
 
 	// The columns in where clause should be covered by unique index
@@ -895,8 +897,7 @@ func newBatchPointGetPlan(
 	if len(partitionInfos) == 0 {
 		partitionInfos = nil
 	}
-
-	return BatchPointGetPlan{
+	p := &BatchPointGetPlan{
 		TblInfo:          tbl,
 		IndexInfo:        matchIdxInfo,
 		IndexValues:      indexValues,
@@ -905,7 +906,9 @@ func newBatchPointGetPlan(
 		PartitionColPos:  pos,
 		PartitionExpr:    partitionExpr,
 		PartitionInfos:   partitionInfos,
-	}.Init(ctx, statsInfo, schema, names, 0)
+	}
+
+	return p.Init(ctx, statsInfo, schema, names, 0)
 }
 
 func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *BatchPointGetPlan {
@@ -1261,6 +1264,11 @@ func buildSchemaFromFields(
 				}
 				continue
 			}
+			if name, column, ok := tryExtractRowChecksumColumn(field, len(columns)); ok {
+				names = append(names, name)
+				columns = append(columns, column)
+				continue
+			}
 			colNameExpr, ok := field.Expr.(*ast.ColumnNameExpr)
 			if !ok {
 				return nil, nil
@@ -1300,6 +1308,38 @@ func buildSchemaFromFields(
 	}
 	schema := expression.NewSchema(columns...)
 	return schema, names
+}
+
+func tryExtractRowChecksumColumn(field *ast.SelectField, idx int) (*types.FieldName, *expression.Column, bool) {
+	f, ok := field.Expr.(*ast.FuncCallExpr)
+	if !ok || f.FnName.L != ast.TiDBRowChecksum || len(f.Args) != 0 {
+		return nil, nil, false
+	}
+	origName := f.FnName
+	origName.L += "()"
+	origName.O += "()"
+	asName := origName
+	if field.AsName.L != "" {
+		asName = field.AsName
+	}
+	cs, cl := types.DefaultCharsetForType(mysql.TypeString)
+	ftype := ptypes.NewFieldType(mysql.TypeString)
+	ftype.SetCharset(cs)
+	ftype.SetCollate(cl)
+	ftype.SetFlen(mysql.MaxBlobWidth)
+	ftype.SetDecimal(0)
+	name := &types.FieldName{
+		OrigColName: origName,
+		ColName:     asName,
+	}
+	column := &expression.Column{
+		RetType:  ftype,
+		ID:       model.ExtraRowChecksumID,
+		UniqueID: model.ExtraRowChecksumID,
+		Index:    idx,
+		OrigName: origName.L,
+	}
+	return name, column, true
 }
 
 // getSingleTableNameAndAlias return the ast node of queried table name and the alias string.

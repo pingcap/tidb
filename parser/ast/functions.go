@@ -62,6 +62,7 @@ const (
 	UnaryMinus         = "unaryminus"
 	In                 = "in"
 	Like               = "like"
+	Ilike              = "ilike"
 	Case               = "case"
 	Regexp             = "regexp"
 	RegexpLike         = "regexp_like"
@@ -297,6 +298,7 @@ const (
 	BinToUUID       = "bin_to_uuid"
 	VitessHash      = "vitess_hash"
 	TiDBShard       = "tidb_shard"
+	TiDBRowChecksum = "tidb_row_checksum"
 	GetLock         = "get_lock"
 	ReleaseLock     = "release_lock"
 

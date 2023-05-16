@@ -945,7 +945,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDropTableOnTemporaryTable:        mysql.Message("`drop global temporary table` can only drop global temporary table", nil),
 	ErrTxnTooLarge:                      mysql.Message("Transaction is too large, size: %d", nil),
 	ErrWriteConflictInTiDB:              mysql.Message("Write conflict, txnStartTS %d is stale", nil),
-	ErrInvalidPluginID:                  mysql.Message("Wrong plugin id: %s, valid plugin id is [name]-[version], both name and version should not contain '-'", nil),
+	ErrInvalidPluginID:                  mysql.Message("Wrong plugin id: %s, valid plugin id is [name]-[version], and version should not contain '-'", nil),
 	ErrInvalidPluginManifest:            mysql.Message("Cannot read plugin %s's manifest", nil),
 	ErrInvalidPluginName:                mysql.Message("Plugin load with %s but got wrong name %s", nil),
 	ErrInvalidPluginVersion:             mysql.Message("Plugin load with %s but got %s", nil),
@@ -1045,19 +1045,24 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataEmptyPath:                mysql.Message("The value of INFILE must not be empty when LOAD DATA from LOCAL", nil),
 	ErrLoadDataUnsupportedFormat:        mysql.Message("The FORMAT '%s' is not supported", nil),
 	ErrLoadDataInvalidURI:               mysql.Message("The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'", nil),
-	ErrLoadDataCantAccess:               mysql.Message("Access to the source file has been denied. Please check the URI, access key and secret access key are correct", nil),
+	ErrLoadDataCantAccess:               mysql.Message("Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct", nil),
 	ErrLoadDataCantRead:                 mysql.Message("Failed to read source files. Reason: %s. %s", nil),
 	ErrLoadDataWrongFormatConfig:        mysql.Message("", nil),
 	ErrUnknownOption:                    mysql.Message("Unknown option %s", nil),
 	ErrInvalidOptionVal:                 mysql.Message("Invalid option value for %s", nil),
 	ErrDuplicateOption:                  mysql.Message("Option %s specified more than once", nil),
 	ErrLoadDataUnsupportedOption:        mysql.Message("Unsupported option %s for %s import mode", nil),
+	ErrLoadDataJobNotFound:              mysql.Message("Job ID %d doesn't exist", nil),
+	ErrLoadDataInvalidOperation:         mysql.Message("The current job status cannot perform the operation. %s", nil),
+	ErrLoadDataLocalUnsupportedOption:   mysql.Message("Unsupported option for LOAD DATA LOCAL INFILE: %s", nil),
+	ErrLoadDataPreCheckFailed:           mysql.Message("PreCheck failed: %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
 	ErrWarnOptimizerHintInvalidToken:    mysql.Message("Cannot use %s '%s' (tok = %d) in an optimizer hint", nil),
 	ErrWarnMemoryQuotaOverflow:          mysql.Message("Max value of MEMORY_QUOTA is %d bytes, ignore this invalid limit", nil),
 	ErrWarnOptimizerHintParseError:      mysql.Message("Optimizer hint syntax error at %v", nil),
+	ErrWarnOptimizerHintWrongPos:        mysql.Message("Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.", nil),
 
 	ErrSequenceUnsupportedTableOption:      mysql.Message("Unsupported sequence table-option %s", nil),
 	ErrColumnTypeUnsupportedNextValue:      mysql.Message("Unsupported sequence default value for column type '%s'", nil),
@@ -1091,6 +1096,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIERestoreFailed: mysql.Message("Restore failed: %s", nil),
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
+	ErrBRJobNotFound:     mysql.Message("BRIE Job %d not found", nil),
 
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
@@ -1133,4 +1139,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPrometheusAddrIsNotSet:    mysql.Message("Prometheus address is not set in PD and etcd", nil),
 	ErrTiKVStaleCommand:          mysql.Message("TiKV server reports stale command", nil),
 	ErrTiKVMaxTimestampNotSynced: mysql.Message("TiKV max timestamp is not synced", nil),
+
+	ErrCannotPauseDDLJob:  mysql.Message("Job [%v] can't be paused now", nil),
+	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed", nil),
+	ErrPausedDDLJob:       mysql.Message("Job [%v] already paused", nil),
 }

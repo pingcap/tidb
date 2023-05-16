@@ -12,25 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package asyncloaddata
+package asyncloaddata_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	. "github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
-func createJob(t *testing.T, conn sqlexec.SQLExecutor, user string) (int64, *JobInfo) {
-	id, err := CreateLoadDataJob(context.Background(), conn, "/tmp/test.csv", "test", "t", "logical", user)
+func checkEqualIgnoreTimes(t *testing.T, expected, got *JobInfo) {
+	cloned := *expected
+	cloned.CreateTime = got.CreateTime
+	cloned.StartTime = got.StartTime
+	cloned.EndTime = got.EndTime
+	require.Equal(t, &cloned, got)
+}
+
+func createJob(t *testing.T, conn sqlexec.SQLExecutor, user string) (*Job, *JobInfo) {
+	job, err := CreateLoadDataJob(context.Background(), conn, "/tmp/test.csv", "test", "t", "logical", user)
 	require.NoError(t, err)
-	info, err := GetJobInfo(context.Background(), conn, id)
+	info, err := job.GetJobInfo(context.Background())
 	require.NoError(t, err)
 	expected := &JobInfo{
-		JobID:         id,
+		JobID:         job.ID,
 		User:          user,
 		DataSource:    "/tmp/test.csv",
 		TableSchema:   "test",
@@ -40,21 +49,18 @@ func createJob(t *testing.T, conn sqlexec.SQLExecutor, user string) (int64, *Job
 		Status:        JobPending,
 		StatusMessage: "",
 	}
-	require.Equal(t, expected, info)
-	return id, info
+	checkEqualIgnoreTimes(t, expected, info)
+	return job, info
 }
 
 func TestHappyPath(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
-
 	ctx := context.Background()
 
 	// job is created
 
-	id, expected := createJob(t, tk.Session(), "user")
+	job, expected := createJob(t, tk.Session(), "user")
 
 	// job is started by a worker
 
@@ -63,72 +69,70 @@ func TestHappyPath(t *testing.T) {
 	t.Cleanup(func() {
 		OfflineThresholdInSec = backup
 	})
-	err := StartJob(ctx, tk.Session(), id)
+	err := job.StartJob(ctx)
 	require.NoError(t, err)
-	info, err := GetJobInfo(ctx, tk.Session(), id)
+	info, err := job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Status = JobRunning
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// job is periodically updated by worker
 
-	ok, err := UpdateJobProgress(ctx, tk.Session(), id, "imported 10%")
+	ok, err := job.UpdateJobProgress(ctx, "imported 10%")
 	require.NoError(t, err)
 	require.True(t, ok)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Progress = "imported 10%"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// job is paused
 
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedPaused)
+	err = UpdateJobExpectedStatus(ctx, tk.Session(), job.ID, JobExpectedPaused)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Status = JobPaused
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// worker still can update progress, maybe response to pausing is delayed
 
-	ok, err = UpdateJobProgress(ctx, tk.Session(), id, "imported 20%")
+	ok, err = job.UpdateJobProgress(ctx, "imported 20%")
 	require.NoError(t, err)
 	require.True(t, ok)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Progress = "imported 20%"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// job is resumed
 
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedRunning)
+	err = UpdateJobExpectedStatus(ctx, tk.Session(), job.ID, JobExpectedRunning)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Status = JobRunning
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// job is finished
 
-	err = FinishJob(ctx, tk.Session(), id, "finished message")
+	err = job.FinishJob(ctx, "finished message")
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Status = JobFinished
 	expected.StatusMessage = "finished message"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 }
 
 func TestKeepAlive(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	// job is created
 
-	id, expected := createJob(t, tk.Session(), "user")
+	job, expected := createJob(t, tk.Session(), "user")
 
 	backup := OfflineThresholdInSec
 	OfflineThresholdInSec = 1
@@ -137,120 +141,129 @@ func TestKeepAlive(t *testing.T) {
 	})
 
 	// before job is started, worker don't need to keepalive
+	// TODO:👆not correct!
 
 	time.Sleep(2 * time.Second)
-	info, err := GetJobInfo(ctx, tk.Session(), id)
+	info, err := job.GetJobInfo(ctx)
 	require.NoError(t, err)
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
-	err = StartJob(ctx, tk.Session(), id)
+	err = job.StartJob(ctx)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Status = JobRunning
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// if worker failed to keepalive, job will fail
 
 	time.Sleep(2 * time.Second)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Status = JobFailed
 	expected.StatusMessage = "job expected running but the node is timeout"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// after the worker is failed to keepalive, further keepalive will fail
 
-	ok, err := UpdateJobProgress(ctx, tk.Session(), id, "imported 20%")
+	ok, err := job.UpdateJobProgress(ctx, "imported 20%")
 	require.NoError(t, err)
 	require.False(t, ok)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
-	// can change expected status.
+	// when worker fails to keepalive, before it calls FailJob, it still can
+	// change expected status to some extent.
 
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedPaused)
+	err = UpdateJobExpectedStatus(ctx, tk.Session(), job.ID, JobExpectedPaused)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.StatusMessage = "job expected paused but the node is timeout"
-	require.Equal(t, expected, info)
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedRunning)
+	checkEqualIgnoreTimes(t, expected, info)
+	err = UpdateJobExpectedStatus(ctx, tk.Session(), job.ID, JobExpectedRunning)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.StatusMessage = "job expected running but the node is timeout"
-	require.Equal(t, expected, info)
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedCanceled)
+	checkEqualIgnoreTimes(t, expected, info)
+	err = UpdateJobExpectedStatus(ctx, tk.Session(), job.ID, JobExpectedCanceled)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
-	expected.StatusMessage = "job expected canceled but the node is timeout"
-	require.Equal(t, expected, info)
+	expected.Status = JobCanceled
+	expected.StatusMessage = ""
+	checkEqualIgnoreTimes(t, expected, info)
+
+	// Now the worker calls FailJob, but the status should still be canceled,
+	// that's more friendly.
+
+	err = job.FailJob(ctx, "failed to keepalive")
+	require.NoError(t, err)
+	info, err = job.GetJobInfo(ctx)
+	require.NoError(t, err)
+	expected.Status = JobCanceled
+	expected.StatusMessage = "failed to keepalive"
+	checkEqualIgnoreTimes(t, expected, info)
 }
 
 func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	// job is created
 
-	id, expected := createJob(t, tk.Session(), "user")
+	job, expected := createJob(t, tk.Session(), "user")
 
-	// job can be failed directly when it's pending, although it's not possible
+	// job can be failed directly when it's pending
 
-	err := FailJob(ctx, tk.Session(), id, "failed message")
+	err := job.FailJob(ctx, "failed message")
 	require.NoError(t, err)
-	info, err := GetJobInfo(ctx, tk.Session(), id)
+	info, err := job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Status = JobFailed
 	expected.StatusMessage = "failed message"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// create another job and fail it
 
-	id, expected = createJob(t, tk.Session(), "user")
+	job, expected = createJob(t, tk.Session(), "user")
 
-	err = StartJob(ctx, tk.Session(), id)
+	err = job.StartJob(ctx)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Status = JobRunning
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
-	err = FailJob(ctx, tk.Session(), id, "failed message")
+	err = job.FailJob(ctx, "failed message")
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
 	expected.Status = JobFailed
 	expected.StatusMessage = "failed message"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// test change expected status of a failed job.
 
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedPaused)
+	err = UpdateJobExpectedStatus(ctx, tk.Session(), job.ID, JobExpectedPaused)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
-	require.Equal(t, expected, info)
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedRunning)
+	checkEqualIgnoreTimes(t, expected, info)
+	err = UpdateJobExpectedStatus(ctx, tk.Session(), job.ID, JobExpectedRunning)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = job.GetJobInfo(ctx)
 	require.NoError(t, err)
-	require.Equal(t, expected, info)
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedCanceled)
-	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
-	require.NoError(t, err)
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
+	err = job.CancelJob(ctx)
+	require.ErrorContains(t, err, "The current job status cannot perform the operation. need status running or paused, but got failed")
 
 	// add job of another user and test GetAllJobInfo
 
-	_, _ = createJob(t, tk.Session(), "user2")
+	job, _ = createJob(t, tk.Session(), "user2")
 
 	jobs, err := GetAllJobInfo(ctx, tk.Session(), "user")
 	require.NoError(t, err)
@@ -262,22 +275,25 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(jobs))
 	require.Equal(t, JobPending, jobs[0].Status)
+	require.Equal(t, job.ID, jobs[0].JobID)
+
+	job.User = "wrong_user"
+	_, err = job.GetJobInfo(ctx)
+	require.ErrorContains(t, err, "doesn't exist")
 }
 
 func TestGetJobStatus(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	// job is created
 
-	id, _ := createJob(t, tk.Session(), "user")
+	job, _ := createJob(t, tk.Session(), "user")
 
 	// job is pending
 
-	status, msg, err := GetJobStatus(ctx, tk.Session(), id)
+	status, msg, err := job.GetJobStatus(ctx)
 	require.NoError(t, err)
 	require.Equal(t, JobPending, status)
 	require.Equal(t, "", msg)
@@ -289,26 +305,41 @@ func TestGetJobStatus(t *testing.T) {
 	t.Cleanup(func() {
 		OfflineThresholdInSec = backup
 	})
-	err = StartJob(ctx, tk.Session(), id)
+	err = job.StartJob(ctx)
 	require.NoError(t, err)
-	status, msg, err = GetJobStatus(ctx, tk.Session(), id)
+	status, msg, err = job.GetJobStatus(ctx)
 	require.NoError(t, err)
 	require.Equal(t, JobRunning, status)
 	require.Equal(t, "", msg)
 
 	// job is finished
 
-	err = FinishJob(ctx, tk.Session(), id, "finished message")
+	err = job.FinishJob(ctx, "finished message")
 	require.NoError(t, err)
-	status, msg, err = GetJobStatus(ctx, tk.Session(), id)
+	status, msg, err = job.GetJobStatus(ctx)
 	require.NoError(t, err)
 	require.Equal(t, JobFinished, status)
 	require.Equal(t, "finished message", msg)
 
 	// wrong ID
 
-	status, msg, err = GetJobStatus(ctx, tk.Session(), id+1)
+	job.ID += 1
+	status, msg, err = job.GetJobStatus(ctx)
 	require.NoError(t, err)
 	require.Equal(t, JobFailed, status)
-	require.Contains(t, msg, "not found")
+	require.Contains(t, msg, "doesn't exist")
+}
+
+func TestCreateLoadDataJobRedact(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+
+	_, err := CreateLoadDataJob(ctx, tk.Session(),
+		"s3://bucket/a.csv?access-key=hideme&secret-access-key=hideme",
+		"db", "table", "mode", "user")
+	require.NoError(t, err)
+	result := tk.MustQuery("SELECT * FROM mysql.load_data_jobs;")
+	result.CheckContain("a.csv")
+	result.CheckNotContain("hideme")
 }

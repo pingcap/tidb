@@ -125,7 +125,7 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 		}
 		var dbName, tableName *model.CIStr
 		if blockOffset != parentOffset {
-			blockAsNames := sctx.GetSessionVars().PlannerSelectBlockAsName
+			blockAsNames := *(sctx.GetSessionVars().PlannerSelectBlockAsName.Load())
 			if blockOffset >= len(blockAsNames) {
 				continue
 			}

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/size"
 )
@@ -503,9 +504,8 @@ func (p PhysicalIndexJoin) Init(ctx sessionctx.Context, stats *property.StatsInf
 
 // Init initializes PhysicalIndexMergeJoin.
 func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMergeJoin {
-	ctx.GetSessionVars().PlanID++
 	p.tp = plancodec.TypeIndexMergeJoin
-	p.id = ctx.GetSessionVars().PlanID
+	p.id = int(ctx.GetSessionVars().PlanID.Add(1))
 	p.ctx = ctx
 	p.self = &p
 	return &p
@@ -513,22 +513,62 @@ func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMerge
 
 // Init initializes PhysicalIndexHashJoin.
 func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJoin {
-	ctx.GetSessionVars().PlanID++
 	p.tp = plancodec.TypeIndexHashJoin
-	p.id = ctx.GetSessionVars().PlanID
+	p.id = int(ctx.GetSessionVars().PlanID.Add(1))
 	p.ctx = ctx
 	p.self = &p
 	return &p
 }
 
 // Init initializes BatchPointGetPlan.
-func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName, offset int) *BatchPointGetPlan {
+func (p *BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName, offset int) *BatchPointGetPlan {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeBatchPointGet, offset)
 	p.schema = schema
 	p.names = names
 	p.stats = stats
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
-	return &p
+
+	var (
+		pids   = make([]int64, 0, len(p.IndexValues))
+		hasErr bool
+		d      types.Datum
+	)
+
+	if p.PartitionExpr != nil {
+		if len(p.Handles) > 0 {
+			for _, handle := range p.Handles {
+				if handle.IsInt() {
+					d = types.NewIntDatum(handle.IntValue())
+				} else {
+					var err error
+					_, d, err = codec.DecodeOne(handle.EncodedCol(p.PartitionColPos))
+					if err != nil {
+						hasErr = true
+						break
+					}
+				}
+				pid, err := GetPhysID(p.TblInfo, p.PartitionExpr, d)
+				if err != nil {
+					hasErr = true
+					break
+				}
+				pids = append(pids, pid)
+			}
+		} else {
+			for _, idxVals := range p.IndexValues {
+				pid, err := GetPhysID(p.TblInfo, p.PartitionExpr, idxVals[p.PartitionColPos])
+				if err != nil {
+					hasErr = true
+					break
+				}
+				pids = append(pids, pid)
+			}
+		}
+	}
+	if !hasErr {
+		p.PartitionIDs = pids
+	}
+	return p
 }
 
 // Init initializes PointGetPlan.

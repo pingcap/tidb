@@ -11,6 +11,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -343,7 +344,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 		s.mockDB.ExpectExec("\\Qupdate `test`.`table_meta` set total_kvs_base = ?, total_bytes_base = ?, checksum_base = ?, status = ? where table_id = ? and task_id = ?\\E").
 			WithArgs(checksum.SumKVS(), checksum.SumSize(), checksum.Sum(), metaStatusRestoreStarted.String(), int64(1), int64(1)).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
-		s.checksumMgr.checksum = RemoteChecksum{
+		s.checksumMgr.checksum = local.RemoteChecksum{
 			TotalBytes: checksum.SumSize(),
 			TotalKVs:   checksum.SumKVS(),
 			Checksum:   checksum.Sum(),
@@ -381,19 +382,19 @@ func TestCheckTasksExclusively(t *testing.T) {
 	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("SELECT task_id, pd_cfgs, status, state, source_bytes, cluster_avail from `test`.`t1` FOR UPDATE").
-		WillReturnRows(sqlmock.NewRows([]string{"task_id", "pd_cfgs", "status", "state", "source_bytes", "cluster_avail"}).
-			AddRow("0", "", taskMetaStatusInitial.String(), "0", "0", "0").
-			AddRow("1", "", taskMetaStatusInitial.String(), "0", "0", "0").
-			AddRow("2", "", taskMetaStatusInitial.String(), "0", "0", "0").
-			AddRow("3", "", taskMetaStatusInitial.String(), "0", "0", "0").
-			AddRow("4", "", taskMetaStatusInitial.String(), "0", "0", "0"))
+	s.mockDB.ExpectQuery("SELECT task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail from `test`.`t1` FOR UPDATE").
+		WillReturnRows(sqlmock.NewRows([]string{"task_id", "pd_cfgs", "status", "state", "tikv_source_bytes", "tiflash_source_bytes", "tiflash_avail", "tiflash_avail"}).
+			AddRow("0", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
+			AddRow("1", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
+			AddRow("2", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
+			AddRow("3", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
+			AddRow("4", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0"))
 
-	s.mockDB.ExpectExec("\\QREPLACE INTO `test`.`t1` (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)\\E").
-		WithArgs(int64(2), "", taskMetaStatusInitial.String(), int(0), uint64(2048), uint64(0)).
+	s.mockDB.ExpectExec("\\QREPLACE INTO `test`.`t1` (task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail) VALUES(?, ?, ?, ?, ?, ?, ?, ?)\\E").
+		WithArgs(int64(2), "", taskMetaStatusInitial.String(), int(0), uint64(2048), uint64(2048), uint64(0), uint64(0)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	s.mockDB.ExpectExec("\\QREPLACE INTO `test`.`t1` (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)\\E").
-		WithArgs(int64(3), "", taskMetaStatusInitial.String(), int(0), uint64(3072), uint64(0)).
+	s.mockDB.ExpectExec("\\QREPLACE INTO `test`.`t1` (task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail) VALUES(?, ?, ?, ?, ?, ?, ?, ?)\\E").
+		WithArgs(int64(3), "", taskMetaStatusInitial.String(), int(0), uint64(3072), uint64(3072), uint64(0), uint64(0)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	s.mockDB.ExpectCommit()
 
@@ -409,7 +410,8 @@ func TestCheckTasksExclusively(t *testing.T) {
 		var newTasks []taskMeta
 		for j := 2; j < 4; j++ {
 			task := tasks[j]
-			task.sourceBytes = uint64(j * 1024)
+			task.tikvSourceBytes = uint64(j * 1024)
+			task.tiflashSourceBytes = uint64(j * 1024)
 			newTasks = append(newTasks, task)
 		}
 		return newTasks, nil
@@ -418,11 +420,11 @@ func TestCheckTasksExclusively(t *testing.T) {
 }
 
 type testChecksumMgr struct {
-	checksum RemoteChecksum
+	checksum local.RemoteChecksum
 	callCnt  int
 }
 
-func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
+func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*local.RemoteChecksum, error) {
 	t.callCnt++
 	return &t.checksum, nil
 }
@@ -437,7 +439,7 @@ func TestSingleTaskMetaMgr(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = metaMgr.InitTask(context.Background(), 1<<30)
+	err = metaMgr.InitTask(context.Background(), 1<<30, 1<<30)
 	require.NoError(t, err)
 
 	ok, err = metaMgr.CheckTaskExist(context.Background())
@@ -446,7 +448,8 @@ func TestSingleTaskMetaMgr(t *testing.T) {
 
 	err = metaMgr.CheckTasksExclusively(context.Background(), func(tasks []taskMeta) ([]taskMeta, error) {
 		require.Len(t, tasks, 1)
-		require.Equal(t, uint64(1<<30), tasks[0].sourceBytes)
+		require.Equal(t, uint64(1<<30), tasks[0].tikvSourceBytes)
+		require.Equal(t, uint64(1<<30), tasks[0].tiflashSourceBytes)
 		return nil, nil
 	})
 	require.NoError(t, err)

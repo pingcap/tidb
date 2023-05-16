@@ -415,7 +415,7 @@ func TestListPartitionPrivilege(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.SetSession(se)
 	tk.MustExec("create database list_partition_pri")
 	tk.MustExec("use list_partition_pri")
@@ -429,7 +429,7 @@ func TestListPartitionPrivilege(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err = session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil, nil))
 	tk1.SetSession(se)
 	tk1.MustExec(`use list_partition_pri`)
 	err = tk1.ExecToErr(`alter table tlist truncate partition p0`)
@@ -560,12 +560,10 @@ func TestListPartitionAutoIncre(t *testing.T) {
 	tk.MustExec("drop table if exists tlist")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
-	err := tk.ExecToErr(`create table tlist (a int, b int AUTO_INCREMENT) partition by list (a) (
+	tk.MustExec(`create table tlist1 (a int, b int AUTO_INCREMENT) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "it must be defined as a key")
 
 	tk.MustExec(`create table tlist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -577,12 +575,10 @@ func TestListPartitionAutoIncre(t *testing.T) {
 	tk.MustExec(`insert into tlist (a) values (10)`)
 	tk.MustExec(`insert into tlist (a) values (1)`)
 
-	err = tk.ExecToErr(`create table tcollist (a int, b int AUTO_INCREMENT) partition by list columns (a) (
+	tk.MustExec(`create table tcollist1 (a int, b int AUTO_INCREMENT) partition by list columns (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "it must be defined as a key")
 
 	tk.MustExec(`create table tcollist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),

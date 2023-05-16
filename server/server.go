@@ -36,9 +36,8 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/http" //nolint:goimports
-	// For pprof
-	_ "net/http/pprof" // #nosec G108
+	"net/http"         //nolint:goimports
+	_ "net/http/pprof" // #nosec G108 for pprof
 	"os"
 	"os/user"
 	"reflect"
@@ -121,7 +120,8 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive | mysql.ClientDeprecateEOF
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive |
+	mysql.ClientDeprecateEOF | mysql.ClientCompress | mysql.ClientZstdCompressionAlgorithm
 
 // Server is the MySQL protocol server
 type Server struct {
@@ -151,6 +151,7 @@ type Server struct {
 	autoIDService       *autoid.Service
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
+	printMDLLogTime     time.Time
 }
 
 // ConnectionCount gets current connection count.
@@ -213,6 +214,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		internalSessions:  make(map[interface{}]struct{}, 100),
 		health:            uatomic.NewBool(true),
 		inShutdownMode:    uatomic.NewBool(false),
+		printMDLLogTime:   time.Now(),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -692,10 +694,24 @@ func (s *Server) onConn(conn *clientConn) {
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	connType := variable.ConnTypeSocket
+	sslVersion := ""
 	if cc.isUnixSocket {
 		connType = variable.ConnTypeUnixSocket
 	} else if cc.tlsConn != nil {
 		connType = variable.ConnTypeTLS
+		sslVersionNum := cc.tlsConn.ConnectionState().Version
+		switch sslVersionNum {
+		case tls.VersionTLS10:
+			sslVersion = "TLSv1.0"
+		case tls.VersionTLS11:
+			sslVersion = "TLSv1.1"
+		case tls.VersionTLS12:
+			sslVersion = "TLSv1.2"
+		case tls.VersionTLS13:
+			sslVersion = "TLSv1.3"
+		default:
+			sslVersion = fmt.Sprintf("Unknown TLS version: %d", sslVersionNum)
+		}
 	}
 	connInfo := &variable.ConnectionInfo{
 		ConnectionID:      cc.connectionID,
@@ -710,7 +726,7 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		ServerOSLoginUser: osUser,
 		OSVersion:         osVersion,
 		ServerVersion:     mysql.TiDBReleaseVersion,
-		SSLVersion:        "v1.2.0", // for current go version
+		SSLVersion:        sslVersion,
 		PID:               serverPID,
 		DB:                cc.dbname,
 	}
@@ -981,9 +997,15 @@ func setSystemTimeZoneVariable() {
 func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
+
+	printLog := false
+	if time.Since(s.printMDLLogTime) > 10*time.Second {
+		printLog = true
+		s.printMDLLogTime = time.Now()
+	}
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids)
+			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids, printLog)
 		}
 	}
 }
@@ -1011,38 +1033,4 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	for _, id := range connIDs {
 		s.Kill(id, false)
 	}
-}
-
-// GetMinStartTS implements SessionManager interface.
-func (s *Server) GetMinStartTS(lowerBound uint64) (ts uint64) {
-	// sys processes
-	if s.dom != nil {
-		for _, pi := range s.dom.SysProcTracker().GetSysProcessList() {
-			if thisTS := pi.GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
-				ts = thisTS
-			}
-		}
-	}
-	// user sessions
-	func() {
-		s.rwlock.RLock()
-		defer s.rwlock.RUnlock()
-		for _, client := range s.clients {
-			if thisTS := client.ctx.ShowProcess().GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
-				ts = thisTS
-			}
-		}
-	}()
-	// internal sessions
-	func() {
-		s.sessionMapMutex.Lock()
-		defer s.sessionMapMutex.Unlock()
-		analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
-		for se := range s.internalSessions {
-			if thisTS, processInfoID := session.GetStartTSFromSession(se); processInfoID != analyzeProcID && thisTS > lowerBound && (thisTS < ts || ts == 0) {
-				ts = thisTS
-			}
-		}
-	}()
-	return
 }

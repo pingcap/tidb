@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/extension"
+	_ "github.com/pingcap/tidb/extension/_import"
 	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -212,13 +213,10 @@ func main() {
 	terror.MustNil(err)
 
 	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
-		clusterID, err := config.GetAutoScalerClusterID()
-		terror.MustNil(err)
-
 		err = tiflashcompute.InitGlobalTopoFetcher(
 			config.GetGlobalConfig().TiFlashComputeAutoScalerType,
 			config.GetGlobalConfig().TiFlashComputeAutoScalerAddr,
-			clusterID,
+			config.GetGlobalConfig().AutoScalerClusterID,
 			config.GetGlobalConfig().IsTiFlashComputeFixedPool)
 		terror.MustNil(err)
 	}
@@ -261,6 +259,9 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL()
+	if config.GetGlobalConfig().Performance.ForceInitStats {
+		<-dom.StatsHandle().InitStatsDone
+	}
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()
@@ -685,9 +686,9 @@ func setGlobalVars() {
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	if cfg.Performance.TxnTotalSizeLimit == config.DefTxnTotalSizeLimit {
 		// practically deprecate the config, let the new session memory tracker take charge of it.
-		kv.TxnTotalSizeLimit = config.SuperLargeTxnSize
+		kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
 	} else {
-		kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+		kv.TxnTotalSizeLimit.Store(cfg.Performance.TxnTotalSizeLimit)
 	}
 	if cfg.Performance.TxnEntrySizeLimit > config.MaxTxnEntrySizeLimit {
 		log.Fatal("cannot set txn entry size limit larger than 120M")
@@ -711,7 +712,7 @@ func setGlobalVars() {
 
 	if len(cfg.TiDBEdition) > 0 {
 		versioninfo.TiDBEdition = cfg.TiDBEdition
-		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 5.7 compatible")
+		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 8.0 compatible")
 	}
 	if len(cfg.VersionComment) > 0 {
 		variable.SetSysVar(variable.VersionComment, cfg.VersionComment)
@@ -857,17 +858,15 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	terror.Log(errors.Trace(err))
 }
 
+// The amount of time we wait for the ongoing txt to finished.
+// We should better provider a dynamic way to set this value.
 var gracefulCloseConnectionsTimeout = 15 * time.Second
 
-func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, _ bool) {
 	dom.StopAutoAnalyze()
 
-	var drainClientWait time.Duration
-	if graceful {
-		drainClientWait = 1<<63 - 1
-	} else {
-		drainClientWait = gracefulCloseConnectionsTimeout
-	}
+	drainClientWait := gracefulCloseConnectionsTimeout
+
 	cancelClientWait := time.Second * 1
 	svr.DrainClients(drainClientWait, cancelClientWait)
 

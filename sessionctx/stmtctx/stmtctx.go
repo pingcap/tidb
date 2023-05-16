@@ -17,8 +17,11 @@ package stmtctx
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +43,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -154,10 +158,11 @@ type StatementContext struct {
 	InSelectStmt                  bool
 	InLoadDataStmt                bool
 	InExplainStmt                 bool
+	ExplainFormat                 string
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
-	IgnoreTruncate                bool
+	IgnoreTruncate                atomic2.Bool
 	IgnoreZeroInDate              bool
 	NoZeroDate                    bool
 	DupKeyAsWarning               bool
@@ -168,6 +173,7 @@ type StatementContext struct {
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
+	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
 	AllowInvalidDate              bool
@@ -313,10 +319,14 @@ type StatementContext struct {
 	EnableOptimizeTrace bool
 	// OptimizeTracer indicates the tracer for optimize
 	OptimizeTracer *tracing.OptimizeTracer
+
 	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
 	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
 	EnableOptimizerCETrace bool
 	OptimizerCETrace       []*tracing.CETraceRecord
+
+	EnableOptimizerDebugTrace bool
+	OptimizerDebugTrace       interface{}
 
 	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
 	WaitLockLeaseTime time.Duration
@@ -353,8 +363,9 @@ type StatementContext struct {
 	IsSQLAndPlanRegistered atomic2.Bool
 	// IsReadOnly uses to indicate whether the SQL is read-only.
 	IsReadOnly bool
-	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
-	StatsLoadStatus map[model.TableItemID]string
+	// usedStatsInfo records version of stats of each table used in the query.
+	// It's a map of table physical id -> *UsedStatsInfoForTable
+	usedStatsInfo map[int64]*UsedStatsInfoForTable
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
@@ -390,6 +401,10 @@ type StatementContext struct {
 	TableStats map[int64]interface{}
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
+	// Check if TiFlash read engine is removed due to strict sql mode.
+	TiFlashEngineRemovedDueToStrictSQLMode bool
+	// CanonicalHashCode try to get the canonical hash code from expression.
+	CanonicalHashCode bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -610,13 +625,35 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHint = hint
 }
 
+// PlanCacheType is the flag of plan cache
+type PlanCacheType int
+
+const (
+	// DefaultNoCache no cache
+	DefaultNoCache PlanCacheType = iota
+	// SessionPrepared session prepared plan cache
+	SessionPrepared
+	// SessionNonPrepared session non-prepared plan cache
+	SessionNonPrepared
+)
+
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	if !sc.UseCache {
 		return // avoid unnecessary warnings
 	}
 	sc.UseCache = false
-	sc.AppendWarning(reason)
+	switch sc.CacheType {
+	case DefaultNoCache:
+		sc.AppendWarning(errors.New("unknown cache type"))
+	case SessionPrepared:
+		sc.AppendWarning(errors.Errorf("skip prepared plan-cache: %s", reason.Error()))
+	case SessionNonPrepared:
+		if sc.InExplainStmt && sc.ExplainFormat == "plan_cache" {
+			// use "plan_cache" rather than types.ExplainFormatPlanCache to avoid import cycle
+			sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
+		}
+	}
 }
 
 // TableEntry presents table in db.
@@ -894,11 +931,12 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 			e.Code() != errno.ErrBadNumber &&
 			e.Code() != errno.ErrWrongValueForType &&
 			e.Code() != errno.ErrDatetimeFunctionOverflow &&
-			e.Code() != errno.WarnDataTruncated) {
+			e.Code() != errno.WarnDataTruncated &&
+			e.Code() != errno.ErrIncorrectDatetimeValue) {
 		return err
 	}
 
-	if sc.IgnoreTruncate {
+	if sc.IgnoreTruncate.Load() {
 		return nil
 	}
 	if sc.TruncateAsWarning {
@@ -1041,7 +1079,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	} else if sc.InSelectStmt {
 		flags |= model.FlagInSelectStmt
 	}
-	if sc.IgnoreTruncate {
+	if sc.IgnoreTruncate.Load() {
 		flags |= model.FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= model.FlagTruncateAsWarning
@@ -1141,7 +1179,7 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 
 // SetFlagsFromPBFlag set the flag of StatementContext from a `tipb.SelectRequest.Flags`.
 func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
-	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
+	sc.IgnoreTruncate.Store((flags & model.FlagIgnoreTruncate) > 0)
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
@@ -1165,7 +1203,7 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
 	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
 	if sc.UseCache {
-		sc.SetSkipPlanCache(errors.Errorf("skip plan-cache: in-list is too long"))
+		sc.SetSkipPlanCache(errors.Errorf("in-list is too long"))
 	}
 	if !sc.RangeFallback {
 		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
@@ -1176,6 +1214,19 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 // UseDynamicPartitionPrune indicates whether dynamic partition is used during the query
 func (sc *StatementContext) UseDynamicPartitionPrune() bool {
 	return sc.UseDynamicPruneMode
+}
+
+// DetachMemDiskTracker detaches the memory and disk tracker from the sessionTracker.
+func (sc *StatementContext) DetachMemDiskTracker() {
+	if sc == nil {
+		return
+	}
+	if sc.MemTracker != nil {
+		sc.MemTracker.Detach()
+	}
+	if sc.DiskTracker != nil {
+		sc.DiskTracker.Detach()
+	}
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.
@@ -1216,6 +1267,142 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
 	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
 	return fields
+}
+
+// GetUsedStatsInfo returns the map for recording the used stats during query.
+// If initIfNil is true, it will initialize it when this map is nil.
+func (sc *StatementContext) GetUsedStatsInfo(initIfNil bool) map[int64]*UsedStatsInfoForTable {
+	if sc.usedStatsInfo == nil && initIfNil {
+		sc.usedStatsInfo = make(map[int64]*UsedStatsInfoForTable)
+	}
+	return sc.usedStatsInfo
+}
+
+// RecordedStatsLoadStatusCnt returns the total number of recorded column/index stats status, which is not full loaded.
+func (sc *StatementContext) RecordedStatsLoadStatusCnt() (cnt int) {
+	allStatus := sc.GetUsedStatsInfo(false)
+	for _, status := range allStatus {
+		if status == nil {
+			continue
+		}
+		cnt += status.recordedColIdxCount()
+	}
+	return
+}
+
+// UsedStatsInfoForTable records stats that are used during query and their information.
+type UsedStatsInfoForTable struct {
+	Name                  string
+	TblInfo               *model.TableInfo
+	Version               uint64
+	RealtimeCount         int64
+	ModifyCount           int64
+	ColumnStatsLoadStatus map[int64]string
+	IndexStatsLoadStatus  map[int64]string
+}
+
+// FormatForExplain format the content in the format expected to be printed in the execution plan.
+// case 1: if stats version is 0, print stats:pseudo.
+// case 2: if stats version is not 0, and there are column/index stats that are not full loaded,
+// print stats:partial, then print status of 3 column/index status at most. For the rest, only
+// the count will be printed, in the format like (more: 1 onlyCmsEvicted, 2 onlyHistRemained).
+func (s *UsedStatsInfoForTable) FormatForExplain() string {
+	// statistics.PseudoVersion == 0
+	if s.Version == 0 {
+		return "stats:pseudo"
+	}
+	var b strings.Builder
+	if len(s.ColumnStatsLoadStatus)+len(s.IndexStatsLoadStatus) == 0 {
+		return ""
+	}
+	b.WriteString("stats:partial")
+	outputNumsLeft := 3
+	statusCnt := make(map[string]uint64, 1)
+	var strs []string
+	strs = append(strs, s.collectFromColOrIdxStatus(false, &outputNumsLeft, statusCnt)...)
+	strs = append(strs, s.collectFromColOrIdxStatus(true, &outputNumsLeft, statusCnt)...)
+	b.WriteString("[")
+	b.WriteString(strings.Join(strs, ", "))
+	if len(statusCnt) > 0 {
+		b.WriteString("...(more: ")
+		keys := maps.Keys(statusCnt)
+		slices.Sort(keys)
+		var cntStrs []string
+		for _, key := range keys {
+			cntStrs = append(cntStrs, strconv.FormatUint(statusCnt[key], 10)+" "+key)
+		}
+		b.WriteString(strings.Join(cntStrs, ", "))
+		b.WriteString(")")
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
+// WriteToSlowLog format the content in the format expected to be printed to the slow log, then write to w.
+// The format is table name partition name:version[realtime row count;modify count][index load status][column load status].
+func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
+	ver := "pseudo"
+	// statistics.PseudoVersion == 0
+	if s.Version != 0 {
+		ver = strconv.FormatUint(s.Version, 10)
+	}
+	fmt.Fprintf(w, "%s:%s[%d;%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
+	if ver == "pseudo" {
+		return
+	}
+	if len(s.ColumnStatsLoadStatus)+len(s.IndexStatsLoadStatus) > 0 {
+		fmt.Fprintf(w,
+			"[%s][%s]",
+			strings.Join(s.collectFromColOrIdxStatus(false, nil, nil), ","),
+			strings.Join(s.collectFromColOrIdxStatus(true, nil, nil), ","),
+		)
+	}
+}
+
+// collectFromColOrIdxStatus prints the status of column or index stats to a slice
+// of the string in the format of "col/idx name:status".
+// If outputNumsLeft is not nil, this function will output outputNumsLeft column/index
+// status at most, the rest will be counted in statusCnt, which is a map of status->count.
+func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(
+	forColumn bool,
+	outputNumsLeft *int,
+	statusCnt map[string]uint64,
+) []string {
+	var status map[int64]string
+	if forColumn {
+		status = s.ColumnStatsLoadStatus
+	} else {
+		status = s.IndexStatsLoadStatus
+	}
+	keys := maps.Keys(status)
+	slices.Sort(keys)
+	strs := make([]string, 0, len(status))
+	for _, id := range keys {
+		if outputNumsLeft == nil || *outputNumsLeft > 0 {
+			var name string
+			if s.TblInfo != nil {
+				if forColumn {
+					name = s.TblInfo.FindColumnNameByID(id)
+				} else {
+					name = s.TblInfo.FindIndexNameByID(id)
+				}
+			}
+			if len(name) == 0 {
+				name = "ID " + strconv.FormatInt(id, 10)
+			}
+			strs = append(strs, name+":"+status[id])
+			if outputNumsLeft != nil {
+				*outputNumsLeft--
+			}
+		} else if statusCnt != nil {
+			statusCnt[status[id]] = statusCnt[status[id]] + 1
+		}
+	}
+	return strs
+}
+
+func (s *UsedStatsInfoForTable) recordedColIdxCount() int {
+	return len(s.IndexStatsLoadStatus) + len(s.ColumnStatsLoadStatus)
 }
 
 // StatsLoadResult indicates result for StatsLoad

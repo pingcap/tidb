@@ -71,7 +71,7 @@ func postReportTelemetryData() {
 	postReportDDLUsage()
 	postReportIndexMergeUsage()
 	postStoreBatchUsage()
-	postReportAggressiveLockingUsageCounter()
+	postReportFairLockingUsageCounter()
 }
 
 // PostReportTelemetryDataForTest is for test.
