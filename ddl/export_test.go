@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -51,7 +52,8 @@ func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endK
 	}
 	taskCh := make(chan *reorgBackfillTask, 5)
 	resultCh := make(chan idxRecResult, 5)
-	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh)
+	sessPool := session.NewSessionPool(nil, store)
+	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, sessPool, nil)
 	pool.chunkSender = &resultChanForTest{ch: resultCh}
 	pool.adjustSize(1)
 	pool.tasksCh <- task

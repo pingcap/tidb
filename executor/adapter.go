@@ -455,7 +455,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceed) {
+		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceedWarnMsg) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)
@@ -1454,7 +1454,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		buf.WriteByte(']')
 		indexNames = buf.String()
 	}
-	flat := getFlatPlan(stmtCtx)
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -1467,7 +1466,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
-	statsInfos := plannercore.GetStatsInfoFromFlatPlan(flat)
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(stmtCtx)
@@ -1503,7 +1501,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeOptimize:      sessVars.DurationOptimization,
 		TimeWaitTS:        sessVars.DurationWaitTS,
 		IndexNames:        indexNames,
-		StatsInfos:        statsInfos,
 		CopTasks:          copTaskInfo,
 		ExecDetail:        execDetail,
 		MemMax:            memMax,
@@ -1525,7 +1522,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
-		StatsLoadStatus:   convertStatusIntoString(a.Ctx, stmtCtx.StatsLoadStatus),
+		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          collectWarningsForSlowLog(stmtCtx),
 	}
@@ -1945,43 +1942,6 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 	}
 	return sqlDigest, planDigest
 }
-func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) map[string]map[string]string {
-	if len(statsLoadStatus) < 1 {
-		return nil
-	}
-	is := domain.GetDomain(sctx).InfoSchema()
-	// tableName -> name -> status
-	r := make(map[string]map[string]string)
-	for item, status := range statsLoadStatus {
-		t, ok := is.TableByID(item.TableID)
-		if !ok {
-			t, _, _ = is.FindTableByPartitionID(item.TableID)
-		}
-		if t == nil {
-			logutil.BgLogger().Warn("record table item load status failed due to not finding table",
-				zap.Int64("tableID", item.TableID))
-			continue
-		}
-		tableName := t.Meta().Name.O
-		itemName := ""
-		if item.IsIndex {
-			itemName = t.Meta().FindIndexNameByID(item.ID)
-		} else {
-			itemName = t.Meta().FindColumnNameByID(item.ID)
-		}
-		if itemName == "" {
-			logutil.BgLogger().Warn("record table item load status failed due to not finding item",
-				zap.Int64("tableID", item.TableID),
-				zap.Int64("id", item.ID), zap.Bool("isIndex", item.IsIndex))
-			continue
-		}
-		if r[tableName] == nil {
-			r[tableName] = make(map[string]string)
-		}
-		r[tableName][itemName] = status
-	}
-	return r
-}
 
 // only allow select/delete/update/insert/execute stmt captured by continues capture
 func checkPlanReplayerContinuesCaptureValidStmt(stmtNode ast.StmtNode) bool {
@@ -2059,15 +2019,22 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		SessionBindings:     handle.GetAllBindRecord(),
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
+		DebugTrace:          stmtCtx.OptimizerDebugTrace,
 		Analyze:             false,
 		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,
 	}
 	dumpTask.EncodedPlan, _ = GetEncodedPlan(stmtCtx, false)
-	if _, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		nsql, _ := sctx.GetSessionVars().StmtCtx.SQLDigest()
-		dumpTask.InExecute = true
-		dumpTask.NormalizedSQL = nsql
+	if execStmtAst, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		planCacheStmt, err := plannercore.GetPreparedStmt(execStmtAst, sctx.GetSessionVars())
+		if err != nil {
+			logutil.BgLogger().Warn("[plan-replayer-capture] fail to find prepared ast for dumping plan replayer",
+				zap.String("sqlDigest", key.SQLDigest),
+				zap.String("planDigest", key.PlanDigest),
+				zap.Error(err))
+		} else {
+			dumpTask.ExecStmts = []ast.StmtNode{planCacheStmt.PreparedAst.Stmt}
+		}
 	}
 	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }

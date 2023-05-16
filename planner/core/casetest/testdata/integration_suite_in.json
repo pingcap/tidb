@@ -704,7 +704,14 @@
       "explain WITH CTE AS (select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
       "explain WITH CTE AS (select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
       "explain WITH CTE AS (select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
-      "explain WITH CTE AS (select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;"
+      "explain WITH CTE AS (select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+
+      // Use hint for partition table
+      "explain select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1",
+      "explain select /*+ no_order_index(th, a) */ a from th where a<1 order by a limit 1",
+      "explain select /*+ order_index(thp, primary) */ a from thp where a<1 order by a limit 1",
+      "explain select /*+ no_order_index(thp, primary) */ a from thp where a<1 order by a limit 1",
+      "explain select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1"
     ]
   },
   {
@@ -1318,6 +1325,14 @@
       "select b from t2 use index(idx) where b is null",
       "select b from t3 where a = 1 and b is not null",
       "select b from t3 where a = 1 and b is null"
+    ]
+  },
+  {
+    "name": "TestFixControl",
+    "cases": [
+      "set @@tidb_opt_fix_control = \"1000:'on', 10000:1\"",
+      "set @@tidb_opt_fix_control = \"100:'on', 100:1\"",
+      "set @@tidb_opt_fix_control = \"100, 100\""
     ]
   }
 ]

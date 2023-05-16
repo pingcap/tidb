@@ -42,7 +42,7 @@ func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHan
 	return nil, nil
 }
 
-func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
+func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	return nil, nil
 }
 
@@ -58,12 +58,16 @@ func (t *testScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return 
 
 func (t *testScheduler) Rollback(_ context.Context) error { return nil }
 
-func (t *testScheduler) SplitSubtask(subtask []byte) ([]proto.MinimalTask, error) {
+func (t *testScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto.MinimalTask, error) {
 	return []proto.MinimalTask{
 		testMiniTask{},
 		testMiniTask{},
 		testMiniTask{},
 	}, nil
+}
+
+func (t *testScheduler) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+	return meta, nil
 }
 
 type testSubtaskExecutor struct {
@@ -81,19 +85,19 @@ func TestFrameworkStartUp(t *testing.T) {
 
 	var v atomic.Int64
 	dispatcher.ClearTaskFlowHandle()
-	dispatcher.RegisterTaskFlowHandle("type1", &testFlowHandle{})
+	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &testFlowHandle{})
 	scheduler.ClearSchedulers()
-	scheduler.RegisterSchedulerConstructor("type1", func(_ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, func(_ []byte, _ int64) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
 	})
-	scheduler.RegisterSubtaskExectorConstructor("type1", func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor{v: &v}, nil
 	})
 
 	_ = testkit.CreateMockStore(t)
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	taskID, err := mgr.AddNewGlobalTask("key1", "type1", 8, nil)
+	taskID, err := mgr.AddNewGlobalTask("key1", proto.TaskTypeExample, 8, nil)
 	require.NoError(t, err)
 	start := time.Now()
 

@@ -339,7 +339,7 @@ type ForRangeColumnsPruning struct {
 	LessThan [][]*expression.Expression
 }
 
-func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
+func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser, colOffsets []int) (*ForRangeColumnsPruning, error) {
 	var res ForRangeColumnsPruning
 	res.LessThan = make([][]*expression.Expression, 0, len(defs))
 	for i := 0; i < len(defs); i++ {
@@ -354,6 +354,17 @@ func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDe
 			tmp, err := parseSimpleExprWithNames(p, ctx, defs[i].LessThan[j], schema, names)
 			if err != nil {
 				return nil, err
+			}
+			_, ok := tmp.(*expression.Constant)
+			if !ok {
+				return nil, dbterror.ErrPartitionConstDomain
+			}
+			// TODO: Enable this for all types!
+			// Currently it will trigger changes for collation differences
+			switch schema.Columns[colOffsets[j]].RetType.GetType() {
+			case mysql.TypeDatetime, mysql.TypeDate:
+				// Will also fold constant
+				tmp = expression.BuildCastFunction(ctx, tmp, schema.Columns[colOffsets[j]].RetType)
 			}
 			lessThanCols = append(lessThanCols, &tmp)
 		}
@@ -694,7 +705,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		ret.Expr = partExpr
 		ret.ForRangePruning = tmp
 	} else {
-		tmp, err := dataForRangeColumnsPruning(ctx, defs, schema, names, p)
+		tmp, err := dataForRangeColumnsPruning(ctx, defs, schema, names, p, offset)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1426,6 +1437,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	tblInfo.Partition.Definitions = tblInfo.Partition.AddingDefinitions
 	tblInfo.Partition.AddingDefinitions = nil
 	tblInfo.Partition.DroppingDefinitions = nil
+	tblInfo.Partition.Num = uint64(len(tblInfo.Partition.Definitions))
 	var tc TableCommon
 	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil))
 

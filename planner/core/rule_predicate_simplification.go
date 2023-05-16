@@ -16,9 +16,11 @@ package core
 
 import (
 	"context"
+	"errors"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/sessionctx"
 	"golang.org/x/exp/slices"
 )
 
@@ -86,12 +88,16 @@ func updateInPredicate(inPredicate expression.Expression, notEQPredicate express
 	}
 	v := inPredicate.(*expression.ScalarFunction)
 	notEQValue := notEQPredicate.(*expression.ScalarFunction).GetArgs()[1].(*expression.Constant)
+	// do not simplify != NULL since it is always false.
+	if notEQValue.Value.IsNull() {
+		return inPredicate, true
+	}
 	newValues := make([]expression.Expression, 0, len(v.GetArgs()))
 	var lastValue *expression.Constant
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
-		redudantValue := valueOK && value.Equal(v.GetCtx(), notEQValue)
-		if !redudantValue {
+		redundantValue := valueOK && value.Equal(v.GetCtx(), notEQValue)
+		if !redundantValue {
 			newValues = append(newValues, element)
 		}
 		if valueOK {
@@ -110,7 +116,7 @@ func updateInPredicate(inPredicate expression.Expression, notEQPredicate express
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(predicates []expression.Expression) []expression.Expression {
+func applyPredicateSimplification(sctx sessionctx.Context, predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
 		return predicates
 	}
@@ -125,11 +131,13 @@ func applyPredicateSimplification(predicates []expression.Expression) []expressi
 			if iCol == jCol {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(jthPredicate, ithPredicate)
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
 					if !specialCase {
 						removeValues = append(removeValues, i)
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
 					predicates[i], specialCase = updateInPredicate(ithPredicate, jthPredicate)
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
 					if !specialCase {
 						removeValues = append(removeValues, j)
 					}
@@ -148,8 +156,8 @@ func applyPredicateSimplification(predicates []expression.Expression) []expressi
 
 func (s *DataSource) predicateSimplification(opt *logicalOptimizeOp) LogicalPlan {
 	p := s.self.(*DataSource)
-	p.pushedDownConds = applyPredicateSimplification(p.pushedDownConds)
-	p.allConds = applyPredicateSimplification(p.allConds)
+	p.pushedDownConds = applyPredicateSimplification(p.ctx, p.pushedDownConds)
+	p.allConds = applyPredicateSimplification(p.ctx, p.allConds)
 	return p
 }
 

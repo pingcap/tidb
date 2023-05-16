@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
 	planutil "github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -179,7 +181,25 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // Currently the time complexity is o(n^2).
-func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Expression, filledPaths []*planutil.AccessPath) (float64, []*StatsNode, error) {
+func (coll *HistColl) Selectivity(
+	ctx sessionctx.Context,
+	exprs []expression.Expression,
+	filledPaths []*planutil.AccessPath,
+) (
+	result float64,
+	retStatsNodes []*StatsNode,
+	err error,
+) {
+	var exprStrs []string
+	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ctx)
+		exprStrs = expression.ExprsToStringsForDisplay(exprs)
+		debugtrace.RecordAnyValuesWithNames(ctx, "Input Expressions", exprStrs)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(ctx, "Result", result)
+			debugtrace.LeaveContextCommon(ctx)
+		}()
+	}
 	// If table's count is zero or conditions are empty, we should return 100% selectivity.
 	if coll.RealtimeCount == 0 || len(exprs) == 0 {
 		return 1, nil, nil
@@ -199,39 +219,49 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 
 	var nodes []*StatsNode
 
+	var remainedExprStrs []string
 	remainedExprs := make([]expression.Expression, 0, len(exprs))
 
 	// Deal with the correlated column.
-	for _, expr := range exprs {
+	for i, expr := range exprs {
 		c := isColEqCorCol(expr)
 		if c == nil {
 			remainedExprs = append(remainedExprs, expr)
+			if sc.EnableOptimizerDebugTrace {
+				remainedExprStrs = append(remainedExprStrs, exprStrs[i])
+			}
 			continue
 		}
 
 		colHist := coll.Columns[c.UniqueID]
+		var sel float64
 		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
-			ret *= 1.0 / pseudoEqualRate
-			continue
-		}
-		if colHist.Histogram.NDV > 0 {
-			ret *= 1 / float64(colHist.Histogram.NDV)
+			sel = 1.0 / pseudoEqualRate
+		} else if colHist.Histogram.NDV > 0 {
+			sel = 1 / float64(colHist.Histogram.NDV)
 		} else {
-			ret *= 1.0 / pseudoEqualRate
+			sel = 1.0 / pseudoEqualRate
 		}
+		if sc.EnableOptimizerDebugTrace {
+			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.String(), "Selectivity", sel)
+		}
+		ret *= sel
 	}
 
 	extractedCols := make([]*expression.Column, 0, len(coll.Columns))
 	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
-	for id, colInfo := range coll.Columns {
-		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
+	colIDs := maps.Keys(coll.Columns)
+	slices.Sort(colIDs)
+	for _, id := range colIDs {
+		colStats := coll.Columns[id]
+		col := expression.ColInfo2Col(extractedCols, colStats.Info)
 		if col != nil {
 			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
-			if colInfo.IsHandle {
+			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
 				var cnt float64
 				cnt, err = coll.GetRowCountByIntColumnRanges(ctx, id, ranges)
@@ -256,19 +286,22 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		}
 		id2Paths[path.Index.ID] = path
 	}
-	for id, idxInfo := range coll.Indices {
-		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxInfo.ID])
+	idxIDs := maps.Keys(coll.Indices)
+	slices.Sort(idxIDs)
+	for _, id := range idxIDs {
+		idxStats := coll.Indices[id]
+		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
-			for i := 0; i < len(idxCols) && i < len(idxInfo.Info.Columns); i++ {
-				lengths = append(lengths, idxInfo.Info.Columns[i].Length)
+			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
+				lengths = append(lengths, idxStats.Info.Columns[i].Length)
 			}
 			// If the found columns are more than the columns held by the index. We are appending the int pk to the tail of it.
 			// When storing index data to key-value store, we use (idx_col1, ...., idx_coln, handle_col) as its key.
-			if len(idxCols) > len(idxInfo.Info.Columns) {
+			if len(idxCols) > len(idxStats.Info.Columns) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
-			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxInfo.ID], idxCols...)
+			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -282,7 +315,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				ID:          id,
 				mask:        maskCovered,
 				Ranges:      ranges,
-				numCols:     len(idxInfo.Info.Columns),
+				numCols:     len(idxStats.Info.Columns),
 				Selectivity: selectivity,
 				partCover:   partCover,
 			})
@@ -313,6 +346,18 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			}
 			expr := expression.ComposeCNFCondition(ctx, curExpr...)
 			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
+		} else if sc.EnableOptimizerDebugTrace {
+			var strs []string
+			for i := range remainedExprs {
+				if set.mask&(1<<uint64(i)) > 0 {
+					strs = append(strs, remainedExprStrs[i])
+				}
+			}
+			debugtrace.RecordAnyValuesWithNames(ctx,
+				"Expressions", strs,
+				"Selectivity", set.Selectivity,
+				"partial cover", set.partCover,
+			)
 		}
 	}
 
@@ -420,10 +465,12 @@ OUTER:
 			}
 
 			selectivity = selectivity + curSelectivity - selectivity*curSelectivity
-			if sc.EnableOptimizerCETrace {
-				// Tracing for the expression estimation results of this DNF.
-				CETraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.RealtimeCount))
-			}
+		}
+		if sc.EnableOptimizerCETrace {
+			// Tracing for the expression estimation results of this DNF.
+			CETraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.RealtimeCount))
+		} else if sc.EnableOptimizerDebugTrace {
+			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", selectivity)
 		}
 
 		if selectivity != 0 {
@@ -452,6 +499,9 @@ OUTER:
 			ret *= sel
 			mask &^= 1 << uint64(i)
 			delete(notCoveredStrMatch, i)
+			if sc.EnableOptimizerDebugTrace {
+				debugtrace.RecordAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", sel)
+			}
 		}
 		for i, scalarCond := range notCoveredNegateStrMatch {
 			ok, sel, err := coll.GetSelectivityByFilter(ctx, []expression.Expression{scalarCond})
@@ -464,6 +514,9 @@ OUTER:
 			ret *= sel
 			mask &^= 1 << uint64(i)
 			delete(notCoveredNegateStrMatch, i)
+			if sc.EnableOptimizerDebugTrace {
+				debugtrace.RecordAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", sel)
+			}
 		}
 	}
 
@@ -483,6 +536,9 @@ OUTER:
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity())
 		}
 		ret *= minSelectivity
+		if sc.EnableOptimizerDebugTrace {
+			debugtrace.RecordAnyValuesWithNames(ctx, "Default Selectivity", minSelectivity)
+		}
 	}
 
 	if sc.EnableOptimizerCETrace {

@@ -20,40 +20,27 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-type engineManager struct {
-	generic.SyncMap[int64, *EngineInfo]
-	MemRoot  MemRoot
-	DiskRoot DiskRoot
-}
-
-func (m *engineManager) init(memRoot MemRoot, diskRoot DiskRoot) {
-	m.SyncMap = generic.NewSyncMap[int64, *EngineInfo](10)
-	m.MemRoot = memRoot
-	m.DiskRoot = diskRoot
-}
-
-// Register create a new EngineInfo and register it to the engineManager.
-func (m *engineManager) Register(bc *BackendContext, jobID, indexID int64, schemaName, tableName string) (*EngineInfo, error) {
+// Register create a new engineInfo and register it to the backend context.
+func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName string) (Engine, error) {
 	// Calculate lightning concurrency degree and set memory usage
 	// and pre-allocate memory usage for worker.
-	m.MemRoot.RefreshConsumption()
-	ok := m.MemRoot.CheckConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
+	bc.MemRoot.RefreshConsumption()
+	ok := bc.MemRoot.CheckConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
 	if !ok {
-		return nil, genEngineAllocMemFailedErr(m.MemRoot, bc.jobID, indexID)
+		return nil, genEngineAllocMemFailedErr(bc.MemRoot, bc.jobID, indexID)
 	}
 
 	var info string
-	en, exist := m.Load(indexID)
+	en, exist := bc.Load(indexID)
 	if !exist {
 		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-		ok := m.MemRoot.CheckConsume(StructSizeEngineInfo + engineCacheSize)
+		ok := bc.MemRoot.CheckConsume(StructSizeEngineInfo + engineCacheSize)
 		if !ok {
-			return nil, genEngineAllocMemFailedErr(m.MemRoot, bc.jobID, indexID)
+			return nil, genEngineAllocMemFailedErr(bc.MemRoot, bc.jobID, indexID)
 		}
 
 		mgr := backend.MakeEngineManager(bc.backend)
@@ -65,10 +52,10 @@ func (m *engineManager) Register(bc *BackendContext, jobID, indexID int64, schem
 			return nil, errors.Trace(err)
 		}
 		id := openedEn.GetEngineUUID()
-		en = NewEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, m.MemRoot, m.DiskRoot)
-		m.Store(indexID, en)
-		m.MemRoot.Consume(StructSizeEngineInfo)
-		m.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
+		en = newEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, bc.MemRoot)
+		bc.Store(indexID, en)
+		bc.MemRoot.Consume(StructSizeEngineInfo)
+		bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
 		info = LitInfoOpenEngine
 	} else {
 		if en.writerCount+1 > bc.cfg.TikvImporter.RangeConcurrency {
@@ -80,47 +67,47 @@ func (m *engineManager) Register(bc *BackendContext, jobID, indexID int64, schem
 		en.writerCount++
 		info = LitInfoAddWriter
 	}
-	m.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
+	bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
 	logutil.BgLogger().Info(info, zap.Int64("job ID", jobID),
 		zap.Int64("index ID", indexID),
-		zap.Int64("current memory usage", m.MemRoot.CurrentUsage()),
-		zap.Int64("memory limitation", m.MemRoot.MaxMemoryQuota()),
+		zap.Int64("current memory usage", bc.MemRoot.CurrentUsage()),
+		zap.Int64("memory limitation", bc.MemRoot.MaxMemoryQuota()),
 		zap.Int("current writer count", en.writerCount))
 	return en, nil
 }
 
-// Unregister delete the EngineInfo from the engineManager.
-func (m *engineManager) Unregister(jobID, indexID int64) {
-	ei, exist := m.Load(indexID)
+// Unregister delete the engineInfo from the engineManager.
+func (bc *litBackendCtx) Unregister(jobID, indexID int64) {
+	ei, exist := bc.Load(indexID)
 	if !exist {
 		return
 	}
 
 	ei.Clean()
-	m.Delete(indexID)
-	m.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
-	m.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
-	m.MemRoot.Release(StructSizeEngineInfo)
+	bc.Delete(indexID)
+	bc.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
+	bc.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
+	bc.MemRoot.Release(StructSizeEngineInfo)
 }
 
-// ResetWorkers reset the writer count of the EngineInfo because
+// ResetWorkers reset the writer count of the engineInfo because
 // the goroutines of backfill workers have been terminated.
-func (m *engineManager) ResetWorkers(bc *BackendContext, jobID, indexID int64) {
-	ei, exist := m.Load(indexID)
+func (bc *litBackendCtx) ResetWorkers(jobID, indexID int64) {
+	ei, exist := bc.Load(indexID)
 	if !exist {
 		return
 	}
-	m.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
-	m.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
+	bc.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
+	bc.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
 	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-	m.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
+	bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
 	ei.writerCount = 0
 }
 
-// UnregisterAll delete all EngineInfo from the engineManager.
-func (m *engineManager) UnregisterAll(jobID int64) {
-	for _, idxID := range m.Keys() {
-		m.Unregister(jobID, idxID)
+// unregisterAll delete all engineInfo from the engineManager.
+func (bc *litBackendCtx) unregisterAll(jobID int64) {
+	for _, idxID := range bc.Keys() {
+		bc.Unregister(jobID, idxID)
 	}
 }
 

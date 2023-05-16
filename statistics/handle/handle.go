@@ -128,6 +128,8 @@ type Handle struct {
 	serverIDGetter func() uint64
 	// tableLocked used to store locked tables
 	tableLocked []int64
+
+	InitStatsDone chan struct{}
 }
 
 // GetTableLockedAndClearForTest for unit test only
@@ -483,6 +485,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 		pool:             pool,
 		sysProcTracker:   tracker,
 		serverIDGetter:   serverIDGetter,
+		InitStatsDone:    make(chan struct{}),
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
@@ -750,7 +753,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			allPartitionStats[partitionID] = partitionStats
 		}
 		for i := 0; i < globalStats.Num; i++ {
-			_, hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			if !analyzed {
 				var errMsg string
 				if isIndex == 0 {
@@ -1095,8 +1098,6 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 		IsHandle:   c.IsHandle,
 		StatsVer:   statsVer,
 	}
-	// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
-	colHist.Count = int64(colHist.TotalRowCount())
 	if colHist.StatsAvailable() {
 		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 	}

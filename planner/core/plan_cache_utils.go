@@ -45,6 +45,11 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+const (
+	// MaxCacheableLimitCount is the max limit count for cacheable query.
+	MaxCacheableLimitCount = 10000
+)
+
 var (
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
@@ -162,6 +167,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 
+	features := new(PlanCacheQueryFeatures)
+	paramStmt.Accept(features)
+
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              vars.CurrentDB,
@@ -175,6 +183,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SQLDigest4PC:        digest4PC,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		QueryFeatures:       features,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -186,6 +195,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 // Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
 // At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
+// TODO: maintain a sync.pool for this structure.
 type planCacheKey struct {
 	database      string
 	connID        uint64
@@ -214,14 +224,10 @@ type planCacheKey struct {
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		var (
-			dbBytes    = hack.Slice(key.database)
-			bufferSize = len(dbBytes) + 8*6 + 3*8
-		)
 		if key.hash == nil {
-			key.hash = make([]byte, 0, bufferSize)
+			key.hash = make([]byte, 0, len(key.stmtText)*2)
 		}
-		key.hash = append(key.hash, dbBytes...)
+		key.hash = append(key.hash, hack.Slice(key.database)...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
@@ -396,6 +402,31 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 	}
 }
 
+// PlanCacheQueryFeatures records all query features which may affect plan selection.
+type PlanCacheQueryFeatures struct {
+	limits      []*ast.Limit
+	hasSubquery bool
+	tables      []*ast.TableName // to capture table stats changes
+}
+
+// Enter implements Visitor interface.
+func (f *PlanCacheQueryFeatures) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.Limit:
+		f.limits = append(f.limits, node)
+	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
+		f.hasSubquery = true
+	case *ast.TableName:
+		f.tables = append(f.tables, node)
+	}
+	return in, false
+}
+
+// Leave implements Visitor interface.
+func (f *PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
@@ -409,6 +440,7 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
+	QueryFeatures     *PlanCacheQueryFeatures
 
 	NormalizedSQL       string
 	NormalizedPlan      string
@@ -443,63 +475,6 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 	return nil, ErrStmtNotFound
 }
 
-type matchOptsExtractor struct {
-	is                infoschema.InfoSchema
-	sctx              sessionctx.Context
-	cacheable         bool // For safety considerations, check if limit count less than 10000
-	offsetAndCount    []uint64
-	unCacheableReason string
-	paramTypeErr      error
-	hasSubQuery       bool
-	statsVersionHash  uint64
-}
-
-// Enter implements Visitor interface.
-func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch node := in.(type) {
-	case *ast.Limit:
-		if node.Count != nil {
-			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-				typeExpected, val := CheckParamTypeInt64orUint64(count)
-				if typeExpected {
-					if val > 10000 {
-						checker.cacheable = false
-						checker.unCacheableReason = "limit count more than 10000"
-						return in, !checker.cacheable
-					}
-					checker.offsetAndCount = append(checker.offsetAndCount, val)
-				} else {
-					checker.cacheable = false
-					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
-					return in, !checker.cacheable
-				}
-			}
-		}
-		if node.Offset != nil {
-			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-				typeExpected, val := CheckParamTypeInt64orUint64(offset)
-				if typeExpected {
-					checker.offsetAndCount = append(checker.offsetAndCount, val)
-				} else {
-					checker.cacheable = false
-					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
-					return in, !checker.cacheable
-				}
-			}
-		}
-	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
-		checker.hasSubQuery = true
-	case *ast.TableName:
-		t, err := checker.is.TableByName(node.Schema, node.Name)
-		if err != nil { // CTE in this case
-			return in, false
-		}
-		tStats := getStatsTable(checker.sctx, t.Meta(), t.Meta().ID)
-		checker.statsVersionHash += tableStatsVersionForPlanCache(tStats) // use '+' as the hash function for simplicity
-	}
-	return in, false
-}
-
 func tableStatsVersionForPlanCache(tStats *statistics.Table) (tableStatsVer uint64) {
 	if tStats == nil {
 		return 0
@@ -518,49 +493,57 @@ func tableStatsVersionForPlanCache(tStats *statistics.Table) (tableStatsVer uint
 	return tableStatsVer
 }
 
-// Leave implements Visitor interface.
-func (checker *matchOptsExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, checker.cacheable
-}
+// GetMatchOpts get options to fetch plan or generate new plan
+// we can add more options here
+func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
+	var statsVerHash uint64
+	var limitOffsetAndCount []uint64
 
-// ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func extractMatchOptsFromAST(sctx sessionctx.Context, is infoschema.InfoSchema, node ast.Node) (*utilpc.PlanCacheMatchOpts, error) {
-	if node == nil {
-		return nil, errors.New("AST node is nil")
-	}
-	checker := matchOptsExtractor{
-		sctx:           sctx,
-		is:             is,
-		cacheable:      true,
-		offsetAndCount: []uint64{},
-		hasSubQuery:    false,
-	}
-	node.Accept(&checker)
-	if checker.paramTypeErr != nil {
-		return nil, checker.paramTypeErr
-	}
-	if sctx != nil && !checker.cacheable {
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New(checker.unCacheableReason))
+	if stmt.QueryFeatures != nil {
+		for _, node := range stmt.QueryFeatures.tables {
+			t, err := is.TableByName(node.Schema, node.Name)
+			if err != nil { // CTE in this case
+				continue
+			}
+			tStats := getStatsTable(sctx, t.Meta(), t.Meta().ID)
+			statsVerHash += tableStatsVersionForPlanCache(tStats) // use '+' as the hash function for simplicity
+		}
+
+		for _, node := range stmt.QueryFeatures.limits {
+			if node.Count != nil {
+				if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+					typeExpected, val := CheckParamTypeInt64orUint64(count)
+					if !typeExpected {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
+						break
+					}
+					if val > MaxCacheableLimitCount {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("limit count is too large"))
+						break
+					}
+					limitOffsetAndCount = append(limitOffsetAndCount, val)
+				}
+			}
+			if node.Offset != nil {
+				if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+					typeExpected, val := CheckParamTypeInt64orUint64(offset)
+					if !typeExpected {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
+						break
+					}
+					limitOffsetAndCount = append(limitOffsetAndCount, val)
+				}
+			}
+		}
 	}
 
 	return &utilpc.PlanCacheMatchOpts{
-		LimitOffsetAndCount: checker.offsetAndCount,
-		HasSubQuery:         checker.hasSubQuery,
-		StatsVersionHash:    checker.statsVersionHash,
+		LimitOffsetAndCount: limitOffsetAndCount,
+		HasSubQuery:         stmt.QueryFeatures.hasSubquery,
+		StatsVersionHash:    statsVerHash,
+		ParamTypes:          parseParamTypes(sctx, params),
+		ForeignKeyChecks:    sctx.GetSessionVars().ForeignKeyChecks,
 	}, nil
-}
-
-// GetMatchOpts get options to fetch plan or generate new plan
-// we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
-	// get limit params and has sub query indicator
-	matchOpts, err := extractMatchOptsFromAST(sctx, is, node)
-	if err != nil {
-		return nil, err
-	}
-	// get param types
-	matchOpts.ParamTypes = parseParamTypes(sctx, params)
-	return matchOpts, nil
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType

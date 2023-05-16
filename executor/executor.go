@@ -335,29 +335,35 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	return err
 }
 
-// CancelDDLJobsExec represents a cancel DDL jobs executor.
-type CancelDDLJobsExec struct {
+// CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
+// DDL jobs. These command currently by admin have the very similar struct and
+// operations, it should be a better idea to have them in the same struct.
+type CommandDDLJobsExec struct {
 	baseExecutor
 
 	cursor int
 	jobIDs []int64
 	errs   []error
+
+	execute func(se sessionctx.Context, ids []int64) (errs []error, err error)
 }
 
-// Open implements the Executor Open interface.
-func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
+// Open implements the Executor for all Cancel/Pause/Resume command on DDL jobs
+// just with different processes. And, it should not be called directly by the
+// Executor.
+func (e *CommandDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
 	newSess, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	e.errs, err = ddl.CancelJobs(newSess, e.jobIDs)
+	e.errs, err = e.execute(newSess, e.jobIDs)
 	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
 	return err
 }
 
-// Next implements the Executor Next interface.
-func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
+// Next implements the Executor Next interface for Cancel/Pause/Resume
+func (e *CommandDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
 		return nil
@@ -373,6 +379,21 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.cursor += numCurBatch
 	return nil
+}
+
+// CancelDDLJobsExec represents a cancel DDL jobs executor.
+type CancelDDLJobsExec struct {
+	*CommandDDLJobsExec
+}
+
+// PauseDDLJobsExec indicates an Executor for Pause a DDL Job.
+type PauseDDLJobsExec struct {
+	*CommandDDLJobsExec
+}
+
+// ResumeDDLJobsExec indicates an Executor for Resume a DDL Job.
+type ResumeDDLJobsExec struct {
+	*CommandDDLJobsExec
 }
 
 // ShowNextRowIDExec represents a show the next row ID executor.
@@ -640,7 +661,7 @@ func ts2Time(timestamp uint64, loc *time.Location) types.Time {
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
 // The jobs id that is given by 'admin show ddl job queries' statement,
-// only be searched in the latest 10 history jobs
+// only be searched in the latest 10 history jobs.
 type ShowDDLJobQueriesExec struct {
 	baseExecutor
 
@@ -2030,7 +2051,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
-	sc.StatsLoadStatus = make(map[model.TableItemID]string)
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
 	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions

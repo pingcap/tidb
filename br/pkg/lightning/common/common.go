@@ -49,7 +49,8 @@ var DefaultImportVariablesTiDB = map[string]string{
 }
 
 // AllocGlobalAutoID allocs N consecutive autoIDs from TiDB.
-func AllocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
+func AllocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int64,
+	tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
 	alloc, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
 	if err != nil {
 		return 0, 0, err
@@ -58,7 +59,8 @@ func AllocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int6
 }
 
 // RebaseGlobalAutoID rebase the autoID base to newBase.
-func RebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) error {
+func RebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, dbID int64,
+	tblInfo *model.TableInfo) error {
 	alloc, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
 	if err != nil {
 		return err
@@ -87,15 +89,19 @@ func getGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
 
 	// Current TiDB has some limitations for auto ID.
-	// 1. Auto increment ID and auto row ID are using the same RowID allocator. See https://github.com/pingcap/tidb/issues/982.
-	// 2. Auto random column must be a clustered primary key. That is to say, there is no implicit row ID for tables with auto random column.
+	// 1. Auto increment ID and auto row ID are using the same RowID allocator.
+	//    See https://github.com/pingcap/tidb/issues/982.
+	// 2. Auto random column must be a clustered primary key. That is to say,
+	//    there is no implicit row ID for tables with auto random column.
 	// 3. There is at most one auto column in a table.
 	// Therefore, we assume there is only one auto column in a table and use RowID allocator if possible.
 	switch {
 	case hasRowID || hasAutoIncID:
-		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, noCache, tblVer), nil
+		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
+			autoid.RowIDAllocType, noCache, tblVer), nil
 	case hasAutoRandID:
-		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, noCache, tblVer), nil
+		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(),
+			autoid.AutoRandomType, noCache, tblVer), nil
 	default:
 		return nil, errors.Errorf("internal error: table %s has no auto ID", tblInfo.Name)
 	}

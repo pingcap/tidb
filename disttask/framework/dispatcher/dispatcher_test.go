@@ -69,7 +69,8 @@ func TestGetInstance(t *testing.T) {
 	// test no server
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	instanceID, err := dispatcher.GetEligibleInstance(ctx)
+	serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
+	instanceID, _ := dispatcher.GetEligibleInstance(serverNodes, 0)
 	require.Lenf(t, instanceID, 0, "instanceID:%d", instanceID)
 	require.EqualError(t, err, "not found instance")
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, 1)
@@ -89,7 +90,9 @@ func TestGetInstance(t *testing.T) {
 		},
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	instanceID, err = dispatcher.GetEligibleInstance(ctx)
+	serverNodes, err = dispatcher.GenerateSchedulerNodes(ctx)
+	require.NoError(t, err)
+	instanceID, err = dispatcher.GetEligibleInstance(serverNodes, 0)
 	require.NoError(t, err)
 	if instanceID != uuids[0] && instanceID != uuids[1] {
 		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
@@ -106,7 +109,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID:      gTaskID,
 		SchedulerID: uuids[1],
 	}
-	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
@@ -118,7 +121,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID:      gTaskID,
 		SchedulerID: uuids[0],
 	}
-	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
@@ -132,7 +135,7 @@ const (
 	subtaskCnt = 3
 )
 
-func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
+func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)")
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
@@ -221,7 +224,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateSucceed)
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, "")
 			require.NoError(t, err)
 		}
 		checkGetGTaskState(proto.TaskStateSucceed)
@@ -230,22 +233,30 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		return
 	}
 
-	// Test each task has a subtask failed.
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
-	}()
-	// Mock a subtask fails.
-	for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-		err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateFailed)
-		require.NoError(t, err)
+	if isCancel {
+		for i := 1; i <= taskCnt; i++ {
+			err = mgr.CancelGlobalTask(int64(i))
+			require.NoError(t, err)
+		}
+	} else {
+		// Test each task has a subtask failed.
+		failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
+		}()
+		// Mock a subtask fails.
+		for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, "")
+			require.NoError(t, err)
+		}
 	}
+
 	checkGetGTaskState(proto.TaskStateReverting)
 	require.Len(t, tasks, taskCnt)
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskState(int64(i), proto.TaskStateReverted)
+		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, "")
 		require.NoError(t, err)
 	}
 	checkGetGTaskState(proto.TaskStateReverted)
@@ -254,19 +265,27 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 }
 
 func TestSimpleNormalFlow(t *testing.T) {
-	checkDispatch(t, 1, true)
+	checkDispatch(t, 1, true, false)
 }
 
 func TestSimpleErrFlow(t *testing.T) {
-	checkDispatch(t, 1, false)
+	checkDispatch(t, 1, false, false)
+}
+
+func TestSimpleCancelFlow(t *testing.T) {
+	checkDispatch(t, 1, false, true)
 }
 
 func TestParallelNormalFlow(t *testing.T) {
-	checkDispatch(t, 3, true)
+	checkDispatch(t, 3, true, false)
 }
 
 func TestParallelErrFlow(t *testing.T) {
-	checkDispatch(t, 3, false)
+	checkDispatch(t, 3, false, false)
+}
+
+func TestParallelCancelFlow(t *testing.T) {
+	checkDispatch(t, 3, false, true)
 }
 
 const taskTypeExample = "task_example"
@@ -294,7 +313,7 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 	return metas, nil
 }
 
-func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
+func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
 }

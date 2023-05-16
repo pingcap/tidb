@@ -32,9 +32,7 @@ import (
 
 func TestBackfillFlowHandle(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	handler := ddl.NewLitBackfillFlowHandle(func() ddl.DDL {
-		return dom.DDL()
-	})
+	handler := ddl.NewLitBackfillFlowHandle(dom.DDL())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -45,7 +43,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
-	gTask := createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitBackfillType)
+	gTask := createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.BackfillTaskType)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -54,7 +52,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 	require.Equal(t, proto.StepOne, gTask.Step)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
 	for i, par := range tblInfo.Partition.Definitions {
-		var subTask ddl.LitBackfillSubTaskMeta
+		var subTask ddl.BackfillSubTaskMeta
 		require.NoError(t, json.Unmarshal(metas[i], &subTask))
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
 	}
@@ -66,29 +64,17 @@ func TestBackfillFlowHandle(t *testing.T) {
 	require.Equal(t, 0, len(metas))
 
 	// test partition table ProcessErrFlow
-	errMeta, err := handler.ProcessErrFlow(context.Background(), nil, gTask, "mockErr")
+	errMeta, err := handler.ProcessErrFlow(context.Background(), nil, gTask, [][]byte{[]byte("mockErr")})
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
-	// test merging index
-	gTask = createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitMergeType)
-	metas, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
-	require.NoError(t, err)
-	require.Equal(t, proto.StepOne, gTask.Step)
-	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
-	for i, par := range tblInfo.Partition.Definitions {
-		var subTask ddl.LitBackfillSubTaskMeta
-		require.NoError(t, json.Unmarshal(metas[i], &subTask))
-		require.Equal(t, par.ID, subTask.PhysicalTableID)
-	}
-
-	errMeta, err = handler.ProcessErrFlow(context.Background(), nil, gTask, "mockErr")
+	errMeta, err = handler.ProcessErrFlow(context.Background(), nil, gTask, [][]byte{[]byte("mockErr")})
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
 	// test normal table not supported yet
 	tk.MustExec("create table t1(id int primary key, v int)")
-	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.FlowHandleLitBackfillType)
+	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.BackfillTaskType)
 	_, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
 	require.EqualError(t, err, "Non-partition table not supported yet")
 }
@@ -102,7 +88,7 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	require.NoError(t, err)
 
-	taskMeta := &ddl.LitBackfillGlobalTaskMeta{
+	taskMeta := &ddl.BackfillGlobalMeta{
 		Job: model.Job{
 			ID:       time.Now().UnixNano(),
 			SchemaID: db.ID,
