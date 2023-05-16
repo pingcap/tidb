@@ -132,7 +132,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error 
 	return nil
 }
 
-func acquireLock(se *concurrency.Session, ctx context.Context, key string) error {
+func acquireLock(ctx context.Context, se *concurrency.Session, key string) error {
 	mu := concurrency.NewMutex(se, key)
 	err := mu.Lock(ctx)
 	if err != nil {
@@ -141,7 +141,7 @@ func acquireLock(se *concurrency.Session, ctx context.Context, key string) error
 	return nil
 }
 
-func releaseLock(se *concurrency.Session, ctx context.Context, key string) error {
+func releaseLock(ctx context.Context, se *concurrency.Session, key string) error {
 	mu := concurrency.NewMutex(se, key)
 	err := mu.Unlock(ctx)
 	if err != nil {
@@ -153,13 +153,13 @@ func releaseLock(se *concurrency.Session, ctx context.Context, key string) error
 func (b *backfillSchedulerHandle) doImportWithDistributedLock(ctx context.Context) error {
 	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", b.job.ID, b.index.ID)
 	se, _ := concurrency.NewSession(b.d.etcdCli)
-	err := acquireLock(se, ctx, distLockKey)
+	err := acquireLock(ctx, se, distLockKey)
 	if err != nil {
 		return err
 	}
 	logutil.BgLogger().Info("[ddl] acquire lock success")
 	defer func() {
-		err = releaseLock(se, ctx, distLockKey)
+		err = releaseLock(ctx, se, distLockKey)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] release lock error", zap.Error(err))
 		}
