@@ -16,6 +16,7 @@ package expression
 
 import (
 	"errors"
+
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
