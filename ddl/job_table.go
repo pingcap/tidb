@@ -233,7 +233,7 @@ func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 	})
 }
 
-func (d *ddl) NoConflictJob(se *sess.Session, sql string) (bool, error) {
+func (*ddl) NoConflictJob(se *sess.Session, sql string) (bool, error) {
 	rows, err := se.Execute(context.Background(), sql, "check conflict jobs")
 	return len(rows) == 0, err
 }
@@ -454,7 +454,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	})
 }
 
-func (d *ddl) markJobNotProcessing(se *sess.Session, job *model.Job) error {
+func (*ddl) markJobNotProcessing(se *sess.Session, job *model.Job) error {
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), fmt.Sprintf(
 		"update mysql.tidb_ddl_job set processing = 0 where job_id = %d", job.ID),
@@ -462,7 +462,7 @@ func (d *ddl) markJobNotProcessing(se *sess.Session, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
+func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), fmt.Sprintf(
 		"update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID),
