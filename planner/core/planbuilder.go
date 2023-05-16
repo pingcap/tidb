@@ -291,7 +291,7 @@ func (info *tableHintInfo) ifPreferTiKV(tableName *hintTableInfo) *hintTableInfo
 // Which it joins on with depend on sequence of traverse
 // and without reorder, user might adjust themselves.
 // This is similar to MySQL hints.
-func (info *tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []hintTableInfo) bool {
+func (*tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []hintTableInfo) bool {
 	hintMatched := false
 	for _, table := range tables {
 		for i, curEntry := range hintTables {
@@ -696,7 +696,7 @@ type PlanBuilderOpt interface {
 type PlanBuilderOptNoExecution struct{}
 
 // Apply implements the interface PlanBuilderOpt.
-func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
+func (PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 	builder.disableSubQueryPreprocessing = true
 }
 
@@ -704,7 +704,7 @@ func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 type PlanBuilderOptAllowCastArray struct{}
 
 // Apply implements the interface PlanBuilderOpt.
-func (p PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
+func (PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
 	builder.allowBuildCastArray = true
 }
 
