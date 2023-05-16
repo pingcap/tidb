@@ -566,9 +566,8 @@ func job2SchemaNames(job *model.Job) []string {
 		var oldSchemaID int64
 		var oldSchemaName model.CIStr
 		var tableName model.CIStr
-		if err := job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName); err != nil {
-			// TODO: Handle this error
-		}
+		// TODO: Handle this error
+		_ = job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName)
 		names := make([]string, 0, 2)
 		names = append(names, strings.ToLower(job.SchemaName))
 		names = append(names, oldSchemaName.O)
