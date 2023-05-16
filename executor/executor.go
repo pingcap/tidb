@@ -2575,15 +2575,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 	if meetError {
 		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
-		indexSql := fmt.Sprintf("select %s, %s, %s from %s.%s use index(%s) where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey, handleColumnField)
-		tableSql := fmt.Sprintf("select %s, %s, %s from %s.%s use index() where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, groupByKey, handleColumnField)
+		indexSQL := fmt.Sprintf("select %s, %s, %s from %s.%s use index(%s) where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey, handleColumnField)
+		tableSQL := fmt.Sprintf("select %s, %s, %s from %s.%s use index() where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, groupByKey, handleColumnField)
 
-		idxRow, err := queryToRow(se, indexSql)
+		idxRow, err := queryToRow(se, indexSQL)
 		if err != nil {
 			trySaveErr(err)
 			return
 		}
-		tblRow, err := queryToRow(se, tableSql)
+		tblRow, err := queryToRow(se, tableSQL)
 		if err != nil {
 			trySaveErr(err)
 			return
