@@ -879,6 +879,18 @@ func TestNonPreparedPlanParameterType(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: '1' may be converted to INT`))
 }
 
+func TestIssue43852(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t6 (a date, b date, key(a))`)
+	tk.MustExec(`insert into t6 values ('2023-01-21', '2023-01-05')`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustQuery(`select * from t6 where a in (2015, '8')`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t6 where a in (2009, '2023-01-21')`).Check(testkit.Rows(`2023-01-21 2023-01-05`))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
 func TestNonPreparedPlanTypeRandomly(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
