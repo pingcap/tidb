@@ -3210,3 +3210,8 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	require.NotNil(t, err)
 	db.Close()
 }
+
+func TestLoadData(t *testing.T) {
+	ts := createTidbTestSuite(t)
+	ts.runTestLoadDataReplace(t)
+}
