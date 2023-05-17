@@ -1450,7 +1450,7 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (node ast.StmtNode, 
 	}
 	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
 	if err != nil {
-		return nil, err
+		return stmts[0], err
 	}
 	cc.dbname = db
 	return stmts[0], err
