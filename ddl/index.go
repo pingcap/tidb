@@ -736,7 +736,7 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool) (model.R
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
-			_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID)
+			_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil)
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
@@ -905,7 +905,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if ok && bc.Done() {
 		return true, 0, nil
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID)
+	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, nil)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 		return false, ver, errors.Trace(err)
@@ -1811,7 +1811,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 				return errors.New("unexpected error, can't find index info")
 			}
 			if indexInfo.Unique {
-				bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, reorgInfo.ID)
+				bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, reorgInfo.ID, nil)
 				if err != nil {
 					return err
 				}

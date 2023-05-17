@@ -120,14 +120,14 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error 
 	logutil.BgLogger().Info("[ddl] lightning init subtask exec env")
 	d := b.d
 
-	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID)
+	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID, d.etcdCli)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
 		return err
 	}
 	b.bc = bc
 	if b.stepForImport {
-		return b.doImportWithDistributedLock(ctx)
+		return b.doImportWithDistributedLock(ctx, ingest.FlushModeForceGlobal)
 	}
 	return nil
 }
@@ -150,7 +150,7 @@ func releaseLock(ctx context.Context, se *concurrency.Session, key string) error
 	return nil
 }
 
-func (b *backfillSchedulerHandle) doImportWithDistributedLock(ctx context.Context) error {
+func (b *backfillSchedulerHandle) doImportWithDistributedLock(ctx context.Context, mode ingest.FlushMode) error {
 	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", b.job.ID, b.index.ID)
 	se, _ := concurrency.NewSession(b.d.etcdCli)
 	err := acquireLock(ctx, se, distLockKey)
@@ -281,7 +281,9 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	}
 
 	if b.isPartition {
-		return nil, b.doImportWithDistributedLock(ctx)
+		return nil, b.doImportWithDistributedLock(ctx, ingest.FlushModeForceGlobal)
+	} else {
+		return nil, b.doImportWithDistributedLock(ctx, ingest.FlushModeForceLocalAndCheckDiskQuota)
 	}
 	return nil, nil
 }
