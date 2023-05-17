@@ -168,7 +168,7 @@ func hasSysDB(job *model.Job) bool {
 func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (err error, isRunnable bool) {
 	if d.stateSyncer.IsUpgradingState() {
 		if hasSysDB(job) {
-			return err, false
+			return nil, true
 		}
 		var errs []error
 		// During binary upgrade, pause all running DDL jobs
