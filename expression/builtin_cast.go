@@ -1910,6 +1910,11 @@ func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 	tp.SetDecimal(0)
 	types.SetBinChsClnFlag(tp)
 	tp.AddFlag(expr.GetType().GetFlag() & mysql.UnsignedFlag)
+
+	if expr.GetType().GetType() == mysql.TypeNull {
+		tp.SetType(mysql.TypeLong)
+		tp.AddFlag(mysql.UnsignedFlag)
+	}
 	return BuildCastFunction(ctx, expr, tp)
 }
 
