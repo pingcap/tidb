@@ -1091,6 +1091,10 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		// If the connection being killed, we need to CANCEL the DDL job.
 		if atomic.LoadUint32(&sessVars.Killed) == 1 {
+			if atomic.LoadInt32(&sessVars.ConnectionStatus) == variable.ConnStatusShutdown {
+				logutil.BgLogger().Info("[ddl] DoDDLJob will quit because context done")
+				return context.Canceled
+			}
 			if sessVars.StmtCtx.DDLJobID != 0 {
 				se, err := d.sessPool.Get()
 				if err != nil {
