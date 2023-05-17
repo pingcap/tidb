@@ -78,7 +78,7 @@ require (
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20230427024529-aed92caf20b9
+	github.com/pingcap/tipb v0.0.0-20230516140330-b3e432c40cb3
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.15.1
 	github.com/prometheus/client_model v0.4.0
@@ -286,6 +286,5 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/parser => ./parser
-	github.com/pingcap/tipb => github.com/pingcap/tipb v0.0.0-20230509143956-5c1ce6aa17a0
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )

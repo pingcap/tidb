@@ -399,7 +399,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 
 // flipCTEReader fix the plan tree. Before we enter the func. The plan tree is like ParentPlan->CTEConsumer->ExchangeReceiver.
 // The CTEConsumer has no real meaning in MPP's execution. We prune it to make the plan become ParentPlan->ExchangeReceiver.
-// But the Recevier needs a schema since itself doesn't hold the schema. So the final plan become ParentPlan->ExchangeRecevier->CTEConsumer.
+// But the Receiver needs a schema since itself doesn't hold the schema. So the final plan become ParentPlan->ExchangeReceiver->CTEConsumer.
 func (f *Fragment) flipCTEReader(currentPlan PhysicalPlan) {
 	newChildren := make([]PhysicalPlan, len(currentPlan.Children()))
 	for i := 0; i < len(currentPlan.Children()); i++ {
