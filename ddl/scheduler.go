@@ -282,10 +282,8 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 
 	if b.isPartition {
 		return nil, b.doImportWithDistributedLock(ctx, ingest.FlushModeForceGlobal)
-	} else {
-		return nil, b.doImportWithDistributedLock(ctx, ingest.FlushModeForceLocalAndCheckDiskQuota)
 	}
-	return nil, nil
+	return nil, b.doImportWithDistributedLock(ctx, ingest.FlushModeForceLocalAndCheckDiskQuota)
 }
 
 // OnSubtaskFinished implements the Scheduler interface.
