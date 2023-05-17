@@ -291,7 +291,7 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 
 // Rollback implements the Scheduler interface.
 func (b *backfillSchedulerHandle) Rollback(context.Context) error {
-	logutil.BgLogger().Info("[ddl] rollback backfill add index task")
+	logutil.BgLogger().Info("[ddl] rollback backfill add index task", zap.Int64("jobID", b.job.ID))
 	bc, ok := ingest.LitBackCtxMgr.Load(b.job.ID)
 	if ok {
 		bc.Unregister(b.job.ID, b.index.ID)
