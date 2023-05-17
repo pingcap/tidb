@@ -393,9 +393,7 @@ type BackendConfig struct {
 	MaxConnPerStore int
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
-	// concurrency of generateJobForRange.
-	RangeConcurrency int
-	// number of import(write & ingest) workers
+	// concurrency of generateJobForRange and import(write & ingest) workers
 	WorkerConcurrency int
 	KVWriteBatchSize  int
 	CheckpointEnabled bool
@@ -429,7 +427,6 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		LocalStoreDir:           cfg.TikvImporter.SortedKVDir,
 		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
-		RangeConcurrency:        cfg.TikvImporter.RangeConcurrency,
 		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
 		KVWriteBatchSize:        cfg.TikvImporter.SendKVPairs,
 		CheckpointEnabled:       cfg.Checkpoint.Enable,
@@ -1136,7 +1133,7 @@ func (local *Backend) generateAndSendJob(
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
 	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(local.RangeConcurrency)
+	eg.SetLimit(local.WorkerConcurrency)
 	for _, jobRange := range jobRanges {
 		r := jobRange
 		eg.Go(func() error {
@@ -1169,7 +1166,7 @@ func (local *Backend) generateAndSendJob(
 	return eg.Wait()
 }
 
-// fakeRegionJobs is used in test , the injected job can be found by (startKey, endKey).
+// fakeRegionJobs is used in test, the injected job can be found by (startKey, endKey).
 var fakeRegionJobs map[[2]string]struct {
 	jobs []*regionJob
 	err  error
@@ -1283,7 +1280,7 @@ func (local *Backend) startWorker(
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
 				jobWg.Add(len(jobs) - 1)
 				for _, j := range jobs {
-					j.retryCount = job.retryCount
+					j.lastRetryableErr = job.lastRetryableErr
 					jobOutCh <- j
 				}
 			}
