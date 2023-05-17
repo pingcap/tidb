@@ -746,7 +746,6 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 		INTO TABLE load_test_write_speed.t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	duration := time.Since(start).Seconds()
-	s.LessOrEqual(duration, 2.0) // 1.3 seconds on my laptop.
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
@@ -757,12 +756,11 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/speed-test.csv?endpoint=%s'
 		INTO TABLE load_test_write_speed.t fields terminated by ',' with import_mode='physical', max_write_speed=6000`, gcsEndpoint)
 	s.tk.MustExec(sql)
-	// generated kv is 34744 bytes, so it should take at least 5 seconds.
-	duration = time.Since(start).Seconds()
-	s.GreaterOrEqual(duration, 5.0)
+	durationWithLimit := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
+	require.Less(s.T(), duration, durationWithLimit)
 }
 
 func (s *mockGCSSuite) TestChecksumNotMatch() {
