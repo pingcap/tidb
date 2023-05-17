@@ -292,13 +292,10 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 // Rollback implements the Scheduler interface.
 func (b *backfillSchedulerHandle) Rollback(context.Context) error {
 	logutil.BgLogger().Info("[ddl] rollback backfill add index task")
-	bc, err := ingest.LitBackCtxMgr.Register(b.d.ctx, b.index.Unique, b.job.ID)
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
-		// It should not return in Rollback?
-		return nil
+	bc, ok := ingest.LitBackCtxMgr.Load(b.job.ID)
+	if ok {
+		bc.Unregister(b.job.ID, b.index.ID)
 	}
-	bc.Unregister(b.job.ID, b.index.ID)
 	return nil
 }
 
