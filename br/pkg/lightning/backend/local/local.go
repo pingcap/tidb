@@ -394,9 +394,11 @@ type BackendConfig struct {
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
 	// concurrency of generateJobForRange and import(write & ingest) workers
-	WorkerConcurrency int
-	KVWriteBatchSize  int
-	CheckpointEnabled bool
+	WorkerConcurrency      int
+	KVWriteBatchSize       int
+	RegionSplitBatchSize   int
+	RegionSplitConcurrency int
+	CheckpointEnabled      bool
 	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
 	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
 	MemTableSize            int
@@ -429,6 +431,8 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
 		KVWriteBatchSize:        cfg.TikvImporter.SendKVPairs,
+		RegionSplitBatchSize:    cfg.TikvImporter.RegionSplitBatchSize,
+		RegionSplitConcurrency:  cfg.TikvImporter.RegionSplitConcurrency,
 		CheckpointEnabled:       cfg.Checkpoint.Enable,
 		MemTableSize:            int(cfg.TikvImporter.EngineMemCacheSize),
 		LocalWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
@@ -1076,6 +1080,7 @@ func (local *Backend) prepareAndSendJob(
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		needSplit = true
 	})
+	logger := log.FromContext(ctx).With(zap.Stringer("uuid", engine.UUID)).Begin(zap.InfoLevel, "split and scatter ranges")
 	for i := 0; i < maxRetryTimes; i++ {
 		failpoint.Inject("skipSplitAndScatter", func() {
 			failpoint.Break()
@@ -1089,8 +1094,8 @@ func (local *Backend) prepareAndSendJob(
 		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engine.UUID),
 			log.ShortError(err), zap.Int("retry", i))
 	}
+	logger.End(zap.ErrorLevel, err)
 	if err != nil {
-		log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engine.UUID), log.ShortError(err))
 		return err
 	}
 
@@ -1166,7 +1171,7 @@ func (local *Backend) generateAndSendJob(
 	return eg.Wait()
 }
 
-// fakeRegionJobs is used in test , the injected job can be found by (startKey, endKey).
+// fakeRegionJobs is used in test, the injected job can be found by (startKey, endKey).
 var fakeRegionJobs map[[2]string]struct {
 	jobs []*regionJob
 	err  error
@@ -1280,7 +1285,7 @@ func (local *Backend) startWorker(
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
 				jobWg.Add(len(jobs) - 1)
 				for _, j := range jobs {
-					j.retryCount = job.retryCount
+					j.lastRetryableErr = job.lastRetryableErr
 					jobOutCh <- j
 				}
 			}

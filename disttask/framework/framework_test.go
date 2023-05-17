@@ -52,6 +52,10 @@ func (*testFlowHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) 
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
+func (*testFlowHandle) IsRetryableErr(error) bool {
+	return true
+}
+
 type testMiniTask struct{}
 
 func (testMiniTask) IsMinimalTask() {}

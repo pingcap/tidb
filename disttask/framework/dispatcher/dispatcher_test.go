@@ -320,3 +320,7 @@ func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Task
 func (NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
+
+func (NumberExampleHandle) IsRetryableErr(error) bool {
+	return true
+}

@@ -825,7 +825,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	if !query {
 		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
-		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
+		conn.setStatus(connStatusWaitShutdown)
 	}
 	killQuery(conn)
 }
@@ -875,7 +875,7 @@ func (s *Server) KillAllConnections() {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	for _, conn := range s.clients {
-		atomic.StoreInt32(&conn.status, connStatusShutdown)
+		conn.setStatus(connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
 		}

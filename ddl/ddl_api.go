@@ -6722,6 +6722,28 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) err
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
+// addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
+func (d *ddl) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName model.CIStr, indexInfo *model.IndexInfo) error {
+	sctx := ctx.GetSessionVars()
+	indexName := indexInfo.Name
+
+	if sctx.HypoIndexes == nil {
+		sctx.HypoIndexes = make(map[string]map[string]map[string]*model.IndexInfo)
+	}
+	if sctx.HypoIndexes[schemaName.L] == nil {
+		sctx.HypoIndexes[schemaName.L] = make(map[string]map[string]*model.IndexInfo)
+	}
+	if sctx.HypoIndexes[schemaName.L][tableName.L] == nil {
+		sctx.HypoIndexes[schemaName.L][tableName.L] = make(map[string]*model.IndexInfo)
+	}
+	if _, exist := sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L]; exist {
+		return errors.Trace(errors.Errorf("conflict hypo index name %s", indexName.L))
+	}
+
+	sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L] = indexInfo
+	return nil
+}
+
 func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
@@ -6810,6 +6832,15 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	if indexOption != nil && indexOption.Tp == model.IndexTypeHypo { // for hypo-index
+		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique, global,
+			indexPartSpecifications, indexOption, model.StatePublic)
+		if err != nil {
+			return err
+		}
+		return d.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
@@ -7041,6 +7072,19 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	return err
 }
 
+// dropHypoIndexFromCtx drops this hypo-index from this ctx.
+func (d *ddl) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, index model.CIStr) bool {
+	sctx := ctx.GetSessionVars()
+	if sctx.HypoIndexes != nil &&
+		sctx.HypoIndexes[schema.L] != nil &&
+		sctx.HypoIndexes[schema.L][table.L] != nil &&
+		sctx.HypoIndexes[schema.L][table.L][index.L] != nil {
+		delete(sctx.HypoIndexes[schema.L][table.L], index.L)
+		return true
+	}
+	return false
+}
+
 func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
@@ -7053,6 +7097,11 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
+	}
+
+	// try hypo-index first
+	if d.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName) {
+		return nil
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)

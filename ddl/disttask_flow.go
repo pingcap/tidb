@@ -106,3 +106,8 @@ func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Tas
 func (*litBackfillFlowHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
+
+// IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
+func (*litBackfillFlowHandle) IsRetryableErr(error) bool {
+	return true
+}
