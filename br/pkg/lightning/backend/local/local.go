@@ -1166,7 +1166,7 @@ func (local *Backend) generateAndSendJob(
 	return eg.Wait()
 }
 
-// fakeRegionJobs is used in test , the injected job can be found by (startKey, endKey).
+// fakeRegionJobs is used in test, the injected job can be found by (startKey, endKey).
 var fakeRegionJobs map[[2]string]struct {
 	jobs []*regionJob
 	err  error
@@ -1280,7 +1280,7 @@ func (local *Backend) startWorker(
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
 				jobWg.Add(len(jobs) - 1)
 				for _, j := range jobs {
-					j.retryCount = job.retryCount
+					j.lastRetryableErr = job.lastRetryableErr
 					jobOutCh <- j
 				}
 			}
