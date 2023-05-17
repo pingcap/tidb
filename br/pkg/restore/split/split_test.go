@@ -14,7 +14,7 @@ import (
 
 func TestScanRegionBackOfferWithSuccess(t *testing.T) {
 	var counter int
-	bo := split.NewScanRegionBackoffer()
+	bo := split.NewWaitRegionOnlineBackoffer()
 
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() {
@@ -37,7 +37,7 @@ func TestScanRegionBackOfferWithFail(t *testing.T) {
 	}()
 
 	var counter int
-	bo := split.NewScanRegionBackoffer()
+	bo := split.NewWaitRegionOnlineBackoffer()
 
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() {
@@ -46,7 +46,7 @@ func TestScanRegionBackOfferWithFail(t *testing.T) {
 		return berrors.ErrPDBatchScanRegion
 	}, bo)
 	require.Error(t, err)
-	require.Equal(t, counter, split.ScanRegionAttemptTimes)
+	require.Equal(t, counter, split.WaitRegionOnlineAttemptTimes)
 }
 
 func TestScanRegionBackOfferWithStopRetry(t *testing.T) {
@@ -56,7 +56,7 @@ func TestScanRegionBackOfferWithStopRetry(t *testing.T) {
 	}()
 
 	var counter int
-	bo := split.NewScanRegionBackoffer()
+	bo := split.NewWaitRegionOnlineBackoffer()
 
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() {

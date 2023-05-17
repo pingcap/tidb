@@ -86,6 +86,11 @@ func (rs *RetryState) RecordRetry() {
 	rs.retryTimes++
 }
 
+// ReduceRetry reduces retry times for 1.
+func (rs *RetryState) ReduceRetry() {
+	rs.retryTimes--
+}
+
 // RetryTimes returns the retry times.
 // usage: unit test.
 func (rs *RetryState) RetryTimes() int {

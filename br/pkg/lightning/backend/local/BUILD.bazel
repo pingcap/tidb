@@ -22,6 +22,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/checksum",
+        "//br/pkg/errors",
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
