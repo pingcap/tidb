@@ -275,10 +275,6 @@ func (d *ddl) startDispatchLoop() {
 			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
-		if err := d.needCheckClusterState(isOnce); err != nil {
-			continue
-		}
-		isOnce = false
 		select {
 		case <-d.ddlJobCh:
 		case <-ticker.C:
@@ -289,12 +285,11 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Second)
 				continue
 			}
-		case _, ok := <-d.stateSyncer.WatchChan():
-			if err := d.doCheckClusterState(!ok); err != nil {
-				continue
-			}
 		case <-d.ctx.Done():
 			return
+		}
+		if err := d.needCheckClusterState(isOnce); err != nil {
+			continue
 		}
 		isOnce = false
 		d.loadDDLJobAndRun(se, d.generalDDLWorkerPool, d.getGeneralJob)
