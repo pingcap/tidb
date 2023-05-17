@@ -3236,7 +3236,7 @@ func (rc *Client) generateRepairIngestIndexSQLs(
 		return sqls, false, errors.Trace(err)
 	}
 
-	if rc.useCheckpoint {
+	if rc.useCheckpoint && len(sqls) > 0 {
 		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.storage, &checkpoint.CheckpointIngestIndexRepairSQLs{
 			SQLs: sqls,
 		}, taskName); err != nil {
@@ -3291,37 +3291,42 @@ NEXTSQL:
 			}
 		}
 
-		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
+		if err := func(sql checkpoint.CheckpointIngestIndexRepairSQL) error {
+			w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
+			defer w.Close()
 
-		// TODO: When the TiDB supports the DROP and CREATE the same name index in one SQL,
-		//   the checkpoint for ingest recorder can be removed and directly use the SQL:
-		//      ALTER TABLE db.tbl DROP INDEX `i_1`, ADD IDNEX `i_1` ...
-		//
-		// This SQL is compatible with checkpoint: If one ingest index has been recreated by
-		// the SQL, the index's id would be another one. In the next retry execution, BR can
-		// not find the ingest index's dropped id so that BR regards it as a dropped index by
-		// restored metakv and then skips repairing it.
+			// TODO: When the TiDB supports the DROP and CREATE the same name index in one SQL,
+			//   the checkpoint for ingest recorder can be removed and directly use the SQL:
+			//      ALTER TABLE db.tbl DROP INDEX `i_1`, ADD IDNEX `i_1` ...
+			//
+			// This SQL is compatible with checkpoint: If one ingest index has been recreated by
+			// the SQL, the index's id would be another one. In the next retry execution, BR can
+			// not find the ingest index's dropped id so that BR regards it as a dropped index by
+			// restored metakv and then skips repairing it.
 
-		// only when first execution or old index id is not dropped
-		if !fromCheckpoint || oldIndexIDFound {
-			if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+			// only when first execution or old index id is not dropped
+			if !fromCheckpoint || oldIndexIDFound {
+				if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			failpoint.Inject("failed-before-create-ingest-index", func(v failpoint.Value) {
+				if v != nil && v.(bool) {
+					failpoint.Return(errors.New("failed before create ingest index"))
+				}
+			})
+			// create the repaired index when first execution or not found it
+			if err := rc.db.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}
-		}
-		failpoint.Inject("failed-before-create-ingest-index", func(v failpoint.Value) {
-			if v != nil && v.(bool) {
-				failpoint.Return(errors.New("failed before create ingest index"))
+			w.Inc()
+			if err := w.Wait(ctx); err != nil {
+				return errors.Trace(err)
 			}
-		})
-		// create the repaired index when first execution or not found it
-		if err := rc.db.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
+			return nil
+		}(sql); err != nil {
 			return errors.Trace(err)
 		}
-		w.Inc()
-		if err := w.Wait(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		w.Close()
 	}
 
 	return nil
