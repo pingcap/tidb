@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -35,6 +36,9 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
+
+// MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
+var MockDMLExecutionAddIndexSubTaskFinish func()
 
 type backfillSchedulerHandle struct {
 	d           *ddl
@@ -267,6 +271,12 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 
 // OnSubtaskFinished implements the Scheduler interface.
 func (*backfillSchedulerHandle) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
+			MockDMLExecutionAddIndexSubTaskFinish()
+		}
+	})
 	return meta, nil
 }
 
@@ -281,6 +291,7 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 
 // Rollback implements the Scheduler interface.
 func (b *backfillSchedulerHandle) Rollback(context.Context) error {
+	logutil.BgLogger().Info("[ddl] rollback backfill add index task")
 	bc, err := ingest.LitBackCtxMgr.Register(b.d.ctx, b.index.Unique, b.job.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
