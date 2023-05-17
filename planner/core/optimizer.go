@@ -1162,7 +1162,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	if t.invalid() {
 		errMsg := "Can't find a proper physical plan for this query"
 		if config.GetGlobalConfig().DisaggregatedTiFlash && !logic.SCtx().GetSessionVars().IsMPPAllowed() {
-			errMsg += ": cop and batchCop is not allowed in disaggregated tiflash mode, you should turn on tidb_allow_mpp switch"
+			errMsg += ": cop and batchCop are not allowed in disaggregated tiflash mode, you should turn on tidb_allow_mpp switch"
 		}
 		return nil, 0, ErrInternal.GenWithStackByArgs(errMsg)
 	}
