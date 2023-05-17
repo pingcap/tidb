@@ -3388,7 +3388,6 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 }
 
 func TestIssue42937(t *testing.T) {
-	pprof.SetGoroutineLabels(pprof.WithLabels(context.Background(), pprof.Labels("name", "TestIssue42937")))
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
