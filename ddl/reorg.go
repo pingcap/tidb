@@ -55,6 +55,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const rowCountEtcdPath = "distAddIndex"
+
 // reorgCtx is for reorganization.
 type reorgCtx struct {
 	// doneCh is used to notify.
@@ -139,7 +141,7 @@ func (rc *reorgCtx) getRowCount() int64 {
 func getAndSetJobRowCnt(ctx context.Context, reorgInfo *reorgInfo, rc *reorgCtx, job *model.Job, client *clientv3.Client) int64 {
 	rowCount := int64(0)
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		path := fmt.Sprintf("distAddIndex/%d", job.ID)
+		path := fmt.Sprintf("%s/%d", rowCountEtcdPath, job.ID)
 		resp, err := client.Get(ctx, path, clientv3.WithPrefix())
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] get row count from ETCD failed", zap.Error(err))
@@ -166,7 +168,7 @@ func getAndSetJobRowCnt(ctx context.Context, reorgInfo *reorgInfo, rc *reorgCtx,
 
 func deleteETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, job *model.Job, client *clientv3.Client) {
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		path := fmt.Sprintf("distAddIndex/%d", job.ID)
+		path := fmt.Sprintf("%s/%d", rowCountEtcdPath, job.ID)
 		_, err := client.Delete(ctx, path, clientv3.WithPrefix())
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] delete row count from ETCD failed", zap.Error(err))
