@@ -83,6 +83,7 @@ func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gT
 
 // IsRetryableErr implements dispatcher.IsRetryableErr interface.
 func (*FlowHandle) IsRetryableErr(error) bool {
+	// TODO: check whether the error is retryable.
 	return false
 }
 

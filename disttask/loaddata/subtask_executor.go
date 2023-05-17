@@ -25,13 +25,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// ImportSubtaskExecutor is a subtask executor for load data.
-type ImportSubtaskExecutor struct {
+// ImportMinimalTaskExecutor is a subtask executor for load data.
+type ImportMinimalTaskExecutor struct {
 	task *MinimalTaskMeta
 }
 
 // Run implements the SubtaskExecutor.Run interface.
-func (e *ImportSubtaskExecutor) Run(ctx context.Context) error {
+func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
 	logutil.BgLogger().Info("subtask executor run", zap.Any("task", e.task))
 	chunkCheckpoint := toChunkCheckpoint(e.task.Chunk)
 	sharedVars := e.task.SharedVars
@@ -54,7 +54,7 @@ func init() {
 			if !ok {
 				return nil, errors.Errorf("invalid task type %T", minimalTask)
 			}
-			return &ImportSubtaskExecutor{task: &task}, nil
+			return &ImportMinimalTaskExecutor{task: &task}, nil
 		},
 	)
 }
