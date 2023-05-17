@@ -17,7 +17,6 @@ package pessimistictest
 import (
 	"context"
 	"fmt"
-	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync"
