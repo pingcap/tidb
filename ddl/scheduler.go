@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -35,6 +36,9 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
+
+// MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
+var MockDMLExecutionAddIndexSubTaskFinish func()
 
 type backfillSchedulerHandle struct {
 	d           *ddl
@@ -266,8 +270,19 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 }
 
 // OnSubtaskFinished implements the Scheduler interface.
+<<<<<<< HEAD
 func (*backfillSchedulerHandle) OnSubtaskFinished(context.Context, []byte) error {
 	return nil
+=======
+func (*backfillSchedulerHandle) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
+			MockDMLExecutionAddIndexSubTaskFinish()
+		}
+	})
+	return meta, nil
+>>>>>>> c071a8999b3 (ddl: fix a bug that rollback distributed adding index is not handled correctly (#43917))
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler interface.
@@ -281,6 +296,11 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 
 // Rollback implements the Scheduler interface.
 func (b *backfillSchedulerHandle) Rollback(context.Context) error {
+	logutil.BgLogger().Info("[ddl] rollback backfill add index task", zap.Int64("jobID", b.job.ID))
+	bc, ok := ingest.LitBackCtxMgr.Load(b.job.ID)
+	if ok {
+		bc.Unregister(b.job.ID, b.index.ID)
+	}
 	return nil
 }
 
