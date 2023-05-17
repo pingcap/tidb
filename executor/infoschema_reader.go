@@ -2133,7 +2133,7 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 }
 
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
-func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+func dataForAnalyzeStatusHelper(sctx sessionctx.Context, isShow bool) (rows [][]types.Datum, err error) {
 	const maxAnalyzeJobs = 30
 	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
@@ -2181,7 +2181,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 		}
 
 		var RemainDurationStr string
-		if state == statistics.AnalyzeRunning {
+		if isShow && state == statistics.AnalyzeRunning {
 			RemainingDuration, RemainDurationErr := getRemainDurationForAnalyzeStatusHelper(sctx, startTime, dbName, tableName, partitionName, processedRows)
 			if RemainDurationErr != nil {
 				log.Warn("get remaining duration failed", zap.Error(RemainDurationErr))
@@ -2190,21 +2190,38 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 				RemainDurationStr = execdetails.FormatDuration(*RemainingDuration)
 			}
 		}
-
-		rows = append(rows, types.MakeDatums(
-			dbName,            // TABLE_SCHEMA
-			tableName,         // TABLE_NAME
-			partitionName,     // PARTITION_NAME
-			jobInfo,           // JOB_INFO
-			processedRows,     // ROW_COUNT
-			startTime,         // START_TIME
-			endTime,           // END_TIME
-			state,             // STATE
-			failReason,        // FAIL_REASON
-			instance,          // INSTANCE
-			procID,            // PROCESS_ID
-			RemainDurationStr, // REMAINING_TIME
-		))
+		var row []types.Datum
+		if isShow {
+			row = types.MakeDatums(
+				dbName,            // TABLE_SCHEMA
+				tableName,         // TABLE_NAME
+				partitionName,     // PARTITION_NAME
+				jobInfo,           // JOB_INFO
+				processedRows,     // ROW_COUNT
+				startTime,         // START_TIME
+				endTime,           // END_TIME
+				state,             // STATE
+				failReason,        // FAIL_REASON
+				instance,          // INSTANCE
+				procID,            // PROCESS_ID
+				RemainDurationStr, // REMAINING_TIME
+			)
+		} else {
+			row = types.MakeDatums(
+				dbName,        // TABLE_SCHEMA
+				tableName,     // TABLE_NAME
+				partitionName, // PARTITION_NAME
+				jobInfo,       // JOB_INFO
+				processedRows, // ROW_COUNT
+				startTime,     // START_TIME
+				endTime,       // END_TIME
+				state,         // STATE
+				failReason,    // FAIL_REASON
+				instance,      // INSTANCE
+				procID,        // PROCESS_ID
+			)
+		}
+		rows = append(rows, row)
 	}
 	return
 }
@@ -2257,7 +2274,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
 func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) (err error) {
-	e.rows, err = dataForAnalyzeStatusHelper(sctx)
+	e.rows, err = dataForAnalyzeStatusHelper(sctx, false)
 	return
 }
 
