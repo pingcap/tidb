@@ -64,7 +64,7 @@ const taskGCTemplate = `DELETE task FROM
 
 const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE create_time < CURDATE() - INTERVAL 90 DAY`
 
-const timeFormat = "2006-01-02 15:04:05"
+const timeFormat = time.DateTime
 
 func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []interface{}) {
 	return insertNewTableIntoStatusTemplate, []interface{}{tableID, parentTableID}

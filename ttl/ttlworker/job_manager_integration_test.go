@@ -113,7 +113,7 @@ func TestParallelLockNewJob(t *testing.T) {
 }
 
 func TestFinishJob(t *testing.T) {
-	timeFormat := "2006-01-02 15:04:05"
+	timeFormat := time.DateTime
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)

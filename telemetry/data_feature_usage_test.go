@@ -639,8 +639,8 @@ func TestIndexMergeUsage(t *testing.T) {
 }
 
 func TestTTLTelemetry(t *testing.T) {
-	timeFormat := "2006-01-02 15:04:05"
-	dateFormat := "2006-01-02"
+	timeFormat := time.DateTime
+	dateFormat := time.DateOnly
 
 	now := time.Now()
 	curDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())

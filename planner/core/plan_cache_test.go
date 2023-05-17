@@ -50,6 +50,53 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	require.NotNil(t, lru)
 }
 
+func TestIssue43311(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table test.t (id int, value decimal(7,4), c1 int, c2 int)`)
+	tk.MustExec(`insert into test.t values (1,1.9285,54,28), (1,1.9286,54,28)`)
+
+	tk.MustExec(`set session tidb_enable_non_prepared_plan_cache=0`)
+	tk.MustQuery(`select * from t where value = 54 / 28`).Check(testkit.Rows()) // empty
+
+	tk.MustExec(`set session tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustQuery(`select * from t where value = 54 / 28`).Check(testkit.Rows()) // empty
+	tk.MustQuery(`select * from t where value = 54 / 28`).Check(testkit.Rows()) // empty
+
+	tk.MustExec(`prepare st from 'select * from t where value = ? / ?'`)
+	tk.MustExec(`set @a=54, @b=28`)
+	tk.MustQuery(`execute st using @a, @b`).Check(testkit.Rows()) // empty
+	tk.MustQuery(`execute st using @a, @b`).Check(testkit.Rows()) // empty
+}
+
+func TestPlanCacheSizeSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// default value = 100
+	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("100"))
+	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("100"))
+
+	// keep the same value when updating any one of them
+	tk.MustExec(`set @@tidb_prepared_plan_cache_size = 200`)
+	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("200"))
+	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("200"))
+	tk.MustExec(`set @@tidb_session_plan_cache_size = 300`)
+	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("300"))
+	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("300"))
+
+	tk.MustExec(`set global tidb_prepared_plan_cache_size = 400`)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("400"))
+	tk1.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("400"))
+
+	tk.MustExec(`set global tidb_session_plan_cache_size = 500`)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("500"))
+	tk2.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("500"))
+}
+
 func TestPlanCacheUnsafeRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -83,6 +130,44 @@ func TestPlanCacheUnsafeRange(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+func TestIssue43405(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`insert into t values (1), (2), (3), (4)`)
+	tk.MustExec(`prepare st from 'select * from t where a!=? and a in (?, ?, ?)'`)
+	tk.MustExec(`set @a=1, @b=2, @c=3, @d=4`)
+	tk.MustQuery(`execute st using @a, @a, @a, @a`).Sort().Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: NE/INList simplification is triggered"))
+	tk.MustQuery(`execute st using @a, @a, @b, @c`).Sort().Check(testkit.Rows("2", "3"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: NE/INList simplification is triggered"))
+	tk.MustQuery(`execute st using @a, @b, @c, @d`).Sort().Check(testkit.Rows("2", "3", "4"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: NE/INList simplification is triggered"))
+
+	tk.MustExec(`CREATE TABLE UK_SIGNED_19384 (
+    COL1 decimal(37,4) unsigned DEFAULT NULL COMMENT 'WITH DEFAULT',
+    COL2 varchar(20) COLLATE utf8mb4_bin DEFAULT NULL,
+    COL4 datetime DEFAULT NULL,
+    COL3 bigint DEFAULT NULL,
+    COL5 float DEFAULT NULL,
+    UNIQUE KEY UK_COL1 (COL1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec(`INSERT INTO UK_SIGNED_19384 VALUES
+  (729024465529090.5423,'劗驻胭毤橰亀讁陶ĉ突錌ͳ河碡祁聓兕锻觰俆','4075-07-11 12:02:57',6021562653572886552,1.93349e38),
+  (492790234219503.0846,'硴皡箒嫹璞玚囑蚂身囈軔獰髴囥慍廂頚禌浖蕐','1193-09-27 12:13:40',1836453747944153034,-2.67982e38),
+  (471841432147994.4981,'豻貐裝濂婝蒙蘦镢県蟎髓蓼窘搴熾臐哥递泒執','1618-01-24 05:06:44',6669616052974883820,9.38232e37)`)
+	tk.MustExec(`prepare stmt from 'select/*+ tidb_inlj(t1) */ t1.col1 from UK_SIGNED_19384 t1 join UK_SIGNED_19384 t2 on t1.col1 = t2.col1 where t1. col1 != ? and t2. col1 in (?, ?, ?)'`)
+	tk.MustExec(`set @a=999999999999999999999999999999999.9999, @b=999999999999999999999999999999999.9999, @c=999999999999999999999999999999999.9999, @d=999999999999999999999999999999999.9999`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows()) // empty result
+	tk.MustExec(`set @a=895769331208356.9029, @b=471841432147994.4981, @c=729024465529090.5423, @d=492790234219503.0846`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Sort().Check(testkit.Rows(
+		"471841432147994.4981",
+		"492790234219503.0846",
+		"729024465529090.5423"))
+}
+
 func TestIssue40296(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -101,6 +186,79 @@ func TestIssue40296(t *testing.T) {
 	tk.MustQuery(`select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("aa", "aa") or col2 = -9605492323393070105 or col3 = "0005-06-22"`).Check(
 		testkit.Rows("ee -9605492323393070105 0850-03-15"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unary operator '-' is not supported now.
+}
+
+func TestIssue43522(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE UK_SIGNED_19385 (
+  COL1 decimal(37,4) unsigned DEFAULT '101.0000' COMMENT 'WITH DEFAULT',
+  COL2 varchar(20) DEFAULT NULL,
+  COL4 datetime DEFAULT NULL,
+  COL3 bigint(20) DEFAULT NULL,
+  COL5 float DEFAULT NULL,
+  UNIQUE KEY UK_COL1 (COL1) /*!80000 INVISIBLE */)`)
+	tk.MustExec(`INSERT INTO UK_SIGNED_19385 VALUES (999999999999999999999999999999999.9999,'苊檷鞤寰抿逿詸叟艟俆錟什姂庋鴪鎅枀礰扚匝','8618-02-11 03:30:03',7016504421081900731,2.77465e38)`)
+	tk.MustQuery(`select * from UK_SIGNED_19385 where col1 = 999999999999999999999999999999999.9999 and
+    col1 * 999999999999999999999999999999999.9999 between 999999999999999999999999999999999.9999 and
+    999999999999999999999999999999999.9999`).Check(testkit.Rows()) // empty and no error
+}
+
+func TestIssue43520(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE IDT_20290 (
+  COL1 mediumtext DEFAULT NULL,
+  COL2 decimal(52,7) DEFAULT NULL,
+  COL3 datetime DEFAULT NULL,
+  KEY U_M_COL (COL1(10),COL2,COL3) /*!80000 INVISIBLE */)`)
+	tk.MustExec(`INSERT INTO IDT_20290 VALUES
+  ('',210255309400.4264137,'4273-04-17 17:26:51'),
+  (NULL,952470120213.2538798,'7087-08-19 21:38:49'),
+  ('俦',486763966102.1656494,'8846-06-12 12:02:13'),
+  ('憁',610644171405.5953911,'2529-07-19 17:24:49'),
+  ('顜',-359717183823.5275069,'2599-04-01 00:12:08'),
+  ('塼',466512908211.1135111,'1477-10-20 07:14:51'),
+  ('宻',-564216096745.0427987,'7071-11-20 13:38:24'),
+  ('網',-483373421083.4724254,'2910-02-19 18:29:17'),
+  ('顥',164020607693.9988781,'2820-10-12 17:38:44'),
+  ('谪',25949740494.3937876,'6527-05-30 22:58:37')`)
+	err := tk.QueryToErr(`select * from IDT_20290 where col2 * 049015787697063065230692384394107598316198958.1850509 >= 659971401668884663953087553591534913868320924.5040396 and col2 = 869042976700631943559871054704914143535627349.9659934`)
+	require.ErrorContains(t, err, "value is out of range in")
+}
+
+func TestIssue14875(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t(a varchar(8) not null, b varchar(8) not null)`)
+	tk.MustExec(`insert into t values('1','1')`)
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t2.b = '1' and t2.b = ?"`)
+	tk.MustExec(`set @a = '1'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @a = '2'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t1.a > ?"`)
+	tk.MustExec(`set @a = '1'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @a = '0'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
+}
+
+func TestIssue14871(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t(a varchar(8), b varchar(8))`)
+	tk.MustExec(`insert into t values('1','1')`)
+	tk.MustExec(`prepare stmt from "select count(1) from t t1 left join t t2 on t1.a = t2.a where t2.b = ? and t2.b = ?"`)
+	tk.MustExec(`set @p0 = '1', @p1 = '2'`)
+	tk.MustQuery(`execute stmt using @p0, @p1`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @p0 = '1', @p1 = '1'`)
+	tk.MustQuery(`execute stmt using @p0, @p1`).Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanCacheDMLHints(t *testing.T) {
@@ -512,7 +670,11 @@ func TestPreparedPlanCacheStats(t *testing.T) {
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustExec("analyze table t")
-	tk.MustExec(`execute st using @a`) // stats changes can affect prep cache hit
+	tk.MustExec("set tidb_plan_cache_invalidation_on_fresh_stats = 0")
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_plan_cache_invalidation_on_fresh_stats = 1")
+	tk.MustExec(`execute st using @a`) // stats changes can affect prep cache hit if we turn on the variable
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
