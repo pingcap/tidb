@@ -100,11 +100,17 @@ func (d *Detector) Detect(ctx context.Context, opts *DetectOptions) (numDups int
 		})
 	}
 
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- g.Wait()
+		for range taskCh {
+			taskWg.Done()
+		}
+	}()
 	taskWg.Wait()
 	close(taskCh)
-	err = g.Wait()
 
-	return atomicNumDups.Load(), err
+	return atomicNumDups.Load(), <-errCh
 }
 
 func (d *Detector) getRangeBounds(ctx context.Context) (startKey, endKey internalKey, _ error) {
