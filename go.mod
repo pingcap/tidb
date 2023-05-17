@@ -81,7 +81,7 @@ require (
 	github.com/pingcap/tipb v0.0.0-20230427024529-aed92caf20b9
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.15.1
-	github.com/prometheus/client_model v0.3.0
+	github.com/prometheus/client_model v0.4.0
 	github.com/prometheus/common v0.42.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
 	github.com/sasha-s/go-deadlock v0.2.0
@@ -110,7 +110,7 @@ require (
 	go.etcd.io/etcd/server/v3 v3.5.2
 	go.etcd.io/etcd/tests/v3 v3.5.2
 	go.opencensus.io v0.24.0
-	go.uber.org/atomic v1.10.0
+	go.uber.org/atomic v1.11.0
 	go.uber.org/automaxprocs v1.5.2
 	go.uber.org/goleak v1.2.1
 	go.uber.org/multierr v1.11.0
@@ -234,7 +234,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
 	github.com/prometheus/procfs v0.9.0 // indirect
-	github.com/prometheus/tsdb v0.8.0 // indirect
+	github.com/prometheus/tsdb v0.10.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/rivo/uniseg v0.4.4 // indirect

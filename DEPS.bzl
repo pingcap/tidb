@@ -3538,8 +3538,8 @@ def go_deps():
         name = "com_github_prometheus_client_model",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/client_model",
-        sum = "h1:UBgGFHqYdG/TPFD1B1ogZywDqEkwp3fBMvqdiQ7Xew4=",
-        version = "v0.3.0",
+        sum = "h1:5lQXD3cAg1OXBf4Wq03gTrXHeaV0TQvGfUooCfx1yqY=",
+        version = "v0.4.0",
     )
     go_repository(
         name = "com_github_prometheus_common",
@@ -3567,8 +3567,8 @@ def go_deps():
         name = "com_github_prometheus_tsdb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/tsdb",
-        sum = "h1:w1tAGxsBMLkuGrFMhqgcCeBkM5d1YI24udArs+aASuQ=",
-        version = "v0.8.0",
+        sum = "h1:If5rVCMTp6W2SiRAQFlbpJNgVlgMEd+U2GZckwK38ic=",
+        version = "v0.10.0",
     )
     go_repository(
         name = "com_github_puerkitobio_purell",
@@ -6187,8 +6187,8 @@ def go_deps():
         name = "org_uber_go_atomic",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/atomic",
-        sum = "h1:9qC72Qh0+3MqyJbAn8YU5xVq1frD8bn3JtD2oXtafVQ=",
-        version = "v1.10.0",
+        sum = "h1:ZvwS0R+56ePWxUNi+Atn9dWONBPp/AUETXlHW0DxSjE=",
+        version = "v1.11.0",
     )
     go_repository(
         name = "org_uber_go_automaxprocs",

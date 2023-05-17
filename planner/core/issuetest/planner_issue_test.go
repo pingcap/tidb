@@ -61,7 +61,16 @@ func TestIssue43461(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, p)
 
-	idxLookUpPlan, ok := p.(*core.PhysicalLimit).Children()[0].(*core.PhysicalProjection).Children()[0].(*core.PhysicalIndexLookUpReader)
+	var idxLookUpPlan *core.PhysicalIndexLookUpReader
+	var ok bool
+
+	for {
+		idxLookUpPlan, ok = p.(*core.PhysicalIndexLookUpReader)
+		if ok {
+			break
+		}
+		p = p.(core.PhysicalPlan).Children()[0]
+	}
 	require.True(t, ok)
 
 	is := idxLookUpPlan.IndexPlans[0].(*core.PhysicalIndexScan)
