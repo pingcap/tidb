@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
@@ -143,25 +144,25 @@ var allTestCase = []testCancelJob{
 	{"alter table t_partition truncate partition p3", true, model.StateNone, true, false, nil},
 	{"alter table t_partition truncate partition p3", false, model.StatePublic, false, true, nil},
 	// Add columns.
-	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateNone, model.StateNone}, true, false, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateDeleteOnly, model.StateNone}, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateWriteOnly, model.StateNone}, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateWriteReorganization, model.StateNone}, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", false, subStates{model.StatePublic, model.StatePublic}, false, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, testutil.SubStates{model.StateNone, model.StateNone}, true, false, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, testutil.SubStates{model.StateDeleteOnly, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, testutil.SubStates{model.StateWriteOnly, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, testutil.SubStates{model.StateWriteReorganization, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", false, testutil.SubStates{model.StatePublic, model.StatePublic}, false, true, nil},
 	// Drop columns.
-	{"alter table t drop column c41, drop column c42", true, subStates{model.StatePublic, model.StatePublic}, true, false, nil},
-	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteOnly, model.StateDeleteOnly}, true, false, nil},
-	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteOnly, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
-	{"alter table t drop column c41, drop column c42", false, subStates{model.StateWriteOnly, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
-	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteReorganization, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
-	{"alter table t drop column c41, drop column c42", false, subStates{model.StateNone, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", true, testutil.SubStates{model.StatePublic, model.StatePublic}, true, false, nil},
+	{"alter table t drop column c41, drop column c42", false, testutil.SubStates{model.StateDeleteOnly, model.StateDeleteOnly}, true, false, nil},
+	{"alter table t drop column c41, drop column c42", false, testutil.SubStates{model.StateDeleteOnly, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", false, testutil.SubStates{model.StateWriteOnly, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", false, testutil.SubStates{model.StateDeleteReorganization, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", false, testutil.SubStates{model.StateNone, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
 	// Drop columns with index.
-	{"alter table t drop column c41, drop column c42", true, subStates{model.StatePublic, model.StatePublic}, true, false, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
-	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteOnly, model.StateDeleteOnly}, true, false, nil},
-	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteOnly, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
-	{"alter table t drop column c41, drop column c42", false, subStates{model.StateWriteOnly, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
-	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteReorganization, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
-	{"alter table t drop column c41, drop column c42", false, subStates{model.StateNone, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
+	{"alter table t drop column c41, drop column c42", true, testutil.SubStates{model.StatePublic, model.StatePublic}, true, false, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
+	{"alter table t drop column c41, drop column c42", false, testutil.SubStates{model.StateDeleteOnly, model.StateDeleteOnly}, true, false, nil},
+	{"alter table t drop column c41, drop column c42", false, testutil.SubStates{model.StateDeleteOnly, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
+	{"alter table t drop column c41, drop column c42", false, testutil.SubStates{model.StateWriteOnly, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
+	{"alter table t drop column c41, drop column c42", false, testutil.SubStates{model.StateDeleteReorganization, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
+	{"alter table t drop column c41, drop column c42", false, testutil.SubStates{model.StateNone, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
 	// Alter index visibility.
 	{"alter table t alter index idx_v invisible", true, model.StateNone, true, false, []string{"alter table t add index idx_v(c1)"}},
 	{"alter table t alter index idx_v invisible", false, model.StatePublic, false, true, nil},
@@ -179,13 +180,13 @@ var allTestCase = []testCancelJob{
 	{"alter table t_partition drop partition p6", false, model.StateDeleteReorganization, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	{"alter table t_partition drop partition p6", false, model.StateNone, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	// Drop indexes.
-	{"alter table t drop index mul_idx1, drop index mul_idx2", true, subStates{model.StatePublic, model.StatePublic}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateWriteOnly, model.StateWriteOnly}, true, false, nil},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateWriteOnly, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteOnly, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteOnly, model.StateWriteOnly}, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteReorganization, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteReorganization, model.StateWriteOnly}, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", true, testutil.SubStates{model.StatePublic, model.StatePublic}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, testutil.SubStates{model.StateWriteOnly, model.StateWriteOnly}, true, false, nil},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, testutil.SubStates{model.StateWriteOnly, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, testutil.SubStates{model.StateDeleteOnly, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, testutil.SubStates{model.StateDeleteOnly, model.StateWriteOnly}, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, testutil.SubStates{model.StateDeleteReorganization, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, testutil.SubStates{model.StateDeleteReorganization, model.StateWriteOnly}, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
 	// Alter db placement.
 	{"alter database db_placement placement policy = 'alter_x'", true, model.StateNone, true, false, []string{"create placement policy alter_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";", "create database db_placement"}},
 	{"alter database db_placement placement policy = 'alter_x'", false, model.StatePublic, false, true, nil},
@@ -244,7 +245,7 @@ func TestCancel(t *testing.T) {
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 
 	hookFunc := func(job *model.Job) {
-		if TestMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel.Load() {
+		if testutil.TestMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel.Load() {
 			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
