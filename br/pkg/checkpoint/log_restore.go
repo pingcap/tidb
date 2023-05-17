@@ -44,9 +44,9 @@ func (l LogRestoreValueType) IdentKey() []byte {
 
 type LogRestoreValueMarshaled struct {
 	// group index in the metadata
-	Goff int
+	Goff int `json:"goff"`
 	// downstream table id -> file indexes in the group
-	Foffs map[int64][]int
+	Foffs map[int64][]int `json:"foffs"`
 }
 
 func (l LogRestoreValueMarshaled) IdentKey() []byte {
