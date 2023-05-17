@@ -36,7 +36,6 @@ import (
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -957,21 +956,10 @@ func errorIsRetryable(err error, job *model.Job) bool {
 	originErr := errors.Cause(err)
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
-		switch sqlErr.Code {
-		case errno.ErrPDServerTimeout,
-			errno.ErrTiKVServerBusy,
-			errno.ErrResolveLockTimeout,
-			errno.ErrInfoSchemaExpired,
-			errno.ErrInfoSchemaChanged,
-			errno.ErrWriteConflictInTiDB,
-			errno.ErrTxnRetryable,
-			errno.ErrWriteConflict:
-			return true
-		default:
-			return false
-		}
+		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
+		return ok
 	}
-	// For the unknown error, we should retry.
+	// For the unknown errors, we should retry.
 	return true
 }
 
