@@ -1516,7 +1516,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 
 	// We should process (and try) all the jobs in one Transaction.
 	for tryN := uint(0); tryN < 10; tryN += 1 {
-		errs = make([]error, len(ids))
+		errs = make([]error, 0, len(ids))
 		// Need to figure out which one could not be paused
 		jobMap := make(map[int64]int, len(ids))
 		idsStr := make([]string, 0, len(ids))
@@ -1621,7 +1621,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 	for {
 		var jobs []*model.Job
 		jobs, err = getJobsBySQL(ns, JobTable,
-			fmt.Sprintf("job_id >= %s and processing order by job_id asc limit %s",
+			fmt.Sprintf("job_id >= %s order by job_id asc limit %s",
 				strconv.FormatInt(jobID, 10),
 				strconv.FormatInt(int64(limit), 10)))
 		if err != nil {
