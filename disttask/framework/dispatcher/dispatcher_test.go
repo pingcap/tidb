@@ -69,7 +69,7 @@ func TestGetInstance(t *testing.T) {
 	// test no server
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
+	_, err := dispatcher.GenerateSchedulerNodes(ctx)
 	require.EqualError(t, err, "not found instance")
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, 1)
 	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
@@ -88,7 +88,7 @@ func TestGetInstance(t *testing.T) {
 		},
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	serverNodes, err = dispatcher.GenerateSchedulerNodes(ctx)
+	serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
 	require.NoError(t, err)
 	instanceID := dispatcher.GetInstanceForSubtask(serverNodes, 0)
 	require.NoError(t, err)
