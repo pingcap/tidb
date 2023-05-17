@@ -23,6 +23,19 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const (
+	AnnPodNameKey        string = "tidb.pingcap.com/pod-name"
+	NamespaceLabelKey    string = "app.kubernetes.io/namespace"
+	NameLabelKey         string = "app.kubernetes.io/name"
+	AnnTemporaryVolumeID string = "temporary/volume-id"
+
+	SourcePvcNameKey   string = "source/pvcName"
+	SourceVolumeIdKey  string = "source/VolumeId"
+	SourceTikvNameKey  string = "source/TikvName"
+	SourceNamespaceKey string = "source/Namespace"
+	SourceContextKey   string = "source/context"
+)
+
 type EC2Session struct {
 	ec2 ec2iface.EC2API
 	// aws operation concurrency
@@ -30,6 +43,15 @@ type EC2Session struct {
 }
 
 type VolumeAZs map[string]string
+
+type SnapshotTags struct {
+	sourcePVCName   string
+	sourceTiKVName  string
+	sourceNameSpace string
+	sourceContext   string
+}
+
+type VolumeSnapshotTags map[string]SnapshotTags
 
 func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 	// aws-sdk has builtin exponential backoff retry mechanism, see:
@@ -47,6 +69,20 @@ func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 	return &EC2Session{ec2: ec2Session, concurrency: concurrency}, nil
 }
 
+func GenerateVolumeSnapshotTags(backupInfo *config.EBSBasedBRMeta) VolumeSnapshotTags {
+	vst := make(VolumeSnapshotTags)
+	for j := range backupInfo.KubernetesMeta.PVs {
+		pv := backupInfo.KubernetesMeta.PVs[j]
+		vst[pv.GetAnnotations()[AnnTemporaryVolumeID]] = SnapshotTags{
+			pv.GetName(),
+			pv.GetAnnotations()[AnnPodNameKey],
+			pv.GetLabels()[NamespaceLabelKey],
+			pv.GetLabels()[NameLabelKey],
+		}
+	}
+	return vst
+}
+
 // CreateSnapshots is the mainly steps to control the data volume snapshots.
 func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[string]string, VolumeAZs, error) {
 	snapIDMap := make(map[string]string)
@@ -54,13 +90,33 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 
 	var mutex sync.Mutex
 	eg, _ := errgroup.WithContext(context.Background())
-	fillResult := func(createOutput *ec2.CreateSnapshotsOutput) {
+
+	vst := GenerateVolumeSnapshotTags(backupInfo)
+	taggingAndFillResult := func(createOutput *ec2.CreateSnapshotsOutput, vst VolumeSnapshotTags) error {
 		mutex.Lock()
 		defer mutex.Unlock()
 		for j := range createOutput.Snapshots {
 			snapshot := createOutput.Snapshots[j]
 			snapIDMap[aws.StringValue(snapshot.VolumeId)] = aws.StringValue(snapshot.SnapshotId)
+
+			createTagInput := &ec2.CreateTagsInput{
+				Resources: []*string{
+					snapshot.SnapshotId,
+				},
+				Tags: []*ec2.Tag{
+					ec2Tag(SourcePvcNameKey, vst[*snapshot.VolumeId].sourcePVCName),
+					ec2Tag(SourceVolumeIdKey, *snapshot.VolumeId),
+					ec2Tag(SourceTikvNameKey, vst[*snapshot.VolumeId].sourceTiKVName),
+					ec2Tag(SourceNamespaceKey, vst[*snapshot.VolumeId].sourceNameSpace),
+					ec2Tag(SourceContextKey, vst[*snapshot.VolumeId].sourceContext),
+				},
+			}
+			_, err := e.ec2.CreateTags(createTagInput)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
+		return nil
 	}
 
 	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshots")
@@ -131,7 +187,11 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				if err != nil {
 					return errors.Trace(err)
 				}
-				fillResult(resp)
+				err = taggingAndFillResult(resp, vst)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
 				return nil
 			})
 		}
@@ -263,14 +323,6 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, targetAZ string) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{
 		VolumeType: &volumeType,
-		TagSpecifications: []*ec2.TagSpecification{
-			{
-				ResourceType: aws.String(ec2.ResourceTypeVolume),
-				Tags: []*ec2.Tag{
-					ec2Tag("TiDBCluster-BR", "new"),
-				},
-			},
-		},
 	}
 	if iops > 0 {
 		template.SetIops(iops)
@@ -287,6 +339,16 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 		defer mutex.Unlock()
 		newVolumeIDMap[oldVol.ID] = *newVol.VolumeId
 	}
+
+	fetchTagValue := func(tags []*ec2.Tag, key string) string {
+		for i := range tags {
+			tag := tags[i]
+			if *tag.Key == key {
+				return *tag.Value
+			}
+		}
+		return ""
+	}
 	workerPool := utils.NewWorkerPool(e.concurrency, "create volume")
 	for i := range meta.TiKVComponent.Stores {
 		store := meta.TiKVComponent.Stores[i]
@@ -295,12 +357,47 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
 				req := template
+
 				req.SetSnapshotId(oldVol.SnapshotID)
 				if targetAZ == "" {
 					req.SetAvailabilityZone(oldVol.VolumeAZ)
 				} else {
 					req.SetAvailabilityZone(targetAZ)
 				}
+
+				snapshotIds := make([]*string, 1)
+				snapshotIds = append(snapshotIds, &oldVol.SnapshotID)
+				resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapshotIds})
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				if len(resp.Snapshots) <= 0 {
+					return errors.Errorf("specified snapshot [%s] is not found", oldVol.SnapshotID)
+				}
+
+				// Copy interested tags of snapshots to the restored volume
+				tags := []*ec2.Tag{
+					ec2Tag("TiDBCluster-BR", "new"),
+					ec2Tag("ebs.csi.aws.com/cluster", "true"),
+				}
+
+				snapshotTags := resp.Snapshots[0].Tags
+				tags = append(tags, ec2Tag("snapshot/createdFromSnapshotId", oldVol.SnapshotID),
+					ec2Tag("snapshot/"+SourcePvcNameKey, fetchTagValue(snapshotTags, "source/pvcName")),
+					ec2Tag("snapshot/"+SourceVolumeIdKey, fetchTagValue(snapshotTags, "source/VolumeId")),
+					ec2Tag("snapshot/"+SourceTikvNameKey, fetchTagValue(snapshotTags, "source/TikvName")),
+					ec2Tag("snapshot/"+SourceNamespaceKey, fetchTagValue(snapshotTags, "source/Namespace")),
+					ec2Tag("snapshot/"+SourceContextKey, fetchTagValue(snapshotTags, "source/context")))
+
+				req.SetTagSpecifications([]*ec2.TagSpecification{
+					{
+						ResourceType: aws.String(ec2.ResourceTypeVolume),
+						Tags:         tags,
+					},
+				})
+				req.SetAvailabilityZone(oldVol.VolumeAZ)
+>>>>>>> 721d0bae6c (br: add tags to snapshots and restored volumes)
 				newVol, err := e.ec2.CreateVolume(&req)
 				if err != nil {
 					return errors.Trace(err)
