@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/etcd"
@@ -1369,7 +1370,12 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	})
 
 	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
+	serverID := generateSubtaskExecID(ctx, do.ddl.GetID())
+	if serverID == "" {
+		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
+		return errors.New(errMsg)
+	}
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, serverID, taskManager)
 	if err != nil {
 		return err
 	}
@@ -1382,6 +1388,17 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
 	}, "distTaskFrameworkLoop")
 	return nil
+}
+
+func generateSubtaskExecID(ctx context.Context, ID string) string {
+	serverInfos, err := infosync.GetAllServerInfo(ctx)
+	if err != nil || len(serverInfos) == 0 {
+		return ""
+	}
+	if serverNode, ok := serverInfos[ID]; ok {
+		return disttaskutil.GenerateExecID(serverNode.IP, serverNode.Port)
+	}
+	return ""
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {

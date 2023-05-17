@@ -391,7 +391,7 @@ func TrimUtf8String(str *string, trimmedNum int64) int64 {
 	totalLenTrimmed := int64(0)
 	for ; trimmedNum > 0; trimmedNum-- {
 		length := Utf8Len((*str)[0]) // character length
-		(*str) = (*str)[length:]
+		*str = (*str)[length:]
 		totalLenTrimmed += int64(length)
 	}
 	return totalLenTrimmed
