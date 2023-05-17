@@ -118,16 +118,20 @@ func (b *backfillSchedulerHandle) UpdateStatLoop() {
 		logutil.BgLogger().Warn("[ddl] get server info failed", zap.Error(err))
 		return
 	}
-	path := fmt.Sprintf("distAddIndex/%d/%s:%d", b.job.ID, ser.IP, ser.Port)
+	path := fmt.Sprintf("%s/%d/%s:%d", rowCountEtcdPath, b.job.ID, ser.IP, ser.Port)
+	writeToEtcd := func() {
+		err := ddlutil.PutKVToEtcd(b.ctx, b.d.etcdCli, 3, path, strconv.Itoa(int(b.totalRowCnt)))
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] update row count for distributed add index failed", zap.Error(err))
+		}
+	}
 	for {
 		select {
 		case <-b.done:
+			writeToEtcd()
 			return
 		case <-tk:
-			err := ddlutil.PutKVToEtcd(b.ctx, b.d.etcdCli, 3, path, strconv.Itoa(int(b.totalRowCnt)))
-			if err != nil {
-				logutil.BgLogger().Warn("[ddl] update row count for distributed add index failed", zap.Error(err))
-			}
+			writeToEtcd()
 		}
 	}
 }

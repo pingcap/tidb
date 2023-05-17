@@ -169,9 +169,14 @@ func getAndSetJobRowCnt(ctx context.Context, reorgInfo *reorgInfo, rc *reorgCtx,
 func deleteETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, job *model.Job, client *clientv3.Client) {
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		path := fmt.Sprintf("%s/%d", rowCountEtcdPath, job.ID)
-		_, err := client.Delete(ctx, path, clientv3.WithPrefix())
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] delete row count from ETCD failed", zap.Error(err))
+		const retryCnt = 3
+		for i := 0; i < retryCnt; i++ {
+			_, err := client.Delete(ctx, path, clientv3.WithPrefix())
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] delete row count from ETCD failed", zap.Error(err))
+			} else {
+				return
+			}
 		}
 	}
 }
