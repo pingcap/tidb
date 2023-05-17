@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -3178,6 +3179,7 @@ func (rc *Client) generateRepairIngestIndexSQLs(
 				return sqls, false, errors.Trace(err)
 			}
 			sqls = checkpointSQLs.SQLs
+			log.Info("[ingest] load ingest index repair sqls from checkpoint")
 			return sqls, true, nil
 		}
 	}
@@ -3261,7 +3263,6 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 NEXTSQL:
 	for _, sql := range sqls {
 		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
-		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
 
 		tableInfo, err := info.TableByName(sql.SchemaName, sql.TableName)
 		if err != nil {
@@ -3280,16 +3281,25 @@ NEXTSQL:
 				if indexInfo.Name.O == sql.IndexName {
 					// find the same name index, but not the same index id,
 					// which means the repaired index id is created
+					console.Out().Write([]byte(fmt.Sprintf("%s ... %s\n", progressTitle, color.HiGreenString("SKIPPED DUE TO CHECKPOINT MODE"))))
 					continue NEXTSQL
 				}
 			}
 		}
+
+		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
+
 		// only when first execution or old index id is not dropped
 		if !fromCheckpoint || oldIndexIDFound {
 			if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
 				return errors.Trace(err)
 			}
 		}
+		failpoint.Inject("failed-before-create-ingest-index", func(v failpoint.Value) {
+			if v != nil && v.(bool) {
+				failpoint.Return(errors.New("failed before create ingest index"))
+			}
+		})
 		// create the repaired index when first execution or not found it
 		if err := rc.db.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
 			return errors.Trace(err)
@@ -3299,7 +3309,6 @@ NEXTSQL:
 			return errors.Trace(err)
 		}
 		w.Close()
-		return nil
 	}
 
 	return errors.Trace(err)
