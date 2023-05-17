@@ -455,7 +455,7 @@ func (local *Backend) BatchSplitRegions(
 		return failedErr
 	}, backoffer)
 
-	// TODO: should we return the error from WithRetry?
+	// TODO: there's still change that we may skip scatter if the retry is timeout.
 	return region, newRegions, ctx.Err()
 }
 
