@@ -247,12 +247,12 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 			logutil.Logger(logCtx).Info("etcd session is done, creates a new one")
 			leaseID := etcdSession.Lease()
 			etcdSession, err = util2.NewSession(campaignContext, logPrefix, m.etcdCli, util2.NewSessionRetryUnlimited, ManagerSessionTTL)
-			m.sessionLease.Store(int64(etcdSession.Lease()))
 			if err != nil {
 				logutil.Logger(logCtx).Info("break campaign loop, NewSession failed", zap.Error(err))
 				m.revokeSession(logPrefix, leaseID)
 				return
 			}
+			m.sessionLease.Store(int64(etcdSession.Lease()))
 		case <-campaignContext.Done():
 			failpoint.Inject("MockDelOwnerKey", func(v failpoint.Value) {
 				if v.(string) == "delOwnerKeyAndNotOwner" {
