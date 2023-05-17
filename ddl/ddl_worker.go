@@ -950,6 +950,18 @@ func (w *worker) countForError(err error, job *model.Job) error {
 	return err
 }
 
+func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (err error, isRunnable bool) {
+	if job.IsPaused() {
+		logutil.Logger(w.logCtx).Debug("[ddl] paused DDL job ", zap.String("job", job.String()))
+		return err, false
+	}
+	if job.IsPausing() {
+		logutil.Logger(w.logCtx).Debug("[ddl] pausing DDL job ", zap.String("job", job.String()))
+		return pauseReorgWorkers(w, d, job), false
+	}
+	return nil, true
+}
+
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runDDLJob", w),
@@ -981,13 +993,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		return convertJob2RollbackJob(w, d, t, job)
 	}
 
-	if job.IsPaused() {
-		logutil.Logger(w.logCtx).Debug("[ddl] paused DDL job ", zap.String("job", job.String()))
+	err, isRunnable := w.processJobPausingRequest(d, job)
+	if !isRunnable {
 		return ver, err
-	}
-	if job.IsPausing() {
-		logutil.Logger(w.logCtx).Debug("[ddl] pausing DDL job ", zap.String("job", job.String()))
-		return ver, pauseReorgWorkers(w, d, job)
 	}
 
 	// During binary upgrade, pause all running DDL jobs

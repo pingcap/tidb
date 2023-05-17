@@ -1557,8 +1557,9 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 
 			err = updateDDLJob2Table(ns, job, true)
 			if err != nil {
-				errs[i] = err
-				continue
+				// unexpected error on updating the job table, should roll it back
+				ns.Rollback()
+				return errs, err
 			}
 		}
 
@@ -1624,7 +1625,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 	for {
 		var jobs []*model.Job
 		jobs, err = getJobsBySQL(ns, JobTable,
-			fmt.Sprintf("job_id >= %s order by job_id asc limit %s",
+			fmt.Sprintf("job_id >= %s and processing order by job_id asc limit %s",
 				strconv.FormatInt(jobID, 10),
 				strconv.FormatInt(int64(limit), 10)))
 		if err != nil {
@@ -1636,11 +1637,12 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 			err = process(ns, job, byWho)
 			if err != nil {
 				jobErrs[job.ID] = err
-				ns.Rollback()
-				return jobErrs, err
+				continue
 			}
+
 			err = updateDDLJob2Table(ns, job, true)
 			if err != nil {
+				// unexpected error on updating the job table, should roll it back
 				ns.Rollback()
 				return jobErrs, err
 			}

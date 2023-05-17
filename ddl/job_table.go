@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/dbterror"
 	"strconv"
 	"strings"
 	"time"
@@ -125,6 +126,11 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 			return nil, errors.Trace(err)
 		}
 
+		err, isRunnable := d.processJobDuringUpgrade(se, &job)
+		if !isRunnable {
+			return nil, errors.Trace(err)
+		}
+
 		// The job has already been picked up, just return to continue it.
 		if isJobProcessing {
 			return &job, nil
@@ -157,6 +163,43 @@ func hasSysDB(job *model.Job) bool {
 		}
 	}
 	return false
+}
+
+func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (err error, isRunnable bool) {
+	if d.stateSyncer.IsUpgradingState() {
+		if hasSysDB(job) {
+			return err, false
+		}
+		var errs []error
+		// During binary upgrade, pause all running DDL jobs
+		errs, err = PauseJobsBySystem(sess.Session(), []int64{job.ID})
+		if len(errs) > 0 {
+			if dbterror.ErrCannotPauseDDLJob.Equal(errs[0]) ||
+				dbterror.ErrPausedDDLJob.Equal(errs[0]) {
+				return nil, false
+			}
+
+			// During upgrade, there are jobs that may not be paused because of `!job.IsRunning`.
+			// Then, we would not run it and just return unless the upgrade finished.
+			return errs[0], false
+		}
+
+		// no matter how, we would not run DDL jobs during upgrade even not paused.
+		return err, false
+	}
+
+	if job.IsPausedBySystem() && !hasSysDB(job) {
+		var errs []error
+		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
+		if len(errs) > 0 {
+			return errs[0], false
+		}
+		if err != nil {
+			return err, false
+		}
+	}
+
+	return nil, true
 }
 
 func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
