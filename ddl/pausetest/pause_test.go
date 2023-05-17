@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package pausetest
 
 import (
 	"context"
@@ -238,7 +238,7 @@ func TestPauseAndResumeMain(t *testing.T) {
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 	commandHook := func(job *model.Job) {
 		logger.Info("allPauseJobTestCase commandHook: " + job.String())
-		if testMatchCancelState(t, job, allPauseJobTestCase[i.Load()].jobState, allPauseJobTestCase[i.Load()].sql) && !isPaused.Load() {
+		if ddl.testMatchCancelState(t, job, allPauseJobTestCase[i.Load()].jobState, allPauseJobTestCase[i.Load()].sql) && !isPaused.Load() {
 			logger.Info("allPauseJobTestCase commandHook: pass the check")
 			if !pauseWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				logger.Info("allPauseJobTestCase commandHook: reorg, return")
