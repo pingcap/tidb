@@ -2180,7 +2180,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context, isShow bool) (rows [][]
 			procID = chunkRow.GetUint64(10)
 		}
 
-		var RemainDurationStr string
+		var RemainDurationStr interface{}
 		if isShow && state == statistics.AnalyzeRunning {
 			RemainingDuration, RemainDurationErr := getRemainDurationForAnalyzeStatusHelper(sctx, startTime, dbName, tableName, partitionName, processedRows)
 			if RemainDurationErr != nil {
