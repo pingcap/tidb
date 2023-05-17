@@ -1140,7 +1140,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTiKVStaleCommand:          mysql.Message("TiKV server reports stale command", nil),
 	ErrTiKVMaxTimestampNotSynced: mysql.Message("TiKV max timestamp is not synced", nil),
 
-	ErrCannotPauseDDLJob:  mysql.Message("Job [%v] can't be paused now", nil),
-	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed", nil),
-	ErrPausedDDLJob:       mysql.Message("Job [%v] already paused", nil),
+	ErrCannotPauseDDLJob:  mysql.Message("Job [%v] state [%s] or schema state [%s] is not qualified to be paused", nil),
+	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed, %s", nil),
+	ErrPausedDDLJob:       mysql.Message("Job [%v] has already been paused", nil),
 }
