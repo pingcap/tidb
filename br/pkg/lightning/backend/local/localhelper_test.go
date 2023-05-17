@@ -1026,8 +1026,8 @@ func TestWaitForScatterRegions(t *testing.T) {
 		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
 	}
 
-	local := &Backend{splitCli: cli}
-	cnt, err := local.waitForScatterRegions(ctx, regions)
+	l := &local{splitCli: cli}
+	cnt, err := l.waitForScatterRegions(ctx, regions)
 	require.NoError(t, err)
 	require.Equal(t, 6, cnt)
 	for i := 1; i <= 4; i++ {
@@ -1050,8 +1050,8 @@ func TestWaitForScatterRegions(t *testing.T) {
 	cli.respM[3] = []*pdpb.GetOperatorResponse{
 		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_DATA_COMPACTED}}},
 	}
-	local = &Backend{splitCli: cli}
-	cnt, err = local.waitForScatterRegions(ctx, regions)
+	l = &local{splitCli: cli}
+	cnt, err = l.waitForScatterRegions(ctx, regions)
 	require.ErrorContains(t, err, "failed to get region operator, error type: DATA_COMPACTED")
 	require.Equal(t, 2, cnt)
 	checkRespDrained(cli)
@@ -1086,8 +1086,8 @@ func TestWaitForScatterRegions(t *testing.T) {
 	cli.respM[6] = []*pdpb.GetOperatorResponse{
 		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
 	}
-	local = &Backend{splitCli: cli}
-	cnt, err = local.waitForScatterRegions(ctx, regions)
+	l = &local{splitCli: cli}
+	cnt, err = l.waitForScatterRegions(ctx, regions)
 	require.ErrorContains(t, err, "wait for scatter region timeout, print the first unfinished region id:4")
 	require.Equal(t, 5, cnt)
 	checkRespDrained(cli)
