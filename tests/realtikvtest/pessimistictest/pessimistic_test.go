@@ -3391,7 +3391,7 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 func TestIssue43243(t *testing.T) {
 	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 
-	{
+	if *realtikvtest.WithRealTiKV {
 		// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
 		// TODO: Remove this after supporting scan lock for in-memory pessimistic lock.
 		tkcfg := testkit.NewTestKit(t, store)
