@@ -2185,9 +2185,9 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 			RemainingDuration, RemainDurationErr := getRemainDurationForAnalyzeStatusHelper(sctx, startTime, dbName, tableName, partitionName, processedRows)
 			if RemainDurationErr != nil {
 				log.Warn("get remaining duration failed", zap.Error(RemainDurationErr))
-				RemainDurationStr = ""
-			} else {
-				RemainDurationStr = execdetails.FormatDuration(RemainingDuration)
+			}
+			if RemainingDuration != nil {
+				RemainDurationStr = execdetails.FormatDuration(*RemainingDuration)
 			}
 		}
 
@@ -2212,7 +2212,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 func getRemainDurationForAnalyzeStatusHelper(
 	sctx sessionctx.Context, startTime interface{},
 	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, error) {
-	var RemainingDuration time.Duration = time.Duration(0)
+	var RemainingDuration = time.Duration(0)
 	if startTime != nil {
 		startTime, ok := startTime.(types.Time)
 		if !ok {
