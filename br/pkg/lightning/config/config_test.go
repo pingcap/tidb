@@ -838,6 +838,7 @@ func TestDefaultImporterBackendValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, cfg.App.IndexConcurrency)
 	require.Equal(t, 6, cfg.App.TableConcurrency)
+	require.Equal(t, 4096, cfg.TikvImporter.RegionSplitBatchSize)
 }
 
 func TestDefaultTidbBackendValue(t *testing.T) {
@@ -852,19 +853,31 @@ func TestDefaultTidbBackendValue(t *testing.T) {
 }
 
 func TestDefaultCouldBeOverwritten(t *testing.T) {
+	ctx := context.Background()
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.TikvImporter.Backend = "local"
 	cfg.App.IndexConcurrency = 20
 	cfg.App.TableConcurrency = 60
 	cfg.TiDB.DistSQLScanConcurrency = 1
-	err := cfg.Adjust(context.Background())
+	err := cfg.Adjust(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 20, cfg.App.IndexConcurrency)
 	require.Equal(t, 60, cfg.App.TableConcurrency)
 
 	require.Equal(t, config.KVWriteBatchCount, cfg.TikvImporter.SendKVPairs)
 	require.Equal(t, config.ByteSize(config.KVWriteBatchSize), cfg.TikvImporter.SendKVSize)
+
+	cfg.TikvImporter.RegionSplitConcurrency = 1
+	// backoff can be 0
+	cfg.TikvImporter.RegionCheckBackoffLimit = 0
+	err = cfg.Adjust(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, cfg.TikvImporter.RegionSplitConcurrency)
+	require.Equal(t, 0, cfg.TikvImporter.RegionCheckBackoffLimit)
+	cfg.TikvImporter.RegionSplitBatchSize = 0
+	err = cfg.Adjust(ctx)
+	require.ErrorContains(t, err, "`tikv-importer.region-split-batch-size` got 0, should be larger than 0")
 }
 
 func TestLoadFromInvalidConfig(t *testing.T) {

@@ -20,6 +20,8 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
@@ -33,7 +35,7 @@ import (
 type FlowHandle struct{}
 
 // ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
-func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+func (h *FlowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -43,6 +45,9 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandl
 
 	switch gTask.Step {
 	case Import:
+		if err := h.postProcess(ctx, handle, gTask); err != nil {
+			return nil, err
+		}
 		gTask.State = proto.TaskStateSucceed
 		return nil, nil
 	default:
@@ -76,7 +81,63 @@ func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gT
 	return nil, nil
 }
 
-func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
+// IsRetryableErr implements dispatcher.IsRetryableErr interface.
+func (*FlowHandle) IsRetryableErr(error) bool {
+	// TODO: check whether the error is retryable.
+	return false
+}
+
+// postProcess does the post processing for the task.
+func (*FlowHandle) postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) error {
+	taskMeta := &TaskMeta{}
+	err := json.Unmarshal(gTask.Meta, taskMeta)
+	if err != nil {
+		return err
+	}
+	tableImporter, err := buildTableImporter(ctx, taskMeta)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err2 := tableImporter.Close()
+		if err == nil {
+			err = err2
+		}
+	}()
+
+	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
+	if err != nil {
+		return err
+	}
+
+	subtaskMetas := make([]*SubtaskMeta, 0, len(metas))
+	for _, bs := range metas {
+		var subtaskMeta SubtaskMeta
+		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
+			return err
+		}
+		subtaskMetas = append(subtaskMetas, &subtaskMeta)
+	}
+
+	logutil.BgLogger().Info("post process", zap.Any("task_meta", taskMeta), zap.Any("subtask_metas", subtaskMetas))
+
+	return verifyChecksum(ctx, tableImporter, subtaskMetas)
+}
+
+func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, subtaskMetas []*SubtaskMeta) error {
+	if tableImporter.Checksum == config.OpLevelOff {
+		return nil
+	}
+	var localChecksum verify.KVChecksum
+	for _, subtaskMeta := range subtaskMetas {
+		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
+		localChecksum.Add(&checksum)
+	}
+	logutil.BgLogger().Info("local checksum", zap.Object("checksum", &localChecksum))
+	return tableImporter.VerifyChecksum(ctx, localChecksum)
+}
+
+func buildTableImporter(ctx context.Context, taskMeta *TaskMeta) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
@@ -95,13 +156,17 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 		return nil, err
 	}
 
-	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
+	return importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
 		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
 		Job: &asyncloaddata.Job{
 			ID: taskMeta.JobID,
 		},
 	}, controller)
+}
+
+func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
+	tableImporter, err := buildTableImporter(ctx, taskMeta)
 	if err != nil {
 		return nil, err
 	}
