@@ -12,6 +12,7 @@ go_test(
         "//config",
         "//ddl",
         "//ddl/internal/callback",
+        "//ddl/testutil",
         "//errno",
         "//parser/model",
         "//testkit",

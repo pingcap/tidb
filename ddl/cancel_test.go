@@ -40,35 +40,6 @@ type testCancelJob struct {
 	prepareSQL  []string
 }
 
-type subStates = []model.SchemaState
-
-func testMatchCancelState(t *testing.T, job *model.Job, cancelState interface{}, sql string) bool {
-	switch v := cancelState.(type) {
-	case model.SchemaState:
-		if job.Type == model.ActionMultiSchemaChange {
-			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s)", sql, v)
-			require.Failf(t, msg, "use []model.SchemaState as cancel states instead")
-			return false
-		}
-		return job.SchemaState == v
-	case subStates: // For multi-schema change sub-jobs.
-		if job.MultiSchemaInfo == nil {
-			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v)", sql, v)
-			require.Failf(t, msg, "use model.SchemaState as the cancel state instead")
-			return false
-		}
-		require.Equal(t, len(job.MultiSchemaInfo.SubJobs), len(v), sql)
-		for i, subJobSchemaState := range v {
-			if job.MultiSchemaInfo.SubJobs[i].SchemaState != subJobSchemaState {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
 var allTestCase = []testCancelJob{
 	// Add index.
 	{"create unique index c3_index on t_partition (c1)", true, model.StateWriteReorganization, true, true, nil},
@@ -273,7 +244,7 @@ func TestCancel(t *testing.T) {
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 
 	hookFunc := func(job *model.Job) {
-		if testMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel.Load() {
+		if TestMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel.Load() {
 			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
