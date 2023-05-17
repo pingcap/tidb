@@ -2168,7 +2168,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	// session resource-group might be changed by query hint, ensure the resoure it back when
+	// session resource-group might be changed by query hint, ensure restore it back when
 	// the execution finished.
 	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
 		defer func() {
@@ -3651,7 +3651,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return ver
+	return modifyBootstrapVersionForTest(store, ver)
 }
 
 func finishBootstrap(store kv.Storage) {

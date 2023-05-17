@@ -224,6 +224,9 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	}
 	var jobs string
 	for _, task := range tasks {
+		if err == nil {
+			err = task.cacheErr
+		}
 		task.err <- err
 		jobs += task.job.String() + "; "
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
@@ -367,14 +370,24 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		return nil
 	})
 	if err == nil {
-		jobTasks := make([]*model.Job, len(tasks))
+		jobTasks := make([]*model.Job, 0, len(tasks))
 		for i, task := range tasks {
 			job := task.job
 			job.Version = currentVersion
 			job.StartTS = startTS
 			job.ID = ids[i]
 			setJobStateToQueueing(job)
-			jobTasks[i] = job
+
+			if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
+				if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+					logutil.BgLogger().Warn("[ddl] pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
+					task.cacheErr = err
+					continue
+				}
+				logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job))
+			}
+
+			jobTasks = append(jobTasks, job)
 			injectModifyJobArgFailPoint(job)
 		}
 
@@ -403,6 +416,11 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
 		logutil.Logger(w.logCtx).Warn("[ddl] update DDL job failed", zap.String("job", job.String()), zap.Error(err))
+		w.sess.Rollback()
+		err1 := w.sess.Begin()
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
 		job.Error = toTError(err)

@@ -416,6 +416,8 @@ type BackendConfig struct {
 	// the minimum value is 128.
 	MaxOpenFiles int
 	KeyspaceName string
+	// the scope when pause PD schedulers.
+	PausePDSchedulerScope config.PausePDSchedulerScope
 }
 
 // NewBackendConfig creates a new BackendConfig.
@@ -437,6 +439,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		ShouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
 		MaxOpenFiles:            maxOpenFiles,
 		KeyspaceName:            keyspaceName,
+		PausePDSchedulerScope:   cfg.TikvImporter.PausePDSchedulerScope,
 	}
 }
 
@@ -1163,7 +1166,7 @@ func (local *Backend) generateAndSendJob(
 	return eg.Wait()
 }
 
-// fakeRegionJobs is used in test , the injected job can be found by (startKey, endKey).
+// fakeRegionJobs is used in test, the injected job can be found by (startKey, endKey).
 var fakeRegionJobs map[[2]string]struct {
 	jobs []*regionJob
 	err  error
@@ -1277,7 +1280,7 @@ func (local *Backend) startWorker(
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
 				jobWg.Add(len(jobs) - 1)
 				for _, j := range jobs {
-					j.retryCount = job.retryCount
+					j.lastRetryableErr = job.lastRetryableErr
 					jobOutCh <- j
 				}
 			}
@@ -1364,7 +1367,11 @@ func (local *Backend) executeJob(
 			job.lastRetryableErr = err
 			return nil
 		}
-		if job.stage == needRescan {
+		// if the job.stage successfully converted into "ingested", it means
+		// these data are ingested into TiKV so we handle remaining data.
+		// For other job.stage, the job should be sent back to caller to retry
+		// later.
+		if job.stage != ingested {
 			return nil
 		}
 
@@ -1410,7 +1417,8 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 		return err
 	}
 
-	if len(regionRanges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
+	if len(regionRanges) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+		log.FromContext(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
