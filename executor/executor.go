@@ -2427,9 +2427,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		pkColsInfo := w.e.table.Meta().GetPrimaryKey().Columns
 		for _, colInfo := range pkColsInfo {
 			colStr := colInfo.Name.O
-			if colInfo.Length != types.UnspecifiedLength {
-				colStr += fmt.Sprintf("(%d)", colInfo.Length)
-			}
 			pkCols = append(pkCols, colStr)
 		}
 		primaryIdx = tables.FindPrimaryIndex(w.table.Meta())
@@ -2454,9 +2451,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			md5HandleAndIndexCol.WriteString(tblCol.GeneratedExprString)
 		} else {
 			md5HandleAndIndexCol.WriteString(col.Name.O)
-			if col.Length != types.UnspecifiedLength {
-				md5HandleAndIndexCol.WriteString(fmt.Sprintf("(%d)", col.Length))
-			}
 		}
 		md5HandleAndIndexCol.WriteString(", 0x1)")
 		if offset != len(idxInfo.Columns)-1 {
@@ -2480,9 +2474,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	var indexColumnField strings.Builder
 	for offset, col := range idxInfo.Columns {
 		indexColumnField.WriteString(col.Name.O)
-		if col.Length != types.UnspecifiedLength {
-			indexColumnField.WriteString(fmt.Sprintf("(%d)", col.Length))
-		}
 		if offset != len(idxInfo.Columns)-1 {
 			indexColumnField.WriteString(", ")
 		}

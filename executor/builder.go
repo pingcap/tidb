@@ -473,14 +473,23 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 }
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
-	noMVIndex := true
+	noMVIndexOrPrefixIndex := true
 	for _, idx := range v.IndexInfos {
 		if idx.MVIndex {
-			noMVIndex = false
+			noMVIndexOrPrefixIndex = false
+			break
+		}
+		for _, col := range idx.Columns {
+			if col.Length != types.UnspecifiedLength {
+				noMVIndexOrPrefixIndex = false
+				break
+			}
+		}
+		if !noMVIndexOrPrefixIndex {
 			break
 		}
 	}
-	if b.ctx.GetSessionVars().FastCheckTable && noMVIndex {
+	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndex {
 		e := &FastCheckTableExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			dbName:       v.DBName,
