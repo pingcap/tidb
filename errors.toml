@@ -1406,6 +1406,21 @@ error = '''
 Ingest failed: %s
 '''
 
+["ddl:8260"]
+error = '''
+Job [%v] can't be paused now
+'''
+
+["ddl:8261"]
+error = '''
+Job [%v] can't be resumed
+'''
+
+["ddl:8262"]
+error = '''
+Job [%v] already paused
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1759,6 +1774,11 @@ Unsupported option for LOAD DATA LOCAL INFILE: %s
 ["executor:8173"]
 error = '''
 PreCheck failed: %s
+'''
+
+["executor:8174"]
+error = '''
+BRIE Job %d not found
 '''
 
 ["executor:8212"]
@@ -3024,6 +3044,11 @@ invalid year format
 ["types:8033"]
 error = '''
 invalid year
+'''
+
+["types:8034"]
+error = '''
+Incorrect datetime value: '%s'
 '''
 
 ["types:8037"]

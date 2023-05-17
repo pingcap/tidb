@@ -93,9 +93,9 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 	})
 
 	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
-	withOptions := "WITH DETACHED"
+	withOptions := "WITH thread=1, DETACHED"
 	if importMode == importer.PhysicalImportMode {
-		withOptions = "WITH DETACHED, import_mode='PHYSICAL'"
+		withOptions = "WITH thread=1, DETACHED, import_mode='PHYSICAL'"
 	}
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
@@ -145,7 +145,7 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	require.ErrorContains(s.T(), err, "Job ID 999999999 doesn't exist")
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
-		INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
+		INTO TABLE test_show.t WITH thread=1, DETACHED;`, gcsEndpoint)
 	// repeat LOAD DATA, will get duplicate entry error
 	rows := s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
@@ -175,7 +175,7 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 
 	// test IGNORE
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
-		IGNORE INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
+		IGNORE INTO TABLE test_show.t WITH thread=1, DETACHED;`, gcsEndpoint)
 	rows = s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
 	row = rows[0]
@@ -203,7 +203,7 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 
 	// test REPLACE
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
-		REPLACE INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
+		REPLACE INTO TABLE test_show.t WITH thread=1, DETACHED;`, gcsEndpoint)
 	rows = s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
 	row = rows[0]
@@ -254,11 +254,11 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	tk3.Session().GetSessionVars().User = user
 
 	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
-	withOptions := "WITH DETACHED, batch_size=1"
+	withOptions := "WITH thread=1, DETACHED, batch_size=1"
 	progressAfterFirstBatch := `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
 	progressAfterAll := `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
 	if importMode == importer.PhysicalImportMode {
-		withOptions = fmt.Sprintf("WITH DETACHED, import_mode='%s'", importMode)
+		withOptions = fmt.Sprintf("WITH thread=1, DETACHED, import_mode='%s'", importMode)
 		progressAfterFirstBatch = `{"SourceFileSize":2,"ReadRowCnt":1,"EncodeFileSize":1,"LoadedRowCnt":1}`
 		progressAfterAll = `{"SourceFileSize":2,"ReadRowCnt":2,"EncodeFileSize":2,"LoadedRowCnt":2}`
 	}

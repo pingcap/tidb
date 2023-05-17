@@ -2080,6 +2080,8 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	require.Regexp(t, "You have an error in your SQL syntax", err)
 
 	// Key partition can't be as subpartition
+	tk.MustContainErrMsg("CREATE TABLE tkey_subpartition1 (a INT not null,b VARCHAR(12) not null,c CHAR(14) not null,primary key (a, b, c)) PARTITION BY KEY (a) SUBPARTITION BY KEY(b) SUBPARTITIONS 2", "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
+
 	tk.MustExec("CREATE TABLE tkey_subpartition1 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))" +
 		"PARTITION BY RANGE(JYRQ)\n" +
 		"SUBPARTITION BY KEY(KHH) SUBPARTITIONS 2 \n" +
@@ -2089,7 +2091,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		"PARTITION p2 VALUES LESS THAN MAXVALUE\n" +
 		")")
 	result = tk.MustQuery("show warnings")
-	result.CheckContain("Unsupported partition type RANGE, treat as normal table")
+	result.CheckContain("Unsupported subpartitioning, only using RANGE partitioning")
 
 	// It ignores /*!50100 */ format
 	tk.MustExec("CREATE TABLE tkey10 (`col1` int, `col2` char(5),`col3` date)" +

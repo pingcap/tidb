@@ -11,9 +11,12 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -165,22 +168,39 @@ func pdRequestWithCode(
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	resp, err := cli.Do(req)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
-	}
+	var resp *http.Response
 	count := 0
 	for {
+		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
-		if count > pdRequestRetryTime || resp.StatusCode < 500 {
+		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
+			if failType, ok := v.(int); ok && count <= pdRequestRetryTime-1 {
+				resp = nil
+				switch failType {
+				case 0:
+					err = &net.OpError{
+						Op:  "read",
+						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+					}
+				default:
+					err = &url.Error{
+						Op:  "read",
+						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+					}
+				}
+			}
+		})
+		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
+			(err != nil && !common.IsRetryableError(err)) {
 			break
 		}
-		_ = resp.Body.Close()
-		time.Sleep(pdRequestRetryInterval())
-		resp, err = cli.Do(req)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		if resp != nil {
+			_ = resp.Body.Close()
 		}
+		time.Sleep(pdRequestRetryInterval())
+	}
+	if err != nil {
+		return 0, nil, errors.Trace(err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -257,7 +277,7 @@ func NewPdController(
 	}
 	if failure != nil {
 		return nil, errors.Annotatef(berrors.ErrPDUpdateFailed,
-			"pd address (%s) not available, please check network", pdAddrs)
+			"pd address (%s) not available, error is %s, please check network", pdAddrs, failure)
 	}
 
 	version := parseVersion(versionBytes)

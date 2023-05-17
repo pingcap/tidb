@@ -63,9 +63,15 @@ func (t *MockTaskTable) GetSubtaskInStates(instanceID string, taskID int64, stat
 	}
 }
 
-// UpdateSubtaskState implements SubtaskTable.UpdateSubtaskState.
-func (t *MockTaskTable) UpdateSubtaskState(id int64, state string) error {
+// UpdateSubtaskStateAndError implements SubtaskTable.UpdateSubtaskState.
+func (t *MockTaskTable) UpdateSubtaskStateAndError(id int64, state string, _ string) error {
 	args := t.Called(id, state)
+	return args.Error(0)
+}
+
+// FinishSubtask implements SubtaskTable.FinishSubtask
+func (t *MockTaskTable) FinishSubtask(id int64, meta []byte) error {
+	args := t.Called(id, meta)
 	return args.Error(0)
 }
 
@@ -133,9 +139,12 @@ func (m *MockScheduler) SplitSubtask(ctx context.Context, subtask []byte) ([]pro
 }
 
 // OnSubtaskFinished implements Scheduler.OnSubtaskFinished.
-func (m *MockScheduler) OnSubtaskFinished(ctx context.Context, subtask []byte) error {
+func (m *MockScheduler) OnSubtaskFinished(ctx context.Context, subtask []byte) ([]byte, error) {
 	args := m.Called(ctx, subtask)
-	return args.Error(0)
+	if args.Error(1) != nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), nil
 }
 
 // CleanupSubtaskExecEnv implements Scheduler.CleanupSubtaskExecEnv.

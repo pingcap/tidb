@@ -21,19 +21,24 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 type RestoreKeyType = int64
-type RestoreValueType = RangeType
+type RestoreValueType struct {
+	// the file key of a range
+	RangeKey string
+}
 
-type RestoreRunner = CheckpointRunner[RestoreKeyType, RestoreValueType]
+func (rv RestoreValueType) IdentKey() []byte {
+	return []byte(rv.RangeKey)
+}
 
 const (
-	CheckpointDataDirForRestoreFormat     = CheckpointDir + "/restore-%s/data"
-	CheckpointChecksumDirForRestoreFormat = CheckpointDir + "/restore-%s/checksum"
-	CheckpointMetaPathForRestoreFormat    = CheckpointDir + "/restore-%s/checkpoint.meta"
+	CheckpointRestoreDirFormat            = CheckpointDir + "/restore-%s"
+	CheckpointDataDirForRestoreFormat     = CheckpointRestoreDirFormat + "/data"
+	CheckpointChecksumDirForRestoreFormat = CheckpointRestoreDirFormat + "/checksum"
+	CheckpointMetaPathForRestoreFormat    = CheckpointRestoreDirFormat + "/checkpoint.meta"
 )
 
 func getCheckpointMetaPathByName(taskName string) string {
@@ -62,11 +67,11 @@ func StartCheckpointRestoreRunnerForTest(
 	cipher *backuppb.CipherInfo,
 	tick time.Duration,
 	taskName string,
-) (*RestoreRunner, error) {
+) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
-	runner.startCheckpointMainLoop(ctx, tick, 0)
+	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
 }
 
@@ -75,34 +80,26 @@ func StartCheckpointRunnerForRestore(
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	taskName string,
-) (*RestoreRunner, error) {
+) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
 		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, 0)
+	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
 	return runner, nil
 }
 
 func AppendRangesForRestore(
 	ctx context.Context,
-	r *RestoreRunner,
+	r *CheckpointRunner[RestoreKeyType, RestoreValueType],
 	tableID RestoreKeyType,
-	ranges []rtree.Range,
+	rangeKey string,
 ) error {
-	// no need to persist the file information
-	group := make([]RestoreValueType, 0, len(ranges))
-	for _, rg := range ranges {
-		group = append(group, RestoreValueType{
-			Range: &rtree.Range{
-				StartKey: rg.StartKey,
-				EndKey:   rg.EndKey,
-			},
-		})
-	}
 	return r.Append(ctx, &CheckpointMessage[RestoreKeyType, RestoreValueType]{
 		GroupKey: tableID,
-		Group:    group,
+		Group: []RestoreValueType{
+			{RangeKey: rangeKey},
+		},
 	})
 }
 
@@ -156,4 +153,9 @@ func ExistsRestoreCheckpoint(
 	taskName string,
 ) (bool, error) {
 	return s.FileExists(ctx, getCheckpointMetaPathByName(taskName))
+}
+
+func RemoveCheckpointDataForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) error {
+	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
+	return removeCheckpointData(ctx, s, prefix)
 }

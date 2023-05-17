@@ -88,18 +88,23 @@ func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (pr *paramReplacer) Reset() {
-	if pr.params != nil {
-		pr.params = pr.params[:0]
-	}
+	pr.params = make([]*driver.ValueExpr, 0, 4)
 }
 
 // GetParamSQLFromAST returns the parameterized SQL of this AST.
 // NOTICE: this function does not modify the original AST.
-func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
+// paramVals are copied from this AST.
+func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, paramVals []types.Datum, err error) {
+	var params []*driver.ValueExpr
 	paramSQL, params, err = ParameterizeAST(ctx, sctx, stmt)
 	if err != nil {
 		return "", nil, err
 	}
+	paramVals = make([]types.Datum, len(params))
+	for i, p := range params {
+		p.Datum.Copy(&paramVals[i])
+	}
+
 	err = RestoreASTWithParams(ctx, sctx, stmt, params)
 	return
 }
@@ -169,14 +174,14 @@ func RestoreASTWithParams(ctx context.Context, _ sessionctx.Context, stmt ast.St
 }
 
 // Params2Expressions converts these parameters to an expression list.
-func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
+func Params2Expressions(params []types.Datum) []expression.Expression {
 	exprs := make([]expression.Expression, 0, len(params))
 	for _, p := range params {
 		// TODO: add a sync.Pool for type.FieldType and expression.Constant here.
 		tp := new(types.FieldType)
-		types.InferParamTypeFromDatum(&p.Datum, tp)
+		types.InferParamTypeFromDatum(&p, tp)
 		exprs = append(exprs, &expression.Constant{
-			Value:   p.Datum,
+			Value:   p,
 			RetType: tp,
 		})
 	}

@@ -60,6 +60,9 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 		tblInfo, err = meta.NewMeta(txn).GetTable(job.SchemaID, job.TableID)
 		return err
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	if tblInfo.Partition == nil {
 		return nil, errors.New("Non-partition table not supported yet")
@@ -89,7 +92,15 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 	return subTaskMetas, nil
 }
 
-func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ string) (meta []byte, err error) {
+func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr [][]byte) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back
+	firstErr := receiveErr[0]
+	task.Error = firstErr
+
 	return nil, nil
+}
+
+// IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
+func (*litBackfillFlowHandle) IsRetryableErr(error) bool {
+	return true
 }

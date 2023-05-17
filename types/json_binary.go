@@ -717,7 +717,7 @@ func appendBinaryNumber(buf []byte, x json.Number) (JSONTypeCode, []byte, error)
 	// - Then uint64 (valid in MySQL JSON, not in JSON decode library)
 	// - Then float64
 	// - Return an error
-	if strings.ContainsAny(string(x), "Ee.") {
+	if strings.Contains(x.String(), "Ee.") {
 		f64, err := x.Float64()
 		if err != nil {
 			return JSONTypeCodeFloat64, nil, errors.Trace(err)

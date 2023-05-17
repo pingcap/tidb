@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type kvEncoder interface {
@@ -44,7 +45,7 @@ type kvEncoder interface {
 type tableKVEncoder struct {
 	*kv.BaseKVEncoder
 	// see import.go
-	columnAssignments  []*ast.Assignment
+	columnAssignments  []expression.Expression
 	columnsAndUserVars []*ast.ColumnNameOrUserVar
 	fieldMappings      []*FieldMapping
 	insertColumns      []*table.Column
@@ -54,10 +55,7 @@ var _ kvEncoder = &tableKVEncoder{}
 
 func newTableKVEncoder(
 	config *encode.EncodingConfig,
-	columnAssignments []*ast.Assignment,
-	columnsAndUserVars []*ast.ColumnNameOrUserVar,
-	fieldMappings []*FieldMapping,
-	insertColumns []*table.Column,
+	ti *TableImporter,
 ) (*tableKVEncoder, error) {
 	baseKVEncoder, err := kv.NewBaseKVEncoder(config)
 	if err != nil {
@@ -65,18 +63,27 @@ func newTableKVEncoder(
 	}
 	// we need a non-nil TxnCtx to avoid panic when evaluating set clause
 	baseKVEncoder.SessionCtx.Vars.TxnCtx = new(variable.TransactionContext)
+	colAssignExprs, _, err := ti.CreateColAssignExprs(baseKVEncoder.SessionCtx)
+	if err != nil {
+		return nil, err
+	}
 
 	return &tableKVEncoder{
 		BaseKVEncoder:      baseKVEncoder,
-		columnAssignments:  columnAssignments,
-		columnsAndUserVars: columnsAndUserVars,
-		fieldMappings:      fieldMappings,
-		insertColumns:      insertColumns,
+		columnAssignments:  colAssignExprs,
+		columnsAndUserVars: ti.ColumnsAndUserVars,
+		fieldMappings:      ti.FieldMappings,
+		insertColumns:      ti.InsertColumns,
 	}, nil
 }
 
 // Encode implements the kvEncoder interface.
 func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
+	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
+	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
+	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
+	// unable to release. So we truncate the warnings here.
+	defer en.TruncateWarns()
 	record, err := en.parserData2TableData(row, rowID)
 	if err != nil {
 		return nil, err
@@ -131,7 +138,7 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 	}
 	for i := 0; i < len(en.columnAssignments); i++ {
 		// eval expression of `SET` clause
-		d, err := expression.EvalAstExpr(en.SessionCtx, en.columnAssignments[i].Expr)
+		d, err := en.columnAssignments[i].Eval(chunk.Row{})
 		if err != nil {
 			return nil, err
 		}

@@ -127,6 +127,20 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
+// PauseDDLJobs indicates a plan to pause the Running DDL Jobs.
+type PauseDDLJobs struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
+// ResumeDDLJobs indicates a plan to resume the Paused DDL Jobs.
+type ResumeDDLJobs struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
 // ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
 type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
@@ -563,6 +577,9 @@ type LoadData struct {
 	Options            []*LoadDataOpt
 
 	GenCols InsertGeneratedColumns
+
+	// only use for distributed load data
+	Stmt string
 }
 
 // LoadDataOpt represents load data option.

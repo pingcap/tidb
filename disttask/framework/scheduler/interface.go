@@ -25,7 +25,8 @@ type TaskTable interface {
 	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
 	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
 	GetSubtaskInStates(instanceID string, taskID int64, states ...interface{}) (*proto.Subtask, error)
-	UpdateSubtaskState(id int64, state string) error
+	UpdateSubtaskStateAndError(id int64, state string, err string) error
+	FinishSubtask(id int64, meta []byte) error
 	HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error)
 }
 
@@ -54,7 +55,8 @@ type Scheduler interface {
 	// CleanupSubtaskExecEnv is used to clean up the environment for the subtask executor.
 	CleanupSubtaskExecEnv(context.Context) error
 	// OnSubtaskFinished is used to handle the subtask when it is finished.
-	OnSubtaskFinished(ctx context.Context, subtask []byte) error
+	// return the result of the subtask.
+	OnSubtaskFinished(ctx context.Context, subtask []byte) ([]byte, error)
 	// Rollback is used to rollback all subtasks.
 	Rollback(context.Context) error
 }

@@ -114,7 +114,7 @@ func (b *SQLBuilder) WriteSelect() error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
-	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY ")
+	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY SQL_NO_CACHE ")
 	b.writeColNames(b.tbl.KeyColumns, false)
 	b.restoreCtx.WritePlain(" FROM ")
 	if err := b.writeTblName(); err != nil {
