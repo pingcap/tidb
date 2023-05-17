@@ -76,6 +76,7 @@ var (
 )
 
 // ConnStatusShutdown indicates that the connection status is closed by server.
+// This code is put here because of package imports, and this value is the original server.connStatusShutdown.
 const ConnStatusShutdown int32 = 2
 
 // SetEnableAdaptiveReplicaRead set `enableAdaptiveReplicaRead` with given value.
