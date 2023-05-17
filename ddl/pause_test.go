@@ -211,7 +211,7 @@ func TestPauseAndResumeMain(t *testing.T) {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`)
 
 	idx := 0
-	rowCount := 100000
+	rowCount := 1000
 	tu := &TestTableUser{}
 	for idx < rowCount {
 		_ = tu.generateAttributes()

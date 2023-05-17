@@ -1179,7 +1179,8 @@ func syncUpgradeState(s Session) {
 	}
 
 	for i := 0; i < retryTimes; i++ {
-		if _, err = ddl.PauseAllJobsBySystem(s); err == nil {
+		_, err = ddl.PauseAllJobsBySystem(s)
+		if err == nil || dbterror.ErrPausedDDLJob.Equal(err) {
 			break
 		}
 

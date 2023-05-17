@@ -975,17 +975,49 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		return ver, err
 	}
 
-	if job.IsPaused() || job.IsPausing() {
-		logutil.Logger(w.logCtx).Info("[ddl] DDL job paused", zap.String("job", job.String()))
-		return ver, pauseReorgWorkers(w, d, job)
-	}
-
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
 		logutil.Logger(w.logCtx).Debug("[ddl] cancel DDL job", zap.String("job", job.String()))
 		return convertJob2RollbackJob(w, d, t, job)
 	}
 
+	if job.IsPaused() {
+		logutil.Logger(w.logCtx).Debug("[ddl] paused DDL job ", zap.String("job", job.String()))
+		return ver, err
+	}
+	if job.IsPausing() {
+		logutil.Logger(w.logCtx).Debug("[ddl] pausing DDL job ", zap.String("job", job.String()))
+		return ver, pauseReorgWorkers(w, d, job)
+	}
+
+	// During binary upgrade, pause all running DDL jobs
+	if d.stateSyncer.IsUpgradingState() {
+		if hasSysDB(job) {
+			return ver, err
+		}
+		var errs []error
+		errs, err = PauseJobsBySystem(w.sess.Session(), []int64{job.ID})
+		if len(errs) > 0 {
+			if dbterror.ErrCannotPauseDDLJob.Equal(errs[0]) ||
+				dbterror.ErrPausedDDLJob.Equal(errs[0]) {
+				// During upgrade, there are jobs that may not be paused because of `!job.IsRunning`.
+				// Then, we would not run it and just return unless the upgrade finished.
+				return ver, nil
+			}
+			logutil.Logger(w.logCtx).Warn("[ddl] unexpected error to pause a DDL: ", zap.Error(err))
+		}
+		return ver, err
+	} else if job.IsPausedBySystem() && !hasSysDB(job) {
+		_, err = ResumeJobsBySystem(w.sess.Session(), []int64{job.ID})
+		if err != nil {
+			logutil.BgLogger().Warn(
+				"[ddl] failed to resume user DDL by system after upgrade", zap.Stringer("job", job), zap.Error(err))
+			return ver, err
+		}
+		return ver, nil
+	}
+
+	// It would be better to do the positive check, but no idea to list all valid states here now.
 	if !job.IsRollingback() {
 		job.State = model.JobStateRunning
 	}
@@ -1122,7 +1154,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if err != nil {
 		err = w.countForError(err, job)
 	}
-	return
+	return ver, err
 }
 
 func loadDDLVars(w *worker) error {

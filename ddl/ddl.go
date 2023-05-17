@@ -1462,9 +1462,11 @@ func cancelRunningJob(sess *sess.Session, job *model.Job,
 // pauseRunningJob check and pause the running Job
 func pauseRunningJob(sess *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
-	// It would be much better doing this filter during `getJobsBySQL`, but not now.
+	if job.IsPausing() || job.IsPaused() {
+		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
+	}
 	if !job.IsPausable() {
-		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID)
+		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, job.State.String(), job.SchemaState.String())
 		if err != nil {
 			return err
 		}
@@ -1483,10 +1485,14 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 // resumePausedJob check and resume the Paused Job
 func resumePausedJob(se *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
-	if !job.IsResumable() ||
-		// The Paused job should only be resumed by who paused it
-		job.AdminOperator != byWho {
-		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID)
+	if !job.IsResumable() {
+		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID,
+			"job has not been paused")
+	}
+	// The Paused job should only be resumed by who paused it
+	if job.AdminOperator != byWho {
+		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID,
+			"job is paused by "+job.AdminOperator.String())
 	}
 
 	job.State = model.JobStateQueueing
@@ -1546,18 +1552,14 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 			err = process(ns, job, byWho)
 			if err != nil {
 				errs[i] = err
-				break
+				continue
 			}
 
 			err = updateDDLJob2Table(ns, job, true)
 			if err != nil {
-				break
+				errs[i] = err
+				continue
 			}
-		}
-		// We may meet some error on job update, try it again
-		if err != nil {
-			ns.Rollback()
-			continue
 		}
 
 		// There may be some conflict during the update, try it again
