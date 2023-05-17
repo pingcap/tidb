@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
@@ -2178,10 +2179,11 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 			procID = chunkRow.GetUint64(10)
 		}
 		var RemainingDuration *time.Duration
+		var RemainDurationErr error
 		if state == statistics.AnalyzeRunning {
-			RemainingDuration, err = getRemainDurationForAnalyzeStatusHelper(sctx, startTime, dbName, tableName, partitionName, processedRows)
-			if err != nil {
-				return nil, err
+			RemainingDuration, RemainDurationErr = getRemainDurationForAnalyzeStatusHelper(sctx, startTime, dbName, tableName, partitionName, processedRows)
+			if RemainDurationErr != nil {
+				log.Warn("get remaining duration failed", zap.Error(RemainDurationErr))
 			}
 		}
 
