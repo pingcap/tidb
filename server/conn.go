@@ -101,8 +101,8 @@ import (
 const (
 	connStatusDispatching int32 = iota
 	connStatusReading
-	connStatusShutdown     // Closed by server.
-	connStatusWaitShutdown // Notified by server to close.
+	connStatusShutdown     = variable.ConnStatusShutdown // Closed by server.
+	connStatusWaitShutdown = 3                           // Notified by server to close.
 )
 
 // newClientConn creates a *clientConn object.
@@ -185,6 +185,21 @@ func (cc *clientConn) String() string {
 	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
+}
+
+func (cc *clientConn) setStatus(status int32) {
+	atomic.StoreInt32(&cc.status, status)
+	if ctx := cc.getCtx(); ctx != nil {
+		atomic.StoreInt32(&ctx.GetSessionVars().ConnectionStatus, status)
+	}
+}
+
+func (cc *clientConn) getStatus() int32 {
+	return atomic.LoadInt32(&cc.status)
+}
+
+func (cc *clientConn) CompareAndSwapStatus(oldStatus, newStatus int32) bool {
+	return atomic.CompareAndSwapInt32(&cc.status, oldStatus, newStatus)
 }
 
 // authSwitchRequest is used by the server to ask the client to switch to a different authentication
@@ -1063,7 +1078,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
+		if cc.getStatus() != connStatusShutdown {
 			err := cc.Close()
 			terror.Log(err)
 		}
@@ -1086,10 +1101,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 		}
 
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
+		if !cc.CompareAndSwapStatus(connStatusDispatching, connStatusReading) ||
 			// The judge below will not be hit by all means,
 			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
-			atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+			cc.getStatus() == connStatusWaitShutdown {
 			return
 		}
 
@@ -1103,7 +1118,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					if atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+					if cc.getStatus() == connStatusWaitShutdown {
 						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
 					} else {
 						idleTime := time.Since(start)
@@ -1130,7 +1145,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
+		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
 			return
 		}
 
@@ -2103,7 +2118,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	}
 
 	if rs != nil {
-		if connStatus := atomic.LoadInt32(&cc.status); connStatus == connStatusShutdown {
+		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
