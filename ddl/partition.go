@@ -358,6 +358,11 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 			failpoint.Return(true, nil)
 		}
 	})
+	failpoint.Inject("mockWaitTiFlashReplicaOK", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(false, nil)
+		}
+	})
 
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
@@ -440,34 +445,31 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	var enable bool
 	switch s.Tp {
 	case model.PartitionTypeRange:
-		if s.Sub == nil {
-			enable = true
-		}
-	case model.PartitionTypeHash:
-		// Partition by hash is enabled by default.
-		// Note that linear hash is simply ignored, and creates non-linear hash.
-		if s.Linear {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack("LINEAR HASH is not supported, using non-linear HASH instead"))
-		}
-		if s.Sub == nil {
-			enable = true
-		}
-	case model.PartitionTypeKey:
-		// Note that linear key is simply ignored, and creates non-linear hash.
-		if s.Linear {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack("LINEAR KEY is not supported, using non-linear KEY instead"))
-		}
-		if s.Sub == nil && len(s.ColumnNames) != 0 {
-			enable = true
-		}
+		enable = true
 	case model.PartitionTypeList:
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		// Partition by hash and key is enabled by default.
+		if s.Sub != nil {
+			// Subpartitioning only allowed with Range or List
+			return ast.ErrSubpartition
+		}
+		// Note that linear hash is simply ignored, and creates non-linear hash/key.
+		if s.Linear {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
+		}
+		if s.Tp == model.PartitionTypeHash || len(s.ColumnNames) != 0 {
+			enable = true
+		}
 	}
 
 	if !enable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
+	}
+	if s.Sub != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
 	}
 
 	pi := &model.PartitionInfo{
@@ -1880,6 +1882,9 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				return ver, errors.Trace(err)
 			}
 		}
+		if tblInfo.TiFlashReplica != nil {
+			removeTiFlashAvailablePartitionIDs(tblInfo, physicalTableIDs)
+		}
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{physicalTableIDs}
@@ -1896,6 +1901,23 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
 	return ver, errors.Trace(err)
+}
+
+func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) {
+	// Remove the partitions
+	ids := tblInfo.TiFlashReplica.AvailablePartitionIDs
+	// Rarely called, so OK to take some time, to make it easy
+	for _, id := range pids {
+		for i, avail := range ids {
+			if id == avail {
+				tmp := ids[:i]
+				tmp = append(tmp, ids[i+1:]...)
+				ids = tmp
+				break
+			}
+		}
+	}
+	tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 }
 
 // onTruncateTablePartition truncates old partition meta.
@@ -1949,16 +1971,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 		tblInfo.TiFlashReplica.Available = false
 		// Set partition replica become unavailable.
-		for _, oldID := range oldIDs {
-			for i, id := range tblInfo.TiFlashReplica.AvailablePartitionIDs {
-				if id == oldID {
-					newIDs := tblInfo.TiFlashReplica.AvailablePartitionIDs[:i]
-					newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
-					tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
-					break
-				}
-			}
-		}
+		removeTiFlashAvailablePartitionIDs(tblInfo, oldIDs)
 	}
 
 	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
