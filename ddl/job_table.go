@@ -124,37 +124,17 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+
 		if job.IsPaused() {
-			// If the job has been Paused, we should not process it. And the
-			// processing should have been set with 0.
 			continue
-		}
-
-		if isJobProcessing {
-			if err := d.handleUpgradingState(se, &job); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-
-		// Receive the `admin pause ...` command on this job, turn it to be
-		// not processing; And, keep continue to pause the job and the
-		// background reorganization workers.
-		if job.IsPausing() {
-			// We want the priority of the jobs keeping the same as the time
-			// (i.e., job_id) they were issued, and lower than those are still
-			// running.
-			if err = d.markJobNotProcessing(se, &job); err != nil {
-				logutil.BgLogger().Warn("[ddl] failed to mark the job as processing=0",
-					zap.Error(err), zap.String("job", job.String()))
-				return nil, errors.Trace(err)
-			}
-			// The job may have been run for a while, we need to notify the
-			// background reorganization worker to finish in worker.runDDLJob
-			// So that we should not `continue` or `return` here
 		}
 
 		// The job has already been picked up, just return to continue it.
 		if isJobProcessing {
+			if err := d.handleUpgradingState(se, &job); err != nil {
+				return nil, errors.Trace(err)
+			}
+
 			return &job, nil
 		}
 
@@ -166,16 +146,12 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 			if err := d.handleUpgradingState(se, &job); err != nil {
 				return nil, errors.Trace(err)
 			}
-			if !job.IsPausing() {
-				// This should be the first time that the job is picked up.
-				// Then it should not be a pausing or paused job.
-				if err = d.markJobProcessing(se, &job); err != nil {
-					logutil.BgLogger().Warn(
-						"[ddl] handle ddl job failed: mark job is processing meet error",
-						zap.Error(err),
-						zap.String("job", job.String()))
-					return nil, errors.Trace(err)
-				}
+			if err = d.markJobProcessing(se, &job); err != nil {
+				logutil.BgLogger().Warn(
+					"[ddl] handle ddl job failed: mark job is processing meet error",
+					zap.Error(err),
+					zap.String("job", job.String()))
+				return nil, errors.Trace(err)
 			}
 			return &job, nil
 		}
@@ -452,14 +428,6 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			d.mu.RUnlock()
 		}
 	})
-}
-
-func (*ddl) markJobNotProcessing(se *sess.Session, job *model.Job) error {
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := se.Execute(context.Background(), fmt.Sprintf(
-		"update mysql.tidb_ddl_job set processing = 0 where job_id = %d", job.ID),
-		"mark_job_not_processing")
-	return errors.Trace(err)
 }
 
 func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {

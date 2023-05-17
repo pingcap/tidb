@@ -749,7 +749,7 @@ func (job *Job) IsPaused() bool {
 
 // IsPausedBySystem returns whether the job is paused by system.
 func (job *Job) IsPausedBySystem() bool {
-	return job.State == JobStatePaused && job.AdminOperator == AdminCommandBySystem
+	return job.IsPaused() && job.AdminOperator == AdminCommandBySystem
 }
 
 // IsPausing indicates whether the job is pausing.

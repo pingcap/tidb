@@ -970,15 +970,34 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		return ver, err
 	}
 
-	if job.IsPaused() || job.IsPausing() {
-		logutil.Logger(w.logCtx).Info("[ddl] DDL job paused", zap.String("job", job.String()))
-		return ver, pauseReorgWorkers(w, d, job)
-	}
-
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
 		logutil.Logger(w.logCtx).Debug("[ddl] cancel DDL job", zap.String("job", job.String()))
 		return convertJob2RollbackJob(w, d, t, job)
+	}
+
+	// During binary upgrade, pause all running DDL jobs
+	if d.stateSyncer.IsUpgradingState() {
+		if hasSysDB(job) || job.IsPaused() {
+			return ver, err
+		}
+		_, err = PauseJobsBySystem(w.sess.Session(), []int64{job.ID})
+		return ver, err
+	} else if job.IsPausedBySystem() && !hasSysDB(job) {
+		_, err = ResumeJobsBySystem(w.sess.Session(), []int64{job.ID})
+		if err != nil {
+			logutil.BgLogger().Warn(
+				"[ddl] failed to resume user DDL by system after upgrade", zap.Stringer("job", job), zap.Error(err))
+			return ver, err
+		}
+		return ver, nil
+	}
+
+	if job.IsPaused() {
+		return ver, err
+	}
+	if job.IsPausing() {
+		return ver, pauseReorgWorkers(w, d, job)
 	}
 
 	if !job.IsRollingback() {
