@@ -18,8 +18,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -127,7 +125,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error 
 	}
 	b.bc = bc
 	if b.stepForImport {
-		return b.doImportWithDistributedLock(ctx, ingest.FlushModeForceGlobal)
+		return b.doFlushAndHandleError(ingest.FlushModeForceGlobal)
 	}
 	return nil
 }
@@ -150,27 +148,8 @@ func releaseLock(ctx context.Context, se *concurrency.Session, key string) error
 	return nil
 }
 
-func (b *backfillSchedulerHandle) doImportWithDistributedLock(ctx context.Context, mode ingest.FlushMode) error {
-	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", b.job.ID, b.index.ID)
-	se, _ := concurrency.NewSession(b.d.etcdCli)
-	err := acquireLock(ctx, se, distLockKey)
-	if err != nil {
-		return err
-	}
-	logutil.BgLogger().Info("[ddl] acquire lock success")
-	defer func() {
-		err = releaseLock(ctx, se, distLockKey)
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] release lock error", zap.Error(err))
-		}
-		logutil.BgLogger().Info("[ddl] release lock success")
-		err = se.Close()
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] close session error", zap.Error(err))
-		}
-	}()
-
-	_, _, err = b.bc.Flush(b.index.ID, ingest.FlushModeForceGlobal)
+func (b *backfillSchedulerHandle) doFlushAndHandleError(mode ingest.FlushMode) error {
+	_, _, err := b.bc.Flush(b.index.ID, mode)
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
@@ -281,9 +260,9 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	}
 
 	if b.isPartition {
-		return nil, b.doImportWithDistributedLock(ctx, ingest.FlushModeForceGlobal)
+		return nil, b.doFlushAndHandleError(ingest.FlushModeForceGlobal)
 	}
-	return nil, b.doImportWithDistributedLock(ctx, ingest.FlushModeForceLocalAndCheckDiskQuota)
+	return nil, b.doFlushAndHandleError(ingest.FlushModeForceLocalAndCheckDiskQuota)
 }
 
 // OnSubtaskFinished implements the Scheduler interface.
