@@ -71,7 +71,6 @@ go_library(
         "//disttask/framework/scheduler",
         "//disttask/framework/storage",
         "//domain/infosync",
-        "//errno",
         "//expression",
         "//infoschema",
         "//kv",
