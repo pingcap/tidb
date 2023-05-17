@@ -317,3 +317,7 @@ func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Task
 	// Don't handle not.
 	return nil, nil
 }
+
+func (NumberExampleHandle) IsRetryableErr(error) bool {
+	return true
+}

@@ -26,6 +26,7 @@ import (
 type TaskFlowHandle interface {
 	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
 	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr [][]byte) (subtaskMeta []byte, err error)
+	IsRetryableErr(err error) bool
 }
 
 var taskFlowHandleMap struct {

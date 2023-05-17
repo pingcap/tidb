@@ -15,8 +15,11 @@
 package loaddata
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/executor/importer"
 )
 
@@ -37,19 +40,30 @@ type TaskMeta struct {
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type SubtaskMeta struct {
-	Plan   importer.Plan
-	ID     int32
-	Chunks []Chunk
+	Plan     importer.Plan
+	ID       int32
+	Chunks   []Chunk
+	Checksum Checksum
+}
+
+// SharedVars is the shared variables between subtask and minimal tasks.
+// This is because subtasks cannot directly obtain the results of the minimal subtask.
+// All the fields should be concurrent safe.
+type SharedVars struct {
+	TableImporter *importer.TableImporter
+	DataEngine    *backend.OpenedEngine
+	IndexEngine   *backend.OpenedEngine
+
+	mu       sync.Mutex
+	Checksum *verification.KVChecksum
 }
 
 // MinimalTaskMeta is the minimal task of LoadData.
 // Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
 type MinimalTaskMeta struct {
-	Plan          importer.Plan
-	Chunk         Chunk
-	TableImporter *importer.TableImporter
-	DataEngine    *backend.OpenedEngine
-	IndexEngine   *backend.OpenedEngine
+	Plan       importer.Plan
+	Chunk      Chunk
+	SharedVars *SharedVars
 }
 
 // IsMinimalTask implements the MinimalTask interface.
@@ -65,4 +79,11 @@ type Chunk struct {
 	Type         mydump.SourceType
 	Compression  mydump.Compression
 	Timestamp    int64
+}
+
+// Checksum records the checksum information.
+type Checksum struct {
+	Sum  uint64
+	KVs  uint64
+	Size uint64
 }
