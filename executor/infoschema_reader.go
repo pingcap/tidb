@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
@@ -2178,12 +2179,15 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 		if !chunkRow.IsNull(10) {
 			procID = chunkRow.GetUint64(10)
 		}
-		var RemainingDuration *time.Duration
-		var RemainDurationErr error
+
+		var RemainDurationStr string
 		if state == statistics.AnalyzeRunning {
-			RemainingDuration, RemainDurationErr = getRemainDurationForAnalyzeStatusHelper(sctx, startTime, dbName, tableName, partitionName, processedRows)
+			RemainingDuration, RemainDurationErr := getRemainDurationForAnalyzeStatusHelper(sctx, startTime, dbName, tableName, partitionName, processedRows)
 			if RemainDurationErr != nil {
 				log.Warn("get remaining duration failed", zap.Error(RemainDurationErr))
+				RemainDurationStr = ""
+			} else {
+				RemainDurationStr = execdetails.FormatDuration(RemainingDuration)
 			}
 		}
 
@@ -2199,7 +2203,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 			failReason,        // FAIL_REASON
 			instance,          // INSTANCE
 			procID,            // PROCESS_ID
-			RemainingDuration, // TABLE_REMAINING_TIME
+			RemainDurationStr, // REMAINING_TIME
 		))
 	}
 	return
