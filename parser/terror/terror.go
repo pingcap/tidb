@@ -14,6 +14,7 @@
 package terror
 
 import (
+	stderrors "errors"
 	"fmt"
 	"runtime/debug"
 	"strconv"
@@ -149,7 +150,8 @@ func (ec ErrClass) EqualClass(err error) bool {
 	if e == nil {
 		return false
 	}
-	if te, ok := e.(*Error); ok {
+	var te *Error
+	if stderrors.As(e, &te) {
 		rfcCode := te.RFCCode()
 		if index := strings.Index(string(rfcCode), ":"); index > 0 {
 			if class, has := rfcCode2errClass.Get(string(rfcCode)[:index]); has {
