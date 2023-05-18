@@ -120,6 +120,7 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl, stepForImport bool) (sc
 	d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 	jobCtx := d.jobContext(jobMeta.ID)
 	bh.jc = jobCtx
+	d.newReorgCtx(jobMeta.ID, 0)
 
 	return bh, nil
 }
@@ -326,6 +327,7 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 
 	if !b.stepForImport {
 		close(b.done)
+		b.d.removeReorgCtx(b.job.ID)
 	}
 	return nil
 }
@@ -337,6 +339,7 @@ func (b *backfillSchedulerHandle) Rollback(context.Context) error {
 	if ok {
 		bc.Unregister(b.job.ID, b.index.ID)
 	}
+	b.d.removeReorgCtx(b.job.ID)
 	return nil
 }
 
