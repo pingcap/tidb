@@ -957,6 +957,23 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	return true, ver, nil
 }
 
+<<<<<<< HEAD
+=======
+func errorIsRetryable(err error, job *model.Job) bool {
+	if job.ErrorCount+1 >= variable.GetDDLErrorCountLimit() {
+		return false
+	}
+	originErr := errors.Cause(err)
+	if tErr, ok := originErr.(*terror.Error); ok {
+		sqlErr := terror.ToSQLError(tErr)
+		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
+		return ok
+	}
+	// For the unknown errors, we should retry.
+	return true
+}
+
+>>>>>>> f636e442e31 (ddl: list the retryable errors for ingest mode (#43782))
 func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
 	tErr, ok := errors.Cause(originErr).(*terror.Error)
 	if !ok {
@@ -1020,7 +1037,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
 		}
-		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) ||
+		if !errorIsRetryable(err, job) ||
 			// TODO: Remove this check make it can be retry. Related test is TestModifyColumnReorgInfo.
 			job.ReorgMeta.IsDistReorg {
 			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
@@ -1407,10 +1424,7 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, rawRecord []byte) error {
 	sysZone := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
 	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, sysZone, w.rowMap)
-	if err != nil {
-		return errors.Trace(dbterror.ErrCantDecodeRecord.GenWithStackByArgs("index", err))
-	}
-	return nil
+	return errors.Trace(err)
 }
 
 // fetchRowColVals fetch w.batchCnt count records that need to reorganize indices, and build the corresponding indexRecord slice.

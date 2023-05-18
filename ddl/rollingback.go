@@ -78,9 +78,13 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		return ver, errors.Trace(err1)
 	}
 	job.State = model.JobStateRollingback
+<<<<<<< HEAD
 	if job.ReorgMeta != nil && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		cleanupLocalIndexData(job.ID)
 	}
+=======
+	err = completeErr(err, indexInfo)
+>>>>>>> f636e442e31 (ddl: list the retryable errors for ingest mode (#43782))
 	return ver, errors.Trace(err)
 }
 

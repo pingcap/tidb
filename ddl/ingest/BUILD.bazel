@@ -60,7 +60,11 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 9,
+=======
+    shard_count = 12,
+>>>>>>> f636e442e31 (ddl: list the retryable errors for ingest mode (#43782))
     deps = [
         "//config",
         "//ddl/internal/session",
