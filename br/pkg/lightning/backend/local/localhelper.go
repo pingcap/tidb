@@ -407,9 +407,9 @@ func (local *Backend) BatchSplitRegions(
 	region *split.RegionInfo,
 	keys [][]byte,
 ) (*split.RegionInfo, []*split.RegionInfo, error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("failToSplit")); _err_ == nil {
-		return nil, nil, errors.New("retryable error")
-	}
+	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+		failpoint.Return(nil, nil, errors.New("retryable error"))
+	})
 	region, newRegions, err := local.splitCli.BatchSplitRegionsWithOrigin(ctx, region, keys)
 	if err != nil {
 		return nil, nil, errors.Annotatef(err, "batch split regions failed")

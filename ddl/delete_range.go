@@ -373,11 +373,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 
 		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
 		if len(partitionIDs) > 0 {
-			if val, _err_ := failpoint.Eval(_curpkg_("checkDropGlobalIndex")); _err_ == nil {
+			failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
 				if val.(bool) {
 					panic("drop global index must not delete partition index range")
 				}
-			}
+			})
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)

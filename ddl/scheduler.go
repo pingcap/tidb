@@ -271,12 +271,12 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 
 // OnSubtaskFinished implements the Scheduler interface.
 func (*backfillSchedulerHandle) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockDMLExecutionAddIndexSubTaskFinish")); _err_ == nil {
+	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
-	}
+	})
 	return meta, nil
 }
 

@@ -546,9 +546,9 @@ func (*tidbBackend) RetryImportDelay() time.Duration {
 }
 
 func (*tidbBackend) MaxChunkSize() int {
-	if _, _err_ := failpoint.Eval(_curpkg_("FailIfImportedSomeRows")); _err_ == nil {
-		return 1
-	}
+	failpoint.Inject("FailIfImportedSomeRows", func() {
+		failpoint.Return(1)
+	})
 	return 1048576
 }
 
@@ -716,9 +716,9 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 			break
 		}
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("FailIfImportedSomeRows")); _err_ == nil {
+	failpoint.Inject("FailIfImportedSomeRows", func() {
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
-	}
+	})
 	return nil
 }
 

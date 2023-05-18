@@ -67,10 +67,10 @@ func (push *pushDown) pushBackup(
 	}
 
 	// Push down backup tasks to all tikv instances.
-	if _, _err_ := failpoint.Eval(_curpkg_("noop-backup")); _err_ == nil {
+	failpoint.Inject("noop-backup", func(_ failpoint.Value) {
 		logutil.CL(ctx).Warn("skipping normal backup, jump to fine-grained backup, meow :3", logutil.Key("start-key", req.StartKey), logutil.Key("end-key", req.EndKey))
-		return nil
-	}
+		failpoint.Return(nil)
+	})
 
 	wg := new(sync.WaitGroup)
 	for _, s := range stores {
@@ -128,28 +128,28 @@ func (push *pushDown) pushBackup(
 				// Finished.
 				return nil
 			}
-			if val, _err_ := failpoint.Eval(_curpkg_("backup-timeout-error")); _err_ == nil {
+			failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
 				msg := val.(string)
 				logutil.CL(ctx).Debug("failpoint backup-timeout-error injected.", zap.String("msg", msg))
 				resp.Error = &backuppb.Error{
 					Msg: msg,
 				}
-			}
-			if val, _err_ := failpoint.Eval(_curpkg_("backup-storage-error")); _err_ == nil {
+			})
+			failpoint.Inject("backup-storage-error", func(val failpoint.Value) {
 				msg := val.(string)
 				logutil.CL(ctx).Debug("failpoint backup-storage-error injected.", zap.String("msg", msg))
 				resp.Error = &backuppb.Error{
 					Msg: msg,
 				}
-			}
-			if val, _err_ := failpoint.Eval(_curpkg_("tikv-rw-error")); _err_ == nil {
+			})
+			failpoint.Inject("tikv-rw-error", func(val failpoint.Value) {
 				msg := val.(string)
 				logutil.CL(ctx).Debug("failpoint tikv-rw-error injected.", zap.String("msg", msg))
 				resp.Error = &backuppb.Error{
 					Msg: msg,
 				}
-			}
-			if val, _err_ := failpoint.Eval(_curpkg_("tikv-region-error")); _err_ == nil {
+			})
+			failpoint.Inject("tikv-region-error", func(val failpoint.Value) {
 				msg := val.(string)
 				logutil.CL(ctx).Debug("failpoint tikv-region-error injected.", zap.String("msg", msg))
 				resp.Error = &backuppb.Error{
@@ -160,7 +160,7 @@ func (push *pushDown) pushBackup(
 						},
 					},
 				}
-			}
+			})
 			if resp.GetError() == nil {
 				// None error means range has been backuped successfully.
 				if checkpointRunner != nil {

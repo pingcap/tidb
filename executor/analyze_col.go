@@ -174,16 +174,16 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 	}
 	for {
-		if _, _err_ := failpoint.Eval(_curpkg_("mockKillRunningV1AnalyzeJob")); _err_ == nil {
+		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
 			dom := domain.GetDomain(e.ctx)
 			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
-		}
+		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			return nil, nil, nil, nil, nil, errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("mockSlowAnalyzeV1")); _err_ == nil {
+		failpoint.Inject("mockSlowAnalyzeV1", func() {
 			time.Sleep(1000 * time.Second)
-		}
+		})
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
 			return nil, nil, nil, nil, nil, err1

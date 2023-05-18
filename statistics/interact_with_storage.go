@@ -50,11 +50,11 @@ type StatsReader struct {
 
 // GetStatsReader returns a StatsReader.
 func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader *StatsReader, err error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockGetStatsReaderFail")); _err_ == nil {
+	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil, errors.New("gofail genStatsReader error")
+			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
 		}
-	}
+	})
 	if snapshot > 0 {
 		return &StatsReader{ctx: exec, snapshot: snapshot}, nil
 	}
@@ -64,7 +64,7 @@ func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader
 		}
 	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	failpoint.Eval(_curpkg_("mockGetStatsReaderPanic"))
+	failpoint.Inject("mockGetStatsReaderPanic", nil)
 	_, err = exec.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return nil, err
@@ -172,9 +172,9 @@ func FMSketchFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64
 
 // ExtendedStatsFromStorage reads extended stats from storage.
 func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int64, loadAll bool) (*Table, error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("injectExtStatsLoadErr")); _err_ == nil {
-		return nil, errors.New("gofail extendedStatsFromStorage error")
-	}
+	failpoint.Inject("injectExtStatsLoadErr", func() {
+		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
+	})
 	lastVersion := uint64(0)
 	if table.ExtendedStats != nil && !loadAll {
 		lastVersion = table.ExtendedStats.LastUpdateVersion

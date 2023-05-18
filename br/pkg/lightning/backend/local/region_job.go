@@ -165,7 +165,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		return nil
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("fakeRegionJobs")); _err_ == nil {
+	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
 		j.writeResult = front.write.result
@@ -173,8 +173,8 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		if err == nil {
 			j.convertStageTo(wrote)
 		}
-		return err
-	}
+		failpoint.Return(err)
+	})
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
@@ -278,9 +278,9 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				return annotateErr(err, allPeers[i])
 			}
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("afterFlushKVs")); _err_ == nil {
+		failpoint.Inject("afterFlushKVs", func() {
 			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
-		}
+		})
 		return nil
 	}
 
@@ -402,12 +402,12 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 		return nil
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("fakeRegionJobs")); _err_ == nil {
+	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
 		j.convertStageTo(front.ingest.nextStage)
-		return front.ingest.err
-	}
+		failpoint.Return(front.ingest.err)
+	})
 
 	if len(j.writeResult.sstMeta) == 0 {
 		j.convertStageTo(ingested)
@@ -511,7 +511,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 
 		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 
-		if val, _err_ := failpoint.Eval(_curpkg_("FailIngestMeta")); _err_ == nil {
+		failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
 			// only inject the error once
 			var resp *sst.IngestResponse
 
@@ -534,8 +534,8 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 					},
 				}
 			}
-			return resp, nil
-		}
+			failpoint.Return(resp, nil)
+		})
 
 		leader := j.region.Leader
 		if leader == nil {

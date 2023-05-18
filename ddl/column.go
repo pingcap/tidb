@@ -114,12 +114,12 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, nil
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("errorBeforeDecodeArgs")); _err_ == nil {
+	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			return ver, errors.New("occur an error before decode args")
+			failpoint.Return(ver, errors.New("occur an error before decode args"))
 		}
-	}
+	})
 
 	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(t, job)
 	if err != nil {
@@ -532,14 +532,14 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("uninitializedOffsetAndState")); _err_ == nil {
+	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			if modifyInfo.newCol.State != model.StatePublic {
-				return ver, errors.New("the column state is wrong")
+				failpoint.Return(ver, errors.New("the column state is wrong"))
 			}
 		}
-	}
+	})
 
 	err = checkAndApplyAutoRandomBits(d, t, dbInfo, tblInfo, oldCol, modifyInfo.newCol, modifyInfo.updatedAutoRandomBits)
 	if err != nil {
@@ -697,12 +697,12 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// none -> delete only
 		updateChangingObjState(changingCol, changingIdxs, model.StateDeleteOnly)
-		if val, _err_ := failpoint.Eval(_curpkg_("mockInsertValueAfterCheckNull")); _err_ == nil {
+		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
 				sctx, err := w.sessPool.Get()
 				if err != nil {
-					return ver, err
+					failpoint.Return(ver, err)
 				}
 				defer w.sessPool.Put(sctx)
 
@@ -711,10 +711,10 @@ func (w *worker) doModifyColumnTypeWithData(
 				_, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
-					return ver, err
+					failpoint.Return(ver, err)
 				}
 			}
-		}
+		})
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -835,7 +835,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 	// With a failpoint-enabled version of TiDB, you can trigger this failpoint by the following command:
 	// enable: curl -X PUT -d "pause" "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData".
 	// disable: curl -X DELETE "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData"
-	failpoint.Eval(_curpkg_("mockDelayInModifyColumnTypeWithData"))
+	failpoint.Inject("mockDelayInModifyColumnTypeWithData", func() {})
 	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onModifyColumn",
 			func() {
@@ -1097,7 +1097,7 @@ var TestReorgGoroutineRunning = make(chan interface{})
 
 // updateCurrentElement update the current element for reorgInfo.
 func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockInfiniteReorgLogic")); _err_ == nil {
+	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			a := new(interface{})
@@ -1106,11 +1106,11 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 				time.Sleep(30 * time.Millisecond)
 				if w.isReorgCancelled(reorgInfo.Job.ID) {
 					// Job is cancelled. So it can't be done.
-					return dbterror.ErrCancelledDDLJob
+					failpoint.Return(dbterror.ErrCancelledDDLJob)
 				}
 			}
 		}
-	}
+	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		//nolint:forcetypeassert
@@ -1207,11 +1207,11 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	checksumNeeded := false
-	if _, _err_ := failpoint.Eval(_curpkg_("forceRowLevelChecksumOnUpdateColumnBackfill")); _err_ == nil {
+	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
 		orig := variable.EnableRowLevelChecksum.Load()
 		defer variable.EnableRowLevelChecksum.Store(orig)
 		variable.EnableRowLevelChecksum.Store(true)
-	}
+	})
 	// We use global `EnableRowLevelChecksum` to detect whether checksum is enabled in ddl backfill worker because
 	// `SessionVars.IsRowLevelChecksumEnabled` will filter out internal sessions.
 	if variable.EnableRowLevelChecksum.Load() {
@@ -1348,14 +1348,14 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockReorgTimeoutInOneRegion")); _err_ == nil {
+	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
-				return errors.Trace(dbterror.ErrWaitReorgTimeout)
+				failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
 			}
 		}
-	}
+	})
 
 	w.rowMap[w.newColInfo.ID] = newColVal
 	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.sessCtx, w.rowMap)
@@ -1895,12 +1895,12 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	defer w.sessPool.Put(sctx)
 
 	skipCheck := false
-	if val, _err_ := failpoint.Eval(_curpkg_("skipMockContextDoExec")); _err_ == nil {
+	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			skipCheck = true
 		}
-	}
+	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
 		err = checkForNullValue(w.ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)

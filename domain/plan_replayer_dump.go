@@ -299,11 +299,11 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 					return err
 				}
 			} else {
-				if val, _err_ := failpoint.Eval(_curpkg_("shouldDumpStats")); _err_ == nil {
+				failpoint.Inject("shouldDumpStats", func(val failpoint.Value) {
 					if val.(bool) {
 						panic("shouldDumpStats")
 					}
-				}
+				})
 			}
 		}
 	} else {

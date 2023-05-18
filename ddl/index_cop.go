@@ -136,11 +136,11 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 		if err != nil {
 			return err
 		}
-		if val, _err_ := failpoint.Eval(_curpkg_("mockCopSenderPanic")); _err_ == nil {
+		failpoint.Inject("mockCopSenderPanic", func(val failpoint.Value) {
 			if val.(bool) {
 				panic("mock panic")
 			}
-		}
+		})
 		if p.checkpointMgr != nil {
 			p.checkpointMgr.Register(task.id, task.endKey)
 		}
@@ -157,9 +157,9 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
-			if _, _err_ := failpoint.Eval(_curpkg_("mockCopSenderError")); _err_ == nil {
+			failpoint.Inject("mockCopSenderError", func() {
 				idxRs.err = errors.New("mock cop error")
-			}
+			})
 			p.chunkSender.AddTask(idxRs)
 		}
 		terror.Call(rs.Close)

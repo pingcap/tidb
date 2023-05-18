@@ -963,12 +963,12 @@ func isConnectionResetError(err error) bool {
 
 func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 	// for unit test
-	if _, _err_ := failpoint.Eval(_curpkg_("replace-error-to-connection-reset-by-peer")); _err_ == nil {
+	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
 		log.Info("original error", zap.Error(r.Error))
 		if r.Error != nil {
 			r.Error = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
 		}
-	}
+	})
 	if isConnectionResetError(r.Error) {
 		return true
 	}

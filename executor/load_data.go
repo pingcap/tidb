@@ -545,7 +545,7 @@ func (ji *logicalJobImporter) Import() {
 		for i := range ji.commitWorkers {
 			worker := ji.commitWorkers[i]
 			commitGroup.Go(func() error {
-				failpoint.Eval(_curpkg_("BeforeCommitWork"))
+				failpoint.Inject("BeforeCommitWork", nil)
 				return worker.commitWork(commitCtx, commitTaskCh)
 			})
 		}
@@ -932,11 +932,11 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 				zap.Uint64("keys processed", task.cnt),
 				zap.Uint64("taskCnt processed", taskCnt),
 			)
-			failpoint.Eval(_curpkg_("AfterCommitOneTask"))
-			if _, _err_ := failpoint.Eval(_curpkg_("SyncAfterCommitOneTask")); _err_ == nil {
+			failpoint.Inject("AfterCommitOneTask", nil)
+			failpoint.Inject("SyncAfterCommitOneTask", func() {
 				importer.TestSyncCh <- struct{}{}
 				<-importer.TestSyncCh
-			}
+			})
 		}
 	}
 }
@@ -954,9 +954,9 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
 		return err
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("commitOneTaskErr")); _err_ == nil {
+	failpoint.Inject("commitOneTaskErr", func() error {
 		return errors.New("mock commit one task error")
-	}
+	})
 	w.ctx.StmtCommit(ctx)
 	// Make sure that there are no retries when committing.
 	if err = w.ctx.RefreshTxnCtx(ctx); err != nil {

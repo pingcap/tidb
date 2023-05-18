@@ -4552,13 +4552,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
 				usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
 
-				if val, _err_ := failpoint.Eval(_curpkg_("forceDynamicPrune")); _err_ == nil {
+				failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
 					if val.(bool) {
 						if isDynamicEnabled {
 							usePartitionProcessor = false
 						}
 					}
-				}
+				})
 
 				if usePartitionProcessor {
 					b.optFlag = b.optFlag | flagPartitionProcessor

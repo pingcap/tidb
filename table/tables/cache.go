@@ -102,9 +102,9 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 		distance := leaseTime.Sub(nowTime)
 
 		var triggerFailpoint bool
-		if _, _err_ := failpoint.Eval(_curpkg_("mockRenewLeaseABA1")); _err_ == nil {
+		failpoint.Inject("mockRenewLeaseABA1", func(_ failpoint.Value) {
 			triggerFailpoint = true
-		}
+		})
 
 		if distance >= 0 && distance <= leaseDuration/2 || triggerFailpoint {
 			if h := c.TakeStateRemoteHandleNoWait(); h != nil {
@@ -279,11 +279,11 @@ func (c *cachedTable) RemoveRecord(sctx sessionctx.Context, h kv.Handle, r []typ
 var TestMockRenewLeaseABA2 chan struct{}
 
 func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData, leaseDuration time.Duration) {
-	if _, _err_ := failpoint.Eval(_curpkg_("mockRenewLeaseABA2")); _err_ == nil {
+	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
 		c.PutStateRemoteHandle(handle)
 		<-TestMockRenewLeaseABA2
 		c.TakeStateRemoteHandle()
-	}
+	})
 
 	defer c.PutStateRemoteHandle(handle)
 
@@ -304,9 +304,9 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 		})
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("mockRenewLeaseABA2")); _err_ == nil {
+	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
 		TestMockRenewLeaseABA2 <- struct{}{}
-	}
+	})
 }
 
 const cacheTableWriteLease = 5 * time.Second

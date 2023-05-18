@@ -254,12 +254,12 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 			}
 			m.sessionLease.Store(int64(etcdSession.Lease()))
 		case <-campaignContext.Done():
-			if v, _err_ := failpoint.Eval(_curpkg_("MockDelOwnerKey")); _err_ == nil {
+			failpoint.Inject("MockDelOwnerKey", func(v failpoint.Value) {
 				if v.(string) == "delOwnerKeyAndNotOwner" {
 					logutil.Logger(logCtx).Info("mock break campaign and don't clear related info")
 					return
 				}
-			}
+			})
 			logutil.Logger(logCtx).Info("break campaign loop, context is done")
 			m.revokeSession(logPrefix, etcdSession.Lease())
 			return
@@ -389,13 +389,13 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 	}
 	newOwnerVal := joinOwnerValues(ownerID, []byte{byte(op)})
 
-	if v, _err_ := failpoint.Eval(_curpkg_("MockDelOwnerKey")); _err_ == nil {
+	failpoint.Inject("MockDelOwnerKey", func(v failpoint.Value) {
 		if valStr, ok := v.(string); ok {
 			if err := mockDelOwnerKey(valStr, ownerKey, m); err != nil {
-				return err
+				failpoint.Return(err)
 			}
 		}
-	}
+	})
 
 	leaseOp := clientv3.WithLease(clientv3.LeaseID(m.sessionLease.Load()))
 	resp, err := m.etcdCli.Txn(ctx).

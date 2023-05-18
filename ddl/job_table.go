@@ -418,14 +418,14 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] handle ddl job failed", zap.Error(err), zap.String("job", job.String()))
 		} else {
-			if val, _err_ := failpoint.Eval(_curpkg_("mockDownBeforeUpdateGlobalVersion")); _err_ == nil {
+			failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 				if val.(bool) {
 					if mockDDLErrOnce == 0 {
 						mockDDLErrOnce = schemaVer
-						return
+						failpoint.Return()
 					}
 				}
-			}
+			})
 
 			// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 			// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
@@ -490,11 +490,11 @@ const (
 )
 
 func insertDDLJobs2Table(se *sess.Session, updateRawArgs bool, jobs ...*model.Job) error {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockAddBatchDDLJobsErr")); _err_ == nil {
+	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 		if val.(bool) {
-			return errors.Errorf("mockAddBatchDDLJobsErr")
+			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
 		}
-	}
+	})
 	if len(jobs) == 0 {
 		return nil
 	}

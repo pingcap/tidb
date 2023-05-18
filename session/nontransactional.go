@@ -426,11 +426,11 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	rs, err := se.ExecuteStmt(ctx, options.stmt.DMLStmt)
 
 	// collect errors
-	if val, _err_ := failpoint.Eval(_curpkg_("batchDMLError")); _err_ == nil {
+	failpoint.Inject("batchDMLError", func(val failpoint.Value) {
 		if val.(bool) {
 			err = errors.New("injected batch(non-transactional) DML error")
 		}
-	}
+	})
 	if err != nil {
 		logutil.Logger(ctx).Error("Non-transactional DML SQL failed", zap.String("job", dmlSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
 		job.err = err

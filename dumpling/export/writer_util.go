@@ -239,10 +239,10 @@ func WriteInsert(
 			}
 			counter++
 			wp.AddFileSize(uint64(bf.Len()-lastBfSize) + 2) // 2 is for ",\n" and ";\n"
-			if _, _err_ := failpoint.Eval(_curpkg_("ChaosBrokenWriterConn")); _err_ == nil {
-				return 0, errors.New("connection is closed")
-			}
-			failpoint.Eval(_curpkg_("AtEveryRow"))
+			failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
+				failpoint.Return(0, errors.New("connection is closed"))
+			})
+			failpoint.Inject("AtEveryRow", nil)
 
 			fileRowIter.Next()
 			shouldSwitch := wp.ShouldSwitchStatement()

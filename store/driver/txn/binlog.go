@@ -65,12 +65,12 @@ func (e *binlogExecutor) Commit(ctx context.Context, commitTS int64) {
 
 	wg := sync.WaitGroup{}
 	mock := false
-	if val, _err_ := failpoint.Eval(_curpkg_("mockSyncBinlogCommit")); _err_ == nil {
+	failpoint.Inject("mockSyncBinlogCommit", func(val failpoint.Value) {
 		if val.(bool) {
 			wg.Add(1)
 			mock = true
 		}
-	}
+	})
 	go func() {
 		logutil.Eventf(ctx, "start write finish binlog")
 		binlogWriteResult := e.binInfo.WriteBinlog(e.txn.GetClusterID())

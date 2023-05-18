@@ -1143,9 +1143,9 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("failed-before-full-restore")); _err_ == nil {
-		return errors.New("failpoint: failed before full restore")
-	}
+	failpoint.Inject("failed-before-full-restore", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed before full restore"))
+	})
 
 	recorder := tiflashrec.New()
 	cfg.tiflashRecorder = recorder
@@ -1436,11 +1436,11 @@ func restoreStream(
 		}
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("do-checksum-with-rewrite-rules")); _err_ == nil {
+	failpoint.Inject("do-checksum-with-rewrite-rules", func(_ failpoint.Value) {
 		if err := client.FailpointDoChecksumForLogRestore(ctx, mgr.GetStorage().GetClient(), mgr.GetPDClient(), idrules, rewriteRules); err != nil {
-			return errors.Annotate(err, "failed to do checksum")
+			failpoint.Return(errors.Annotate(err, "failed to do checksum"))
 		}
-	}
+	})
 
 	gcDisabledRestorable = true
 

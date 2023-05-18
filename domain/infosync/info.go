@@ -263,7 +263,7 @@ func initResourceGroupManager(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 	if pdCli == nil {
 		cli = NewMockResourceGroupManager()
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("managerAlreadyCreateSomeGroups")); _err_ == nil {
+	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
 		if val.(bool) {
 			_, err := cli.AddResourceGroup(context.TODO(),
 				&rmpb.ResourceGroup{
@@ -292,7 +292,7 @@ func initResourceGroupManager(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 				log.Warn("fail to create default group", zap.Error(err))
 			}
 		}
-	}
+	})
 	return
 }
 
@@ -341,11 +341,11 @@ func SetMockTiFlash(tiflash *MockTiFlash) {
 
 // GetServerInfo gets self server static information.
 func GetServerInfo() (*ServerInfo, error) {
-	if v, _err_ := failpoint.Eval(_curpkg_("mockGetServerInfo")); _err_ == nil {
+	failpoint.Inject("mockGetServerInfo", func(v failpoint.Value) {
 		var res ServerInfo
 		err := json.Unmarshal([]byte(v.(string)), &res)
-		return &res, err
-	}
+		failpoint.Return(&res, err)
+	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
@@ -380,11 +380,11 @@ func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*Server
 
 // GetAllServerInfo gets all servers static information from etcd.
 func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockGetAllServerInfo")); _err_ == nil {
+	failpoint.Inject("mockGetAllServerInfo", func(val failpoint.Value) {
 		res := make(map[string]*ServerInfo)
 		err := json.Unmarshal([]byte(val.(string)), &res)
-		return res, err
-	}
+		failpoint.Return(res, err)
+	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
@@ -549,13 +549,13 @@ func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
 
 func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
 	fpEnabled := false
-	if val, _err_ := failpoint.Eval(_curpkg_("FailPlacement")); _err_ == nil {
+	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
 		if val.(bool) {
 			fpEnabled = true
 			resp = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
 			err = nil
 		}
-	}
+	})
 	if fpEnabled {
 		return
 	}
@@ -584,15 +584,15 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 
 // PutRuleBundles is used to post specific rule bundles to PD.
 func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
-	if isServiceError, _err_ := failpoint.Eval(_curpkg_("putRuleBundlesError")); _err_ == nil {
+	failpoint.Inject("putRuleBundlesError", func(isServiceError failpoint.Value) {
 		var err error
 		if isServiceError.(bool) {
 			err = ErrHTTPServiceError.FastGen("mock service error")
 		} else {
 			err = errors.New("mock other error")
 		}
-		return err
-	}
+		failpoint.Return(err)
+	})
 
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -1070,14 +1070,14 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 
 	metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, info.GitHash).Set(float64(info.StartTimestamp))
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockServerInfo")); _err_ == nil {
+	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {
 			info.StartTimestamp = 1282967700
 			info.Labels = map[string]string{
 				"foo": "bar",
 			}
 		}
-	}
+	})
 
 	return info
 }

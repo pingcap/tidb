@@ -221,9 +221,9 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 	tableRegions, err := mydump.MakeTableRegions(ctx, divideConfig)
 	if err == nil {
 		timestamp := time.Now().Unix()
-		if v, _err_ := failpoint.Eval(_curpkg_("PopulateChunkTimestamp")); _err_ == nil {
+		failpoint.Inject("PopulateChunkTimestamp", func(v failpoint.Value) {
 			timestamp = int64(v.(int))
-		}
+		})
 		for _, region := range tableRegions {
 			engine, found := cp.Engines[region.EngineID]
 			if !found {
@@ -507,13 +507,13 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 	if cp.Status < checkpoints.CheckpointStatusIndexImported {
 		var err error
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
-			if _, _err_ := failpoint.Eval(_curpkg_("FailBeforeStartImportingIndexEngine")); _err_ == nil {
+			failpoint.Inject("FailBeforeStartImportingIndexEngine", func() {
 				errMsg := "fail before importing index KV data"
 				tr.logger.Warn(errMsg)
-				return errors.New(errMsg)
-			}
+				failpoint.Return(errors.New(errMsg))
+			})
 			err = tr.importKV(ctx, closedIndexEngine, rc)
-			if _, _err_ := failpoint.Eval(_curpkg_("FailBeforeIndexEngineImported")); _err_ == nil {
+			failpoint.Inject("FailBeforeIndexEngineImported", func() {
 				finished := rc.status.FinishedFileSize.Load()
 				total := rc.status.TotalFileSize.Load()
 				tr.logger.Warn("print lightning status",
@@ -521,7 +521,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 					zap.Int64("total", total),
 					zap.Bool("equal", finished == total))
 				panic("forcing failure due to FailBeforeIndexEngineImported")
-			}
+			})
 		}
 
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexImported)
@@ -652,11 +652,11 @@ ChunkLoop:
 		}
 		checkFlushLock.Unlock()
 
-		if _, _err_ := failpoint.Eval(_curpkg_("orphanWriterGoRoutine")); _err_ == nil {
+		failpoint.Inject("orphanWriterGoRoutine", func() {
 			if chunkIndex > 0 {
 				<-pCtx.Done()
 			}
-		}
+		})
 
 		select {
 		case <-pCtx.Done():
@@ -939,12 +939,12 @@ func (tr *TableImporter) postProcess(
 			}
 			hasDupe = hasLocalDupe
 		}
-		if v, _err_ := failpoint.Eval(_curpkg_("SlowDownCheckDupe")); _err_ == nil {
+		failpoint.Inject("SlowDownCheckDupe", func(v failpoint.Value) {
 			sec := v.(int)
 			tr.logger.Warn("start to sleep several seconds before checking other dupe",
 				zap.Int("seconds", sec))
 			time.Sleep(time.Duration(sec) * time.Second)
-		}
+		})
 
 		otherHasDupe, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
 		if err != nil {
@@ -1185,7 +1185,7 @@ func (tr *TableImporter) importKV(
 		m.ImportSecondsHistogram.Observe(dur.Seconds())
 	}
 
-	failpoint.Eval(_curpkg_("SlowDownImport"))
+	failpoint.Inject("SlowDownImport", func() {})
 
 	return nil
 }
@@ -1321,17 +1321,17 @@ func (*TableImporter) executeDDL(
 		resultCh <- s.Exec(ctx, "add index", ddl)
 	}()
 
-	if _, _err_ := failpoint.Eval(_curpkg_("AddIndexCrash")); _err_ == nil {
+	failpoint.Inject("AddIndexCrash", func() {
 		_ = common.KillMySelf()
-	}
+	})
 
 	var ddlErr error
 	for {
 		select {
 		case ddlErr = <-resultCh:
-			if _, _err_ := failpoint.Eval(_curpkg_("AddIndexFail")); _err_ == nil {
+			failpoint.Inject("AddIndexFail", func() {
 				ddlErr = errors.New("injected error")
-			}
+			})
 			if ddlErr == nil {
 				return nil
 			}

@@ -1187,13 +1187,13 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("orphanWriterGoRoutine")); _err_ == nil {
+	failpoint.Inject("orphanWriterGoRoutine", func() {
 		_ = common.KillMySelf()
 		// mimic we meet context cancel error when `addSST`
 		<-ctx.Done()
 		time.Sleep(5 * time.Second)
-		return errors.Trace(ctx.Err())
-	}
+		failpoint.Return(errors.Trace(ctx.Err()))
+	})
 
 	err = w.addSST(ctx, meta)
 	if err != nil {
