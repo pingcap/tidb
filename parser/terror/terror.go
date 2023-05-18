@@ -280,7 +280,7 @@ func ErrorEqual(err1, err2 error) bool {
 	e1 := errors.Cause(err1)
 	e2 := errors.Cause(err2)
 
-	if e1 == e2 {
+	if stderrors.Is(e1, e2) {
 		return true
 	}
 
