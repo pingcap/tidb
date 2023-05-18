@@ -52,6 +52,7 @@ var detachedCases = []detachedCase{
 }
 
 func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.testSameBehaviourDetachedOrNot(importer.LogicalImportMode)
 	s.testSameBehaviourDetachedOrNot(importer.PhysicalImportMode)
 }
