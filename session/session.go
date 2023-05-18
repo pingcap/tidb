@@ -1520,7 +1520,12 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	p := parserPool.Get().(*parser.Parser)
 	defer parserPool.Put(p)
-	p.SetSQLMode(s.sessionVars.SQLMode)
+
+	sqlMode := s.sessionVars.SQLMode
+	if s.isInternal() {
+		sqlMode = mysql.DelSQLMode(sqlMode, mysql.ModeNoBackslashEscapes)
+	}
+	p.SetSQLMode(sqlMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
@@ -1623,11 +1628,8 @@ func (s *session) ClearDiskFullOpt() {
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
-	oriSQLMode := s.sessionVars.SQLMode
-	s.sessionVars.SQLMode = mysql.DelSQLMode(oriSQLMode, mysql.ModeNoBackslashEscapes)
 	defer func() {
 		s.sessionVars.InRestrictedSQL = origin
-		s.sessionVars.SQLMode = oriSQLMode
 		// Restore the goroutine label by using the original ctx after execution is finished.
 		pprof.SetGoroutineLabels(ctx)
 	}()
@@ -2091,11 +2093,8 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 func (s *session) ExecuteInternalStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
-	oriSQLMode := s.sessionVars.SQLMode
-	s.sessionVars.SQLMode = mysql.DelSQLMode(oriSQLMode, mysql.ModeNoBackslashEscapes)
 	defer func() {
 		s.sessionVars.InRestrictedSQL = origin
-		s.sessionVars.SQLMode = oriSQLMode
 		// Restore the goroutine label by using the original ctx after execution is finished.
 		pprof.SetGoroutineLabels(ctx)
 	}()
