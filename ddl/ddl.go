@@ -1493,7 +1493,7 @@ func resumePausedJob(se *sess.Session, job *model.Job,
 	// The Paused job should only be resumed by who paused it
 	if job.AdminOperator != byWho {
 		errMsg := fmt.Sprintf("job has been paused by [%s], should not resumed by [%s]",
-			job.AdminOperator.String(), byWho)
+			job.AdminOperator.String(), byWho.String())
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
 
