@@ -441,7 +441,7 @@ func (local *local) BatchSplitRegions(
 		log.FromContext(ctx).Warn("scatter region failed", zap.Int("regionCount", len(newRegions)),
 			zap.Int("failedCount", len(retryRegions)), zap.Error(failedErr))
 		scatterRegions = retryRegions
-		// also it's not PDBatchScanRegion, WaitRegionOnlineBackoffer will only
+		// although it's not PDBatchScanRegion, WaitRegionOnlineBackoffer will only
 		// check this error class so we simply reuse it. Will refine WaitRegionOnlineBackoffer
 		// later
 		failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scatter region failed")
@@ -460,13 +460,16 @@ func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error
 }
 
 func (local *local) waitForScatterRegions(ctx context.Context, regions []*split.RegionInfo) (scatterCount int, _ error) {
-	subCtx, cancel := context.WithTimeout(ctx, split.ScatterWaitUpperInterval)
-	defer cancel()
-
-	for len(regions) > 0 {
+	var (
+		retErr    error
+		backoffer = split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
+	)
+	// WithRetry will return multierr which is hard to use, so we use `retErr`
+	// to save the error needed to return.
+	_ = utils.WithRetry(ctx, func() error {
 		var retryRegions []*split.RegionInfo
 		for _, region := range regions {
-			scattered, err := local.checkRegionScatteredOrReScatter(subCtx, region)
+			scattered, err := local.checkRegionScatteredOrReScatter(ctx, region)
 			if scattered {
 				scatterCount++
 				continue
@@ -474,24 +477,31 @@ func (local *local) waitForScatterRegions(ctx context.Context, regions []*split.
 			if err != nil {
 				if !common.IsRetryableError(err) {
 					log.FromContext(ctx).Warn("wait for scatter region encountered non-retryable error", logutil.Region(region.Region), zap.Error(err))
-					return scatterCount, err
+					retErr = err
+					// return nil to stop retry, the error is saved in `retErr`
+					return nil
 				}
 				log.FromContext(ctx).Warn("wait for scatter region encountered error, will retry again", logutil.Region(region.Region), zap.Error(err))
 			}
 			retryRegions = append(retryRegions, region)
 		}
-		regions = retryRegions
-		select {
-		case <-time.After(time.Second):
-		case <-subCtx.Done():
-			if len(regions) > 0 {
-				log.FromContext(ctx).Warn("wait for scatter region timeout, print the first region",
-					logutil.Region(regions[0].Region))
-			}
-			return
+		if len(retryRegions) == 0 {
+			regions = retryRegions
+			return nil
 		}
+		if len(retryRegions) < len(regions) {
+			backoffer.Stat.ReduceRetry()
+		}
+
+		regions = retryRegions
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "wait for scatter region failed")
+	}, backoffer)
+
+	if len(regions) > 0 && retErr == nil {
+		retErr = errors.Errorf("wait for scatter region timeout, print the first unfinished region %v",
+			regions[0].Region.String())
 	}
-	return scatterCount, nil
+	return scatterCount, retErr
 }
 
 func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
@@ -501,6 +511,7 @@ func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionI
 	}
 	// Heartbeat may not be sent to PD
 	if respErr := resp.GetHeader().GetError(); respErr != nil {
+		// TODO: why this is OK?
 		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
 			return true, nil
 		}
