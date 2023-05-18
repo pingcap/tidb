@@ -1624,8 +1624,11 @@ func (s *session) ClearDiskFullOpt() {
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
+	oriSQLMode := s.sessionVars.SQLMode
+	s.sessionVars.SQLMode = mysql.DelSQLMode(oriSQLMode, mysql.ModeNoBackslashEscapes)
 	defer func() {
 		s.sessionVars.InRestrictedSQL = origin
+		s.sessionVars.SQLMode = oriSQLMode
 		// Restore the goroutine label by using the original ctx after execution is finished.
 		pprof.SetGoroutineLabels(ctx)
 	}()
