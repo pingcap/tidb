@@ -44,6 +44,7 @@ import (
 const (
 	flagBackupVolumeFile           = "volume-file"
 	flagProgressFile               = "progress-file"
+	flagTargetAZ                   = "target-az"
 	waitAllScheduleStoppedInterval = 15 * time.Second
 )
 
@@ -58,6 +59,7 @@ func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 	flags.Uint(flagCloudAPIConcurrency, defaultCloudAPIConcurrency, "concurrency of calling cloud api")
 	flags.String(flagProgressFile, "progress.txt", "the file name of progress file")
 	flags.Bool(flagOperatorPausedGCAndSchedulers, false, "if the GC and scheduler are paused by the `operator` command in another therad, set this so we can skip pausing GC and schedulers.")
+	flags.String(flagTargetAZ, "", "the target AZ for restored volumes")
 
 	_ = flags.MarkHidden(flagFullBackupType)
 	_ = flags.MarkHidden(flagBackupVolumeFile)
