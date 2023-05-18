@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/util/dbterror"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	tidb_util "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -126,7 +126,7 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 			return nil, errors.Trace(err)
 		}
 
-		err, isRunnable := d.processJobDuringUpgrade(se, &job)
+		isRunnable, err := d.processJobDuringUpgrade(se, &job)
 		if !isRunnable {
 			return nil, errors.Trace(err)
 		}
@@ -165,10 +165,10 @@ func hasSysDB(job *model.Job) bool {
 	return false
 }
 
-func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (err error, isRunnable bool) {
+func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
 	if d.stateSyncer.IsUpgradingState() {
 		if hasSysDB(job) {
-			return nil, true
+			return true, nil
 		}
 		var errs []error
 		// During binary upgrade, pause all running DDL jobs
@@ -176,30 +176,30 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (err e
 		if len(errs) > 0 {
 			if dbterror.ErrCannotPauseDDLJob.Equal(errs[0]) ||
 				dbterror.ErrPausedDDLJob.Equal(errs[0]) {
-				return nil, false
+				return false, nil
 			}
 
 			// During upgrade, there are jobs that may not be paused because of `!job.IsRunning`.
 			// Then, we would not run it and just return unless the upgrade finished.
-			return errs[0], false
+			return false, errs[0]
 		}
 
 		// no matter how, we would not run DDL jobs during upgrade even not paused.
-		return err, false
+		return false, err
 	}
 
 	if job.IsPausedBySystem() && !hasSysDB(job) {
 		var errs []error
 		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
 		if len(errs) > 0 {
-			return errs[0], false
+			return false, errs[0]
 		}
 		if err != nil {
-			return err, false
+			return false, err
 		}
 	}
 
-	return nil, true
+	return true, nil
 }
 
 func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
