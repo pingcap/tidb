@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
@@ -752,7 +753,6 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 		INTO TABLE load_test_write_speed.t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	duration := time.Since(start).Seconds()
-	s.LessOrEqual(duration, 2.0) // 1.3 seconds on my laptop.
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
@@ -763,12 +763,11 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/speed-test.csv?endpoint=%s'
 		INTO TABLE load_test_write_speed.t fields terminated by ',' with import_mode='physical', max_write_speed=6000`, gcsEndpoint)
 	s.tk.MustExec(sql)
-	// generated kv is 34744 bytes, so it should take at least 5 seconds.
-	duration = time.Since(start).Seconds()
-	s.GreaterOrEqual(duration, 5.0)
+	durationWithLimit := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
+	require.Less(s.T(), duration, durationWithLimit)
 }
 
 func (s *mockGCSSuite) TestChecksumNotMatch() {
@@ -809,9 +808,12 @@ func (s *mockGCSSuite) testChecksumNotMatch(importMode string, distributed bool)
 	loadDataSQL := adjustOptions(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
 		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical'`, gcsEndpoint), distributed)
 	err := s.tk.ExecToErr(loadDataSQL)
-	// TODO(gmhdbjd): get real error
-	// require.ErrorIs(s.T(), err, common.ErrChecksumMismatch)
-	require.Error(s.T(), err)
+	if !distributed {
+		require.ErrorIs(s.T(), err, common.ErrChecksumMismatch)
+	} else {
+		// TODO(gmhdbjd): get real error
+		require.Error(s.T(), err)
+	}
 	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",

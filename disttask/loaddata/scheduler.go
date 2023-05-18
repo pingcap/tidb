@@ -32,6 +32,7 @@ import (
 )
 
 // ImportScheduler is a scheduler for load data.
+// Scheduler is equivalent to a Lightning instance.
 type ImportScheduler struct {
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
@@ -134,7 +135,8 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 		return nil, errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 
-	logutil.BgLogger().Info("import data engine", zap.Any("id", subtaskMeta.ID))
+	// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
+	s.logger.Info("import data engine", zap.Any("id", subtaskMeta.ID))
 	closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
 	if err != nil {
 		return nil, err

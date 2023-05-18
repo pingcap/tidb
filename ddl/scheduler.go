@@ -18,18 +18,27 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl/ingest"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
+
+// MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
+var MockDMLExecutionAddIndexSubTaskFinish func()
 
 type backfillSchedulerHandle struct {
 	d           *ddl
@@ -41,6 +50,8 @@ type backfillSchedulerHandle struct {
 	jc          *JobContext
 	eleTypeKey  []byte
 	totalRowCnt int64
+	done        chan struct{}
+	ctx         context.Context
 }
 
 // BackfillGlobalMeta is the global task meta for backfilling index.
@@ -103,17 +114,65 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl) (scheduler.Scheduler, e
 	return bh, nil
 }
 
+// UpdateStatLoop updates the row count of adding index.
+func (b *backfillSchedulerHandle) UpdateStatLoop() {
+	tk := time.Tick(time.Second * 5)
+	ser, err := infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] get server info failed", zap.Error(err))
+		return
+	}
+	path := fmt.Sprintf("%s/%d/%s:%d", rowCountEtcdPath, b.job.ID, ser.IP, ser.Port)
+	writeToEtcd := func() {
+		err := ddlutil.PutKVToEtcd(b.ctx, b.d.etcdCli, 3, path, strconv.Itoa(int(b.totalRowCnt)))
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] update row count for distributed add index failed", zap.Error(err))
+		}
+	}
+	for {
+		select {
+		case <-b.done:
+			writeToEtcd()
+			return
+		case <-tk:
+			writeToEtcd()
+		}
+	}
+}
+
 // InitSubtaskExecEnv implements the Scheduler interface.
-func (b *backfillSchedulerHandle) InitSubtaskExecEnv(context.Context) error {
+func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning init subtask exec env")
 	d := b.d
 
-	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID)
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, b.index.Unique, b.job.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
 		return err
 	}
 	b.bc = bc
+	b.ctx = ctx
+
+	ser, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("distAddIndex/%d/%s:%d", b.job.ID, ser.IP, ser.Port)
+	response, err := d.etcdCli.Get(ctx, path)
+	if err != nil {
+		return err
+	}
+	if len(response.Kvs) > 0 {
+		cnt, err := strconv.Atoi(string(response.Kvs[0].Value))
+		if err != nil {
+			return err
+		}
+		b.totalRowCnt = int64(cnt)
+	}
+
+	b.done = make(chan struct{})
+	go b.UpdateStatLoop()
+
 	return nil
 }
 
@@ -212,6 +271,12 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 
 // OnSubtaskFinished implements the Scheduler interface.
 func (*backfillSchedulerHandle) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
+			MockDMLExecutionAddIndexSubTaskFinish()
+		}
+	})
 	return meta, nil
 }
 
@@ -220,11 +285,17 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
 
 	b.bc.Unregister(b.job.ID, b.index.ID)
+	close(b.done)
 	return nil
 }
 
 // Rollback implements the Scheduler interface.
 func (b *backfillSchedulerHandle) Rollback(context.Context) error {
+	logutil.BgLogger().Info("[ddl] rollback backfill add index task", zap.Int64("jobID", b.job.ID))
+	bc, ok := ingest.LitBackCtxMgr.Load(b.job.ID)
+	if ok {
+		bc.Unregister(b.job.ID, b.index.ID)
+	}
 	return nil
 }
 
