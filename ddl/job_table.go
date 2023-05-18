@@ -127,8 +127,11 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		}
 
 		isRunnable, err := d.processJobDuringUpgrade(se, &job)
-		if !isRunnable {
+		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if !isRunnable {
+			continue
 		}
 
 		// The job has already been picked up, just return to continue it.

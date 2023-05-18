@@ -818,10 +818,13 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	w.registerSync(job)
 
 	if runJobErr != nil {
-		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
-		// which may act like a deadlock.
-		logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
-			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
+		// Omit the ErrPausedDDLJob
+		if !dbterror.ErrPausedDDLJob.Equal(runJobErr) {
+			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
+			// which may act like a deadlock.
+			logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
+				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
+		}
 
 		// In test and job is cancelling we can ignore the sleep
 		if !(intest.InTest && job.IsCancelling()) {
@@ -974,7 +977,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
 
 	if job.Type != model.ActionMultiSchemaChange {
-		logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
+		logutil.Logger(w.logCtx).Debug("[ddl] run DDL job", zap.String("job", job.String()))
 	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {

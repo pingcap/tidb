@@ -1486,13 +1486,15 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 func resumePausedJob(se *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if !job.IsResumable() {
-		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID,
-			"job has not been paused")
+		errMsg := fmt.Sprintf("job has not been paused, job state:%s, schema state:%s",
+			job.State, job.SchemaState)
+		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
 	// The Paused job should only be resumed by who paused it
 	if job.AdminOperator != byWho {
-		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID,
-			"job is paused by "+job.AdminOperator.String())
+		errMsg := fmt.Sprintf("job has been paused by [%s], should not resumed by [%s]",
+			job.AdminOperator.String(), byWho)
+		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
 
 	job.State = model.JobStateQueueing
