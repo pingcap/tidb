@@ -260,7 +260,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 // CreateVolumes create volumes from snapshots
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
-func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64) (map[string]string, error) {
+func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, targetAZ string) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{
 		VolumeType: &volumeType,
 		TagSpecifications: []*ec2.TagSpecification{
@@ -297,6 +297,11 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 				req := template
 				req.SetSnapshotId(oldVol.SnapshotID)
 				req.SetAvailabilityZone(oldVol.VolumeAZ)
+				if targetAZ == "" {
+					req.SetAvailabilityZone(oldVol.VolumeAZ)
+				} else {
+					req.SetAvailabilityZone(targetAZ)
+				}
 				newVol, err := e.ec2.CreateVolume(&req)
 				if err != nil {
 					return errors.Trace(err)
