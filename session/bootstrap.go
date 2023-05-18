@@ -1206,11 +1206,11 @@ func syncUpgradeState(s Session) {
 func syncNormalRunning(s Session) {
 	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
-		logutil.BgLogger().Fatal("[Upgrading] unexpected error to resume all paused jobs: ", zap.Error(err))
+		logutil.BgLogger().Warn("[Upgrading] unexpected error to resume all paused jobs: ", zap.Error(err))
 	}
 
-	for jobID, err := range jobErrs {
-		logutil.BgLogger().Warn("[Upgrading] unable to resume the job ["+string(jobID)+"], error: ", zap.Error(err))
+	for _, err := range jobErrs {
+		logutil.BgLogger().Warn("[Upgrading] unable to resume the job, error: ", zap.Error(err))
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
