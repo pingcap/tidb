@@ -58,6 +58,7 @@ go_library(
         "//util",
         "//util/chunk",
         "//util/dbterror",
+        "//util/disttask",
         "//util/domainutil",
         "//util/engine",
         "//util/etcd",

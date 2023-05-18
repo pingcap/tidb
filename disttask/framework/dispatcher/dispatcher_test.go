@@ -81,12 +81,17 @@ func TestGetInstance(t *testing.T) {
 	// server ids: uuid0, uuid1
 	// subtask instance ids: nil
 	uuids := []string{"ddl_id_1", "ddl_id_2"}
+	serverIDs := []string{"10.123.124.10:32457", "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65535"}
 	mockedAllServerInfos = map[string]*infosync.ServerInfo{
 		uuids[0]: {
-			ID: uuids[0],
+			ID:   uuids[0],
+			IP:   "10.123.124.10",
+			Port: 32457,
 		},
 		uuids[1]: {
-			ID: uuids[1],
+			ID:   uuids[1],
+			IP:   "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789",
+			Port: 65535,
 		},
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
@@ -94,7 +99,10 @@ func TestGetInstance(t *testing.T) {
 	require.NoError(t, err)
 	instanceID, err = dispatcher.GetEligibleInstance(serverNodes, 0)
 	require.NoError(t, err)
-	if instanceID != uuids[0] && instanceID != uuids[1] {
+	require.Equal(t, serverIDs[0], instanceID)
+	instanceID, err = dispatcher.GetEligibleInstance(serverNodes, 1)
+	require.NoError(t, err)
+	if instanceID != serverIDs[0] && instanceID != serverIDs[1] {
 		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
 	}
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, 1)
@@ -107,26 +115,26 @@ func TestGetInstance(t *testing.T) {
 	subtask := &proto.Subtask{
 		Type:        proto.TaskTypeExample,
 		TaskID:      gTaskID,
-		SchedulerID: uuids[1],
+		SchedulerID: serverIDs[1],
 	}
 	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
-	require.Equal(t, []string{uuids[1]}, instanceIDs)
+	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid0, uuid1
 	subtask = &proto.Subtask{
 		Type:        proto.TaskTypeExample,
 		TaskID:      gTaskID,
-		SchedulerID: uuids[0],
+		SchedulerID: serverIDs[0],
 	}
 	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
-	require.Len(t, instanceIDs, len(uuids))
-	require.ElementsMatch(t, instanceIDs, uuids)
+	require.Len(t, instanceIDs, len(serverIDs))
+	require.ElementsMatch(t, instanceIDs, serverIDs)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo"))
 }

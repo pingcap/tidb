@@ -17,6 +17,7 @@ go_library(
         "//resourcemanager/util",
         "//sessionctx/variable",
         "//util",
+        "//util/disttask",
         "//util/logutil",
         "//util/syncutil",
         "@com_github_pingcap_errors//:errors",
