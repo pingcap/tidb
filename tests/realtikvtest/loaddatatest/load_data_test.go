@@ -40,20 +40,6 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 	s.tk.MustExec("use " + db)
 }
 
-func (s *mockGCSSuite) prepareDistTaskVar(distributed bool) {
-	rows := s.tk.MustQuery("select @@global.tidb_enable_dist_task").Rows()
-	s.Len(rows, 1)
-	oldValue := rows[0][0].(string)
-	if distributed {
-		s.tk.MustExec("set @@global.tidb_enable_dist_task = 1")
-	} else {
-		s.tk.MustExec("set @@global.tidb_enable_dist_task = 0")
-	}
-	s.T().Cleanup(func() {
-		s.tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %s", oldValue))
-	})
-}
-
 func adjustOptions(options string, distributed bool) string {
 	if distributed {
 		options += ", __distributed=true"
@@ -384,7 +370,6 @@ func (s *mockGCSSuite) TestMultiValueIndex() {
 func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareDistTaskVar(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec(`CREATE TABLE load_csv.t (
@@ -421,7 +406,6 @@ func (s *mockGCSSuite) TestMixedCompression() {
 func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH thread=1, import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareDistTaskVar(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
 	s.tk.MustExec("CREATE DATABASE multi_load;")
 	s.tk.MustExec("CREATE TABLE multi_load.t (i INT PRIMARY KEY, s varchar(32));")
@@ -484,7 +468,6 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareDistTaskVar(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("CREATE TABLE load_csv.t (" +
@@ -525,7 +508,6 @@ func (s *mockGCSSuite) TestGBK() {
 func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareDistTaskVar(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_charset;")
 	s.tk.MustExec("CREATE DATABASE load_charset;")
 	s.tk.MustExec(`CREATE TABLE load_charset.gbk (
@@ -644,7 +626,6 @@ func (s *mockGCSSuite) TestOtherCharset() {
 func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareDistTaskVar(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_charset;")
 	s.tk.MustExec("CREATE DATABASE load_charset;")
 	s.tk.MustExec(`CREATE TABLE load_charset.utf8 (
@@ -805,7 +786,6 @@ func (s *mockGCSSuite) testChecksumNotMatch(importMode string, distributed bool)
 		config.DefaultBatchSize = backup
 	})
 
-	s.prepareDistTaskVar(distributed)
 	s.prepareAndUseDB("load_data")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
