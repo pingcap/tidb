@@ -19,6 +19,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"time"
 
@@ -873,7 +874,7 @@ func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed boo
 		serverInfo, err := infosync.GetServerInfo()
 		s.NoError(err)
 		for _, st := range subtasks {
-			s.Equal(serverInfo.ID, st.SchedulerID)
+			s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.SchedulerID)
 		}
 	}
 }
