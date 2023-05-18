@@ -281,9 +281,6 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 
 // DoOptimizeAndLogicAsRet optimizes a logical plan to a physical plan and return the optimized logical plan.
 func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (LogicalPlan, PhysicalPlan, float64, error) {
-	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
-		logutil.BgLogger().Warn("before logical optimize", zap.String("the plan", ToString(logic)))
-	}
 	sessVars := sctx.GetSessionVars()
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
@@ -301,10 +298,6 @@ func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag 
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, nil, 0, err
-	}
-
-	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
-		logutil.BgLogger().Warn("after logical optimize", zap.String("the plan", ToString(logic)))
 	}
 
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
