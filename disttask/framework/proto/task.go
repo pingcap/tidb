@@ -81,8 +81,8 @@ type Subtask struct {
 	// taken from task_key of the subtask table
 	TaskID int64
 	State  string
-	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id, and ID in ServerInfo.
-	// ID in ServerInfo is a UUID generated on startup, so it changes every time the server restarts.
+	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
+	// its value is IP:PORT, see GenerateExecID
 	SchedulerID string
 	StartTime   uint64
 	EndTime     time.Time
