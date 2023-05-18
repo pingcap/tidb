@@ -32,8 +32,7 @@ import (
 )
 
 // FlowHandle is the dispatcher for load data.
-type FlowHandle struct {
-}
+type FlowHandle struct{}
 
 // ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
 func (*FlowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
