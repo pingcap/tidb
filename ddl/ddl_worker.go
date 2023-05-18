@@ -957,6 +957,7 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 	}
 	if job.IsPausing() {
 		logutil.Logger(w.logCtx).Debug("[ddl] pausing DDL job ", zap.String("job", job.String()))
+		job.State = model.JobStatePaused
 		return false, pauseReorgWorkers(w, d, job)
 	}
 	return true, nil

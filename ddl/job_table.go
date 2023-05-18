@@ -174,18 +174,28 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		// During binary upgrade, pause all running DDL jobs
 		errs, err = PauseJobsBySystem(sess.Session(), []int64{job.ID})
 		if len(errs) > 0 {
-			if dbterror.ErrCannotPauseDDLJob.Equal(errs[0]) ||
-				dbterror.ErrPausedDDLJob.Equal(errs[0]) {
+			if dbterror.ErrPausedDDLJob.Equal(errs[0]) {
+				// In case of 'Pausing', we need to deliver the job to DDL
+				// worker to pause the background reorganization workers.
+				return true, nil
+			}
+			if dbterror.ErrCannotPauseDDLJob.Equal(errs[0]) {
+				// The state could be 'cancelling' or 'rollback', as well as
+				// some corner state
 				return false, nil
 			}
 
-			// During upgrade, there are jobs that may not be paused because of `!job.IsRunning`.
-			// Then, we would not run it and just return unless the upgrade finished.
+			// During upgrade, there are jobs that may not be paused because of
+			// some serious error. Then, we would not run it and just return
+			// unless the upgrade finished.
 			return false, errs[0]
 		}
 
-		// no matter how, we would not run DDL jobs during upgrade even not paused.
-		return false, err
+		// The job has been issued the command 'pause', which has been turned
+		// to be 'pausing' in job table, then we need to deliver it to ddl
+		// worker to turn it to be 'paused'
+		job.State = model.JobStatePausing
+		return true, err
 	}
 
 	if job.IsPausedBySystem() && !hasSysDB(job) {
