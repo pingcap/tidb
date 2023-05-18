@@ -23,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
@@ -49,6 +50,9 @@ type DetailsNeedP90 struct {
 	CalleeAddress string
 	TimeDetail    util.TimeDetail
 }
+
+// DetailsNeedP90Size indicates the size of DetailsNeedP90Size, used for memory tracking.
+const DetailsNeedP90Size = int64(unsafe.Sizeof(DetailsNeedP90{}))
 
 type stmtExecDetailKeyType struct{}
 

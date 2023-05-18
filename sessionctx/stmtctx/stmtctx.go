@@ -1004,6 +1004,7 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 				CalleeAddress: details.CalleeAddress,
 				TimeDetail:    details.TimeDetail,
 			})
+		sc.MemTracker.Consume(execdetails.DetailsNeedP90Size + int64(len(details.BackoffSleep))*8 + int64(len(details.BackoffTimes))*8)
 	}
 	if commitDetails != nil {
 		if sc.mu.execDetails.CommitDetail == nil {
