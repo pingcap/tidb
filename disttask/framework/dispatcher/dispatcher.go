@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
@@ -154,7 +155,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 			}
 
 			// TODO: Consider getting these tasks, in addition to the task being worked on..
-			gTasks, err := d.taskMgr.GetGlobalTasksInStates(proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateReverting)
+			gTasks, err := d.taskMgr.GetGlobalTasksInStates(proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStateCancelling)
 			if err != nil {
 				logutil.BgLogger().Warn("get unfinished(pending, running or reverting) tasks failed", zap.Error(err))
 				break
@@ -169,7 +170,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 				if d.isRunningGTask(gTask.ID) {
 					continue
 				}
-				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting {
+				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
 					d.setRunningGTask(gTask)
 					cnt++
 					continue
@@ -197,6 +198,16 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 	// TODO: Consider putting the following operations into a transaction.
 	// TODO: Consider collect some information about the tasks.
 	if gTask.State != proto.TaskStateReverting {
+		cancelling, err := d.taskMgr.IsGlobalTaskCancelling(gTask.ID)
+		if err != nil {
+			logutil.BgLogger().Warn("check task cancelling failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
+			return false, nil
+		}
+
+		if cancelling {
+			return false, [][]byte{[]byte("cancel")}
+		}
+
 		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateFailed)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
@@ -428,7 +439,8 @@ func GetEligibleInstance(serverNodes []*infosync.ServerInfo, pos int) (string, e
 		return "", errors.New("no available TiDB node")
 	}
 	pos = pos % len(serverNodes)
-	return serverNodes[pos].ID, nil
+	serverID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+	return serverID, nil
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
@@ -464,9 +476,19 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 	}
 	ids := make([]string, 0, len(schedulerIDs))
 	for _, id := range schedulerIDs {
-		if _, ok := serverInfos[id]; ok {
+		if ok := matchServerInfo(serverInfos, id); ok {
 			ids = append(ids, id)
 		}
 	}
 	return ids, nil
+}
+
+func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
+	for _, serverInfo := range serverInfos {
+		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port)
+		if serverID == schedulerID {
+			return true
+		}
+	}
+	return false
 }

@@ -111,6 +111,13 @@ def go_deps():
         sum = "h1:4QctJBgXEkbzeKz6PJy6bt3JSPNSN4I2mITYW+eKUoQ=",
         version = "v1.0.0",
     )
+    go_repository(
+        name = "com_github_alexbrainman_sspi",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/alexbrainman/sspi",
+        sum = "h1:Kk6a4nehpJ3UuJRqlA3JxYxBZEqCeOmATOvrbT4p9RA=",
+        version = "v0.0.0-20210105120005-909beea2cc74",
+    )
 
     go_repository(
         name = "com_github_alexkohler_prealloc",
@@ -233,8 +240,8 @@ def go_deps():
         name = "com_github_aws_aws_sdk_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go",
-        sum = "h1:jLDC9RsNoYMLFlKpB8LdqUnoDdC2yvkS4QbuyPQJ8+M=",
-        version = "v1.44.48",
+        sum = "h1:7yDn1dcv4DZFMKpu+2exIH5O6ipNj9qXrKfdMUaIJwY=",
+        version = "v1.44.259",
     )
     go_repository(
         name = "com_github_axw_gocov",
@@ -294,6 +301,14 @@ def go_deps():
         sum = "h1:Q2feRPMlcfVcqz3pF87PJzkm5lZrL+x6BDtzhODzNJM=",
         version = "v11.2.8+incompatible",
     )
+    go_repository(
+        name = "com_github_azure_go_ntlmssp",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/Azure/go-ntlmssp",
+        sum = "h1:mFRzDkZVAjdal+s7s0MwaRv9igoPqLRdzOLzw/8Xvq8=",
+        version = "v0.0.0-20221128193559-754e69321358",
+    )
+
     go_repository(
         name = "com_github_bazelbuild_buildtools",
         build_file_proto_mode = "disable",
@@ -786,8 +801,8 @@ def go_deps():
         name = "com_github_cznic_strutil",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/cznic/strutil",
-        sum = "h1:0rkFMAbn5KBKNpJyHQ6Prb95vIKanmAe62KxsrN+sqA=",
-        version = "v0.0.0-20171016134553-529a34b1c186",
+        sum = "h1:MZRmHqDBd0vxNwenEbKSQqRVT24d3C05ft8kduSwlqM=",
+        version = "v0.0.0-20181122101858-275e90344537",
     )
     go_repository(
         name = "com_github_daixiang0_gci",
@@ -1218,6 +1233,14 @@ def go_deps():
         version = "v1.4.0",
     )
     go_repository(
+        name = "com_github_go_asn1_ber_asn1_ber",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/go-asn1-ber/asn1-ber",
+        sum = "h1:vXT6d/FNDiELJnLb6hGNa309LMsrCoYFvpwHDF0+Y1A=",
+        version = "v1.5.4",
+    )
+
+    go_repository(
         name = "com_github_go_check_check",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-check/check",
@@ -1282,6 +1305,15 @@ def go_deps():
         sum = "h1:MRVx0/zhvdseW+Gza6N9rVzU/IVzaeE1SFI4raAhmBU=",
         version = "v0.2.1",
     )
+    go_repository(
+        name = "com_github_go_ldap_ldap_v3",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/go-ldap/ldap/v3",
+        replace = "github.com/YangKeao/ldap/v3",
+        sum = "h1:+OqGGFc2YHFd82aSHmjlILVt1t4JWJjrNIfV8cVEPow=",
+        version = "v3.4.5-0.20230421065457-369a3bab1117",
+    )
+
     go_repository(
         name = "com_github_go_logfmt_logfmt",
         build_file_proto_mode = "disable_global",
@@ -1372,8 +1404,8 @@ def go_deps():
         name = "com_github_go_sql_driver_mysql",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-sql-driver/mysql",
-        sum = "h1:ueSltNNllEqE3qcWBTD0iQd3IpL/6U+mJxLkazJ7YPc=",
-        version = "v1.7.0",
+        sum = "h1:lUIinVbN1DY0xBg0eMOzmmtGoHwWBbvnWubQUrtU8EI=",
+        version = "v1.7.1",
     )
     go_repository(
         name = "com_github_go_stack_stack",
@@ -3381,8 +3413,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:aGROoQpU8Sx9MhCspeSrDXpNkW1pcG+EWdMYxg4d5uo=",
-        version = "v0.0.0-20230419072653-dc3cd8784a19",
+        sum = "h1:eHtwHgPzzm8aIZ4x8o7zg1b23cjUl0AikW+SDLpqf3E=",
+        version = "v0.0.0-20230426023724-d90a321b46be",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4132,8 +4164,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:bsHddossVMw8NSwMj6ruEWoDxBiPTYsIq9t5wL3FcW4=",
-        version = "v2.0.8-0.20230428110356-62cc95123c00",
+        sum = "h1:Xu3sf5rKIqlkLzGjTs5IED6l6soJgZHHEyj5mapc42I=",
+        version = "v2.0.8-0.20230512034316-adb48afeef3e",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -6076,8 +6108,8 @@ def go_deps():
         name = "org_modernc_golex",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/golex",
-        sum = "h1:EYKY1a3wStt0RzHaH8mdSRNg78Ub0OHxYfCRWw35YtM=",
-        version = "v1.0.1",
+        sum = "h1:IaPGsXg0FX9vkth++hQ/YIHjj0v4eZGJwoMrejWR1Ts=",
+        version = "v1.0.4",
     )
     go_repository(
         name = "org_modernc_lex",
@@ -6097,8 +6129,8 @@ def go_deps():
         name = "org_modernc_mathutil",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/mathutil",
-        sum = "h1:ij3fYGe8zBF4Vu+g0oT7mB06r8sqGWKuJu1yXeR4by8=",
-        version = "v1.4.1",
+        sum = "h1:rV0Ko/6SfM+8G+yKiyI830l3Wuz1zRutdslNoQ0kfiQ=",
+        version = "v1.5.0",
     )
     go_repository(
         name = "org_modernc_parser",
@@ -6118,15 +6150,15 @@ def go_deps():
         name = "org_modernc_sortutil",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/sortutil",
-        sum = "h1:SUTM1sCR0Ldpv7dbB/KCPC2zHHsZ1KrSkhmGmmV22CQ=",
-        version = "v1.0.0",
+        sum = "h1:VQGxbQGcHaQeB/BX9TQjrHFmOA0bounO1X/jvOfRo6Q=",
+        version = "v1.1.1",
     )
     go_repository(
         name = "org_modernc_strutil",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/strutil",
-        sum = "h1:+1/yCzZxY2pZwwrsbH+4T7BQMoLQ9QiBshRC9eicYsc=",
-        version = "v1.1.0",
+        sum = "h1:fNMm+oJklMGYfU9Ylcywl0CO5O6nTfaowNsh2wpPjzY=",
+        version = "v1.1.3",
     )
     go_repository(
         name = "org_modernc_y",

@@ -59,7 +59,7 @@ type Batcher struct {
 	batchSizeThreshold int
 	size               int32
 
-	checkpointTrees map[int64]rtree.RangeTree
+	checkpointSetWithTableID map[int64]map[string]struct{}
 }
 
 // Len calculate the current size of this batcher.
@@ -233,12 +233,27 @@ type DrainResult struct {
 }
 
 // Files returns all files of this drain result.
-func (result DrainResult) Files() []*backuppb.File {
-	files := make([]*backuppb.File, 0, len(result.Ranges)*2)
-	for _, fs := range result.Ranges {
-		files = append(files, fs.Files...)
+func (result DrainResult) Files() []TableIDWithFiles {
+	tableIDWithFiles := make([]TableIDWithFiles, 0, len(result.TableEndOffsetInRanges))
+	var startOffset int = 0
+	for i, endOffset := range result.TableEndOffsetInRanges {
+		tableID := result.TablesToSend[i].Table.ID
+		ranges := result.Ranges[startOffset:endOffset]
+		files := make([]*backuppb.File, 0, len(result.Ranges)*2)
+		for _, rg := range ranges {
+			files = append(files, rg.Files...)
+		}
+
+		tableIDWithFiles = append(tableIDWithFiles, TableIDWithFiles{
+			TableID: tableID,
+			Files:   files,
+		})
+
+		// update start offset
+		startOffset = endOffset
 	}
-	return files
+
+	return tableIDWithFiles
 }
 
 func newDrainResult() DrainResult {
@@ -251,34 +266,37 @@ func newDrainResult() DrainResult {
 	}
 }
 
-// fileterOutRanges filter out the range from `drained-range` that is overlapped with ranges in the `range-tree`
-func (b *Batcher) filterOutRanges(tree rtree.RangeTree, drained []rtree.Range) []rtree.Range {
-	newRanges := make([]rtree.Range, 0, len(drained))
+// fileterOutRanges filter out the files from `drained-range` that exists in the checkpoint set.
+func (b *Batcher) filterOutRanges(checkpointSet map[string]struct{}, drained []rtree.Range) []rtree.Range {
 	progress := int(0)
 	totalKVs := uint64(0)
 	totalBytes := uint64(0)
-	for _, rg := range drained {
-		if r := tree.Find(&rg); r != nil {
-			// The range is overlapped with ranges in the tree,
-			// so skip it and update the summary information.
-			progress += 1
-			for _, f := range rg.Files {
+	for i, rg := range drained {
+		newFiles := make([]*backuppb.File, 0, len(rg.Files))
+		for _, f := range rg.Files {
+			rangeKey := getFileRangeKey(f.Name)
+			if _, exists := checkpointSet[rangeKey]; exists {
+				// the range has been import done, so skip it and
+				// update the summary information
+				progress += 1
 				totalKVs += f.TotalKvs
 				totalBytes += f.TotalBytes
+			} else {
+				newFiles = append(newFiles, f)
 			}
-		} else {
-			newRanges = append(newRanges, rg)
 		}
+		// the newFiles may be empty
+		drained[i].Files = newFiles
 	}
 	if progress > 0 {
-		// split/scatter + download/ingest
-		b.updateCh.IncBy(int64(progress) * 2)
+		// (split/scatter + download/ingest) / (default cf + write cf)
+		b.updateCh.IncBy(int64(progress) * 2 / 2)
 		summary.CollectSuccessUnit(summary.TotalKV, progress, totalKVs)
 		summary.CollectSuccessUnit(summary.SkippedKVCountByCheckpoint, progress, totalKVs)
 		summary.CollectSuccessUnit(summary.TotalBytes, progress, totalBytes)
 		summary.CollectSuccessUnit(summary.SkippedBytesByCheckpoint, progress, totalBytes)
 	}
-	return newRanges
+	return drained
 }
 
 // drainRanges 'drains' ranges from current tables.
@@ -306,7 +324,7 @@ func (b *Batcher) drainRanges() DrainResult {
 	defer b.cachedTablesMu.Unlock()
 
 	for offset, thisTable := range b.cachedTables {
-		t, exists := b.checkpointTrees[thisTable.Table.ID]
+		t, exists := b.checkpointSetWithTableID[thisTable.Table.ID]
 		thisTableLen := len(thisTable.Range)
 		collected := len(result.Ranges)
 
@@ -427,6 +445,6 @@ func (b *Batcher) SetThreshold(newThreshold int) {
 	b.batchSizeThreshold = newThreshold
 }
 
-func (b *Batcher) SetCheckpoint(trees map[int64]rtree.RangeTree) {
-	b.checkpointTrees = trees
+func (b *Batcher) SetCheckpoint(sets map[int64]map[string]struct{}) {
+	b.checkpointSetWithTableID = sets
 }

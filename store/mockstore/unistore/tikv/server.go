@@ -1138,6 +1138,12 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				ExistingCommitTs: x.ExistingCommitTS,
 			},
 		}
+	case *kverrors.ErrPrimaryMismatch:
+		return &kvrpcpb.KeyError{
+			PrimaryMismatch: &kvrpcpb.PrimaryMismatch{
+				LockInfo: x.Lock.ToLockInfo(x.Key),
+			},
+		}
 	default:
 		return &kvrpcpb.KeyError{
 			Abort: err.Error(),

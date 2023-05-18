@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/stretchr/testify/require"
@@ -186,6 +188,79 @@ func TestIssue40296(t *testing.T) {
 	tk.MustQuery(`select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("aa", "aa") or col2 = -9605492323393070105 or col3 = "0005-06-22"`).Check(
 		testkit.Rows("ee -9605492323393070105 0850-03-15"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unary operator '-' is not supported now.
+}
+
+func TestIssue43522(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE UK_SIGNED_19385 (
+  COL1 decimal(37,4) unsigned DEFAULT '101.0000' COMMENT 'WITH DEFAULT',
+  COL2 varchar(20) DEFAULT NULL,
+  COL4 datetime DEFAULT NULL,
+  COL3 bigint(20) DEFAULT NULL,
+  COL5 float DEFAULT NULL,
+  UNIQUE KEY UK_COL1 (COL1) /*!80000 INVISIBLE */)`)
+	tk.MustExec(`INSERT INTO UK_SIGNED_19385 VALUES (999999999999999999999999999999999.9999,'苊檷鞤寰抿逿詸叟艟俆錟什姂庋鴪鎅枀礰扚匝','8618-02-11 03:30:03',7016504421081900731,2.77465e38)`)
+	tk.MustQuery(`select * from UK_SIGNED_19385 where col1 = 999999999999999999999999999999999.9999 and
+    col1 * 999999999999999999999999999999999.9999 between 999999999999999999999999999999999.9999 and
+    999999999999999999999999999999999.9999`).Check(testkit.Rows()) // empty and no error
+}
+
+func TestIssue43520(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE IDT_20290 (
+  COL1 mediumtext DEFAULT NULL,
+  COL2 decimal(52,7) DEFAULT NULL,
+  COL3 datetime DEFAULT NULL,
+  KEY U_M_COL (COL1(10),COL2,COL3) /*!80000 INVISIBLE */)`)
+	tk.MustExec(`INSERT INTO IDT_20290 VALUES
+  ('',210255309400.4264137,'4273-04-17 17:26:51'),
+  (NULL,952470120213.2538798,'7087-08-19 21:38:49'),
+  ('俦',486763966102.1656494,'8846-06-12 12:02:13'),
+  ('憁',610644171405.5953911,'2529-07-19 17:24:49'),
+  ('顜',-359717183823.5275069,'2599-04-01 00:12:08'),
+  ('塼',466512908211.1135111,'1477-10-20 07:14:51'),
+  ('宻',-564216096745.0427987,'7071-11-20 13:38:24'),
+  ('網',-483373421083.4724254,'2910-02-19 18:29:17'),
+  ('顥',164020607693.9988781,'2820-10-12 17:38:44'),
+  ('谪',25949740494.3937876,'6527-05-30 22:58:37')`)
+	err := tk.QueryToErr(`select * from IDT_20290 where col2 * 049015787697063065230692384394107598316198958.1850509 >= 659971401668884663953087553591534913868320924.5040396 and col2 = 869042976700631943559871054704914143535627349.9659934`)
+	require.ErrorContains(t, err, "value is out of range in")
+}
+
+func TestIssue14875(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t(a varchar(8) not null, b varchar(8) not null)`)
+	tk.MustExec(`insert into t values('1','1')`)
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t2.b = '1' and t2.b = ?"`)
+	tk.MustExec(`set @a = '1'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @a = '2'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t1.a > ?"`)
+	tk.MustExec(`set @a = '1'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @a = '0'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
+}
+
+func TestIssue14871(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t(a varchar(8), b varchar(8))`)
+	tk.MustExec(`insert into t values('1','1')`)
+	tk.MustExec(`prepare stmt from "select count(1) from t t1 left join t t2 on t1.a = t2.a where t2.b = ? and t2.b = ?"`)
+	tk.MustExec(`set @p0 = '1', @p1 = '2'`)
+	tk.MustQuery(`execute stmt using @p0, @p1`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @p0 = '1', @p1 = '1'`)
+	tk.MustQuery(`execute stmt using @p0, @p1`).Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanCacheDMLHints(t *testing.T) {
@@ -802,6 +877,18 @@ func TestNonPreparedPlanParameterType(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a='1'`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: '1' may be converted to INT`))
+}
+
+func TestIssue43852(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t6 (a date, b date, key(a))`)
+	tk.MustExec(`insert into t6 values ('2023-01-21', '2023-01-05')`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustQuery(`select * from t6 where a in (2015, '8')`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t6 where a in (2009, '2023-01-21')`).Check(testkit.Rows(`2023-01-21 2023-01-05`))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanTypeRandomly(t *testing.T) {
@@ -1909,7 +1996,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have generated columns are not supported",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
-		"skip non-prepared plan-cache: get a TableDual plan",
+		"skip non-prepared plan-cache: some parameters may be overwritten when constant propagation",
 	}
 
 	all := append(supported, unsupported...)
@@ -2203,6 +2290,52 @@ func TestNonPreparedPlanCacheAutoStmtRetry(t *testing.T) {
 	require.NoError(t, err)
 	wg.Wait()
 	require.ErrorContains(t, tk2Err, "Duplicate entry")
+}
+
+func TestIssue43667Concurrency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cycle (pk int key, val int)")
+	var wg sync.WaitGroup
+	concurrency := 30
+	for i := 0; i < concurrency; i++ {
+		tk.MustExec(fmt.Sprintf("insert into cycle values (%v,%v)", i, i))
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+			query := fmt.Sprintf("select (val) from cycle where pk = %v", id)
+			for j := 0; j < 5000; j++ {
+				tk.MustQuery(query).Check(testkit.Rows(fmt.Sprintf("%v", id)))
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestIssue43667(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`create table cycle (pk int not null primary key, sk int not null, val int)`)
+	tk.MustExec(`insert into cycle values (4, 4, 4)`)
+	tk.MustExec(`insert into cycle values (7, 7, 7)`)
+
+	tk.MustQuery(`select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
+	tk.MustQuery(`select (val) from cycle where pk = 7`).Check(testkit.Rows("7"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	updateAST := func(stmt ast.StmtNode) {
+		v := stmt.(*ast.SelectStmt).Where.(*ast.BinaryOperationExpr).R.(*driver.ValueExpr)
+		v.Datum.SetInt64(7)
+	}
+
+	tctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestIssue43667, updateAST)
+	tk.MustQueryWithContext(tctx, `select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
 }
 
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {

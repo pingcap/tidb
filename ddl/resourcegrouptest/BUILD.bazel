@@ -6,7 +6,7 @@ go_test(
     srcs = ["resource_group_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//ddl/internal/callback",
         "//ddl/resourcegroup",
