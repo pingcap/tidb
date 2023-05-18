@@ -32,8 +32,6 @@ type Options struct {
 	InfoCache *infoschema.InfoCache
 	Hook      Callback
 	Lease     time.Duration
-
-	ServerIDGetter func() uint64
 }
 
 // WithEtcdClient specifies the `clientv3.Client` of DDL used to request the etcd service
@@ -68,12 +66,5 @@ func WithHook(callback Callback) Option {
 func WithLease(lease time.Duration) Option {
 	return func(options *Options) {
 		options.Lease = lease
-	}
-}
-
-// WithServerIDGetter specifies the function to get server ID.
-func WithServerIDGetter(serverIDGetter func() uint64) Option {
-	return func(options *Options) {
-		options.ServerIDGetter = serverIDGetter
 	}
 }

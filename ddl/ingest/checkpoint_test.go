@@ -17,13 +17,9 @@ package ingest_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net"
-	"strconv"
 	"testing"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/testkit"
@@ -42,7 +38,7 @@ func TestCheckpointManager(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: false}
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1, 0)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -95,7 +91,7 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: true}
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1, 0)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -130,7 +126,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 			LocalKeyCount:  100,
 			GlobalSyncKey:  []byte{'2', '9'},
 			GlobalKeyCount: 200,
-			InstanceAddr:   initInstanceAddr(),
+			InstanceAddr:   ingest.InitInstanceAddr(),
 			Version:        1,
 		},
 	}
@@ -144,7 +140,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: false}
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1, 0)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
 	require.NoError(t, err)
 	defer mgr.Close()
 	require.True(t, mgr.IsComplete([]byte{'1', '9'}))
@@ -152,12 +148,6 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	localCnt, globalNextKey := mgr.Status()
 	require.Equal(t, 100, localCnt)
 	require.EqualValues(t, []byte{'2', '9'}, globalNextKey)
-}
-
-func initInstanceAddr() string {
-	cfg := config.GetGlobalConfig()
-	dsn := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
-	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
 }
 
 type dummyFlushCtrl struct {
