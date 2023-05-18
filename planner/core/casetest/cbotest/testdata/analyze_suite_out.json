@@ -5,13 +5,13 @@
       {
         "SQL": "explain format = 'brief' select * from t1, t2 where t1.a = t2.a",
         "Plan": [
-          "HashJoin 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─TableReader(Build) 5.99 root  data:Selection",
-          "│ └─Selection 5.99 cop[tikv]  not(isnull(test.t2.a))",
-          "│   └─TableFullScan 6.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 5.99 root  data:Selection",
-          "  └─Selection 5.99 cop[tikv]  not(isnull(test.t1.a))",
-          "    └─TableFullScan 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
