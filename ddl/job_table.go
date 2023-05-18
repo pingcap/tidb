@@ -173,7 +173,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		var errs []error
 		// During binary upgrade, pause all running DDL jobs
 		errs, err = PauseJobsBySystem(sess.Session(), []int64{job.ID})
-		if len(errs) > 0 {
+		if errs != nil && errs[0] != nil {
 			if dbterror.ErrPausedDDLJob.Equal(errs[0]) {
 				// In case of 'Pausing', we need to deliver the job to DDL
 				// worker to pause the background reorganization workers.

@@ -1520,7 +1520,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 	var errs []error
 	// We should process (and try) all the jobs in one Transaction.
 	for tryN := uint(0); tryN < 10; tryN += 1 {
-		errs = make([]error, 0, len(ids))
+		errs = make([]error, len(ids))
 		// Need to figure out which one could not be paused
 		jobMap := make(map[int64]int, len(ids))
 		idsStr := make([]string, 0, len(ids))
