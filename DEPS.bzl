@@ -3501,8 +3501,8 @@ def go_deps():
         name = "com_github_polyfloyd_go_errorlint",
         build_file_proto_mode = "disable",
         importpath = "github.com/polyfloyd/go-errorlint",
-        sum = "h1:r8ru5FhXSn34YU1GJDOuoJv2LdsQkPmK325EOpPMJlM=",
-        version = "v1.4.1",
+        sum = "h1:CU+O4181IxFDdPH6t/HT7IiDj1I7zxNi1RIUxYwn8d0=",
+        version = "v1.4.2",
     )
 
     go_repository(
@@ -3531,15 +3531,15 @@ def go_deps():
         name = "com_github_prometheus_client_golang",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/client_golang",
-        sum = "h1:8tXpTmJbyH5lydzFPoxSIJ0J46jdh3tylbvM1xCv0LI=",
-        version = "v1.15.1",
+        sum = "h1:nJdhIvne2eSX/XRAFV9PcvFFRbrjbcTUj0VP62TMhnw=",
+        version = "v1.14.0",
     )
     go_repository(
         name = "com_github_prometheus_client_model",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/client_model",
-        sum = "h1:5lQXD3cAg1OXBf4Wq03gTrXHeaV0TQvGfUooCfx1yqY=",
-        version = "v0.4.0",
+        sum = "h1:UBgGFHqYdG/TPFD1B1ogZywDqEkwp3fBMvqdiQ7Xew4=",
+        version = "v0.3.0",
     )
     go_repository(
         name = "com_github_prometheus_common",
@@ -6082,13 +6082,8 @@ def go_deps():
         name = "org_golang_x_tools",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/tools",
-<<<<<<< HEAD
         sum = "h1:8WMNJAz3zrtPmnYC7ISf5dEn3MT0gY7jBJfw27yrrLo=",
         version = "v0.9.1",
-=======
-        sum = "h1:CtBMYmb33qYal6XpayZzNXlyK/3FpZV8bDq4CZo57b8=",
-        version = "v0.9.0",
->>>>>>> 2cfc11c1e3 (linter: enable errorlint)
     )
     go_repository(
         name = "org_golang_x_xerrors",
