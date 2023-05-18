@@ -70,7 +70,10 @@ const (
 	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
 
-	KVWriteBatchSize        = 32768
+	KVWriteBatchCount = 32768
+	// KVWriteBatchSize batch size when write to TiKV.
+	// this is the default value of linux send buffer size(net.ipv4.tcp_wmem) too.
+	KVWriteBatchSize        = 16 * units.KiB
 	DefaultRangeConcurrency = 16
 
 	defaultDistSQLScanConcurrency     = 15
@@ -745,6 +748,7 @@ type TikvImporter struct {
 	OnDuplicate             string                       `toml:"on-duplicate" json:"on-duplicate"`
 	MaxKVPairs              int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	SendKVPairs             int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	SendKVSize              ByteSize                     `toml:"send-kv-size" json:"send-kv-size"`
 	CompressKVPairs         CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
 	RegionSplitSize         ByteSize                     `toml:"region-split-size" json:"region-split-size"`
 	RegionSplitKeys         int                          `toml:"region-split-keys" json:"region-split-keys"`
@@ -952,7 +956,8 @@ func NewConfig() *Config {
 			Backend:                 "",
 			OnDuplicate:             ReplaceOnDup,
 			MaxKVPairs:              4096,
-			SendKVPairs:             KVWriteBatchSize,
+			SendKVPairs:             KVWriteBatchCount,
+			SendKVSize:              KVWriteBatchSize,
 			RegionSplitSize:         0,
 			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,
 			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),

@@ -865,6 +865,9 @@ func TestDefaultCouldBeOverwritten(t *testing.T) {
 	require.Equal(t, 20, cfg.App.IndexConcurrency)
 	require.Equal(t, 60, cfg.App.TableConcurrency)
 
+	require.Equal(t, config.KVWriteBatchCount, cfg.TikvImporter.SendKVPairs)
+	require.Equal(t, config.ByteSize(config.KVWriteBatchSize), cfg.TikvImporter.SendKVSize)
+
 	cfg.TikvImporter.RegionSplitConcurrency = 1
 	// backoff can be 0
 	cfg.TikvImporter.RegionCheckBackoffLimit = 0

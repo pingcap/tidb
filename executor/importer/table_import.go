@@ -116,6 +116,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
 		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
+		KVWriteBatchCount:      config.KVWriteBatchCount,
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
