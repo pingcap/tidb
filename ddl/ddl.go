@@ -1462,9 +1462,12 @@ func cancelRunningJob(sess *sess.Session, job *model.Job,
 // pauseRunningJob check and pause the running Job
 func pauseRunningJob(sess *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
-	// It would be much better doing this filter during `getJobsBySQL`, but not now.
+	if job.IsPausing() || job.IsPaused() {
+		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
+	}
 	if !job.IsPausable() {
-		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID)
+		errMsg := fmt.Sprintf("state [%s] or schema state [%s]", job.State.String(), job.SchemaState.String())
+		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, errMsg)
 		if err != nil {
 			return err
 		}
@@ -1483,10 +1486,16 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 // resumePausedJob check and resume the Paused Job
 func resumePausedJob(se *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
-	if !job.IsResumable() ||
-		// The Paused job should only be resumed by who paused it
-		job.AdminOperator != byWho {
-		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID)
+	if !job.IsResumable() {
+		errMsg := fmt.Sprintf("job has not been paused, job state:%s, schema state:%s",
+			job.State, job.SchemaState)
+		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
+	}
+	// The Paused job should only be resumed by who paused it
+	if job.AdminOperator != byWho {
+		errMsg := fmt.Sprintf("job has been paused by [%s], should not resumed by [%s]",
+			job.AdminOperator.String(), byWho.String())
+		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
 
 	job.State = model.JobStateQueueing
@@ -1510,8 +1519,8 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 	}
 
 	ns := sess.NewSession(sessCtx)
-	var errs []error
 
+	var errs []error
 	// We should process (and try) all the jobs in one Transaction.
 	for tryN := uint(0); tryN < 10; tryN += 1 {
 		errs = make([]error, len(ids))
@@ -1546,18 +1555,14 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 			err = process(ns, job, byWho)
 			if err != nil {
 				errs[i] = err
-				break
+				continue
 			}
 
 			err = updateDDLJob2Table(ns, job, true)
 			if err != nil {
-				break
+				errs[i] = err
+				continue
 			}
-		}
-		// We may meet some error on job update, try it again
-		if err != nil {
-			ns.Rollback()
-			continue
 		}
 
 		// There may be some conflict during the update, try it again
@@ -1634,13 +1639,13 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 			err = process(ns, job, byWho)
 			if err != nil {
 				jobErrs[job.ID] = err
-				ns.Rollback()
-				return jobErrs, err
+				continue
 			}
+
 			err = updateDDLJob2Table(ns, job, true)
 			if err != nil {
-				ns.Rollback()
-				return jobErrs, err
+				jobErrs[job.ID] = err
+				continue
 			}
 		}
 
