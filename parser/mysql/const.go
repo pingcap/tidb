@@ -412,10 +412,12 @@ func (m SQLMode) HasAllowInvalidDatesMode() bool {
 	return m&ModeAllowInvalidDates == ModeAllowInvalidDates
 }
 
+// DelSQLMode delete sql mode from ori
 func DelSQLMode(ori SQLMode, del SQLMode) SQLMode {
 	return ori & (^del)
 }
 
+// SetSQLMode add sql mode to ori
 func SetSQLMode(ori SQLMode, add SQLMode) SQLMode {
 	return ori | add
 }
