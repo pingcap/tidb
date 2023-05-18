@@ -338,16 +338,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		util.WithRecovery(
 			func() {
 				failpoint.Inject("testIndexMergePanicPartialIndexWorker", nil)
-				failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
-					select {
-					case <-ctx.Done():
-						failpoint.Return()
-					case <-e.finished:
-						failpoint.Return()
-					case <-exitCh:
-						failpoint.Return()
-					}
-				})
 				worker := &partialIndexWorker{
 					stats:              e.stats,
 					idxID:              e.getPartitalPlanID(workID),
@@ -463,16 +453,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		util.WithRecovery(
 			func() {
 				failpoint.Inject("testIndexMergePanicPartialTableWorker", nil)
-				failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
-					select {
-					case <-ctx.Done():
-						failpoint.Return()
-					case <-e.finished:
-						failpoint.Return()
-					case <-exitCh:
-						failpoint.Return()
-					}
-				})
 				var err error
 				partialTableReader := &TableReaderExecutor{
 					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
@@ -1624,14 +1604,6 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 		// Make sure panic failpoint is after fetch task from workCh.
 		// Otherwise cannot send error to task.doneCh.
 		failpoint.Inject("testIndexMergePanicTableScanWorker", nil)
-		failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
-			select {
-			case <-ctx.Done():
-				failpoint.Return()
-			case <-w.finished:
-				failpoint.Return()
-			}
-		})
 		execStart := time.Now()
 		err := w.executeTask(ctx, *task)
 		if w.stats != nil {

@@ -21,6 +21,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -110,12 +111,15 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 	}
 
 	backendConfig := local.BackendConfig{
-		PDAddr:            tidbCfg.Path,
-		LocalStoreDir:     dir,
-		MaxConnPerStore:   config.DefaultRangeConcurrency,
-		ConnCompressType:  config.CompressionNone,
-		WorkerConcurrency: config.DefaultRangeConcurrency * 2,
-		KVWriteBatchSize:  config.KVWriteBatchSize,
+		PDAddr:                 tidbCfg.Path,
+		LocalStoreDir:          dir,
+		MaxConnPerStore:        config.DefaultRangeConcurrency,
+		ConnCompressType:       config.CompressionNone,
+		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
+		KVWriteBatchCount:      config.KVWriteBatchCount,
+		KVWriteBatchSize:       config.KVWriteBatchSize,
+		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
+		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
 		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
 		// set to false when we fix it.
 		CheckpointEnabled:       true,
@@ -129,6 +133,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		ShouldCheckWriteStall: true,
 		MaxOpenFiles:          int(util.GenRLimit()),
 		KeyspaceName:          keySpaceName,
+		PausePDSchedulerScope: config.PausePDSchedulerScopeTable,
 	}
 
 	tableMeta := &mydump.MDTableMeta{
@@ -269,7 +274,7 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEnc
 		Table:  ti.encTable,
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
-	return newTableKVEncoder(cfg, ti.ColumnAssignments, ti.ColumnsAndUserVars, ti.FieldMappings, ti.InsertColumns)
+	return newTableKVEncoder(cfg, ti)
 }
 
 func (ti *TableImporter) importTable(ctx context.Context) (err error) {
@@ -298,16 +303,12 @@ func (ti *TableImporter) postProcess(ctx context.Context) (err error) {
 	}()
 	// todo: post process
 	if ti.Checksum != config.OpLevelOff {
-		return ti.verifyChecksum(ctx)
+		return ti.checksumTable(ctx)
 	}
 	return nil
 }
 
-func (ti *TableImporter) verifyChecksum(ctx context.Context) (err error) {
-	task := log.BeginTask(ti.logger, "verify checksum")
-	defer func() {
-		task.End(zap.ErrorLevel, err)
-	}()
+func (ti *TableImporter) localChecksum() verify.KVChecksum {
 	var localChecksum verify.KVChecksum
 	for _, engine := range ti.tableCp.Engines {
 		for _, chunk := range engine.Chunks {
@@ -315,6 +316,15 @@ func (ti *TableImporter) verifyChecksum(ctx context.Context) (err error) {
 		}
 	}
 	ti.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+	return localChecksum
+}
+
+// VerifyChecksum verify the checksum of the table.
+func (ti *TableImporter) VerifyChecksum(ctx context.Context, localChecksum verify.KVChecksum) (err error) {
+	task := log.BeginTask(ti.logger, "verify checksum")
+	defer func() {
+		task.End(zap.ErrorLevel, err)
+	}()
 	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.DistSQLScanConcurrency))
 	remoteChecksum, err2 := manager.Checksum(ctx, ti.tableInfo)
 	if err2 != nil {
@@ -335,6 +345,11 @@ func (ti *TableImporter) verifyChecksum(ctx context.Context) (err error) {
 		return err3
 	}
 	return nil
+}
+
+func (ti *TableImporter) checksumTable(ctx context.Context) error {
+	localChecksum := ti.localChecksum()
+	return ti.VerifyChecksum(ctx, localChecksum)
 }
 
 // PopulateChunks populates chunks from table regions.
@@ -408,7 +423,7 @@ func (ti *TableImporter) rebaseChunkRowID(rowIDBase int64) {
 }
 
 // OpenIndexEngine opens an index engine.
-func (ti *TableImporter) OpenIndexEngine(ctx context.Context) (*backend.OpenedEngine, error) {
+func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*backend.OpenedEngine, error) {
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
 	}
@@ -427,7 +442,7 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context) (*backend.OpenedEn
 	// some return path, didn't make sure all data engine and index engine are cleaned up.
 	// maybe we can add this in upper level to clean the whole local-sort directory
 	mgr := backend.MakeEngineManager(ti.backend)
-	return mgr.OpenEngine(ctx, idxEngineCfg, fullTableName, common.IndexEngineID)
+	return mgr.OpenEngine(ctx, idxEngineCfg, fullTableName, engineID)
 }
 
 // OpenDataEngine opens a data engine.
@@ -449,7 +464,7 @@ func (ti *TableImporter) preprocessAndImportEngines(ctx context.Context) (err er
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	indexEngine, err3 := ti.OpenIndexEngine(ctx)
+	indexEngine, err3 := ti.OpenIndexEngine(ctx, common.IndexEngineID)
 	if err3 != nil {
 		return errors.Trace(err3)
 	}

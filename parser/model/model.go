@@ -387,6 +387,9 @@ const ExtraPidColID = -2
 // Must be after ExtraPidColID!
 const ExtraPhysTblID = -3
 
+// ExtraRowChecksumID is the column ID of column which holds the row checksum info.
+const ExtraRowChecksumID = -4
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -1377,6 +1380,8 @@ func (t IndexType) String() string {
 		return "HASH"
 	case IndexTypeRtree:
 		return "RTREE"
+	case IndexTypeHypo:
+		return "HYPO"
 	default:
 		return ""
 	}
@@ -1388,6 +1393,7 @@ const (
 	IndexTypeBtree
 	IndexTypeHash
 	IndexTypeRtree
+	IndexTypeHypo
 )
 
 // IndexInfo provides meta data describing a DB index.

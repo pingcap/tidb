@@ -293,9 +293,9 @@ func (pe *PartitionExpr) GetPartColumnsForKeyPartition(columns []*expression.Col
 }
 
 // LocateKeyPartition is the common interface used to locate the destination partition
-func (pe *PartitionExpr) LocateKeyPartition(num uint64, r []types.Datum) (int, error) {
+func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (int, error) {
 	h := crc32.NewIEEE()
-	for _, col := range pe.KeyPartCols {
+	for _, col := range kp.KeyPartCols {
 		val := r[col.Index]
 		if val.Kind() == types.KindNull {
 			h.Write([]byte{0})
@@ -307,7 +307,7 @@ func (pe *PartitionExpr) LocateKeyPartition(num uint64, r []types.Datum) (int, e
 			h.Write(data)
 		}
 	}
-	return int(h.Sum32() % uint32(num)), nil
+	return int(h.Sum32() % uint32(numParts)), nil
 }
 
 func initEvalBufferType(t *partitionedTable) {
@@ -339,7 +339,7 @@ type ForRangeColumnsPruning struct {
 	LessThan [][]*expression.Expression
 }
 
-func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
+func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser, colOffsets []int) (*ForRangeColumnsPruning, error) {
 	var res ForRangeColumnsPruning
 	res.LessThan = make([][]*expression.Expression, 0, len(defs))
 	for i := 0; i < len(defs); i++ {
@@ -354,6 +354,17 @@ func dataForRangeColumnsPruning(ctx sessionctx.Context, defs []model.PartitionDe
 			tmp, err := parseSimpleExprWithNames(p, ctx, defs[i].LessThan[j], schema, names)
 			if err != nil {
 				return nil, err
+			}
+			_, ok := tmp.(*expression.Constant)
+			if !ok {
+				return nil, dbterror.ErrPartitionConstDomain
+			}
+			// TODO: Enable this for all types!
+			// Currently it will trigger changes for collation differences
+			switch schema.Columns[colOffsets[j]].RetType.GetType() {
+			case mysql.TypeDatetime, mysql.TypeDate:
+				// Will also fold constant
+				tmp = expression.BuildCastFunction(ctx, tmp, schema.Columns[colOffsets[j]].RetType)
 			}
 			lessThanCols = append(lessThanCols, &tmp)
 		}
@@ -694,7 +705,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, expr string, partCols []
 		ret.Expr = partExpr
 		ret.ForRangePruning = tmp
 	} else {
-		tmp, err := dataForRangeColumnsPruning(ctx, defs, schema, names, p)
+		tmp, err := dataForRangeColumnsPruning(ctx, defs, schema, names, p, offset)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1219,7 +1230,6 @@ func (t *partitionedTable) locatePartitionCommon(ctx sessionctx.Context, tp mode
 		}
 	case model.PartitionTypeHash:
 		// Note that only LIST and RANGE supports REORGANIZE PARTITION
-		// TODO: Add support for ADD PARTITION and COALESCE PARTITION for HASH
 		idx, err = t.locateHashPartition(ctx, partitionExpr, num, r)
 	case model.PartitionTypeKey:
 		idx, err = partitionExpr.LocateKeyPartition(num, r)
@@ -1247,6 +1257,10 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, r []types.Dat
 func (t *partitionedTable) locateReorgPartition(ctx sessionctx.Context, r []types.Datum) (int64, error) {
 	pi := t.Meta().GetPartitionInfo()
 	columnsSet := len(pi.DDLColumns) > 0
+	// Note that for KEY/HASH partitioning, since we do not support LINEAR,
+	// all partitions will be reorganized,
+	// so we can use the number in Dropping or AddingDefinitions,
+	// depending on current state.
 	num := len(pi.AddingDefinitions)
 	if pi.DDLState == model.StateDeleteReorganization {
 		num = len(pi.DroppingDefinitions)
@@ -1367,7 +1381,7 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, partitio
 }
 
 // TODO: supports linear hashing
-func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, partExpr *PartitionExpr, num uint64, r []types.Datum) (int, error) {
+func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, partExpr *PartitionExpr, numParts uint64, r []types.Datum) (int, error) {
 	if col, ok := partExpr.Expr.(*expression.Column); ok {
 		var data types.Datum
 		switch r[col.Index].Kind() {
@@ -1381,7 +1395,7 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, partExpr 
 			}
 		}
 		ret := data.GetInt64()
-		ret = ret % int64(num)
+		ret = ret % int64(numParts)
 		if ret < 0 {
 			ret = -ret
 		}
@@ -1397,7 +1411,7 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, partExpr 
 	if isNull {
 		return 0, nil
 	}
-	ret = ret % int64(num)
+	ret = ret % int64(numParts)
 	if ret < 0 {
 		ret = -ret
 	}

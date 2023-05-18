@@ -247,6 +247,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 	pi := tbl.Meta().Partition
 	partExpr := tbl.(partitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
+	pe := &tables.ForKeyPruning{KeyPartCols: partCols}
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, nil, err
@@ -263,7 +264,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 
 			colVals := make([]types.Datum, 0, len(r.HighVal))
 			colVals = append(colVals, r.HighVal...)
-			idx, err := partExpr.LocateKeyPartition(pi.Num, colVals)
+			idx, err := pe.LocateKeyPartition(pi.Num, colVals)
 			if err != nil {
 				// If we failed to get the point position, we can just skip and ignore it.
 				continue
@@ -305,7 +306,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 				if rangeScalar < float64(pi.Num) && !highIsNull && !lowIsNull {
 					for i := posLow; i <= posHigh; i++ {
 						d := types.NewIntDatum(i)
-						idx, err := partExpr.LocateKeyPartition(pi.Num, []types.Datum{d})
+						idx, err := pe.LocateKeyPartition(pi.Num, []types.Datum{d})
 						if err != nil {
 							// If we failed to get the point position, we can just skip and ignore it.
 							continue
@@ -1485,8 +1486,7 @@ func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.C
 	args := partFn.GetArgs()
 	// The partition function may be floor(unix_timestamp(ts)) instead of a simple fn(col).
 	if partFn.FuncName.L == ast.Floor {
-		ut := args[0].(*expression.ScalarFunction)
-		if ut.FuncName.L == ast.UnixTimestamp {
+		if ut, ok := args[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
 			args = ut.GetArgs()
 			args[0] = con
 			return partFn
@@ -1872,7 +1872,7 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 // pruneUseBinarySearch returns the start and end of which partitions will match.
 // If no match (i.e. value > last partition) the start partition will be the number of partition, not the first partition!
 func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
-	var err error
+	var savedError error
 	var isNull bool
 	if len(p.partCols) > 1 {
 		// Only one constant in the input, this will never be called with
@@ -1885,11 +1885,18 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 			if p.lessThan[ith][i] == nil { // MAXVALUE
 				return true
 			}
-			var expr expression.Expression
-			expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), *p.lessThan[ith][i], v)
+			expr, err := expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), *p.lessThan[ith][i], v)
+			if err != nil {
+				savedError = err
+				return true
+			}
 			expr.SetCharsetAndCollation(charSet, collation)
 			var val int64
 			val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
+			if err != nil {
+				savedError = err
+				return true
+			}
 			if val > 0 {
 				return true
 			}
@@ -1916,7 +1923,7 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 	}
 
 	// Something goes wrong, abort this pruning.
-	if err != nil || isNull {
+	if savedError != nil || isNull {
 		return 0, len(p.lessThan)
 	}
 

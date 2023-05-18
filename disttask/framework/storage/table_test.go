@@ -96,6 +96,19 @@ func TestGlobalTaskTable(t *testing.T) {
 	// test cannot insert task with dup key
 	_, err = gm.AddNewGlobalTask("key1", "test2", 4, []byte("test2"))
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")
+
+	// test cancel global task
+	id, err = gm.AddNewGlobalTask("key2", "test", 4, []byte("test"))
+	require.NoError(t, err)
+
+	cancelling, err := gm.IsGlobalTaskCancelling(id)
+	require.NoError(t, err)
+	require.False(t, cancelling)
+
+	require.NoError(t, gm.CancelGlobalTask(id))
+	cancelling, err = gm.IsGlobalTaskCancelling(id)
+	require.NoError(t, err)
+	require.True(t, cancelling)
 }
 
 func TestSubTaskTable(t *testing.T) {
@@ -112,7 +125,7 @@ func TestSubTaskTable(t *testing.T) {
 	sm, err := storage.GetTaskManager()
 	require.NoError(t, err)
 
-	err = sm.AddNewSubTask(1, "tidb1", []byte("test"), proto.TaskTypeExample, false)
+	err = sm.AddNewSubTask(1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
 
 	nilTask, err := sm.GetSubtaskInStates("tidb2", 1, proto.TaskStatePending)
@@ -185,12 +198,21 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = sm.AddNewSubTask(2, "tidb1", []byte("test"), proto.TaskTypeExample, true)
+	err = sm.AddNewSubTask(2, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, true)
 	require.NoError(t, err)
 
 	cnt, err = sm.GetSubtaskInStatesCnt(2, proto.TaskStateRevertPending)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cnt)
+
+	subtasks, err := sm.GetSucceedSubtasksByStep(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 0)
+	err = sm.FinishSubtask(2, []byte{})
+	require.NoError(t, err)
+	subtasks, err = sm.GetSucceedSubtasksByStep(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 1)
 }
 
 func TestBothGlobalAndSubTaskTable(t *testing.T) {

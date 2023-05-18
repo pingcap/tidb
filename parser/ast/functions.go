@@ -265,6 +265,7 @@ const (
 	TiDBDecodePlan       = "tidb_decode_plan"
 	TiDBDecodeBinaryPlan = "tidb_decode_binary_plan"
 	TiDBDecodeSQLDigests = "tidb_decode_sql_digests"
+	TiDBEncodeSQLDigest  = "tidb_encode_sql_digest"
 	FormatBytes          = "format_bytes"
 	FormatNanoTime       = "format_nano_time"
 	CurrentResourceGroup = "current_resource_group"
@@ -298,6 +299,7 @@ const (
 	BinToUUID       = "bin_to_uuid"
 	VitessHash      = "vitess_hash"
 	TiDBShard       = "tidb_shard"
+	TiDBRowChecksum = "tidb_row_checksum"
 	GetLock         = "get_lock"
 	ReleaseLock     = "release_lock"
 
