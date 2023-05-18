@@ -2492,8 +2492,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		return
 	}
 
+	times := 0
+	const maxTimes = 10
 	for tableRowCntToCheck > lookupCheckThreshold || !checkOnce {
 		checkOnce = true
+		times++
+		if times == maxTimes {
+			logutil.BgLogger().Warn("compare checksum by group reaches time limit", zap.Int("times", times))
+			break
+		}
 		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
 
 		// compute table side checksum.
@@ -2539,6 +2546,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		}
 
 		if !meetError {
+			if times != 1 {
+				logutil.BgLogger().Error("unexpected result, no error detected in this round, but an error is detected in the previous round", zap.Int("times", times), zap.Int("offset", offset), zap.Int("mod", mod))
+			}
 			break
 		}
 
