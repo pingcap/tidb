@@ -38,6 +38,7 @@ type Pool struct {
 	wg                 sync.WaitGroup
 	mu                 deadlock.RWMutex
 	options            *Options
+	originCapacity     int32
 	capacity           int32
 	running            atomic.Int32
 	waiting            atomic.Int32
@@ -63,6 +64,7 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 	}
 	result.SetName(name)
 	result.capacity = size
+	result.originCapacity = size
 	result.concurrencyMetrics.Set(float64(size))
 	err := resourcemanager.InstanceResourceManager.Register(result, name, component)
 	if err != nil {
@@ -229,4 +231,9 @@ func runTask(task *poolmanager.Meta) {
 			return
 		}
 	}
+}
+
+// GetOriginConcurrency return the concurrency of the pool at the init.
+func (p *Pool) GetOriginConcurrency() int32 {
+	return p.originCapacity
 }
