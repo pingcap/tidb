@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
@@ -378,7 +379,10 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
-		return err
+		if handle.IsRetryableErr(err) {
+			return err
+		}
+		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),
 		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", len(metas)))
@@ -440,7 +444,8 @@ func GetEligibleInstance(serverNodes []*infosync.ServerInfo, pos int) (string, e
 		return "", errors.New("no available TiDB node")
 	}
 	pos = pos % len(serverNodes)
-	return serverNodes[pos].ID, nil
+	serverID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+	return serverID, nil
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
@@ -476,11 +481,21 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 	}
 	ids := make([]string, 0, len(schedulerIDs))
 	for _, id := range schedulerIDs {
-		if _, ok := serverInfos[id]; ok {
+		if ok := matchServerInfo(serverInfos, id); ok {
 			ids = append(ids, id)
 		}
 	}
 	return ids, nil
+}
+
+func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
+	for _, serverInfo := range serverInfos {
+		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port)
+		if serverID == schedulerID {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error) {

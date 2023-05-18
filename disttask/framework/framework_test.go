@@ -46,6 +46,10 @@ func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle
 	return nil, nil
 }
 
+func (*testFlowHandle) IsRetryableErr(error) bool {
+	return true
+}
+
 type testMiniTask struct{}
 
 func (testMiniTask) IsMinimalTask() {}

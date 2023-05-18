@@ -167,3 +167,8 @@ func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Tas
 
 	return nil, nil
 }
+
+// IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
+func (*litBackfillFlowHandle) IsRetryableErr(error) bool {
+	return true
+}

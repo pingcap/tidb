@@ -1343,7 +1343,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 
 	err = tk.ExecToErr("select * from t;")
 	// Expect error, because TestAutoScaler return empty topo.
-	require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
+	require.Contains(t, err.Error(), "Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty")
 
 	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
@@ -1521,7 +1521,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 			err = tk1.ExecToErr("select * from t;")
 			if useAS {
 				// Expect error, because TestAutoScaler return empty topo.
-				require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
+				require.Contains(t, err.Error(), "Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty")
 			} else {
 				// This error message means we use PD instead of AutoScaler.
 				require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
