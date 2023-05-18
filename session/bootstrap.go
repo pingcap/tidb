@@ -1178,8 +1178,21 @@ func syncUpgradeState(s Session) {
 		time.Sleep(interval)
 	}
 
+	retryTimes = 60
+	interval = 500 * time.Millisecond
 	for i := 0; i < retryTimes; i++ {
-		if _, err = ddl.PauseAllJobsBySystem(s); err == nil {
+		jobErrs, err := ddl.PauseAllJobsBySystem(s)
+		if err == nil && len(jobErrs) == 0 {
+			break
+		}
+		isAllFinished := true
+		for _, jobErr := range jobErrs {
+			if dbterror.ErrPausedDDLJob.Equal(jobErr) {
+				continue
+			}
+			isAllFinished = false
+		}
+		if isAllFinished {
 			break
 		}
 
@@ -1193,9 +1206,13 @@ func syncUpgradeState(s Session) {
 }
 
 func syncNormalRunning(s Session) {
-	_, err := ddl.ResumeAllJobsBySystem(s)
+	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
-		logutil.BgLogger().Fatal("upgrade pause all jobs failed", zap.Error(err))
+		logutil.BgLogger().Warn("[upgrading] unexpected error to resume all paused jobs: ", zap.Error(err))
+	}
+
+	for _, e := range jobErrs {
+		logutil.BgLogger().Warn("[upgrading] unable to resume the job, error: ", zap.Error(e))
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
