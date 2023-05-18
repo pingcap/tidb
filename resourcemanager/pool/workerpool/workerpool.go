@@ -33,16 +33,17 @@ type Worker[T any] interface {
 
 // WorkerPool is a pool of workers.
 type WorkerPool[T any] struct {
-	name         string
-	numWorkers   int32
-	runningTask  atomicutil.Int32
-	taskChan     chan T
-	quitChan     chan struct{}
-	wg           tidbutil.WaitGroupWrapper
-	createWorker func() Worker[T]
-	lastTuneTs   atomicutil.Time
-	mu           syncutil.RWMutex
-	skipRegister bool
+	name          string
+	numWorkers    int32
+	originWorkers int32
+	runningTask   atomicutil.Int32
+	taskChan      chan T
+	quitChan      chan struct{}
+	wg            tidbutil.WaitGroupWrapper
+	createWorker  func() Worker[T]
+	lastTuneTs    atomicutil.Time
+	mu            syncutil.RWMutex
+	skipRegister  bool
 }
 
 // Option is the config option for WorkerPool.
@@ -66,11 +67,12 @@ func NewWorkerPool[T any](name string, component util.Component, numWorkers int,
 	}
 
 	p := &WorkerPool[T]{
-		name:         name,
-		numWorkers:   int32(numWorkers),
-		taskChan:     make(chan T),
-		quitChan:     make(chan struct{}),
-		createWorker: createWorker,
+		name:          name,
+		numWorkers:    int32(numWorkers),
+		originWorkers: int32(numWorkers),
+		taskChan:      make(chan T),
+		quitChan:      make(chan struct{}),
+		createWorker:  createWorker,
 	}
 
 	for _, opt := range opts {
@@ -176,4 +178,9 @@ func (p *WorkerPool[T]) ReleaseAndWait() {
 	if !p.skipRegister {
 		resourcemanager.InstanceResourceManager.Unregister(p.Name())
 	}
+}
+
+// GetOriginConcurrency return the concurrency of the pool at the init.
+func (p *WorkerPool[T]) GetOriginConcurrency() int32 {
+	return p.originWorkers
 }

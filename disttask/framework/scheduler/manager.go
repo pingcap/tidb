@@ -93,7 +93,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
 
-	schedulerPool, err := m.newPool("scheduler_pool", schedulerPoolSize, util.DDL)
+	schedulerPool, err := m.newPool("scheduler_pool", schedulerPoolSize, util.DistTask)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		if opt, ok := subtaskExecutorOptions[taskType]; ok && opt.PoolSize > 0 {
 			poolSize = opt.PoolSize
 		}
-		subtaskExecutorPool, err := m.newPool(taskType+"_pool", poolSize, util.DDL)
+		subtaskExecutorPool, err := m.newPool(taskType+"_pool", poolSize, util.DistTask)
 		if err != nil {
 			return nil, err
 		}
