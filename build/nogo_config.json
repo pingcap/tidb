@@ -133,6 +133,7 @@
       ".*_generated\\.go$": "ignore generated code",
       ".*_test\\.go$": "ignore generated code",
       "/rules_go_work-*": "ignore generated code",
+      "tools/check/ut.go": "ignore tools/check/ut.go",
       "GOROOT/": "ignore code"
     }
   },
