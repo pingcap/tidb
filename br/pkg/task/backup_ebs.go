@@ -67,6 +67,7 @@ func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagCloudAPIConcurrency)
 	_ = flags.MarkHidden(flagProgressFile)
 	_ = flags.MarkHidden(flagOperatorPausedGCAndSchedulers)
+	_ = flags.MarkHidden(flagTargetAZ)
 }
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
