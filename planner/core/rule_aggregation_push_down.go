@@ -473,6 +473,17 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 						newAggFuncsArgs = append(newAggFuncsArgs, newArgs)
 					}
 				}
+				for i, funcsArgs := range oldAggFuncsArgs {
+					for j := range funcsArgs {
+						if oldAggFuncsArgs[i][j].GetType().EvalType() != newAggFuncsArgs[i][j].GetType().EvalType() {
+							noSideEffects = false
+							break
+						}
+					}
+					if !noSideEffects {
+						break
+					}
+				}
 				if noSideEffects {
 					agg.GroupByItems = newGbyItems
 					for i, aggFunc := range agg.AggFuncs {
