@@ -175,10 +175,10 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
 		// replica only -> public
-		failpoint.Inject("sleepBeforeReplicaOnly", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("sleepBeforeReplicaOnly")); _err_ == nil {
 			sleepSecond := val.(int)
 			time.Sleep(time.Duration(sleepSecond) * time.Second)
-		})
+		}
 		// Here need do some tiflash replica complement check.
 		// TODO: If a table is with no TiFlashReplica or it is not available, the replica-only state can be eliminated.
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
@@ -353,16 +353,16 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 }
 
 func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
-	failpoint.Inject("mockWaitTiFlashReplica", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockWaitTiFlashReplica")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(true, nil)
+			return true, nil
 		}
-	})
-	failpoint.Inject("mockWaitTiFlashReplicaOK", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("mockWaitTiFlashReplicaOK")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(false, nil)
+			return false, nil
 		}
-	})
+	}
 
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
@@ -394,9 +394,9 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 				return needWait, errors.Trace(err)
 			}
 			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, regionState.Meta.Peers)
-			failpoint.Inject("ForceTiflashNotAvailable", func(v failpoint.Value) {
+			if v, _err_ := failpoint.Eval(_curpkg_("ForceTiflashNotAvailable")); _err_ == nil {
 				tiflashPeerAtLeastOne = v.(bool)
-			})
+			}
 			// It's unnecessary to wait all tiflash peer to be replicated.
 			// Here only make sure that tiflash peer count > 0 (at least one).
 			if tiflashPeerAtLeastOne {
@@ -1961,9 +1961,9 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
 		e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID)
-		failpoint.Inject("FailTiFlashTruncatePartition", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("FailTiFlashTruncatePartition")); _err_ == nil {
 			e = errors.New("enforced error")
-		})
+		}
 		if e != nil {
 			logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(e))
 			job.State = model.JobStateCancelled
@@ -2150,12 +2150,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("exchangePartitionErr")); _err_ == nil {
 		if val.(bool) {
 			job.State = model.JobStateCancelled
-			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
+			return ver, errors.New("occur an error after updating partition id")
 		}
-	})
+	}
 
 	// recreate non-partition table meta info
 	err = t.DropTableOrView(job.SchemaID, partDef.ID)
@@ -2187,20 +2187,20 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	failpoint.Inject("exchangePartitionAutoID", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("exchangePartitionAutoID")); _err_ == nil {
 		if val.(bool) {
 			seCtx, err := w.sessPool.Get()
 			defer w.sessPool.Put(seCtx)
 			if err != nil {
-				failpoint.Return(ver, err)
+				return ver, err
 			}
 			se := sess.NewSession(seCtx)
 			_, err = se.Execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
 			if err != nil {
-				failpoint.Return(ver, err)
+				return ver, err
 			}
 		}
-	})
+	}
 
 	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
 	if err != nil {
@@ -2505,11 +2505,11 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 
 		firstPartIdx, lastPartIdx, idMap, err2 := getReplacedPartitionIDs(partNamesCIStr, tblInfo.Partition)
-		failpoint.Inject("reorgPartWriteReorgReplacedPartIDsFail", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartWriteReorgReplacedPartIDsFail")); _err_ == nil {
 			if val.(bool) {
 				err2 = errors.New("Injected error by reorgPartWriteReorgReplacedPartIDsFail")
 			}
-		})
+		}
 		if err2 != nil {
 			return ver, err2
 		}
@@ -2545,11 +2545,11 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.DroppingDefinitions = nil
 		tblInfo.Partition.AddingDefinitions = nil
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
-		failpoint.Inject("reorgPartWriteReorgSchemaVersionUpdateFail", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartWriteReorgSchemaVersionUpdateFail")); _err_ == nil {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartWriteReorgSchemaVersionUpdateFail")
 			}
-		})
+		}
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2820,12 +2820,12 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		}
 	}
 
-	failpoint.Inject("reorgPartitionAfterDataCopy", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("reorgPartitionAfterDataCopy")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test in reorgPartitionAfterDataCopy")
 		}
-	})
+	}
 
 	// Rewrite this to do all indexes at once in addTableIndex
 	// instead of calling it once per index (meaning reading the table multiple times)
@@ -2897,12 +2897,12 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		}
 		reorgInfo.PhysicalTableID = firstNewPartitionID
 	}
-	failpoint.Inject("reorgPartitionAfterIndex", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("reorgPartitionAfterIndex")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test in reorgPartitionAfterIndex")
 		}
-	})
+	}
 	return nil
 }
 

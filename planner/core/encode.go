@@ -40,12 +40,12 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	if flat.InExecute {
 		return ""
 	}
-	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockPlanRowCount")); _err_ == nil {
 		selectPlan, _ := flat.Main.GetSelectPlan()
 		for _, op := range selectPlan {
 			op.Origin.statsInfo().RowCount = float64(val.(int))
 		}
-	})
+	}
 	pn := encoderPool.Get().(*planEncoder)
 	defer func() {
 		pn.buf.Reset()
@@ -163,9 +163,9 @@ func EncodePlan(p Plan) string {
 	defer encoderPool.Put(pn)
 	selectPlan := getSelectPlan(p)
 	if selectPlan != nil {
-		failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockPlanRowCount")); _err_ == nil {
 			selectPlan.statsInfo().RowCount = float64(val.(int))
-		})
+		}
 	}
 	return pn.encodePlanTree(p)
 }

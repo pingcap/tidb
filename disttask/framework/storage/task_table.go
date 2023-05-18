@@ -399,11 +399,11 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 			return err
 		}
 
-		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("MockUpdateTaskErr")); _err_ == nil {
 			if val.(bool) {
-				failpoint.Return(errors.New("updateTaskErr"))
+				return errors.New("updateTaskErr")
 			}
-		})
+		}
 
 		subtaskState := proto.TaskStatePending
 		if isSubtaskRevert {

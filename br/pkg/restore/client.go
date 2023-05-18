@@ -655,11 +655,11 @@ func (rc *Client) GetTSWithRetry(ctx context.Context) (uint64, error) {
 
 	err := utils.WithRetry(ctx, func() error {
 		startTS, getTSErr = rc.GetTS(ctx)
-		failpoint.Inject("get-ts-error", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("get-ts-error")); _err_ == nil {
 			if val.(bool) && retry < 3 {
 				getTSErr = errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
 			}
-		})
+		}
 
 		retry++
 		if getTSErr != nil {
@@ -1035,11 +1035,11 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
-			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("restore-createtables-error")); _err_ == nil {
 				if val.(bool) {
 					err = errors.New("sample error without extra message")
 				}
-			})
+			}
 			if err != nil {
 				log.Error("create tables fail", zap.Error(err))
 				return err
@@ -2052,9 +2052,9 @@ func (rc *Client) getRuleID(tableID int64) string {
 
 // IsFull returns whether this backup is full.
 func (rc *Client) IsFull() bool {
-	failpoint.Inject("mock-incr-backup-data", func() {
-		failpoint.Return(false)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mock-incr-backup-data")); _err_ == nil {
+		return false
+	}
 	return !rc.IsIncremental()
 }
 
@@ -2782,9 +2782,9 @@ func (rc *Client) RestoreMetaKVFiles(
 	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
 	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
-	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("failed-before-id-maps-saved")); _err_ == nil {
+		return errors.New("failpoint: failed before id maps saved")
+	}
 
 	if schemasReplace.NeedConstructIdMap() {
 		// Preconstruct the map and save it into external storage.
@@ -2797,9 +2797,9 @@ func (rc *Client) RestoreMetaKVFiles(
 			return errors.Trace(err)
 		}
 	}
-	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("failed-after-id-maps-saved")); _err_ == nil {
+		return errors.New("failpoint: failed after id maps saved")
+	}
 
 	// run the rewrite and restore meta-kv into TiKV cluster.
 	if err := rc.RestoreMetaKVFilesWithBatchMethod(
@@ -3039,18 +3039,18 @@ func (rc *Client) restoreMetaKvEntries(
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.e.Value)), zap.ByteString("new-key", newEntry.Key))
 
-		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
-			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("failed-to-restore-metakv")); _err_ == nil {
+			return 0, 0, errors.Errorf("failpoint: failed to restore metakv")
+		}
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 		// for failpoint, we need to flush the cache in rawKVClient every time
-		failpoint.Inject("do-not-put-metakv-in-batch", func(_ failpoint.Value) {
+		if _, _err_ := failpoint.Eval(_curpkg_("do-not-put-metakv-in-batch")); _err_ == nil {
 			if err := rc.rawKVClient.PutRest(ctx); err != nil {
-				failpoint.Return(0, 0, errors.Trace(err))
+				return 0, 0, errors.Trace(err)
 			}
-		})
+		}
 		kvCount++
 		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}

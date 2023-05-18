@@ -166,7 +166,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			iterOutAction = setupCTEStorageTracker(e.iterOutTbl, e.ctx, e.memTracker, e.diskTracker)
 		}
 
-		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testCTEStorageSpill")); _err_ == nil {
 			if val.(bool) && variable.EnableTmpStorageOnOOM.Load() {
 				defer resAction.WaitForTest()
 				defer iterInAction.WaitForTest()
@@ -174,7 +174,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 					defer iterOutAction.WaitForTest()
 				}
 			}
-		})
+		}
 
 		if err = e.computeSeedPart(ctx); err != nil {
 			e.resTbl.SetError(err)
@@ -236,7 +236,7 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 			err = errors.Errorf("%v", r)
 		}
 	}()
-	failpoint.Inject("testCTESeedPanic", nil)
+	failpoint.Eval(_curpkg_("testCTESeedPanic"))
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
 	chks := make([]*chunk.Chunk, 0, 10)
@@ -275,7 +275,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 			err = errors.Errorf("%v", r)
 		}
 	}()
-	failpoint.Inject("testCTERecursivePanic", nil)
+	failpoint.Eval(_curpkg_("testCTERecursivePanic"))
 	if e.recursiveExec == nil || e.iterInTbl.NumChunks() == 0 {
 		return
 	}
@@ -449,11 +449,11 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 
 	if variable.EnableTmpStorageOnOOM.Load() {
 		actionSpill = tbl.ActionSpill()
-		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testCTEStorageSpill")); _err_ == nil {
 			if val.(bool) {
 				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
 			}
-		})
+		}
 		ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	return actionSpill

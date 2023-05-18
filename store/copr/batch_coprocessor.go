@@ -763,7 +763,7 @@ func buildBatchCopTasksConsistentHash(
 }
 
 func failpointCheckForConsistentHash(tasks []*batchCopTask) {
-	failpoint.Inject("checkOnlyDispatchToTiFlashComputeNodes", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkOnlyDispatchToTiFlashComputeNodes")); _err_ == nil {
 		logutil.BgLogger().Debug("in checkOnlyDispatchToTiFlashComputeNodes")
 
 		// This failpoint will be tested in test-infra case, because we needs setup a cluster.
@@ -784,18 +784,18 @@ func failpointCheckForConsistentHash(tasks []*batchCopTask) {
 				panic(err)
 			}
 		}
-	})
+	}
 }
 
 func failpointCheckWhichPolicy(act tiflashcompute.DispatchPolicy) {
-	failpoint.Inject("testWhichDispatchPolicy", func(exp failpoint.Value) {
+	if exp, _err_ := failpoint.Eval(_curpkg_("testWhichDispatchPolicy")); _err_ == nil {
 		expStr := exp.(string)
 		actStr := tiflashcompute.GetDispatchPolicy(act)
 		if actStr != expStr {
 			err := errors.Errorf("tiflash_compute dispatch should be %v, but got %v", expStr, actStr)
 			panic(err)
 		}
-	})
+	}
 }
 
 // When `partitionIDs != nil`, it means that buildBatchCopTasksCore is constructing a batch cop tasks for PartitionTableScan.
@@ -1001,11 +1001,11 @@ func (b *batchCopIterator) run(ctx context.Context) {
 	for _, task := range b.tasks {
 		b.wg.Add(1)
 		boMaxSleep := copNextMaxBackoff
-		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
+		if value, _err_ := failpoint.Eval(_curpkg_("ReduceCopNextMaxBackoff")); _err_ == nil {
 			if value.(bool) {
 				boMaxSleep = 2
 			}
-		})
+		}
 		bo := backoff.NewBackofferWithVars(ctx, boMaxSleep, b.vars)
 		go b.handleTask(ctx, bo, task)
 	}

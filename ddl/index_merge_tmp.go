@@ -197,12 +197,12 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 		return nil
 	})
 
-	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockDMLExecutionMerging")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionMerging != nil {
 			MockDMLExecutionMerging()
 		}
-	})
+	}
 	logSlowOperations(time.Since(oprStartTime), "AddIndexMergeDataInTxn", 3000)
 	return
 }

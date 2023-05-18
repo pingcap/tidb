@@ -398,29 +398,29 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 	txn.updateState(txninfo.TxnCommitting)
 	txn.mu.Unlock()
 
-	failpoint.Inject("mockSlowCommit", func(_ failpoint.Value) {})
+	failpoint.Eval(_curpkg_("mockSlowCommit"))
 
 	// mockCommitError8942 is used for PR #8942.
-	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitError8942")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(kv.ErrTxnRetryable)
+			return kv.ErrTxnRetryable
 		}
-	})
+	}
 
 	// mockCommitRetryForAutoIncID is used to mock an commit retry for adjustAutoIncrementDatum.
-	failpoint.Inject("mockCommitRetryForAutoIncID", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitRetryForAutoIncID")); _err_ == nil {
 		if val.(bool) && !mockAutoIncIDRetry() {
 			enableMockAutoIncIDRetry()
-			failpoint.Return(kv.ErrTxnRetryable)
+			return kv.ErrTxnRetryable
 		}
-	})
+	}
 
-	failpoint.Inject("mockCommitRetryForAutoRandID", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitRetryForAutoRandID")); _err_ == nil {
 		if val.(bool) && needMockAutoRandIDRetry() {
 			decreaseMockAutoRandIDRetryCount()
-			failpoint.Return(kv.ErrTxnRetryable)
+			return kv.ErrTxnRetryable
 		}
-	})
+	}
 
 	return txn.Transaction.Commit(ctx)
 }
@@ -432,7 +432,7 @@ func (txn *LazyTxn) Rollback() error {
 	txn.updateState(txninfo.TxnRollingBack)
 	txn.mu.Unlock()
 	// mockSlowRollback is used to mock a rollback which takes a long time
-	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
+	failpoint.Eval(_curpkg_("mockSlowRollback"))
 	return txn.Transaction.Rollback()
 }
 
@@ -450,7 +450,7 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 
 // LockKeysFunc Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keys ...kv.Key) error {
-	failpoint.Inject("beforeLockKeys", func() {})
+	failpoint.Eval(_curpkg_("beforeLockKeys"))
 	t := time.Now()
 
 	var originState txninfo.TxnRunningState
@@ -686,7 +686,7 @@ type txnFuture struct {
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
-	failpoint.Inject("txnFutureWait", func() {})
+	failpoint.Eval(_curpkg_("txnFutureWait"))
 	if err == nil {
 		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {

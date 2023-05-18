@@ -983,13 +983,13 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 
-	failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockDMLExecutionStateMerging")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) && indexInfo.BackfillState == model.BackfillStateMerging &&
 			MockDMLExecutionStateMerging != nil {
 			MockDMLExecutionStateMerging()
 		}
-	})
+	}
 
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
@@ -1091,12 +1091,12 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		RemoveDependentHiddenColumns(tblInfo, indexInfo)
 		removeIndexInfo(tblInfo, indexInfo)
 
-		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockExceedErrorLimit")); _err_ == nil {
 			//nolint:forcetypeassert
 			if val.(bool) {
 				panic("panic test in cancelling add index")
 			}
-		})
+		}
 
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
@@ -1349,25 +1349,25 @@ var mockNotOwnerErrOnce uint32
 // getIndexRecord gets index columns values use w.rowDecoder, and generate indexRecord.
 func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Handle, recordKey []byte) (*indexRecord, error) {
 	cols := w.table.WritableCols()
-	failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockGetIndexRecordErr")); _err_ == nil {
 		if valStr, ok := val.(string); ok {
 			switch valStr {
 			case "cantDecodeRecordErr":
-				failpoint.Return(nil, errors.Trace(dbterror.ErrCantDecodeRecord.GenWithStackByArgs("index",
-					errors.New("mock can't decode record error"))))
+				return nil, errors.Trace(dbterror.ErrCantDecodeRecord.GenWithStackByArgs("index",
+					errors.New("mock can't decode record error")))
 			case "modifyColumnNotOwnerErr":
 				if idxInfo.Name.O == "_Idx$_idx_0" && handle.IntValue() == 7168 && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 0, 1) {
-					failpoint.Return(nil, errors.Trace(dbterror.ErrNotOwner))
+					return nil, errors.Trace(dbterror.ErrNotOwner)
 				}
 			case "addIdxNotOwnerErr":
 				// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
 				// First step, we need to exit "addPhysicalTableIndex".
 				if idxInfo.Name.O == "idx2" && handle.IntValue() == 6144 && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 1, 2) {
-					failpoint.Return(nil, errors.Trace(dbterror.ErrNotOwner))
+					return nil, errors.Trace(dbterror.ErrNotOwner)
 				}
 			}
 		}
-	})
+	}
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	var err error
 	for j, v := range idxInfo.Columns {
@@ -1697,16 +1697,16 @@ func writeOneKVToLocal(writer ingest.Writer,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		failpoint.Inject("mockLocalWriterPanic", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockLocalWriterPanic")); _err_ == nil {
 			panic("mock panic")
-		})
+		}
 		err = writer.WriteRow(key, idxVal, handle)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		failpoint.Inject("mockLocalWriterError", func() {
-			failpoint.Return(errors.New("mock engine error"))
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("mockLocalWriterError")); _err_ == nil {
+			return errors.New("mock engine error")
+		}
 		writeBufs.IndexKeyBuf = key
 	}
 	return nil
@@ -1716,12 +1716,12 @@ func writeOneKVToLocal(writer ingest.Writer,
 // Note that index columns values may change, and an index is not allowed to be added, so the txn will rollback and retry.
 // BackfillData will add w.batchCnt indices once, default value of w.batchCnt is 128.
 func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
-	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("errorMockPanic")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test")
 		}
-	})
+	}
 
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
@@ -1776,12 +1776,12 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillData", 3000)
-	failpoint.Inject("mockDMLExecution", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockDMLExecution")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecution != nil {
 			MockDMLExecution()
 		}
-	})
+	}
 	return
 }
 
@@ -1966,7 +1966,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		return 0, nil, nil, nil
 	}
 
-	failpoint.Inject("mockUpdateCachedSafePoint", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockUpdateCachedSafePoint")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			ts := oracle.GoTimeToTS(time.Now())
@@ -1975,7 +1975,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 			s.UpdateSPCache(ts, time.Now())
 			time.Sleep(time.Second * 3)
 		}
-	})
+	}
 
 	var startKey, endKey kv.Key
 	if reorg.mergingTmpIdx {
@@ -2090,12 +2090,12 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 }
 
 func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
-	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("errorMockPanic")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test")
 		}
-	})
+	}
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())

@@ -348,12 +348,12 @@ func (exec *Executor) Execute(
 		)
 		err = utils.WithRetry(ctx, func() error {
 			resp, err = sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
-			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("checksumRetryErr")); _err_ == nil {
 				// first time reach here. return error
 				if val.(bool) {
 					err = errors.New("inject checksum error")
 				}
-			})
+			}
 			if err != nil {
 				return errors.Trace(err)
 			}

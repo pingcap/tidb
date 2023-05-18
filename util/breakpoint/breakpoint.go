@@ -25,10 +25,10 @@ const NotifyBreakPointFuncKey = stringutil.StringerStr("breakPointNotifyFunc")
 
 // Inject injects a break point to a session
 func Inject(sctx sessionctx.Context, name string) {
-	failpoint.Inject(name, func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_(name)); _err_ == nil {
 		val := sctx.Value(NotifyBreakPointFuncKey)
 		if breakPointNotifyAndWaitContinue, ok := val.(func(string)); ok {
 			breakPointNotifyAndWaitContinue(name)
 		}
-	})
+	}
 }

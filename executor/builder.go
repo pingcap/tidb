@@ -787,7 +787,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		outputNames:  v.OutputNames(),
 	}
 
-	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertExecutePrepareStatementStalenessOption")); _err_ == nil {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertReadReplicaScope := vs[0], vs[1]
 		staleread.AssertStmtStaleness(b.ctx, true)
@@ -800,7 +800,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 			assertReadReplicaScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}
-	})
+	}
 
 	return e
 }
@@ -2452,9 +2452,9 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectAnalyzeSnapshot")); _err_ == nil {
 		startTS = uint64(val.(int))
-	})
+	}
 
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
@@ -2510,11 +2510,11 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	if idx.IsEvicted() {
 		return analyzeTask
 	}
-	failpoint.Inject("assertEvictIndex", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertEvictIndex")); _err_ == nil {
 		if idx.IsEvicted() {
 			panic("evicted index shouldn't use analyze incremental task")
 		}
-	})
+	}
 
 	var oldHist *statistics.Histogram
 	if statistics.IsAnalyzed(idx.Flag) {
@@ -2573,21 +2573,21 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectAnalyzeSnapshot")); _err_ == nil {
 		startTS = uint64(val.(int))
-	})
+	}
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectBaseCount", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectBaseCount")); _err_ == nil {
 		count = int64(val.(int))
-	})
-	failpoint.Inject("injectBaseModifyCount", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("injectBaseModifyCount")); _err_ == nil {
 		modifyCount = int64(val.(int))
-	})
+	}
 	sampleRate := new(float64)
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
@@ -2719,13 +2719,13 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Co
 	regionStats := &helper.PDRegionStats{}
 	pdHelper := helper.NewHelper(tikvStore)
 	err := pdHelper.GetPDRegionStats(tid, regionStats, true)
-	failpoint.Inject("calcSampleRateByStorageCount", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("calcSampleRateByStorageCount")); _err_ == nil {
 		// Force the TiDB thinking that there's PD and the count of region is small.
 		err = nil
 		regionStats.Count = 1
 		// Set a very large approximate count.
 		regionStats.StorageKeys = 1000000
-	})
+	}
 	if err != nil {
 		return 0, false
 	}
@@ -2778,9 +2778,9 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectAnalyzeSnapshot")); _err_ == nil {
 		startTS = uint64(val.(int))
-	})
+	}
 
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
@@ -3503,16 +3503,16 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
-	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkUseMPP")); _err_ == nil {
 		if !b.ctx.GetSessionVars().InRestrictedSQL && val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
 				b.err = errors.New("expect mpp but not used")
 			} else {
 				b.err = errors.New("don't expect mpp but we used it")
 			}
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	if useMPPExecution(b.ctx, v) {
 		return b.buildMPPGather(v)
 	}
@@ -5134,12 +5134,12 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		sctx.IndexNames = append(sctx.IndexNames, plan.TblInfo.Name.O+":"+plan.IndexInfo.Name.O)
 	}
 
-	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertBatchPointReplicaOption")); _err_ == nil {
 		assertScope := val.(string)
 		if e.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != b.readReplicaScope {
 			panic("batch point get replica option fail")
 		}
-	})
+	}
 
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {

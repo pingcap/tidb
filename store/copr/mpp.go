@@ -181,11 +181,11 @@ func (m *mppIterator) run(ctx context.Context) {
 		m.mu.Unlock()
 		m.wg.Add(1)
 		boMaxSleep := copNextMaxBackoff
-		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
+		if value, _err_ := failpoint.Eval(_curpkg_("ReduceCopNextMaxBackoff")); _err_ == nil {
 			if value.(bool) {
 				boMaxSleep = 2
 			}
-		})
+		}
 		bo := backoff.NewBackoffer(ctx, boMaxSleep)
 		go func(mppTask *kv.MPPDispatchRequest) {
 			defer func() {
@@ -213,11 +213,11 @@ func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
 	}()
 	if m.memTracker != nil {
 		respSize := resp.MemSize()
-		failpoint.Inject("testMPPOOMPanic", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testMPPOOMPanic")); _err_ == nil {
 			if val.(bool) && respSize != 0 {
 				respSize = 1 << 30
 			}
-		})
+		}
 		m.memTracker.Consume(respSize)
 		defer m.memTracker.Consume(-respSize)
 	}
@@ -339,13 +339,13 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
 		}
 	}
-	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mppNonRootTaskError")); _err_ == nil {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
 			m.sendError(derr.ErrTiFlashServerTimeout)
 			return
 		}
-	})
+	}
 	if !req.IsRoot {
 		return
 	}
@@ -584,10 +584,10 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 }
 
 func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, TTL int64) (int, error) {
-	failpoint.Inject("mppStoreCountSetLastUpdateTime", func(value failpoint.Value) {
+	if value, _err_ := failpoint.Eval(_curpkg_("mppStoreCountSetLastUpdateTime")); _err_ == nil {
 		v, _ := strconv.ParseInt(value.(string), 10, 0)
 		c.lastUpdate = v
-	})
+	}
 
 	lastUpdate := atomic.LoadInt64(&c.lastUpdate)
 	now := time.Now().UnixMicro()
@@ -599,10 +599,10 @@ func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, 
 		}
 	}
 
-	failpoint.Inject("mppStoreCountSetLastUpdateTimeP2", func(value failpoint.Value) {
+	if value, _err_ := failpoint.Eval(_curpkg_("mppStoreCountSetLastUpdateTimeP2")); _err_ == nil {
 		v, _ := strconv.ParseInt(value.(string), 10, 0)
 		c.lastUpdate = v
-	})
+	}
 
 	if !atomic.CompareAndSwapInt64(&c.lastUpdate, lastUpdate, now) {
 		if isInit {
@@ -615,11 +615,11 @@ func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, 
 	cnt := 0
 	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
 
-	failpoint.Inject("mppStoreCountPDError", func(value failpoint.Value) {
+	if value, _err_ := failpoint.Eval(_curpkg_("mppStoreCountPDError")); _err_ == nil {
 		if value.(bool) {
 			err = errors.New("failed to get mpp store count")
 		}
-	})
+	}
 
 	if err == nil {
 		for _, s := range stores {
@@ -634,9 +634,9 @@ func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, 
 		return 0, err
 	}
 
-	failpoint.Inject("mppStoreCountSetMPPCnt", func(value failpoint.Value) {
+	if value, _err_ := failpoint.Eval(_curpkg_("mppStoreCountSetMPPCnt")); _err_ == nil {
 		cnt = value.(int)
-	})
+	}
 
 	if !isInit || atomic.LoadInt64(&c.lastUpdate) == now {
 		atomic.StoreInt32(&c.cnt, int32(cnt))

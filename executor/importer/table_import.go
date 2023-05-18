@@ -482,11 +482,11 @@ func (ti *TableImporter) preprocessAndImportEngines(ctx context.Context) (err er
 			return err2
 		}
 
-		failpoint.Inject("AfterImportDataEngine", nil)
-		failpoint.Inject("SyncAfterImportDataEngine", func() {
+		failpoint.Eval(_curpkg_("AfterImportDataEngine"))
+		if _, _err_ := failpoint.Eval(_curpkg_("SyncAfterImportDataEngine")); _err_ == nil {
 			TestSyncCh <- struct{}{}
 			<-TestSyncCh
-		})
+		}
 	}
 
 	closedIndexEngine, err3 := indexEngine.Close(ctx)

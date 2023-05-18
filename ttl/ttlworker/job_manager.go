@@ -597,9 +597,9 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			expireTime = tableStatus.CurrentJobTTLExpire
 			jobExist = true
 		}
-		failpoint.Inject("set-job-uuid", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("set-job-uuid")); _err_ == nil {
 			jobID = val.(string)
-		})
+		}
 
 		sql, args = setTableStatusOwnerSQL(jobID, table.ID, now, expireTime, m.id)
 		_, err = se.ExecuteSQL(ctx, sql, args...)

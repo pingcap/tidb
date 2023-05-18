@@ -307,19 +307,19 @@ func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	if killed == 1 {
 		done = true
 	}
-	failpoint.Inject("BatchAddTiFlashSendDone", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("BatchAddTiFlashSendDone")); _err_ == nil {
 		done = val.(bool)
-	})
+	}
 	return done, killed
 }
 
 func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
 	configRetry := tiflashCheckPendingTablesRetry
 	configWaitTime := tiflashCheckPendingTablesWaitTime
-	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
+	if value, _err_ := failpoint.Eval(_curpkg_("FastFailCheckTiFlashPendingTables")); _err_ == nil {
 		configRetry = value.(int)
 		configWaitTime = time.Millisecond * 200
-	})
+	}
 
 	for retry := 0; retry < configRetry; retry += 1 {
 		done, killed := isSessionDone(sctx)
@@ -2559,12 +2559,12 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	infos []*model.TableInfo,
 	cs ...CreateTableWithInfoConfigurier,
 ) error {
-	failpoint.Inject("RestoreBatchCreateTableEntryTooLarge", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("RestoreBatchCreateTableEntryTooLarge")); _err_ == nil {
 		injectBatchSize := val.(int)
 		if len(infos) > injectBatchSize {
-			failpoint.Return(kv.ErrEntryTooLarge)
+			return kv.ErrEntryTooLarge
 		}
-	})
+	}
 	c := GetCreateTableWithInfoConfig(cs)
 
 	jobs := &model.Job{
@@ -2859,9 +2859,9 @@ func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 
 // checkPartitionByRange checks validity of a "BY RANGE" partition.
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	failpoint.Inject("CheckPartitionByRangeErr", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("CheckPartitionByRangeErr")); _err_ == nil {
 		panic(memory.PanicMemoryExceedWarnMsg)
-	})
+	}
 	pi := tbInfo.Partition
 
 	if len(pi.Columns) == 0 {

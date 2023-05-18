@@ -765,14 +765,14 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysical
 // calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers, and divide by 2
 // return false, 0 if any err happens
 func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx sessionctx.Context, serversInfo []infoschema.ServerInfo) (bool, uint64) {
-	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockTiFlashStreamCountUsingMinLogicalCores")); _err_ == nil {
 		intVal, err := strconv.Atoi(val.(string))
 		if err == nil {
-			failpoint.Return(true, uint64(intVal))
+			return true, uint64(intVal)
 		} else {
-			failpoint.Return(false, 0)
+			return false, 0
 		}
-	})
+	}
 	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
 	if err != nil {
 		return false, 0
