@@ -1466,7 +1466,8 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
 	}
 	if !job.IsPausable() {
-		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, job.State.String(), job.SchemaState.String())
+		errMsg := fmt.Sprintf("state [%s] or schema state [%s]", job.State.String(), job.SchemaState.String())
+		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, errMsg)
 		if err != nil {
 			return err
 		}

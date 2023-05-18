@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	tidb_util "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -170,25 +169,25 @@ func hasSysDB(job *model.Job) bool {
 
 func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
 	if d.stateSyncer.IsUpgradingState() {
-		if hasSysDB(job) {
+		// We need to turn the 'pausing' job to be 'paused' in ddl worker,
+		// and stop the reorganization workers
+		if job.IsPausing() || hasSysDB(job) {
 			return true, nil
 		}
 		var errs []error
 		// During binary upgrade, pause all running DDL jobs
 		errs, err = PauseJobsBySystem(sess.Session(), []int64{job.ID})
 		if errs != nil && errs[0] != nil {
-			if dbterror.ErrPausedDDLJob.Equal(errs[0]) {
-				// In case of 'Pausing', we need to deliver the job to DDL
-				// worker to pause the background reorganization workers.
-				return true, nil
-			}
-			// During upgrade, there are jobs that may not be paused because of
-			// some serious error. Then, we would not run it and just return
-			// unless the upgrade finished.
-			return false, errs[0]
+			err = errs[0]
 		}
 
-		return false, err
+		if err != nil {
+			errMsg := fmt.Sprintf("[DDL] unable to pause [%d], error: %s",
+				job.ID, zap.Error(err).String)
+			logutil.BgLogger().Warn(errMsg)
+		}
+
+		return false, nil
 	}
 
 	if job.IsPausedBySystem() && !hasSysDB(job) {
