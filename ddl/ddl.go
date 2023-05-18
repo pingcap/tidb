@@ -1553,9 +1553,8 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 
 			err = updateDDLJob2Table(ns, job, true)
 			if err != nil {
-				// unexpected error on updating the job table, should roll it back
-				ns.Rollback()
-				return errs, err
+				errs[i] = err
+				continue
 			}
 		}
 
@@ -1638,9 +1637,8 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 
 			err = updateDDLJob2Table(ns, job, true)
 			if err != nil {
-				// unexpected error on updating the job table, should roll it back
-				ns.Rollback()
-				return jobErrs, err
+				jobErrs[job.ID] = err
+				continue
 			}
 		}
 
