@@ -98,6 +98,7 @@ func (m *MockGPool) Name() string {
 	return m.name
 }
 
+// GetOriginConcurrency is only for test
 func (m *MockGPool) GetOriginConcurrency() int32 {
 	return m.originConcurrency
 }
