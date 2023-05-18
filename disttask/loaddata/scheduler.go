@@ -36,11 +36,12 @@ type ImportScheduler struct {
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
 	sharedVars    sync.Map
+	logger        *zap.Logger
 }
 
 // InitSubtaskExecEnv implements the Scheduler.InitSubtaskExecEnv interface.
 func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
-	logutil.BgLogger().Info("InitSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("InitSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
 
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.taskMeta.Plan.TableInfo)
@@ -75,7 +76,7 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 
 // SplitSubtask implements the Scheduler.SplitSubtask interface.
 func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
-	logutil.BgLogger().Info("SplitSubtask", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("SplitSubtask", zap.Any("taskMeta", s.taskMeta))
 	var subtaskMeta SubtaskMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
@@ -118,7 +119,7 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 
 // OnSubtaskFinished implements the Scheduler.OnSubtaskFinished interface.
 func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
-	logutil.BgLogger().Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
 	var subtaskMeta SubtaskMeta
 	if err := json.Unmarshal(subtaskMetaBytes, &subtaskMeta); err != nil {
 		return nil, err
@@ -165,7 +166,7 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.
 func (s *ImportScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
-	logutil.BgLogger().Info("CleanupSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("CleanupSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
 	return s.tableImporter.Close()
 }
 
@@ -184,8 +185,12 @@ func init() {
 			if err := json.Unmarshal(bs, &taskMeta); err != nil {
 				return nil, err
 			}
-			logutil.BgLogger().Info("register scheduler constructor", zap.Any("taskMeta", taskMeta))
-			return &ImportScheduler{taskMeta: &taskMeta}, nil
+			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.LoadData), zap.Int64("ID", taskMeta.JobID))
+			logger.Info("create new load data scheduler", zap.Any("taskMeta", taskMeta))
+			return &ImportScheduler{
+				taskMeta: &taskMeta,
+				logger:   logger,
+			}, nil
 		},
 		scheduler.WithConcurrentSubtask(),
 	)

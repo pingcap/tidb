@@ -37,8 +37,9 @@ var (
 // DistImporter is a JobImporter for distributed load data.
 type DistImporter struct {
 	*importer.JobImportParam
-	plan *importer.Plan
-	stmt string
+	plan   *importer.Plan
+	stmt   string
+	logger *zap.Logger
 }
 
 var _ importer.JobImporter = &DistImporter{}
@@ -49,6 +50,7 @@ func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt s
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
+		logger:         logutil.BgLogger().With(zap.String("component", "distribute importer"), zap.Int("id", int(param.Job.ID))),
 	}, nil
 }
 
@@ -59,7 +61,7 @@ func (ti *DistImporter) Param() *importer.JobImportParam {
 
 // Import implements JobImporter.Import.
 func (ti *DistImporter) Import() {
-	logutil.BgLogger().Info("start distribute load data", zap.Int64("jobID", ti.Job.ID))
+	ti.logger.Info("start distribute load data")
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
 		return ti.doImport(ti.GroupCtx)
@@ -75,7 +77,7 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 		return result
 	}
 
-	logutil.BgLogger().Info("finish distribute load data", zap.Int64("jobID", ti.Job.ID), zap.Any("task meta", taskMeta))
+	ti.logger.Info("finish distribute load data", zap.Any("task meta", taskMeta))
 	var (
 		numWarnings uint64
 		numRecords  uint64

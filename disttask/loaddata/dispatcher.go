@@ -32,20 +32,22 @@ import (
 )
 
 // FlowHandle is the dispatcher for load data.
-type FlowHandle struct{}
+type FlowHandle struct {
+}
 
 // ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
-func (h *FlowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+func (*FlowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
 		return nil, err
 	}
-	logutil.BgLogger().Info("process normal flow", zap.Any("task_meta", taskMeta), zap.Any("step", gTask.Step))
+	logger.Info("process normal flow", zap.Any("task_meta", taskMeta), zap.Any("step", gTask.Step))
 
 	switch gTask.Step {
 	case Import:
-		if err := h.postProcess(ctx, handle, gTask); err != nil {
+		if err := postProcess(ctx, handle, gTask, logger); err != nil {
 			return nil, err
 		}
 		gTask.State = proto.TaskStateSucceed
@@ -61,7 +63,7 @@ func (h *FlowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	if err != nil {
 		return nil, err
 	}
-	logutil.BgLogger().Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
+	logger.Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
 	metaBytes := make([][]byte, 0, len(subtaskMetas))
 	for _, subtaskMeta := range subtaskMetas {
 		bs, err := json.Marshal(subtaskMeta)
@@ -75,8 +77,9 @@ func (h *FlowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 }
 
 // ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
-func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
-	logutil.BgLogger().Info("process error flow", zap.ByteStrings("error message", receiveErr))
+func (h *FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
+	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
+	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
 	gTask.Error = receiveErr[0]
 	return nil, nil
 }
@@ -87,7 +90,7 @@ func (*FlowHandle) IsRetryableErr(error) bool {
 }
 
 // postProcess does the post processing for the task.
-func (*FlowHandle) postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) error {
+func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, logger *zap.Logger) error {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -118,16 +121,16 @@ func (*FlowHandle) postProcess(ctx context.Context, handle dispatcher.TaskHandle
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
 
-	logutil.BgLogger().Info("post process", zap.Any("task_meta", taskMeta), zap.Any("subtask_metas", subtaskMetas))
-	if err := verifyChecksum(ctx, tableImporter, subtaskMetas); err != nil {
+	logger.Info("post process", zap.Any("task_meta", taskMeta), zap.Any("subtask_metas", subtaskMetas))
+	if err := verifyChecksum(ctx, tableImporter, subtaskMetas, logger); err != nil {
 		return err
 	}
 
-	updateMetrics(taskMeta, subtaskMetas)
+	updateMetrics(taskMeta, subtaskMetas, logger)
 	return updateMeta(gTask, taskMeta)
 }
 
-func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, subtaskMetas []*SubtaskMeta) error {
+func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, subtaskMetas []*SubtaskMeta, logger *zap.Logger) error {
 	if tableImporter.Checksum == config.OpLevelOff {
 		return nil
 	}
@@ -136,11 +139,11 @@ func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, 
 		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
 		localChecksum.Add(&checksum)
 	}
-	logutil.BgLogger().Info("local checksum", zap.Object("checksum", &localChecksum))
+	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 	return tableImporter.VerifyChecksum(ctx, localChecksum)
 }
 
-func updateMetrics(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta) {
+func updateMetrics(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta, logger *zap.Logger) {
 	for _, subtaskMeta := range subtaskMetas {
 		taskMeta.Metrics.ReadRowCnt += subtaskMeta.Metrics.ReadRowCnt
 		taskMeta.Metrics.LoadedRowCnt += subtaskMeta.Metrics.LoadedRowCnt
@@ -148,7 +151,7 @@ func updateMetrics(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta) {
 			taskMeta.Metrics.LastInsertID = subtaskMeta.Metrics.LastInsertID
 		}
 	}
-	logutil.BgLogger().Info("update metrics", zap.Any("task_meta", taskMeta))
+	logger.Info("update metrics", zap.Any("task_meta", taskMeta))
 }
 
 func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
