@@ -709,6 +709,84 @@ func TestIssue31629(t *testing.T) {
 	}
 }
 
+func TestAddKeyPartitionStates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dbName := "partSchemaVer"
+	tk.MustExec("create database " + dbName)
+	tk.MustExec("use " + dbName)
+	tk.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + dbName)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use " + dbName)
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec("use " + dbName)
+	tk.MustExec(`create table t (a int primary key, b varchar(255), key (b)) partition by hash (a) partitions 3`)
+	tk.MustExec(`insert into t values (1, "1")`)
+	tk.MustExec(`analyze table t`)
+	tk.MustExec("BEGIN")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1"))
+	tk.MustExec(`insert into t values (2, "2")`)
+	syncChan := make(chan bool)
+	go func() {
+		tk2.MustExec(`alter table t add partition partitions 1`)
+		syncChan <- true
+	}()
+	waitFor := func(i int, s string) {
+		for {
+			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = 't' and job_type like 'alter table%'`).Rows()
+			if len(res) == 1 && res[0][i] == s {
+				break
+			}
+			gotime.Sleep(10 * gotime.Millisecond)
+		}
+	}
+	waitFor(4, "delete only")
+	tk3.MustExec(`BEGIN`)
+	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1"))
+	tk3.MustExec(`insert into t values (3,"3")`)
+
+	tk.MustExec(`COMMIT`)
+	waitFor(4, "write only")
+	tk.MustExec(`BEGIN`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustExec(`insert into t values (4,"4")`)
+
+	tk3.MustExec(`COMMIT`)
+	waitFor(4, "write reorganization")
+	tk3.MustExec(`BEGIN`)
+	tk3.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 3"))
+	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk3.MustExec(`insert into t values (5,"5")`)
+
+	tk.MustExec(`COMMIT`)
+	waitFor(4, "delete reorganization")
+	tk.MustExec(`BEGIN`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 4"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 4"))
+	tk.MustExec(`insert into t values (6,"6")`)
+
+	tk3.MustExec(`COMMIT`)
+	tk.MustExec(`COMMIT`)
+	<-syncChan
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6"))
+}
+
 type compoundSQL struct {
 	selectSQL        string
 	point            bool
