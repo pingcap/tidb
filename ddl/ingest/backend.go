@@ -147,22 +147,13 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 	return nil
 }
 
-func acquireLock(ctx context.Context, se *concurrency.Session, key string) error {
+func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
 	mu := concurrency.NewMutex(se, key)
 	err := mu.Lock(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return nil
-}
-
-func releaseLock(ctx context.Context, se *concurrency.Session, key string) error {
-	mu := concurrency.NewMutex(se, key)
-	err := mu.Unlock(ctx)
-	if err != nil {
-		return err
-	}
-	return nil
+	return mu, nil
 }
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
@@ -198,13 +189,13 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	if bc.etcdClient != nil {
 		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
 		se, _ := concurrency.NewSession(bc.etcdClient)
-		err := acquireLock(bc.ctx, se, distLockKey)
+		mu, err := acquireLock(bc.ctx, se, distLockKey)
 		if err != nil {
 			return true, false, err
 		}
 		logutil.BgLogger().Info("[ddl] acquire lock success")
 		defer func() {
-			err = releaseLock(bc.ctx, se, distLockKey)
+			err = mu.Unlock(bc.ctx)
 			if err != nil {
 				logutil.BgLogger().Warn("[ddl] release lock error", zap.Error(err))
 			}

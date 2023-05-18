@@ -624,7 +624,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateNone:
 		// none -> delete only
 		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique)
+		initDistReorg(job.ReorgMeta)
+		reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique, d)
 		if err != nil {
 			break
 		}
@@ -666,10 +667,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
-
-		if job.MultiSchemaInfo == nil {
-			initDistReorg(job.ReorgMeta)
-		}
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		tbl, err := getTable(d.store, schemaID, tblInfo)
@@ -716,7 +713,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 // pickBackfillType determines which backfill process will be used.
-func pickBackfillType(ctx context.Context, job *model.Job, unique bool) (model.ReorgType, error) {
+func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCtx) (model.ReorgType, error) {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't change the backfill type.
@@ -736,7 +733,11 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool) (model.R
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
-			_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil)
+			if job.ReorgMeta.IsDistReorg {
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli)
+			} else {
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil)
+			}
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
@@ -834,7 +835,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
-	reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique)
+	reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique, d)
 	if err != nil {
 		return false, ver, err
 	}

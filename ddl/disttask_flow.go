@@ -96,6 +96,11 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 			return nil, errors.Trace(err)
 		}
 		startKey, endKey, err := getTableRange(d.jobContext(job.ID), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
+		if startKey == nil && endKey == nil {
+			// Empty table.
+			gTask.Step = proto.StepOne
+			return nil, nil
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -17,7 +17,6 @@ package ddl
 import (
 	"time"
 
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
@@ -30,9 +29,5 @@ const (
 )
 
 func initDistReorg(reorgMeta *model.DDLReorgMeta) {
-	isDistReorg := variable.EnableDistTask.Load()
-	reorgMeta.IsDistReorg = isDistReorg
-	if isDistReorg {
-		metrics.TelemetryDistReorgCnt.Inc()
-	}
+	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
 }
