@@ -950,7 +950,7 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
 	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
 	// can produce a reasonable results in this scenario.
-	if rowCount > float64(modifyCount) {
+	if rowCount > float64(modifyCount) && sctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
 		return float64(modifyCount)
 	}
 	return rowCount
