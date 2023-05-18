@@ -128,8 +128,3 @@ func (t *TaskManager) hasTask(taskID uint64) bool {
 	_, ok := t.task[shardID].stats[taskID]
 	return ok
 }
-
-// GetOriginConcurrency return the concurrency of the pool at the init.
-func (t *TaskManager) GetOriginConcurrency() int32 {
-	return t.concurrency
-}

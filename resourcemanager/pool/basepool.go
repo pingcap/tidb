@@ -35,15 +35,17 @@ var (
 
 // BasePool is base class of pool
 type BasePool struct {
-	lastTuneTs atomicutil.Time
-	name       string
-	generator  atomic.Uint64
+	lastTuneTs  atomicutil.Time
+	name        string
+	generator   atomic.Uint64
+	concurrency int32
 }
 
 // NewBasePool is to create a new BasePool.
-func NewBasePool() BasePool {
+func NewBasePool(concurrency int32) BasePool {
 	return BasePool{
-		lastTuneTs: *atomicutil.NewTime(time.Now()),
+		lastTuneTs:  *atomicutil.NewTime(time.Now()),
+		concurrency: concurrency,
 	}
 }
 
@@ -70,4 +72,9 @@ func (p *BasePool) LastTunerTs() time.Time {
 // SetLastTuneTs sets the last time when the pool was tuned.
 func (p *BasePool) SetLastTuneTs(t time.Time) {
 	p.lastTuneTs.Store(t)
+}
+
+// GetOriginConcurrency return the concurrency of the pool at the init.
+func (p *BasePool) GetOriginConcurrency() int32 {
+	return p.concurrency
 }
