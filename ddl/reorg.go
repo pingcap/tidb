@@ -246,6 +246,11 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			return dbterror.ErrCancelledDDLJob
 		}
 
+		err := overwriteReorgInfoFromCheckpoint(rh.s, job, reorgInfo)
+		if err != nil {
+			return err
+		}
+
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
@@ -313,6 +318,19 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			zap.Int64("total added row count", rowCount))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return dbterror.ErrWaitReorgTimeout
+	}
+	return nil
+}
+
+func overwriteReorgInfoFromCheckpoint(sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
+	start, end, pid, err := getCheckpointReorgHandle(sess, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(start) > 0 && len(end) > 0 && pid > 0 {
+		reorgInfo.StartKey = start
+		reorgInfo.EndKey = end
+		reorgInfo.PhysicalTableID = pid
 	}
 	return nil
 }

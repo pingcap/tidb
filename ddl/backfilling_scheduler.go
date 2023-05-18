@@ -298,7 +298,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	b.backendCtx = bc
 	mgr := bc.GetCheckpointManager()
 	if mgr != nil {
-		mgr.Reset(b.tbl.GetPhysicalID())
+		mgr.Reset(b.tbl.GetPhysicalID(), b.reorgInfo.StartKey, b.reorgInfo.EndKey)
 		b.checkpointMgr = mgr
 	}
 	copReqSenderPool, err := b.createCopReqSenderPool()
