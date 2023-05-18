@@ -4339,6 +4339,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 	analyzeCount := mathutil.Max(statsTbl.GetAnalyzeRowCount(), 0)
 	if !ctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
+		statsTbl = statsTbl.Copy()
 		statsTbl.RealtimeCount = int64(analyzeCount)
 	}
 
