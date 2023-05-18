@@ -3473,5 +3473,4 @@ func TestIssue43243(t *testing.T) {
 
 	// Check data consistency
 	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 3", "3 13", "4 14", "5 15"))
-
 }
