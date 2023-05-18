@@ -673,6 +673,23 @@ func TestDefaultCouldBeOverwritten(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 20, cfg.App.IndexConcurrency)
 	require.Equal(t, 60, cfg.App.TableConcurrency)
+<<<<<<< HEAD
+=======
+
+	require.Equal(t, config.KVWriteBatchCount, cfg.TikvImporter.SendKVPairs)
+	require.Equal(t, config.ByteSize(config.KVWriteBatchSize), cfg.TikvImporter.SendKVSize)
+
+	cfg.TikvImporter.RegionSplitConcurrency = 1
+	// backoff can be 0
+	cfg.TikvImporter.RegionCheckBackoffLimit = 0
+	err = cfg.Adjust(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, cfg.TikvImporter.RegionSplitConcurrency)
+	require.Equal(t, 0, cfg.TikvImporter.RegionCheckBackoffLimit)
+	cfg.TikvImporter.RegionSplitBatchSize = 0
+	err = cfg.Adjust(ctx)
+	require.ErrorContains(t, err, "`tikv-importer.region-split-batch-size` got 0, should be larger than 0")
+>>>>>>> ca629447dff (lightning: add send-kv-size to avoid oom when each kv is large on default config (#43870))
 }
 
 func TestLoadFromInvalidConfig(t *testing.T) {

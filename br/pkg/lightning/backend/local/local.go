@@ -345,7 +345,83 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 	return nil
 }
 
+<<<<<<< HEAD
 type local struct {
+=======
+// BackendConfig is the config for local backend.
+type BackendConfig struct {
+	// comma separated list of PD endpoints.
+	PDAddr        string
+	LocalStoreDir string
+	// max number of cached grpc.ClientConn to a store.
+	// note: this is not the limit of actual connections, each grpc.ClientConn can have one or more of it.
+	MaxConnPerStore int
+	// compress type when write or ingest into tikv
+	ConnCompressType config.CompressionType
+	// concurrency of generateJobForRange and import(write & ingest) workers
+	WorkerConcurrency int
+	// batch kv count and size when writing to TiKV
+	KVWriteBatchCount      int
+	KVWriteBatchSize       int64
+	RegionSplitBatchSize   int
+	RegionSplitConcurrency int
+	CheckpointEnabled      bool
+	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
+	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
+	MemTableSize            int
+	LocalWriterMemCacheSize int64
+	// whether check TiKV capacity before write & ingest.
+	ShouldCheckTiKV    bool
+	DupeDetectEnabled  bool
+	DuplicateDetectOpt DupDetectOpt
+	// max write speed in bytes per second to each store(burst is allowed), 0 means no limit
+	StoreWriteBWLimit int
+	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
+	// To avoid this, we should check write stall before ingesting SSTs. Note that, we
+	// must check both leader node and followers in client side, because followers will
+	// not check write stall as long as ingest command is accepted by leader.
+	ShouldCheckWriteStall bool
+	// soft limit on the number of open files that can be used by pebble DB.
+	// the minimum value is 128.
+	MaxOpenFiles int
+	KeyspaceName string
+	// the scope when pause PD schedulers.
+	PausePDSchedulerScope config.PausePDSchedulerScope
+}
+
+// NewBackendConfig creates a new BackendConfig.
+func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string) BackendConfig {
+	return BackendConfig{
+		PDAddr:                  cfg.TiDB.PdAddr,
+		LocalStoreDir:           cfg.TikvImporter.SortedKVDir,
+		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
+		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
+		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
+		KVWriteBatchCount:       cfg.TikvImporter.SendKVPairs,
+		KVWriteBatchSize:        int64(cfg.TikvImporter.SendKVSize),
+		RegionSplitBatchSize:    cfg.TikvImporter.RegionSplitBatchSize,
+		RegionSplitConcurrency:  cfg.TikvImporter.RegionSplitConcurrency,
+		CheckpointEnabled:       cfg.Checkpoint.Enable,
+		MemTableSize:            int(cfg.TikvImporter.EngineMemCacheSize),
+		LocalWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
+		ShouldCheckTiKV:         cfg.App.CheckRequirements,
+		DupeDetectEnabled:       cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		DuplicateDetectOpt:      DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		StoreWriteBWLimit:       int(cfg.TikvImporter.StoreWriteBWLimit),
+		ShouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
+		MaxOpenFiles:            maxOpenFiles,
+		KeyspaceName:            keyspaceName,
+		PausePDSchedulerScope:   cfg.TikvImporter.PausePDSchedulerScope,
+	}
+}
+
+func (c *BackendConfig) adjust() {
+	c.MaxOpenFiles = mathutil.Max(c.MaxOpenFiles, openFilesLowerThreshold)
+}
+
+// Backend is a local backend.
+type Backend struct {
+>>>>>>> ca629447dff (lightning: add send-kv-size to avoid oom when each kv is large on default config (#43870))
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
 	pdCtl    *pdutil.PdController
