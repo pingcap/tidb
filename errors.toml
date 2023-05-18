@@ -1581,6 +1581,11 @@ error = '''
 The password for anonymous user cannot be expired.
 '''
 
+["executor:3024"]
+error = '''
+Query execution was interrupted, maximum statement execution time exceeded
+'''
+
 ["executor:3523"]
 error = '''
 Unknown authorization ID %.256s

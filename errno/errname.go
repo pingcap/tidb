@@ -886,7 +886,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWindowExplainJSON:                                     mysql.Message("To get information about window functions use EXPLAIN FORMAT=JSON", nil),
 	ErrWindowFunctionIgnoresFrame:                            mysql.Message("Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition", nil),
 	ErrRoleNotGranted:                                        mysql.Message("%s is not granted to %s", nil),
-	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, max_execution_time exceeded.", nil),
+	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, maximum statement execution time exceeded", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           mysql.Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
 	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' cannot be set using SET_VAR hint.", nil),
 	ErrExistsInHistoryPassword:                               mysql.Message("Cannot use these credentials for '%s@%s' because they contradict the password history policy.", nil),

@@ -313,6 +313,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	sessVars := base.ctx.GetSessionVars()
+	if atomic.LoadUint32(&sessVars.Killed) == 2 {
+		return exeerrors.ErrMaxExecTimeExceeded
+	}
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		return exeerrors.ErrQueryInterrupted
 	}
@@ -329,6 +332,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		return err
 	}
 	// recheck whether the session/query is killed during the Next()
+	if atomic.LoadUint32(&sessVars.Killed) == 2 {
+		err = exeerrors.ErrMaxExecTimeExceeded
+	}
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		err = exeerrors.ErrQueryInterrupted
 	}

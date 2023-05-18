@@ -50,6 +50,7 @@ var (
 	ErrRoleNotGranted                = dbterror.ClassPrivilege.NewStd(mysql.ErrRoleNotGranted)
 	ErrDeadlock                      = dbterror.ClassExecutor.NewStd(mysql.ErrLockDeadlock)
 	ErrQueryInterrupted              = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
+	ErrMaxExecTimeExceeded           = dbterror.ClassExecutor.NewStd(mysql.ErrMaxExecTimeExceeded)
 	ErrDynamicPrivilegeNotRegistered = dbterror.ClassExecutor.NewStd(mysql.ErrDynamicPrivilegeNotRegistered)
 	ErrIllegalPrivilegeLevel         = dbterror.ClassExecutor.NewStd(mysql.ErrIllegalPrivilegeLevel)
 	ErrInvalidSplitRegionRanges      = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidSplitRegionRanges)
