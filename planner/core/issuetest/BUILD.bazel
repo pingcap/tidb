@@ -6,18 +6,5 @@ go_test(
     srcs = ["planner_issue_test.go"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
     deps = ["//testkit"],
-=======
-    shard_count = 3,
-    deps = [
-        "//parser",
-        "//planner",
-        "//planner/core",
-        "//testkit",
-        "//testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
-    ],
->>>>>>> 6caadcafc6f (planner: fix correctness of the correlated predicate push down for cte (#43759))
 )
