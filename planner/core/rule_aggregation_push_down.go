@@ -508,7 +508,11 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					for j := range funcsArgs {
 						if oldAggFuncsArgs[i][j].GetType().EvalType() != newAggFuncsArgs[i][j].GetType().EvalType() {
 							noSideEffects = false
+							break
 						}
+					}
+					if !noSideEffects {
+						break
 					}
 				}
 				if noSideEffects {
