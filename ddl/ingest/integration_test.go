@@ -20,10 +20,17 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
+	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -105,20 +112,13 @@ func TestIngestCopSenderErr(t *testing.T) {
 	}
 	tk.MustQuery("split table t between (0) and (50000) regions 5;").Check(testkit.Rows("4 1"))
 
-<<<<<<< HEAD
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockCopSenderError", "return"))
-=======
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCopSenderError", "1*return"))
->>>>>>> 92f7f67e77e (ddl: retry or rollback on error in ingest mode (#43610))
 	tk.MustExec("alter table t add index idx(a);")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockCopSenderError"))
 	tk.MustExec("admin check table t;")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
 	jobTp := rows[0][3].(string)
-<<<<<<< HEAD
-	require.True(t, strings.Contains(jobTp, "txn-merge"), jobTp)
-=======
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 
 	tk.MustExec("drop table t;")
@@ -236,5 +236,4 @@ func TestIngestPartitionRowCount(t *testing.T) {
 	rowCount := rows[0][7].(string)
 	require.Equal(t, "3", rowCount)
 	tk.MustExec("admin check table t;")
->>>>>>> 92f7f67e77e (ddl: retry or rollback on error in ingest mode (#43610))
 }
