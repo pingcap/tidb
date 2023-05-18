@@ -285,6 +285,7 @@ func ErrorEqual(err1, err2 error) bool {
 	}
 
 	if e1 == nil || e2 == nil {
+		//nolint: errorlint
 		return e1 == e2
 	}
 
