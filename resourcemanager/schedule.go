@@ -54,6 +54,7 @@ func (r *ResourceManager) schedulePool(pool *util.PoolContainer) scheduler.Comma
 	return scheduler.Hold
 }
 
+// Exec is to executor the command from scheduler.
 func (*ResourceManager) Exec(pool *util.PoolContainer, cmd scheduler.Command) {
 	if cmd == scheduler.Hold {
 		return
