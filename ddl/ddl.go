@@ -373,6 +373,8 @@ type ddlCtx struct {
 		sync.Mutex
 		seqNum uint64
 	}
+
+	serverIDGetter func() uint64
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
@@ -660,6 +662,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		schemaVersionManager:       newSchemaVersionManager(),
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
 		runningJobIDs:              make([]string, 0, jobRecordCapacity),
+		serverIDGetter:             opt.ServerIDGetter,
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)

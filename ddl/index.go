@@ -923,7 +923,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return false, ver, errors.Trace(err)
 	}
 	if bc.GetCheckpointManager() == nil {
-		mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, indexInfo.ID)
+		mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, indexInfo.ID, w.serverIDGetter())
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl-ingest] create checkpoint manager failed", zap.Error(err))
 		}
