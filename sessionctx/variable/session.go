@@ -2051,7 +2051,7 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 // ConsiderRealtimeStatsForEstimation means whether the estimation
 // logic need to consider modify count and the realtime row count.
 func (s *SessionVars) ConsiderRealtimeStatsForEstimation() bool {
-	return true
+	return false
 }
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
