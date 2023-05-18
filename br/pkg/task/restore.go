@@ -747,10 +747,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		defer func() {
 			// need to flush the whole checkpoint data so that br can quickly jump to
 			// the log kv restore step when the next retry.
-			if len(cfg.FullBackupStorage) > 0 || !schedulersRemovable {
-				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint(ctx)
-			}
+			log.Info("wait for flush checkpoint...")
+			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
 		}()
 	}
 

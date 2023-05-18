@@ -318,9 +318,9 @@ func (bc *Client) StartCheckpointRunner(
 	return errors.Trace(err)
 }
 
-func (bc *Client) WaitForFinishCheckpoint(ctx context.Context) {
+func (bc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 	if bc.checkpointRunner != nil {
-		bc.checkpointRunner.WaitForFinish(ctx)
+		bc.checkpointRunner.WaitForFinish(ctx, flush)
 	}
 }
 

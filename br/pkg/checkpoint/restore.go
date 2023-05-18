@@ -16,6 +16,7 @@ package checkpoint
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -60,6 +61,10 @@ func flushPositionForRestore(taskName string) flushPosition {
 	}
 }
 
+func valueMarshalerForRestore(group *RangeGroup[RestoreKeyType, RestoreValueType]) ([]byte, error) {
+	return json.Marshal(group)
+}
+
 // only for test
 func StartCheckpointRestoreRunnerForTest(
 	ctx context.Context,
@@ -69,7 +74,7 @@ func StartCheckpointRestoreRunnerForTest(
 	taskName string,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+		ctx, storage, cipher, nil, flushPositionForRestore(taskName), valueMarshalerForRestore)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
@@ -82,7 +87,7 @@ func StartCheckpointRunnerForRestore(
 	taskName string,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+		ctx, storage, cipher, nil, flushPositionForRestore(taskName), valueMarshalerForRestore)
 
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
