@@ -357,7 +357,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
 				req := template
-				snapshotIds := make([]*string, 1)
+				snapshotIds := make([]*string, 0)
 				snapshotIds = append(snapshotIds, &oldVol.SnapshotID)
 				resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapshotIds})
 				if err != nil {
