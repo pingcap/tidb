@@ -1164,8 +1164,8 @@ func syncUpgradeState(s Session) {
 		logutil.BgLogger().Fatal("upgrade update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
 	}
 
-	retryTimes := 10
-	interval := 200 * time.Millisecond
+	retryTimes := 60
+	interval := 500 * time.Millisecond
 	for i := 0; i < retryTimes; i++ {
 		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
 		if err == nil && op.String() == owner.OpGetUpgradingState.String() {

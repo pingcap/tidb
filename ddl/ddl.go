@@ -1516,8 +1516,8 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 	}
 
 	ns := sess.NewSession(sessCtx)
-	var errs []error
 
+	var errs []error
 	// We should process (and try) all the jobs in one Transaction.
 	for tryN := uint(0); tryN < 10; tryN += 1 {
 		errs = make([]error, 0, len(ids))
