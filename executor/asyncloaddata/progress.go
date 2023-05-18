@@ -40,7 +40,7 @@ type PhysicalImportProgress struct {
 	EncodeFileSize atomic.Int64
 	// LastInsertID is the smallest auto-generated ID in current import.
 	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	LastInsertID LastInsertID
+	LastInsertID LastInsertID `json:"-"`
 }
 
 // Progress is the progress of the LOAD DATA task.
