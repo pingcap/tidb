@@ -237,3 +237,14 @@ func TestIngestPartitionRowCount(t *testing.T) {
 	require.Equal(t, "3", rowCount)
 	tk.MustExec("admin check table t;")
 }
+
+func TestAddIndexIngestClientError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer injectMockBackendMgr(t, store)()
+
+	tk.MustExec("CREATE TABLE t1 (f1 json);")
+	tk.MustExec(`insert into t1(f1) values (cast("null" as json));`)
+	tk.MustGetErrCode("create index i1 on t1((cast(f1 as unsigned array)));", errno.ErrInvalidJSONValueForFuncIndex)
+}

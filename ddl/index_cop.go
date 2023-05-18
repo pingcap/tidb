@@ -441,9 +441,16 @@ func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.Se
 	}
 	err = table.FillVirtualColumnValue(c.virtualColFieldTps, c.virtualColOffsets, c.expColInfos, c.colInfos, c.sessCtx, chk)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, completeErr(err, c.idxInfo)
 	}
 	return false, nil
+}
+
+func completeErr(err error, idxInfo *model.IndexInfo) error {
+	if expression.ErrInvalidJSONForFuncIndex.Equal(err) {
+		err = expression.ErrInvalidJSONForFuncIndex.GenWithStackByArgs(idxInfo.Name.O)
+	}
+	return errors.Trace(err)
 }
 
 func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
