@@ -73,8 +73,3 @@ func (p *BasePool) LastTunerTs() time.Time {
 func (p *BasePool) SetLastTuneTs(t time.Time) {
 	p.lastTuneTs.Store(t)
 }
-
-// GetOriginConcurrency return the concurrency of the pool at the init.
-func (p *BasePool) GetOriginConcurrency() int32 {
-	return p.concurrency
-}
