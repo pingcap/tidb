@@ -185,11 +185,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 			return false, errs[0]
 		}
 
-		// The job has been issued the command 'pause', which has been turned
-		// to be 'pausing' in job table, then we need to deliver it to ddl
-		// worker to turn it to be 'paused'
-		job.State = model.JobStatePausing
-		return true, err
+		return false, err
 	}
 
 	if job.IsPausedBySystem() && !hasSysDB(job) {

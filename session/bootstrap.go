@@ -1209,8 +1209,8 @@ func syncNormalRunning(s Session) {
 		logutil.BgLogger().Warn("[Upgrading] unexpected error to resume all paused jobs: ", zap.Error(err))
 	}
 
-	for _, err := range jobErrs {
-		logutil.BgLogger().Warn("[Upgrading] unable to resume the job, error: ", zap.Error(err))
+	for _, e := range jobErrs {
+		logutil.BgLogger().Warn("[Upgrading] unable to resume the job, error: ", zap.Error(e))
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
