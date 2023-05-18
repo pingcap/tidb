@@ -36,6 +36,7 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 }
 
 func (s *mockGCSSuite) TestPhysicalMode() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -144,6 +145,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 }
 
 func (s *mockGCSSuite) TestInputNull() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -169,6 +171,7 @@ func (s *mockGCSSuite) TestInputNull() {
 }
 
 func (s *mockGCSSuite) TestIgnoreNLines() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},
 		Content: []byte(`1,test1,11
@@ -221,7 +224,24 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	}...))
 }
 
+<<<<<<< HEAD
 func (s *mockGCSSuite) TestGeneratedCol() {
+=======
+func (s *mockGCSSuite) TestGeneratedColumns() {
+	s.testLoadDataForGeneratedColumns(importer.LogicalImportMode)
+	//s.testLoadDataForGeneratedColumns(importer.PhysicalImportMode)
+}
+
+func (s *mockGCSSuite) testLoadDataForGeneratedColumns(importMode string) {
+	// For issue https://github.com/pingcap/tidb/issues/39885
+	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec("USE load_csv;")
+	s.tk.MustExec("set @@sql_mode = ''")
+	s.tk.MustExec(`CREATE TABLE load_csv.t_gen1 (a int, b int generated ALWAYS AS (a+1));`)
+
+>>>>>>> 0620a9fab70 (load data: skip physical mode test (#43959))
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -243,6 +263,7 @@ func (s *mockGCSSuite) TestGeneratedCol() {
 }
 
 func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -277,6 +298,7 @@ func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
 }
 
 func (s *mockGCSSuite) TestDeliverBytesRows() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -320,8 +342,14 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 }
 
 func (s *mockGCSSuite) TestMultiValueIndex() {
+<<<<<<< HEAD
 	s.testMultiValueIndex(importer.LogicalImportMode)
 	s.testMultiValueIndex(importer.PhysicalImportMode)
+=======
+	s.testMultiValueIndex(importer.LogicalImportMode, false)
+	//s.testMultiValueIndex(importer.PhysicalImportMode, false)
+	//s.testMultiValueIndex(importer.PhysicalImportMode, true)
+>>>>>>> 0620a9fab70 (load data: skip physical mode test (#43959))
 }
 
 func (s *mockGCSSuite) testMultiValueIndex(importMode string) {
@@ -354,8 +382,14 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string) {
 }
 
 func (s *mockGCSSuite) TestMixedCompression() {
+<<<<<<< HEAD
 	s.testMixedCompression(importer.LogicalImportMode)
 	s.testMixedCompression(importer.PhysicalImportMode)
+=======
+	s.testMixedCompression(importer.LogicalImportMode, false)
+	//s.testMixedCompression(importer.PhysicalImportMode, false)
+	//s.testMixedCompression(importer.PhysicalImportMode, true)
+>>>>>>> 0620a9fab70 (load data: skip physical mode test (#43959))
 }
 
 func (s *mockGCSSuite) testMixedCompression(importMode string) {
@@ -414,8 +448,14 @@ func (s *mockGCSSuite) testMixedCompression(importMode string) {
 }
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
+<<<<<<< HEAD
 	s.testLoadSQLDump(importer.LogicalImportMode)
 	s.testLoadSQLDump(importer.PhysicalImportMode)
+=======
+	s.testLoadSQLDump(importer.LogicalImportMode, false)
+	//s.testLoadSQLDump(importer.PhysicalImportMode, false)
+	//s.testLoadSQLDump(importer.PhysicalImportMode, true)
+>>>>>>> 0620a9fab70 (load data: skip physical mode test (#43959))
 }
 
 func (s *mockGCSSuite) testLoadSQLDump(importMode string) {
@@ -452,8 +492,14 @@ func (s *mockGCSSuite) testLoadSQLDump(importMode string) {
 }
 
 func (s *mockGCSSuite) TestGBK() {
+<<<<<<< HEAD
 	s.testGBK(importer.LogicalImportMode)
 	s.testGBK(importer.PhysicalImportMode)
+=======
+	s.testGBK(importer.LogicalImportMode, false)
+	//s.testGBK(importer.PhysicalImportMode, false)
+	//s.testGBK(importer.PhysicalImportMode, true)
+>>>>>>> 0620a9fab70 (load data: skip physical mode test (#43959))
 }
 
 func (s *mockGCSSuite) testGBK(importMode string) {
@@ -562,8 +608,14 @@ func (s *mockGCSSuite) testGBK(importMode string) {
 }
 
 func (s *mockGCSSuite) TestOtherCharset() {
+<<<<<<< HEAD
 	s.testOtherCharset(importer.LogicalImportMode)
 	s.testOtherCharset(importer.PhysicalImportMode)
+=======
+	s.testOtherCharset(importer.LogicalImportMode, false)
+	//s.testOtherCharset(importer.PhysicalImportMode, false)
+	//s.testOtherCharset(importer.PhysicalImportMode, true)
+>>>>>>> 0620a9fab70 (load data: skip physical mode test (#43959))
 }
 
 func (s *mockGCSSuite) testOtherCharset(importMode string) {
@@ -656,6 +708,7 @@ func (s *mockGCSSuite) testOtherCharset(importMode string) {
 }
 
 func (s *mockGCSSuite) TestMaxWriteSpeed() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_write_speed;")
 	s.tk.MustExec("CREATE DATABASE load_test_write_speed;")
 	s.tk.MustExec(`CREATE TABLE load_test_write_speed.t(a int, b int)`)
@@ -698,6 +751,15 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 }
 
 func (s *mockGCSSuite) TestChecksumNotMatch() {
+<<<<<<< HEAD
+=======
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
+	s.testChecksumNotMatch(importer.PhysicalImportMode, false)
+	s.testChecksumNotMatch(importer.PhysicalImportMode, true)
+}
+
+func (s *mockGCSSuite) testChecksumNotMatch(importMode string, distributed bool) {
+>>>>>>> 0620a9fab70 (load data: skip physical mode test (#43959))
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -753,3 +815,45 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
 	}...))
 }
+<<<<<<< HEAD
+=======
+
+func (s *mockGCSSuite) TestColumnsAndUserVars() {
+	s.testColumnsAndUserVars(importer.LogicalImportMode, false)
+	//s.testColumnsAndUserVars(importer.PhysicalImportMode, false)
+	//s.testColumnsAndUserVars(importer.PhysicalImportMode, true)
+}
+
+func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed bool) {
+	withOptions := fmt.Sprintf("WITH thread=2, import_mode='%s'", importMode)
+	withOptions = adjustOptions(withOptions, distributed)
+	s.prepareVariables(distributed)
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
+	s.tk.MustExec("CREATE DATABASE load_data;")
+	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT, c int);`)
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "cols_and_vars-1.tsv"},
+		Content:     []byte("1,11,111\n2,22,222\n3,33,333\n4,44,444\n5,55,555\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "cols_and_vars-2.tsv"},
+		Content:     []byte("6,66,666\n7,77,777\n8,88,888\n9,99,999\n"),
+	})
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/cols_and_vars-*.tsv?endpoint=%s'
+		INTO TABLE load_data.cols_and_vars fields terminated by ','
+		(@V1, @v2, @v3) set a=@V1, b=@V2*10, c=123 %s`, gcsEndpoint, withOptions)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_data.cols_and_vars;").Sort().Check(testkit.Rows(
+		"1 110 123",
+		"2 220 123",
+		"3 330 123",
+		"4 440 123",
+		"5 550 123",
+		"6 660 123",
+		"7 770 123",
+		"8 880 123",
+		"9 990 123",
+	))
+}
+>>>>>>> 0620a9fab70 (load data: skip physical mode test (#43959))

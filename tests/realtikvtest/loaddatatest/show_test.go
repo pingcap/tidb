@@ -128,8 +128,7 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 }
 
 func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
-	s.simpleShowLoadDataJobs(importer.PhysicalImportMode)
-
+	//s.simpleShowLoadDataJobs(importer.PhysicalImportMode)
 	s.simpleShowLoadDataJobs(importer.LogicalImportMode)
 
 	user := &auth.UserIdentity{
@@ -221,7 +220,7 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 
 func (s *mockGCSSuite) TestInternalStatus() {
 	s.testInternalStatus(importer.LogicalImportMode)
-	s.testInternalStatus(importer.PhysicalImportMode)
+	//s.testInternalStatus(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testInternalStatus(importMode string) {
