@@ -4337,6 +4337,11 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
 	}
 
+	analyzeCount := mathutil.Max(statsTbl.GetAnalyzeRowCount(), 0)
+	if !ctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
+		statsTbl.RealtimeCount = int64(analyzeCount)
+	}
+
 	// 2. table row count from statistics is zero.
 	if statsTbl.RealtimeCount == 0 {
 		countIs0 = true

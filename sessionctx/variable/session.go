@@ -2048,6 +2048,12 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 	s.EnablePseudoForOutdatedStats = val
 }
 
+// ConsiderRealtimeStatsForEstimation means whether the estimation
+// logic need to consider modify count and the realtime row count.
+func (s *SessionVars) ConsiderRealtimeStatsForEstimation() bool {
+	return true
+}
+
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {

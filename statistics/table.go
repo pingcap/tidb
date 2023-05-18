@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -405,18 +406,23 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *To
 	return nil, nil, nil, nil, false
 }
 
-// GetColRowCount tries to get the row count of the a column if possible.
+// GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
-func (t *Table) GetColRowCount() float64 {
-	IDs := make([]int64, 0, len(t.Columns))
-	for id := range t.Columns {
-		IDs = append(IDs, id)
-	}
+func (coll *HistColl) GetAnalyzeRowCount() float64 {
+	IDs := maps.Keys(coll.Columns)
 	slices.Sort(IDs)
 	for _, id := range IDs {
-		col := t.Columns[id]
+		col := coll.Columns[id]
 		if col != nil && col.IsFullLoad() {
 			return col.TotalRowCount()
+		}
+	}
+	IDs = maps.Keys(coll.Indices)
+	slices.Sort(IDs)
+	for _, id := range IDs {
+		idx := coll.Indices[id]
+		if idx != nil && idx.IsFullLoad() {
+			return idx.TotalRowCount()
 		}
 	}
 	return -1
@@ -430,7 +436,7 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	}
 	var healthy int64
 	count := float64(t.RealtimeCount)
-	if histCount := t.GetColRowCount(); histCount > 0 {
+	if histCount := t.GetAnalyzeRowCount(); histCount > 0 {
 		count = histCount
 	}
 	if float64(t.ModifyCount) < count {
@@ -495,7 +501,7 @@ func (t *Table) IsInitialized() bool {
 
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
-	rowcount := t.GetColRowCount()
+	rowcount := t.GetAnalyzeRowCount()
 	if rowcount < 0 {
 		rowcount = float64(t.RealtimeCount)
 	}
