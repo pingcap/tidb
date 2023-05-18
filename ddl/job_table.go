@@ -179,12 +179,6 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 				// worker to pause the background reorganization workers.
 				return true, nil
 			}
-			if dbterror.ErrCannotPauseDDLJob.Equal(errs[0]) {
-				// The state could be 'cancelling' or 'rollback', as well as
-				// some corner state
-				return false, nil
-			}
-
 			// During upgrade, there are jobs that may not be paused because of
 			// some serious error. Then, we would not run it and just return
 			// unless the upgrade finished.
