@@ -19,10 +19,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
@@ -82,14 +85,8 @@ type FlushController interface {
 
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
-	sessPool *sess.Pool, jobID, indexID int64, serverID uint64) (*CheckpointManager, error) {
-	sessCtx, err := sessPool.Get()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer sessPool.Put(sessCtx)
-	ddlSess := sess.NewSession(sessCtx)
-	instanceAddr := getCurrentInstanceAddr(ctx, ddlSess, serverID)
+	sessPool *sess.Pool, jobID, indexID int64) (*CheckpointManager, error) {
+	instanceAddr := InitInstanceAddr()
 	cm := &CheckpointManager{
 		ctx:           ctx,
 		flushCtrl:     flushCtrl,
@@ -103,7 +100,7 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 		updaterExitCh: make(chan struct{}),
 		updaterCh:     make(chan *sync.WaitGroup),
 	}
-	err = cm.resumeCheckpoint(ddlSess)
+	err := cm.resumeCheckpoint()
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +112,13 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 	logutil.BgLogger().Info("[ddl-ingest] create checkpoint manager",
 		zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 	return cm, nil
+}
+
+// InitInstanceAddr returns the string concat with instance address and temp-dir.
+func InitInstanceAddr() string {
+	cfg := config.GetGlobalConfig()
+	dsn := net.JoinHostPort(cfg.AdvertiseAddress, strconv.Itoa(int(cfg.Port)))
+	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
 }
 
 // IsComplete checks if the task is complete.
@@ -259,7 +263,13 @@ const (
 	JobCheckpointVersion1       = 1
 )
 
-func (s *CheckpointManager) resumeCheckpoint(ddlSess *sess.Session) error {
+func (s *CheckpointManager) resumeCheckpoint() error {
+	sessCtx, err := s.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer s.sessPool.Put(sessCtx)
+	ddlSess := sess.NewSession(sessCtx)
 	return ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = %s;"
 		sql := fmt.Sprintf(template, s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
@@ -300,22 +310,6 @@ func (s *CheckpointManager) resumeCheckpoint(ddlSess *sess.Session) error {
 			zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID))
 		return nil
 	})
-}
-
-func getCurrentInstanceAddr(ctx context.Context, se *sess.Session, serverID uint64) string {
-	template := "select INSTANCE from INFORMATION_SCHEMA.CLUSTER_INFO where SERVER_ID = %d;"
-	sql := fmt.Sprintf(template, serverID)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
-	rows, err := se.Execute(ctx, sql, "get_instance_addr")
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] get current instance address failed", zap.Error(err))
-		return ""
-	}
-	if len(rows) == 0 || rows[0].IsNull(0) {
-		logutil.BgLogger().Warn("[ddl-ingest] get current instance address failed", zap.Error(err))
-		return ""
-	}
-	return rows[0].GetString(0)
 }
 
 func (s *CheckpointManager) updateCheckpoint() error {
