@@ -296,7 +296,6 @@ var Command2Str = map[byte]string{
 
 // DefaultSQLMode for GLOBAL_VARIABLES
 const DefaultSQLMode = "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"
-const DefaultSQLModeInt SQLMode = ModeOnlyFullGroupBy|ModeStrictTransTables|ModeNoZeroInDate|ModeNoZeroDate|ModeErrorForDivisionByZero|ModeNoAutoCreateUser|ModeNoEngineSubstitution
 
 // DefaultLengthOfMysqlTypes is the map for default physical length of MySQL data types.
 // See http://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
@@ -414,11 +413,11 @@ func (m SQLMode) HasAllowInvalidDatesMode() bool {
 }
 
 func DelSQLMode(ori SQLMode, del SQLMode) SQLMode {
-	return ori&(^del)
+	return ori & (^del)
 }
 
 func SetSQLMode(ori SQLMode, add SQLMode) SQLMode {
-	return ori|add
+	return ori | add
 }
 
 // consts for sql modes.
