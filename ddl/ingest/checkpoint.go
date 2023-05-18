@@ -221,9 +221,7 @@ func (s *CheckpointManager) Sync() {
 
 // Reset resets the checkpoint manager between two partitions.
 func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
-	logutil.BgLogger().Info("[ddl-ingest] reset checkpoint manager",
-		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.physicalID),
-		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
+	reset := false
 	s.mu.Lock()
 	if s.physicalID != newPhysicalID {
 		s.minKeySyncLocal = nil
@@ -232,8 +230,14 @@ func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 		s.physicalID = newPhysicalID
 		s.startKey = start
 		s.endKey = end
+		reset = true
 	}
 	s.mu.Unlock()
+	if reset {
+		logutil.BgLogger().Info("[ddl-ingest] reset checkpoint manager",
+			zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.physicalID),
+			zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
+	}
 }
 
 // JobReorgMeta is the metadata for a reorg job.
