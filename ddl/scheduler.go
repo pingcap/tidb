@@ -164,6 +164,25 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error 
 	if b.stepForImport {
 		return b.doFlushAndHandleError(ingest.FlushModeForceGlobal)
 	}
+	b.ctx = ctx
+
+	ser, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("distAddIndex/%d/%s:%d", b.job.ID, ser.IP, ser.Port)
+	response, err := d.etcdCli.Get(ctx, path)
+	if err != nil {
+		return err
+	}
+	if len(response.Kvs) > 0 {
+		cnt, err := strconv.Atoi(string(response.Kvs[0].Value))
+		if err != nil {
+			return err
+		}
+		b.totalRowCnt = int64(cnt)
+	}
+
 	b.done = make(chan struct{})
 	go b.UpdateStatLoop()
 	return nil
