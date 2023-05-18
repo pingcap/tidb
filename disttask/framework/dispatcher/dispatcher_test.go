@@ -98,8 +98,7 @@ func TestGetInstance(t *testing.T) {
 	instanceID := dispatcher.GetInstanceForSubtask(serverNodes, 0)
 	require.NoError(t, err)
 	require.Equal(t, serverIDs[0], instanceID)
-	instanceID, err = dispatcher.GetEligibleInstance(serverNodes, 1)
-	require.NoError(t, err)
+	instanceID = dispatcher.GetInstanceForSubtask(serverNodes, 1)
 	if instanceID != serverIDs[0] && instanceID != serverIDs[1] {
 		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
 	}

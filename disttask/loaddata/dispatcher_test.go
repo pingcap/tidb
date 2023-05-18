@@ -71,8 +71,8 @@ func (s *loadDataSuite) TestFlowHandleGetEligibleInstances() {
 	}
 	s.Equal(serverInfoMap, resultMap)
 
-	gTask.Meta = []byte(`{"EligibleInstances":[{"ddl_id": "xxx"}]}`)
+	gTask.Meta = []byte(`{"EligibleInstances":[{"ip": "1.1.1.1", "listening_port": 4000}]}`)
 	eligibleInstances, err = h.GetEligibleInstances(context.Background(), gTask)
 	s.NoError(err)
-	s.Equal([]*infosync.ServerInfo{{ID: "xxx"}}, eligibleInstances)
+	s.Equal([]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}}, eligibleInstances)
 }
