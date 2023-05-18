@@ -163,6 +163,7 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 		LoadedRowCnt: uint64(dataKVCount),
 		LastInsertID: sharedVars.Progress.LastInsertID.Load(),
 	}
+	s.sharedVars.Delete(subtaskMeta.ID)
 	return json.Marshal(subtaskMeta)
 }
 
