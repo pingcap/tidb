@@ -371,6 +371,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		}
 
 		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		cfg.TargetAZ, err = flags.GetString(flagTargetAZ)
 		if err != nil {
 			return errors.Trace(err)
