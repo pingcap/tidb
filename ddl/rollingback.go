@@ -75,6 +75,7 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		return ver, errors.Trace(err1)
 	}
 	job.State = model.JobStateRollingback
+	err = completeErr(err, indexInfo)
 	return ver, errors.Trace(err)
 }
 
@@ -371,8 +372,6 @@ func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 }
 
 func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
-	job.State = model.JobStatePaused
-
 	if needNotifyAndStopReorgWorker(job) {
 		logutil.Logger(w.logCtx).Info("[DDL] pausing the DDL job", zap.String("job", job.String()))
 		d.notifyReorgWorkerJobStateChange(job)

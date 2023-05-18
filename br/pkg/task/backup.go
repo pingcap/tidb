@@ -634,9 +634,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		defer func() {
 			if !gcSafePointKeeperRemovable {
 				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint(ctx)
+				client.WaitForFinishCheckpoint(ctx, true)
 			} else {
 				log.Info("start to remove checkpoint data for backup")
+				client.WaitForFinishCheckpoint(ctx, false)
 				if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
 					log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
 				} else {
