@@ -235,7 +235,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		}
 	}()
 	volumeIDMap, err = ec2Session.CreateVolumes(h.metaInfo,
-		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput)
+		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput, h.cfg.TargetAZ)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
