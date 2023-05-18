@@ -810,7 +810,7 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 }
 
 // Kill implements the SessionManager interface.
-func (s *Server) Kill(connectionID uint64, query bool) {
+func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
@@ -827,7 +827,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		// this, it will end the dispatch loop and exit.
 		conn.setStatus(connStatusWaitShutdown)
 	}
-	killQuery(conn)
+	killQuery(conn, maxExecutionTime)
 }
 
 // UpdateTLSConfig implements the SessionManager interface.
@@ -839,9 +839,13 @@ func (s *Server) getTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
-func killQuery(conn *clientConn) {
+func killQuery(conn *clientConn, maxExecutionTime bool) {
 	sessVars := conn.ctx.GetSessionVars()
-	atomic.StoreUint32(&sessVars.Killed, 1)
+	if maxExecutionTime {
+		atomic.StoreUint32(&sessVars.Killed, 2)
+	} else {
+		atomic.StoreUint32(&sessVars.Killed, 1)
+	}
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
@@ -879,7 +883,7 @@ func (s *Server) KillAllConnections() {
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
 		}
-		killQuery(conn)
+		killQuery(conn, false)
 	}
 
 	s.KillSysProcesses()
@@ -1031,6 +1035,6 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	}
 	s.rwlock.RUnlock()
 	for _, id := range connIDs {
-		s.Kill(id, false)
+		s.Kill(id, false, false)
 	}
 }
