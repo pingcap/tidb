@@ -19,13 +19,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
@@ -82,8 +79,14 @@ type FlushController interface {
 
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
-	sessPool *sess.Pool, jobID, indexID int64) (*CheckpointManager, error) {
-	instanceAddr := InitInstanceAddr()
+	sessPool *sess.Pool, jobID, indexID int64, serverID uint64) (*CheckpointManager, error) {
+	sessCtx, err := sessPool.Get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer sessPool.Put(sessCtx)
+	ddlSess := sess.NewSession(sessCtx)
+	instanceAddr := getCurrentInstanceAddr(ctx, ddlSess, serverID)
 	cm := &CheckpointManager{
 		ctx:           ctx,
 		flushCtrl:     flushCtrl,
@@ -97,7 +100,7 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 		updaterExitCh: make(chan struct{}),
 		updaterCh:     make(chan *sync.WaitGroup),
 	}
-	err := cm.resumeCheckpoint()
+	err = cm.resumeCheckpoint(ddlSess)
 	if err != nil {
 		return nil, err
 	}
@@ -109,13 +112,6 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 	logutil.BgLogger().Info("[ddl-ingest] create checkpoint manager",
 		zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 	return cm, nil
-}
-
-// InitInstanceAddr returns the string concat with instance address and temp-dir.
-func InitInstanceAddr() string {
-	cfg := config.GetGlobalConfig()
-	dsn := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
-	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
 }
 
 // IsComplete checks if the task is complete.
@@ -171,7 +167,16 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	if !flushed || err != nil {
 		return err
 	}
-	// Progress the minimum synced key.
+	s.progressLocalSyncMinKey()
+	if imported && s.minKeySyncGlobal.Cmp(s.minKeySyncLocal) != 0 {
+		s.minKeySyncGlobal = s.minKeySyncLocal
+		s.globalCnt = s.localCnt
+		s.dirty = true
+	}
+	return nil
+}
+
+func (s *CheckpointManager) progressLocalSyncMinKey() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for {
@@ -185,12 +190,6 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 		delete(s.checkpoints, s.minTaskIDSynced)
 		s.dirty = true
 	}
-	if imported && s.minKeySyncGlobal.Cmp(s.minKeySyncLocal) != 0 {
-		s.minKeySyncGlobal = s.minKeySyncLocal
-		s.globalCnt = s.localCnt
-		s.dirty = true
-	}
-	return nil
 }
 
 // Close closes the checkpoint manager.
@@ -203,6 +202,11 @@ func (s *CheckpointManager) Close() {
 
 // Sync syncs the checkpoint.
 func (s *CheckpointManager) Sync() {
+	_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] flush local engine failed", zap.Error(err))
+	}
+	s.progressLocalSyncMinKey()
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	s.updaterCh <- &wg
@@ -211,22 +215,15 @@ func (s *CheckpointManager) Sync() {
 
 // Reset resets the checkpoint manager between two partitions.
 func (s *CheckpointManager) Reset(newPhysicalID int64) {
-	if s.physicalID != 0 {
-		_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal)
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl-ingest] flush local engine failed", zap.Error(err))
-		}
-	}
+	logutil.BgLogger().Info("[ddl-ingest] reset checkpoint manager",
+		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.physicalID),
+		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
 	s.mu.Lock()
 	if s.physicalID != newPhysicalID {
 		s.minKeySyncLocal = nil
 		s.minKeySyncGlobal = nil
 		s.minTaskIDSynced = 0
 		s.physicalID = newPhysicalID
-		for id, cp := range s.checkpoints {
-			s.localCnt += cp.totalKeys
-			delete(s.checkpoints, id)
-		}
 	}
 	s.mu.Unlock()
 }
@@ -253,13 +250,7 @@ const (
 	JobCheckpointVersion1       = 1
 )
 
-func (s *CheckpointManager) resumeCheckpoint() error {
-	sessCtx, err := s.sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer s.sessPool.Put(sessCtx)
-	ddlSess := sess.NewSession(sessCtx)
+func (s *CheckpointManager) resumeCheckpoint(ddlSess *sess.Session) error {
 	return ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = %s;"
 		sql := fmt.Sprintf(template, s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
@@ -298,6 +289,22 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 			zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID))
 		return nil
 	})
+}
+
+func getCurrentInstanceAddr(ctx context.Context, se *sess.Session, serverID uint64) string {
+	template := "select INSTANCE from INFORMATION_SCHEMA.CLUSTER_INFO where SERVER_ID = %d;"
+	sql := fmt.Sprintf(template, serverID)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
+	rows, err := se.Execute(ctx, sql, "get_instance_addr")
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] get current instance address failed", zap.Error(err))
+		return ""
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		logutil.BgLogger().Warn("[ddl-ingest] get current instance address failed", zap.Error(err))
+		return ""
+	}
+	return rows[0].GetString(0)
 }
 
 func (s *CheckpointManager) updateCheckpoint() error {

@@ -331,6 +331,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		b.writerPool.ReleaseAndWait()
 	}
 	if b.checkpointMgr != nil {
+		b.checkpointMgr.Sync()
 		// Get the latest status after all workers are closed so that the result is more accurate.
 		cnt, nextKey := b.checkpointMgr.Status()
 		b.resultCh <- &backfillResult{

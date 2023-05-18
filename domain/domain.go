@@ -1122,6 +1122,7 @@ func (do *Domain) Init(
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
+		ddl.WithServerIDGetter(do.ServerID),
 	)
 
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
