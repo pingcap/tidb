@@ -32,12 +32,15 @@ import (
 
 // CheckpointManager is a checkpoint manager implementation that used by non-distributed reorganization.
 type CheckpointManager struct {
-	ctx        context.Context
-	flushCtrl  FlushController
-	sessPool   *sess.Pool
-	jobID      int64
-	indexID    int64
+	ctx       context.Context
+	flushCtrl FlushController
+	sessPool  *sess.Pool
+	jobID     int64
+	indexID   int64
+
 	physicalID int64
+	startKey   kv.Key
+	endKey     kv.Key
 
 	// Derived and unchanged after the initialization.
 	instanceAddr     string
@@ -213,7 +216,7 @@ func (s *CheckpointManager) Sync() {
 }
 
 // Reset resets the checkpoint manager between two partitions.
-func (s *CheckpointManager) Reset(newPhysicalID int64) {
+func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	logutil.BgLogger().Info("[ddl-ingest] reset checkpoint manager",
 		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.physicalID),
 		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
@@ -223,6 +226,8 @@ func (s *CheckpointManager) Reset(newPhysicalID int64) {
 		s.minKeySyncGlobal = nil
 		s.minTaskIDSynced = 0
 		s.physicalID = newPhysicalID
+		s.startKey = start
+		s.endKey = end
 	}
 	s.mu.Unlock()
 }
@@ -239,8 +244,12 @@ type ReorgCheckpoint struct {
 	GlobalSyncKey  kv.Key `json:"global_sync_key"`
 	GlobalKeyCount int    `json:"global_key_count"`
 	InstanceAddr   string `json:"instance_addr"`
-	PhysicalID     int64  `json:"physical_id"`
-	Version        int64  `json:"version"`
+
+	PhysicalID int64  `json:"physical_id"`
+	StartKey   kv.Key `json:"start_key"`
+	EndKey     kv.Key `json:"end_key"`
+
+	Version int64 `json:"version"`
 }
 
 // JobCheckpointVersionCurrent is the current version of the checkpoint.
@@ -275,6 +284,8 @@ func (s *CheckpointManager) resumeCheckpoint(ddlSess *sess.Session) error {
 				s.minKeySyncLocal = cp.LocalSyncKey
 				s.localCnt = cp.LocalKeyCount
 				s.physicalID = cp.PhysicalID
+				s.startKey = cp.StartKey
+				s.endKey = cp.EndKey
 			}
 			logutil.BgLogger().Info("[ddl-ingest] resume checkpoint",
 				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
@@ -335,6 +346,8 @@ func (s *CheckpointManager) updateCheckpoint() error {
 			GlobalKeyCount: currentGlobalCnt,
 			InstanceAddr:   s.instanceAddr,
 			PhysicalID:     s.physicalID,
+			StartKey:       s.startKey,
+			EndKey:         s.endKey,
 			Version:        JobCheckpointVersionCurrent,
 		}
 		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})
