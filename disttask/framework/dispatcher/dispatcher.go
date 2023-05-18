@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
@@ -435,7 +436,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 // we assign the subtask to the instance in a round-robin way.
 func GetInstanceForSubtask(serverNodes []*infosync.ServerInfo, taskIdx int) string {
 	pos := taskIdx % len(serverNodes)
-	return serverNodes[pos].ID
+	return disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
@@ -471,11 +472,21 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 	}
 	ids := make([]string, 0, len(schedulerIDs))
 	for _, id := range schedulerIDs {
-		if _, ok := serverInfos[id]; ok {
+		if ok := matchServerInfo(serverInfos, id); ok {
 			ids = append(ids, id)
 		}
 	}
 	return ids, nil
+}
+
+func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
+	for _, serverInfo := range serverInfos {
+		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port)
+		if serverID == schedulerID {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error) {

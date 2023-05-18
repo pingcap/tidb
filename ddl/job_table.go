@@ -266,16 +266,11 @@ func (d *ddl) startDispatchLoop() {
 		logutil.BgLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
 	defer ticker.Stop()
-	isFirst := true
 	isOnce := false
 	for {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
-		if err := d.needCheckClusterState(isFirst || isOnce); err != nil {
-			continue
-		}
-		isFirst = false
 		if !d.isOwner() {
 			isOnce = true
 			d.once.Store(true)
@@ -292,12 +287,11 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Second)
 				continue
 			}
-		case _, ok := <-d.stateSyncer.WatchChan():
-			if err := d.doCheckClusterState(!ok); err != nil {
-				continue
-			}
 		case <-d.ctx.Done():
 			return
+		}
+		if err := d.needCheckClusterState(isOnce); err != nil {
+			continue
 		}
 		isOnce = false
 		d.loadDDLJobAndRun(se, d.generalDDLWorkerPool, d.getGeneralJob)
