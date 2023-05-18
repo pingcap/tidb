@@ -364,8 +364,8 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 				} else {
 					req.SetAvailabilityZone(targetAZ)
 				}
+				snapshotIds := make([]*string, 0)
 
-				snapshotIds := make([]*string, 1)
 				snapshotIds = append(snapshotIds, &oldVol.SnapshotID)
 				resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapshotIds})
 				if err != nil {
