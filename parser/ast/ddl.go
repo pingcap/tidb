@@ -525,10 +525,10 @@ const (
 )
 
 var (
-	invalidOptionForGeneratedColumn = map[ColumnOptionType]struct{}{
-		ColumnOptionAutoIncrement: {},
-		ColumnOptionOnUpdate:      {},
-		ColumnOptionDefaultValue:  {},
+	invalidOptionForGeneratedColumn = map[ColumnOptionType]string{
+		ColumnOptionAutoIncrement: "AUTO_INCREMENT",
+		ColumnOptionOnUpdate:      "ON UPDATE",
+		ColumnOptionDefaultValue:  "DEFAULT",
 	}
 )
 
@@ -1007,17 +1007,22 @@ func (n *ColumnDef) Accept(v Visitor) (Node, bool) {
 // For example, generated column definitions that contain such
 // column options as `ON UPDATE`, `AUTO_INCREMENT`, `DEFAULT`
 // are illegal.
-func (n *ColumnDef) Validate() bool {
+func (n *ColumnDef) Validate() error {
 	generatedCol := false
-	illegalOpt4gc := false
+	var illegalOpt4gc string
 	for _, opt := range n.Options {
 		if opt.Tp == ColumnOptionGenerated {
 			generatedCol = true
 		}
-		_, found := invalidOptionForGeneratedColumn[opt.Tp]
-		illegalOpt4gc = illegalOpt4gc || found
+		msg, found := invalidOptionForGeneratedColumn[opt.Tp]
+		if found {
+			illegalOpt4gc = msg
+		}
 	}
-	return !(generatedCol && illegalOpt4gc)
+	if generatedCol && illegalOpt4gc != "" {
+		return ErrWrongUsage.GenWithStackByArgs(illegalOpt4gc, "generated column")
+	}
+	return nil
 }
 
 type TemporaryKeyword int
@@ -2127,9 +2132,6 @@ const (
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
-	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
-		return nil
-	}
 	fn := func() error {
 		switch n.Tp {
 		case ResourceRURate:
@@ -3691,6 +3693,8 @@ var (
 	ErrTooManyValues                        = terror.ClassDDL.NewStd(mysql.ErrTooManyValues)
 	ErrWrongPartitionTypeExpectedSystemTime = terror.ClassDDL.NewStd(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 	ErrUnknownCharacterSet                  = terror.ClassDDL.NewStd(mysql.ErrUnknownCharacterSet)
+	ErrCoalescePartitionNoPartition         = terror.ClassDDL.NewStd(mysql.ErrCoalescePartitionNoPartition)
+	ErrWrongUsage                           = terror.ClassDDL.NewStd(mysql.ErrWrongUsage)
 )
 
 type SubPartitionDefinition struct {

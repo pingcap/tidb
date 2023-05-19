@@ -30,6 +30,7 @@ go_test(
         "testdata/v2-enc/backupmeta.schema.000000001",
     ],
     flaky = True,
+    shard_count = 4,
     deps = [
         ":show",
         "//testkit",

@@ -799,6 +799,7 @@ var funcs = map[string]functionClass{
 	ast.UUIDToBin:       &uuidToBinFunctionClass{baseFunctionClass{ast.UUIDToBin, 1, 2}},
 	ast.BinToUUID:       &binToUUIDFunctionClass{baseFunctionClass{ast.BinToUUID, 1, 2}},
 	ast.TiDBShard:       &tidbShardFunctionClass{baseFunctionClass{ast.TiDBShard, 1, 1}},
+	ast.TiDBRowChecksum: &tidbRowChecksumFunctionClass{baseFunctionClass{ast.TiDBRowChecksum, 0, 0}},
 
 	ast.GetLock:     &lockFunctionClass{baseFunctionClass{ast.GetLock, 2, 2}},
 	ast.ReleaseLock: &releaseLockFunctionClass{baseFunctionClass{ast.ReleaseLock, 1, 1}},
@@ -902,6 +903,7 @@ var funcs = map[string]functionClass{
 	ast.TiDBDecodePlan:       &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
 	ast.TiDBDecodeBinaryPlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodeBinaryPlan, 1, 1}},
 	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
+	ast.TiDBEncodeSQLDigest:  &tidbEncodeSQLDigestFunctionClass{baseFunctionClass{ast.TiDBEncodeSQLDigest, 1, 1}},
 
 	// TiDB Sequence function.
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},

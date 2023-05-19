@@ -1,51 +1,34 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "loaddata",
     srcs = [
         "dispatcher.go",
+        "job.go",
         "proto.go",
+        "scheduler.go",
+        "subtask_executor.go",
         "wrapper.go",
     ],
     importpath = "github.com/pingcap/tidb/disttask/loaddata",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/kv",
+        "//br/pkg/lightning/checkpoints",
+        "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/mydump",
-        "//br/pkg/storage",
+        "//br/pkg/lightning/verification",
         "//disttask/framework/dispatcher",
         "//disttask/framework/proto",
+        "//disttask/framework/scheduler",
+        "//disttask/framework/storage",
+        "//executor/asyncloaddata",
         "//executor/importer",
-        "//parser/model",
-        "//parser/mysql",
-        "//util/intest",
+        "//table/tables",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
-        "@org_golang_x_exp//maps",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "loaddata_test",
-    timeout = "short",
-    srcs = [
-        "dispatcher_test.go",
-        "wrapper_test.go",
-    ],
-    data = glob(["testdata/**"]),
-    embed = [":loaddata"],
-    flaky = True,
-    shard_count = 4,
-    deps = [
-        "//br/pkg/lightning/config",
-        "//br/pkg/lightning/mydump",
-        "//disttask/framework/dispatcher",
-        "//disttask/framework/proto",
-        "//executor/importer",
-        "//parser/model",
-        "@com_github_stretchr_testify//mock",
-        "@com_github_stretchr_testify//require",
     ],
 )

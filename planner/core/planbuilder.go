@@ -291,7 +291,7 @@ func (info *tableHintInfo) ifPreferTiKV(tableName *hintTableInfo) *hintTableInfo
 // Which it joins on with depend on sequence of traverse
 // and without reorder, user might adjust themselves.
 // This is similar to MySQL hints.
-func (info *tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []hintTableInfo) bool {
+func (*tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []hintTableInfo) bool {
 	hintMatched := false
 	for _, table := range tables {
 		for i, curEntry := range hintTables {
@@ -696,7 +696,7 @@ type PlanBuilderOpt interface {
 type PlanBuilderOptNoExecution struct{}
 
 // Apply implements the interface PlanBuilderOpt.
-func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
+func (PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 	builder.disableSubQueryPreprocessing = true
 }
 
@@ -704,7 +704,7 @@ func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 type PlanBuilderOptAllowCastArray struct{}
 
 // Apply implements the interface PlanBuilderOpt.
-func (p PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
+func (PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
 	builder.allowBuildCastArray = true
 }
 
@@ -867,7 +867,7 @@ func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) 
 	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
 }
 
-func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
+func (*PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
 	exe := &Change{
 		ChangeStmt: v,
 	}
@@ -1167,7 +1167,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 }
 
 // detectAggInExprNode detects an aggregate function in its exprs.
-func (b *PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
+func (*PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
 	for _, expr := range exprs {
 		if ast.HasAggFlag(expr) {
 			return true
@@ -1177,7 +1177,7 @@ func (b *PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
-func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
+func (*PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
 	}
@@ -1204,7 +1204,7 @@ func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
+func (*PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	for _, f := range sel.Fields.Fields {
 		if ast.HasWindowFlag(f.Expr) {
 			return true
@@ -1357,6 +1357,16 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		}
 	}
 
+	// consider hypo-indexes
+	hypoIndexes := ctx.GetSessionVars().HypoIndexes
+	if hypoIndexes != nil {
+		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][tblName.L] != nil {
+			for _, index := range hypoIndexes[dbName.L][tblName.L] {
+				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+			}
+		}
+	}
+
 	hasScanHint, hasUseOrForce := false, false
 	available := make([]*util.AccessPath, 0, len(publicPaths))
 	ignored := make([]*util.AccessPath, 0, len(publicPaths))
@@ -1477,14 +1487,22 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	if len(paths) == 0 {
 		helpMsg := ""
 		if engineVals == "tiflash" {
-			helpMsg = ". Please check tiflash replica or ensure the query is readonly"
+			helpMsg = ". Please check tiflash replica"
+			if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+				helpMsg += " or check if the query is not readonly and sql mode is strict"
+			}
 		}
 		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
 			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
 	}
 	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-			fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
+		if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because the query is not readonly and sql mode is strict.")
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
+		}
 	}
 	return paths, err
 }
@@ -1628,6 +1646,14 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	case ast.AdminCancelDDLJobs:
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.setSchemaAndNames(buildCancelDDLJobsFields())
+		ret = p
+	case ast.AdminPauseDDLJobs:
+		p := &PauseDDLJobs{JobIDs: as.JobIDs}
+		p.setSchemaAndNames(buildPauseDDLJobsFields())
+		ret = p
+	case ast.AdminResumeDDLJobs:
+		p := &ResumeDDLJobs{JobIDs: as.JobIDs}
+		p.setSchemaAndNames(buildResumeDDLJobsFields())
 		ret = p
 	case ast.AdminCheckIndexRange:
 		schema, names, err := b.buildCheckIndexSchema(as.Tables[0], as.Index)
@@ -2137,7 +2163,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ast.TableName, cols *calcOnceM
 		}
 		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 		for _, idx := range tblInfo.Indices {
-			if idx.State != model.StatePublic {
+			if idx.State != model.StatePublic || idx.MVIndex {
 				continue
 			}
 			for _, idxCol := range idx.Columns {
@@ -3102,12 +3128,24 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
-func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
+func buildCommandOnDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(2)
 	schema.Append(buildColumnWithName("", "JOB_ID", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "RESULT", mysql.TypeVarchar, 128))
 
 	return schema.col2Schema(), schema.names
+}
+
+func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
+}
+
+func buildPauseDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
+}
+
+func buildResumeDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
 }
 
 func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {
@@ -3116,16 +3154,22 @@ func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(len(names))
 	for i := range names {
 		fLen, _ := mysql.GetDefaultFieldLengthAndDecimal(ftypes[i])
+		if ftypes[i] == mysql.TypeVarchar {
+			// the default varchar length is `5`, which might be too short for us.
+			fLen = 255
+		}
 		schema.Append(buildColumnWithName("", names[i], ftypes[i], fLen))
 	}
 	return schema.col2Schema(), schema.names
 }
 
-func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
-	if kind == ast.BRIEKindShowBackupMeta {
-		return buildShowBackupMetaSchema()
-	}
+func buildShowBackupQuerySchema() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "Query", mysql.TypeVarchar, 4096))
+	return schema.col2Schema(), schema.names
+}
 
+func buildBackupRestoreSchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	datetimeSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDatetime)
 
@@ -3139,6 +3183,20 @@ func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
 	schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
 	return schema.col2Schema(), schema.names
+}
+
+func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
+	switch kind {
+	case ast.BRIEKindShowBackupMeta:
+		return buildShowBackupMetaSchema()
+	case ast.BRIEKindShowQuery:
+		return buildShowBackupQuerySchema()
+	case ast.BRIEKindBackup, ast.BRIEKindRestore:
+		return buildBackupRestoreSchema(kind)
+	default:
+		s := newColumnsWithNames(0)
+		return s.col2Schema(), s.names
+	}
 }
 
 func buildCalibrateResourceSchema() (*expression.Schema, types.NameSlice) {
@@ -3891,7 +3949,7 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 	return onDupColSet, nil
 }
 
-func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column, err error) {
+func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column, err error) {
 	if len(insertStmt.Columns) > 0 {
 		// This branch is for the following scenarios:
 		// 1. `INSERT INTO tbl_name (col_name [, col_name] ...) {VALUES | VALUE} (value_list) [, (value_list)] ...`,
@@ -4085,7 +4143,7 @@ func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
 	}
 }
 
-func (c *colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
+func (*colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
 }
 
@@ -4247,6 +4305,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
 		Options:            options,
+		Stmt:               ld.Text(),
 	}.Init(b.ctx)
 	user := b.ctx.GetSessionVars().User
 	var insertErr, deleteErr error
@@ -4284,22 +4343,22 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	return p, nil
 }
 
-func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
+func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	p := &LoadStats{Path: ld.Path}
 	return p
 }
 
-func (b *PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
+func (*PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
 	p := &LockStats{Tables: ld.Tables}
 	return p
 }
 
-func (b *PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
+func (*PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
 	p := &UnlockStats{Tables: ld.Tables}
 	return p
 }
 
-func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
+func (*PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 	p := &IndexAdvise{
 		IsLocal:        node.IsLocal,
 		Path:           node.Path,
@@ -4880,12 +4939,14 @@ const (
 
 	// TracePlanTargetEstimation indicates CE trace target for optimizer trace.
 	TracePlanTargetEstimation = "estimation"
+	// TracePlanTargetDebug indicates debug trace target for optimizer trace.
+	TracePlanTargetDebug = "debug"
 )
 
 // buildTrace builds a trace plan. Inside this method, it first optimize the
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
-func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
+func (*PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	p := &Trace{
 		StmtNode:             trace.Stmt,
 		Format:               trace.Format,
@@ -4894,19 +4955,24 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	}
 	// TODO: forbid trace plan if the statement isn't select read-only statement
 	if trace.TracePlan {
-		if trace.TracePlanTarget != "" && trace.TracePlanTarget != TracePlanTargetEstimation {
-			return nil, errors.New("trace plan target should only be 'estimation'")
-		}
-		if trace.TracePlanTarget == TracePlanTargetEstimation {
-			schema := newColumnsWithNames(1)
-			schema.Append(buildColumnWithName("", "CE_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
-			p.SetSchema(schema.col2Schema())
-			p.names = schema.names
-		} else {
+		switch trace.TracePlanTarget {
+		case "":
 			schema := newColumnsWithNames(1)
 			schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
 			p.SetSchema(schema.col2Schema())
 			p.names = schema.names
+		case TracePlanTargetEstimation:
+			schema := newColumnsWithNames(1)
+			schema.Append(buildColumnWithName("", "CE_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
+			p.SetSchema(schema.col2Schema())
+			p.names = schema.names
+		case TracePlanTargetDebug:
+			schema := newColumnsWithNames(1)
+			schema.Append(buildColumnWithName("", "Debug_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
+			p.SetSchema(schema.col2Schema())
+			p.names = schema.names
+		default:
+			return nil, errors.New("trace plan target should only be 'estimation'")
 		}
 		return p, nil
 	}
@@ -5079,7 +5145,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
-	case ast.ShowProcedureStatus:
+	case ast.ShowProcedureStatus, ast.ShowFunctionStatus:
 		return buildShowProcedureSchema()
 	case ast.ShowTriggers:
 		return buildShowTriggerSchema()
@@ -5240,8 +5306,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}
 	case ast.ShowBackups, ast.ShowRestores:
-		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
+		names = []string{"Id", "Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowPlacementLabels:
 		names = []string{"Key", "Values"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeJSON}
@@ -5254,11 +5320,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowLoadDataJobs:
 		names = []string{"Job_ID", "Create_Time", "Start_Time", "End_Time",
 			"Data_Source", "Target_Table", "Import_Mode", "Created_By",
-			"Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+			"Job_State", "Job_Status", "Source_File_Size", "Imported_Rows",
 			"Result_Code", "Result_Message"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
 			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
-			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeString}
 	}
 
@@ -5285,7 +5351,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	return
 }
 
-func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
+func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 	schema := newColumnsWithNames(1)

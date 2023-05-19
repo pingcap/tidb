@@ -675,10 +675,17 @@ func buildBatchCopTasksConsistentHash(
 		if err != nil {
 			return nil, err
 		}
+		storesBefFilter := len(storesStr)
 		storesStr = filterAliveStoresStr(ctx, storesStr, ttl, kvStore)
 		logutil.BgLogger().Info("topo filter alive", zap.Any("topo", storesStr))
 		if len(storesStr) == 0 {
-			retErr := errors.New("Cannot find proper topo from AutoScaler")
+			errMsg := "Cannot find proper topo to dispatch MPPTask: "
+			if storesBefFilter == 0 {
+				errMsg += "topo from AutoScaler is empty"
+			} else {
+				errMsg += "detect aliveness failed, no alive ComputeNode"
+			}
+			retErr := errors.New(errMsg)
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because FetchAndGetTopo return empty topo", zap.Int("retryNum", retryNum))
 			if intest.InTest && retryNum > 3 {
 				return nil, retErr

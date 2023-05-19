@@ -45,6 +45,9 @@ var (
 		restoreCtx := format.NewRestoreCtx(format.RestoreForNonPrepPlanCache|format.RestoreStringWithoutCharset|format.RestoreStringSingleQuotes|format.RestoreNameBackQuotes, buf)
 		return restoreCtx
 	}}
+	paramMakerPool = sync.Pool{New: func() interface{} {
+		return ast.NewParamMarkerExpr(0)
+	}}
 )
 
 // paramReplacer is an ast.Visitor that replaces all values with `?` and collects them.
@@ -72,8 +75,9 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *driver.ValueExpr:
 		pr.params = append(pr.params, n)
-		param := ast.NewParamMarkerExpr(len(pr.params) - 1)      // offset is used as order in non-prepared plan cache.
-		param.(*driver.ParamMarkerExpr).Datum = *n.Datum.Clone() // init the ParamMakerExpr's Datum
+		param := paramMakerPool.Get().(*driver.ParamMarkerExpr)
+		param.Offset = len(pr.params) - 1 // offset is used as order in non-prepared plan cache.
+		n.Datum.Copy(&param.Datum)        // init the ParamMakerExpr's Datum
 		return param, true
 	}
 	return in, false
@@ -83,15 +87,24 @@ func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-func (pr *paramReplacer) Reset() { pr.params = nil }
+func (pr *paramReplacer) Reset() {
+	pr.params = make([]*driver.ValueExpr, 0, 4)
+}
 
 // GetParamSQLFromAST returns the parameterized SQL of this AST.
 // NOTICE: this function does not modify the original AST.
-func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
+// paramVals are copied from this AST.
+func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, paramVals []types.Datum, err error) {
+	var params []*driver.ValueExpr
 	paramSQL, params, err = ParameterizeAST(ctx, sctx, stmt)
 	if err != nil {
 		return "", nil, err
 	}
+	paramVals = make([]types.Datum, len(params))
+	for i, p := range params {
+		p.Datum.Copy(&paramVals[i])
+	}
+
 	err = RestoreASTWithParams(ctx, sctx, stmt, params)
 	return
 }
@@ -129,7 +142,9 @@ func (pr *paramRestorer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			return nil, true
 		}
 		// offset is used as order in non-prepared plan cache.
-		return pr.params[n.Offset], true
+		offset := n.Offset
+		paramMakerPool.Put(n)
+		return pr.params[offset], true
 	}
 	if pr.err != nil {
 		return nil, true
@@ -159,13 +174,14 @@ func RestoreASTWithParams(ctx context.Context, _ sessionctx.Context, stmt ast.St
 }
 
 // Params2Expressions converts these parameters to an expression list.
-func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
+func Params2Expressions(params []types.Datum) []expression.Expression {
 	exprs := make([]expression.Expression, 0, len(params))
 	for _, p := range params {
+		// TODO: add a sync.Pool for type.FieldType and expression.Constant here.
 		tp := new(types.FieldType)
-		types.InferParamTypeFromDatum(&p.Datum, tp)
+		types.InferParamTypeFromDatum(&p, tp)
 		exprs = append(exprs, &expression.Constant{
-			Value:   p.Datum,
+			Value:   p,
 			RetType: tp,
 		})
 	}

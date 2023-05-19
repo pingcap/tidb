@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/expression"
@@ -38,6 +39,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -113,8 +115,11 @@ type planInfo struct {
 type LoadDataWorker struct {
 	UserSctx sessionctx.Context
 
+	importPlan *importer.Plan
 	controller *importer.LoadDataController
 	planInfo   planInfo
+	// only use in distributed load data
+	stmt string
 
 	table    table.Table
 	progress *asyncloaddata.Progress
@@ -134,7 +139,12 @@ func NewLoadDataWorker(
 	plan *plannercore.LoadData,
 	tbl table.Table,
 ) (w *LoadDataWorker, err error) {
-	controller, err := importer.NewLoadDataController(userSctx, plan, tbl)
+	importPlan, err := importer.NewPlan(userSctx, plan, tbl)
+	if err != nil {
+		return nil, err
+	}
+	astArgs := importer.ASTArgsFromPlan(plan)
+	controller, err := importer.NewLoadDataController(importPlan, tbl, astArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -146,13 +156,15 @@ func NewLoadDataWorker(
 	loadDataWorker := &LoadDataWorker{
 		UserSctx:   userSctx,
 		table:      tbl,
+		importPlan: importPlan,
+		stmt:       plan.Stmt,
 		controller: controller,
 		planInfo: planInfo{
 			ID:          plan.ID(),
 			Columns:     plan.Columns,
 			GenColExprs: plan.GenCols.Exprs,
 		},
-		progress: asyncloaddata.NewProgress(),
+		progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
 	}
 	return loadDataWorker, nil
 }
@@ -184,6 +196,9 @@ func (e *LoadDataWorker) load(ctx context.Context, r io.ReadCloser) (jboID int64
 	}()
 
 	sqlExec := s.(sqlexec.SQLExecutor)
+	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
+		return 0, err2
+	}
 
 	job, err2 := asyncloaddata.CreateLoadDataJob(
 		ctx,
@@ -232,9 +247,9 @@ func (e *LoadDataWorker) importJob(ctx context.Context, jobImporter importer.Job
 	param := jobImporter.Param()
 	job, group, groupCtx, done := param.Job, param.Group, param.GroupCtx, param.Done
 
-	var msg string
+	var result importer.JobImportResult
 	defer func() {
-		job.OnComplete(err, msg)
+		job.OnComplete(err, result.Msg)
 	}()
 
 	err = job.StartJob(ctx)
@@ -244,12 +259,25 @@ func (e *LoadDataWorker) importJob(ctx context.Context, jobImporter importer.Job
 
 	// UpdateJobProgress goroutine.
 	group.Go(func() error {
+		// ProgressUpdateRoutineFn must be run in this group, since on job cancel/drop, we depend on it to trigger
+		// the cancel of the other routines in this group.
 		return job.ProgressUpdateRoutineFn(ctx, done, groupCtx.Done(), e.progress)
 	})
 	jobImporter.Import()
 	err = group.Wait()
-	msg = jobImporter.Result()
+	result = jobImporter.Result()
+	if !e.controller.Detached {
+		e.setResult(result)
+	}
 	return err
+}
+
+func (e *LoadDataWorker) setResult(result importer.JobImportResult) {
+	userStmtCtx := e.UserSctx.GetSessionVars().StmtCtx
+	userStmtCtx.SetMessage(result.Msg)
+	userStmtCtx.SetAffectedRows(result.Affected)
+	userStmtCtx.SetWarnings(result.Warnings)
+	userStmtCtx.LastInsertID = result.LastInsertID
 }
 
 func (e *LoadDataWorker) getJobImporter(ctx context.Context, job *asyncloaddata.Job, r io.ReadCloser) (importer.JobImporter, error) {
@@ -259,6 +287,11 @@ func (e *LoadDataWorker) getJobImporter(ctx context.Context, job *asyncloaddata.
 		Group:    group,
 		GroupCtx: groupCtx,
 		Done:     make(chan struct{}),
+		Progress: e.progress,
+	}
+
+	if variable.EnableDistTask.Load() && e.importPlan.Distributed {
+		return loaddata.NewDistImporter(param, e.importPlan, e.stmt)
 	}
 
 	if e.controller.ImportMode == importer.LogicalImportMode {
@@ -321,7 +354,8 @@ func (e *LoadDataWorker) TestLoad(parser mydump.Parser) error {
 	if err != nil {
 		return err
 	}
-	jobImporter.mergeAndSetMessage()
+	result := jobImporter.Result()
+	e.setResult(result)
 	return nil
 }
 
@@ -388,10 +422,16 @@ func (ji *logicalJobImporter) initEncodeCommitWorkers(e *LoadDataWorker) (err er
 			return err2
 		}
 		createdSessions = append(createdSessions, commitCore.ctx)
+		colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(encodeCore.ctx)
+		if err2 != nil {
+			return err2
+		}
 		encode := &encodeWorker{
-			InsertValues: encodeCore,
-			controller:   e.controller,
-			killed:       &e.UserSctx.GetSessionVars().Killed,
+			InsertValues:   encodeCore,
+			controller:     e.controller,
+			colAssignExprs: colAssignExprs,
+			exprWarnings:   exprWarnings,
+			killed:         &e.UserSctx.GetSessionVars().Killed,
 		}
 		encode.resetBatch()
 		encodeWorkers = append(encodeWorkers, encode)
@@ -528,13 +568,7 @@ func (ji *logicalJobImporter) Import() {
 }
 
 // Result implements the importer.JobImporter interface.
-func (ji *logicalJobImporter) Result() string {
-	return ji.mergeAndSetMessage()
-}
-
-// mergeAndSetMessage merges stats from all used session context and sets info
-// message(ERR_LOAD_INFO) generated by LOAD statement to UserSctx.
-func (ji *logicalJobImporter) mergeAndSetMessage() string {
+func (ji *logicalJobImporter) Result() importer.JobImportResult {
 	var (
 		numWarnings uint64
 		numAffected uint64
@@ -555,36 +589,48 @@ func (ji *logicalJobImporter) mergeAndSetMessage() string {
 		numSkipped += commitStmtCtx.RecordRows() - commitStmtCtx.CopiedRows()
 	}
 
+	// col assign expr warnings is generated during init, it's static
+	// we need to generate it for each row processed.
+	colAssignExprWarnings := ji.encodeWorkers[0].exprWarnings
+	numWarnings += numRecords * uint64(len(colAssignExprWarnings))
+
 	if numWarnings > math.MaxUint16 {
 		numWarnings = math.MaxUint16
 	}
 
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	if !ji.controller.Detached {
-		userStmtCtx := ji.userSctx.GetSessionVars().StmtCtx
-		userStmtCtx.SetMessage(msg)
-
-		userStmtCtx.SetAffectedRows(numAffected)
-
-		warns := make([]stmtctx.SQLWarn, numWarnings)
-		n := 0
-		lastInsertID := uint64(0)
-		for _, w := range ji.encodeWorkers {
-			n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
-			if w.lastInsertID > lastInsertID {
-				lastInsertID = w.lastInsertID
-			}
-		}
-		for _, w := range ji.commitWorkers {
-			n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
-			if w.lastInsertID > lastInsertID {
-				lastInsertID = w.lastInsertID
-			}
-		}
-		userStmtCtx.SetWarnings(warns)
-		userStmtCtx.LastInsertID = lastInsertID
+	warns := make([]stmtctx.SQLWarn, numWarnings)
+	n := 0
+	for _, w := range ji.encodeWorkers {
+		n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
 	}
-	return msg
+	for _, w := range ji.commitWorkers {
+		n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
+	}
+	for i := 0; i < int(numRecords) && n < len(warns); i++ {
+		n += copy(warns[n:], colAssignExprWarnings)
+	}
+	return importer.JobImportResult{
+		Msg:          msg,
+		LastInsertID: ji.getLastInsertID(),
+		Affected:     numAffected,
+		Warnings:     warns,
+	}
+}
+
+func (ji *logicalJobImporter) getLastInsertID() uint64 {
+	lastInsertID := uint64(0)
+	for _, w := range ji.encodeWorkers {
+		if w.lastInsertID != 0 && (lastInsertID == 0 || w.lastInsertID < lastInsertID) {
+			lastInsertID = w.lastInsertID
+		}
+	}
+	for _, w := range ji.commitWorkers {
+		if w.lastInsertID != 0 && (lastInsertID == 0 || w.lastInsertID < lastInsertID) {
+			lastInsertID = w.lastInsertID
+		}
+	}
+	return lastInsertID
 }
 
 // Close implements the importer.JobImporter interface.
@@ -608,9 +654,13 @@ func (ji *logicalJobImporter) Close() error {
 // encodeWorker is a sub-worker of LoadDataWorker that dedicated to encode data.
 type encodeWorker struct {
 	*InsertValues
-	controller *importer.LoadDataController
-	killed     *uint32
-	rows       [][]types.Datum
+	controller     *importer.LoadDataController
+	colAssignExprs []expression.Expression
+	// sessionCtx generate warnings when rewrite AST node into expression.
+	// we should generate such warnings for each row encoded.
+	exprWarnings []stmtctx.SQLWarn
+	killed       *uint32
+	rows         [][]types.Datum
 }
 
 // processStream always trys to build a parser from channel and process it. When
@@ -797,11 +847,17 @@ func (w *encodeWorker) parserData2TableData(
 			continue
 		}
 
+		// Don't set the value for generated columns.
+		if fieldMappings[i].Column.IsGenerated() {
+			row = append(row, types.NewDatum(nil))
+			continue
+		}
+
 		row = append(row, parserData[i])
 	}
-	for i := 0; i < len(w.controller.ColumnAssignments); i++ {
+	for i := 0; i < len(w.colAssignExprs); i++ {
 		// eval expression of `SET` clause
-		d, err := expression.EvalAstExpr(w.ctx, w.controller.ColumnAssignments[i].Expr)
+		d, err := w.colAssignExprs[i].Eval(chunk.Row{})
 		if err != nil {
 			if w.controller.Restrictive {
 				return nil, err
@@ -825,9 +881,6 @@ func (w *encodeWorker) parserData2TableData(
 
 	return newRow, nil
 }
-
-// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
-var TestSyncCh = make(chan struct{})
 
 // commitWorker is a sub-worker of LoadDataWorker that dedicated to commit data.
 type commitWorker struct {
@@ -881,8 +934,8 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 			)
 			failpoint.Inject("AfterCommitOneTask", nil)
 			failpoint.Inject("SyncAfterCommitOneTask", func() {
-				TestSyncCh <- struct{}{}
-				<-TestSyncCh
+				importer.TestSyncCh <- struct{}{}
+				<-importer.TestSyncCh
 			})
 		}
 	}

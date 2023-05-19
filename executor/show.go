@@ -963,6 +963,10 @@ func getDefaultCollate(charsetName string) string {
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
 func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
+	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
+}
+
+func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
@@ -1109,6 +1113,18 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			publicIndices = append(publicIndices, idx)
 		}
 	}
+
+	// consider hypo-indexes
+	hypoIndexes := ctx.GetSessionVars().HypoIndexes
+	if hypoIndexes != nil && dbName != nil {
+		schemaName := dbName.L
+		tblName := tableInfo.Name.L
+		if hypoIndexes[schemaName] != nil && hypoIndexes[schemaName][tblName] != nil {
+			for _, index := range hypoIndexes[schemaName][tblName] {
+				publicIndices = append(publicIndices, index)
+			}
+		}
+	}
 	if len(publicIndices) > 0 {
 		buf.WriteString(",\n")
 	}
@@ -1141,6 +1157,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 		if idxInfo.Comment != "" {
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+		}
+		if idxInfo.Tp == model.IndexTypeHypo {
+			fmt.Fprintf(buf, ` /* HYPO INDEX */`)
 		}
 		if idxInfo.Primary {
 			if tableInfo.HasClusteredIndex() {
@@ -1392,7 +1411,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	tableInfo := tb.Meta()
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, tb.Allocators(e.ctx), &buf); err != nil {
+	if err = constructResultOfShowCreateTable(e.ctx, &e.DBName, tableInfo, tb.Allocators(e.ctx), &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -2162,7 +2181,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 // fetchShowLoadDataJobs fills the result with the schema
 // {"Job_ID", "Create_Time", "Start_Time", "End_Time",
 // "Data_Source", "Target_Table", "Import_Mode", "Created_By",
-// "Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+// "Job_State", "Job_Status", "Source_File_Size", "Imported_rows",
 // "Result_Code", "Result_Message"}.
 func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.SQLExecutor)
@@ -2189,7 +2208,7 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 			e.result.AppendNull(11)
 		} else {
 			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
-			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize.Load())))
+			e.result.AppendUint64(11, progress.LoadedRowCnt.Load())
 		}
 		terr := new(terror.Error)
 		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))

@@ -682,6 +682,7 @@ type mockImportClient struct {
 	sst.ImportSSTClient
 	store              *metapb.Store
 	resp               *sst.IngestResponse
+	onceResp           *atomic.Pointer[sst.IngestResponse]
 	err                error
 	retry              int
 	cnt                int
@@ -697,15 +698,29 @@ func newMockImportClient() *mockImportClient {
 	}
 }
 
-func (c *mockImportClient) MultiIngest(context.Context, *sst.MultiIngestRequest, ...grpc.CallOption) (*sst.IngestResponse, error) {
+func (c *mockImportClient) MultiIngest(_ context.Context, req *sst.MultiIngestRequest, _ ...grpc.CallOption) (*sst.IngestResponse, error) {
 	defer func() {
 		c.cnt++
 	}()
+	for _, meta := range req.Ssts {
+		if meta.RegionId != c.store.GetId() {
+			return &sst.IngestResponse{Error: &errorpb.Error{Message: "The file which would be ingested doest not exist."}}, nil
+		}
+	}
 	if c.apiInvokeRecorder != nil {
 		c.apiInvokeRecorder["MultiIngest"] = append(c.apiInvokeRecorder["MultiIngest"], c.store.GetId())
 	}
-	if c.cnt < c.retry && (c.err != nil || c.resp != nil) {
-		return c.resp, c.err
+	if c.cnt < c.retry {
+		if c.err != nil {
+			return c.resp, c.err
+		}
+		if c.onceResp != nil {
+			resp := c.onceResp.Swap(&sst.IngestResponse{})
+			return resp, nil
+		}
+		if c.resp != nil {
+			return c.resp, nil
+		}
 	}
 
 	if !c.multiIngestCheckFn(c.store) {
@@ -732,7 +747,7 @@ func (c *mockImportClient) Write(ctx context.Context, opts ...grpc.CallOption) (
 		c.apiInvokeRecorder["Write"] = append(c.apiInvokeRecorder["Write"], c.store.GetId())
 	}
 	return mockWriteClient{writeResp: &sst.WriteResponse{Metas: []*sst.SSTMeta{
-		{}, {}, {},
+		{RegionId: c.store.GetId()},
 	}}}, nil
 }
 
@@ -1042,7 +1057,7 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	jobOutCh := make(chan *regionJob, 1)
 	err := bak.startWorker(context.Background(), jobCh, jobOutCh, nil)
 	require.Error(t, err)
-	require.Regexp(t, "The available disk of TiKV.*", err.Error())
+	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	require.Len(t, jobCh, 0)
 }
 
@@ -1230,6 +1245,340 @@ func TestCheckPeersBusy(t *testing.T) {
 	require.Equal(t, []byte("b"), retryJob.keyRange.end)
 }
 
+func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// test lightning using stale region info (1,2,3), now the region is (11,12,13)
+	apiInvokeRecorder := map[string][]uint64{}
+	notLeaderResp := &sst.IngestResponse{
+		Error: &errorpb.Error{
+			NotLeader: &errorpb.NotLeader{Leader: &metapb.Peer{StoreId: 11}},
+		}}
+
+	local := &Backend{
+		splitCli: initTestSplitClient3Replica([][]byte{{}, {'a'}, {}}, nil),
+		importClientFactory: &mockImportClientFactory{
+			stores: []*metapb.Store{
+				{Id: 1}, {Id: 2}, {Id: 3},
+				{Id: 11}, {Id: 12}, {Id: 13},
+			},
+			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+				importCli := newMockImportClient()
+				importCli.store = store
+				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 1 {
+					importCli.retry = 1
+					importCli.resp = notLeaderResp
+				}
+				return importCli
+			},
+		},
+		logger:             log.L(),
+		writeLimiter:       noopStoreWriteLimiter{},
+		bufferPool:         membuf.NewPool(),
+		supportMultiIngest: true,
+		BackendConfig: BackendConfig{
+			ShouldCheckWriteStall: true,
+		},
+		tikvCodec: keyspace.CodecV1,
+	}
+
+	db, tmpPath := makePebbleDB(t, nil)
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel2 := context.WithCancel(context.Background())
+	f := &Engine{
+		db:           db,
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel2,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
+	}
+	err := f.db.Set([]byte("a"), []byte("a"), nil)
+	require.NoError(t, err)
+
+	jobCh := make(chan *regionJob, 10)
+
+	staleJob := &regionJob{
+		keyRange: Range{start: []byte("a"), end: []byte("")},
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Id: 1,
+				Peers: []*metapb.Peer{
+					{Id: 1, StoreId: 1}, {Id: 2, StoreId: 2}, {Id: 3, StoreId: 3},
+				},
+				StartKey: []byte("a"),
+				EndKey:   []byte(""),
+			},
+			Leader: &metapb.Peer{Id: 1, StoreId: 1},
+		},
+		stage:  regionScanned,
+		engine: f,
+	}
+	var jobWg sync.WaitGroup
+	jobWg.Add(1)
+	jobCh <- staleJob
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	jobOutCh := make(chan *regionJob)
+	go func() {
+		defer wg.Done()
+		for {
+			job := <-jobOutCh
+			if job.stage == ingested {
+				jobWg.Done()
+				return
+			}
+			jobCh <- job
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		require.NoError(t, err)
+	}()
+
+	jobWg.Wait()
+	cancel()
+	wg.Wait()
+
+	// "ingest" to test peers busy of stale region: 1,2,3
+	// then "write" to stale region: 1,2,3
+	// then "ingest" to stale leader: 1
+	// then meet NotLeader error, scanned new region (11,12,13)
+	// repeat above for 11,12,13
+	require.Equal(t, []uint64{1, 2, 3, 11, 12, 13}, apiInvokeRecorder["Write"])
+	require.Equal(t, []uint64{1, 2, 3, 1, 11, 12, 13, 11}, apiInvokeRecorder["MultiIngest"])
+}
+
+func TestPartialWriteIngestErrorWillPanic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// let lightning meet any error that will call convertStageTo(needRescan)
+	apiInvokeRecorder := map[string][]uint64{}
+	notLeaderResp := &sst.IngestResponse{
+		Error: &errorpb.Error{
+			NotLeader: &errorpb.NotLeader{Leader: &metapb.Peer{StoreId: 11}},
+		}}
+
+	local := &Backend{
+		splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
+		importClientFactory: &mockImportClientFactory{
+			stores: []*metapb.Store{
+				{Id: 1}, {Id: 2}, {Id: 3},
+			},
+			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+				importCli := newMockImportClient()
+				importCli.store = store
+				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 1 {
+					importCli.retry = 1
+					importCli.resp = notLeaderResp
+				}
+				return importCli
+			},
+		},
+		logger:             log.L(),
+		writeLimiter:       noopStoreWriteLimiter{},
+		bufferPool:         membuf.NewPool(),
+		supportMultiIngest: true,
+		tikvCodec:          keyspace.CodecV1,
+	}
+
+	db, tmpPath := makePebbleDB(t, nil)
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel2 := context.WithCancel(context.Background())
+	f := &Engine{
+		db:           db,
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel2,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
+	}
+	err := f.db.Set([]byte("a"), []byte("a"), nil)
+	require.NoError(t, err)
+	err = f.db.Set([]byte("a2"), []byte("a2"), nil)
+	require.NoError(t, err)
+
+	jobCh := make(chan *regionJob, 10)
+
+	partialWriteJob := &regionJob{
+		keyRange: Range{start: []byte("a"), end: []byte("c")},
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Id: 1,
+				Peers: []*metapb.Peer{
+					{Id: 1, StoreId: 1}, {Id: 2, StoreId: 2}, {Id: 3, StoreId: 3},
+				},
+				StartKey: []byte("a"),
+				EndKey:   []byte("c"),
+			},
+			Leader: &metapb.Peer{Id: 1, StoreId: 1},
+		},
+		stage:  regionScanned,
+		engine: f,
+		// use small regionSplitSize to trigger partial write
+		regionSplitSize: 1,
+	}
+	var jobWg sync.WaitGroup
+	jobWg.Add(1)
+	jobCh <- partialWriteJob
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	jobOutCh := make(chan *regionJob)
+	go func() {
+		defer wg.Done()
+		for {
+			job := <-jobOutCh
+			if job.stage == regionScanned {
+				jobWg.Done()
+				return
+			}
+			require.Fail(t, "job stage %s is not expected", job.stage)
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		require.NoError(t, err)
+	}()
+
+	jobWg.Wait()
+	cancel()
+	wg.Wait()
+
+	require.Equal(t, []uint64{1, 2, 3}, apiInvokeRecorder["Write"])
+	require.Equal(t, []uint64{1}, apiInvokeRecorder["MultiIngest"])
+}
+
+func TestPartialWriteIngestBusy(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	apiInvokeRecorder := map[string][]uint64{}
+	notLeaderResp := &sst.IngestResponse{
+		Error: &errorpb.Error{
+			ServerIsBusy: &errorpb.ServerIsBusy{},
+		}}
+	onceResp := &atomic.Pointer[sst.IngestResponse]{}
+	onceResp.Store(notLeaderResp)
+
+	local := &Backend{
+		splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
+		importClientFactory: &mockImportClientFactory{
+			stores: []*metapb.Store{
+				{Id: 1}, {Id: 2}, {Id: 3},
+			},
+			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+				importCli := newMockImportClient()
+				importCli.store = store
+				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 1 {
+					importCli.retry = 1
+					importCli.onceResp = onceResp
+				}
+				return importCli
+			},
+		},
+		logger:             log.L(),
+		writeLimiter:       noopStoreWriteLimiter{},
+		bufferPool:         membuf.NewPool(),
+		supportMultiIngest: true,
+		tikvCodec:          keyspace.CodecV1,
+	}
+
+	db, tmpPath := makePebbleDB(t, nil)
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel2 := context.WithCancel(context.Background())
+	f := &Engine{
+		db:           db,
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel2,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
+	}
+	err := f.db.Set([]byte("a"), []byte("a"), nil)
+	require.NoError(t, err)
+	err = f.db.Set([]byte("a2"), []byte("a2"), nil)
+	require.NoError(t, err)
+
+	jobCh := make(chan *regionJob, 10)
+
+	partialWriteJob := &regionJob{
+		keyRange: Range{start: []byte("a"), end: []byte("c")},
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Id: 1,
+				Peers: []*metapb.Peer{
+					{Id: 1, StoreId: 1}, {Id: 2, StoreId: 2}, {Id: 3, StoreId: 3},
+				},
+				StartKey: []byte("a"),
+				EndKey:   []byte("c"),
+			},
+			Leader: &metapb.Peer{Id: 1, StoreId: 1},
+		},
+		stage:  regionScanned,
+		engine: f,
+		// use small regionSplitSize to trigger partial write
+		regionSplitSize: 1,
+	}
+	var jobWg sync.WaitGroup
+	jobWg.Add(1)
+	jobCh <- partialWriteJob
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	jobOutCh := make(chan *regionJob)
+	go func() {
+		defer wg.Done()
+		for {
+			job := <-jobOutCh
+			switch job.stage {
+			case wrote:
+				// mimic retry later
+				jobCh <- job
+			case ingested:
+				// partially write will change the start key
+				require.Equal(t, []byte("a2"), job.keyRange.start)
+				require.Equal(t, []byte("c"), job.keyRange.end)
+				jobWg.Done()
+				return
+			default:
+				require.Fail(t, "job stage %s is not expected, job: %v", job.stage, job)
+			}
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		require.NoError(t, err)
+	}()
+
+	jobWg.Wait()
+	cancel()
+	wg.Wait()
+
+	require.Equal(t, int64(2), f.importedKVCount.Load())
+
+	require.Equal(t, []uint64{1, 2, 3, 1, 2, 3}, apiInvokeRecorder["Write"])
+	require.Equal(t, []uint64{1, 1, 1}, apiInvokeRecorder["MultiIngest"])
+}
+
 // mockGetSizeProperties mocks that 50MB * 20 SST file.
 func mockGetSizeProperties(log.Logger, *pebble.DB, KeyAdapter) (*sizeProperties, error) {
 	props := newSizeProperties()
@@ -1286,6 +1635,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 			panicSplitRegionClient{}, // make sure no further split region
 		),
 	}
+	local.BackendConfig.WorkerConcurrency = 1
 	db, tmpPath := makePebbleDB(t, nil)
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	ctx := context.Background()
@@ -1450,7 +1800,7 @@ func TestDoImport(t *testing.T) {
 						{
 							write: injectedWriteBehaviour{
 								// a retryable error
-								err: errors.New("is not fully replicated"),
+								err: status.Error(codes.Unknown, "is not fully replicated"),
 							},
 						},
 					},
@@ -1479,7 +1829,9 @@ func TestDoImport(t *testing.T) {
 
 	ctx := context.Background()
 	l := &Backend{
-		BackendConfig: BackendConfig{WorkerConcurrency: 2},
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 2,
+		},
 	}
 	e := &Engine{}
 	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
@@ -1604,6 +1956,72 @@ func TestDoImport(t *testing.T) {
 	}
 	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
+	for _, v := range fakeRegionJobs {
+		for _, job := range v.jobs {
+			require.Len(t, job.injected, 0)
+		}
+	}
+}
+
+func TestRegionJobResetRetryCounter(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 1
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs")
+	})
+
+	// test that job need rescan when ingest
+
+	initRanges := []Range{
+		{start: []byte{'c'}, end: []byte{'d'}},
+	}
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		{"c", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					engine:     &Engine{},
+					injected:   getNeedRescanWhenIngestBehaviour(),
+					retryCount: maxWriteAndIngestRetryTimes,
+				},
+				{
+					keyRange:   Range{start: []byte{'c', '2'}, end: []byte{'d'}},
+					engine:     &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+					retryCount: maxWriteAndIngestRetryTimes,
+				},
+			},
+		},
+		{"c", "c2"}: {
+			jobs: []*regionJob{
+				{
+					keyRange: Range{start: []byte{'c'}, end: []byte{'c', '2'}},
+					engine:   &Engine{},
+					injected: getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	l := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 2,
+		},
+	}
+	e := &Engine{}
+	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
 			require.Len(t, job.injected, 0)

@@ -93,7 +93,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
 
-	schedulerPool, err := m.newPool("scheduler_pool", schedulerPoolSize, util.DDL)
+	schedulerPool, err := m.newPool("scheduler_pool", schedulerPoolSize, util.DistTask)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		if opt, ok := subtaskExecutorOptions[taskType]; ok && opt.PoolSize > 0 {
 			poolSize = opt.PoolSize
 		}
-		subtaskExecutorPool, err := m.newPool(taskType+"_pool", poolSize, util.DDL)
+		subtaskExecutorPool, err := m.newPool(taskType+"_pool", poolSize, util.DistTask)
 		if err != nil {
 			return nil, err
 		}
@@ -181,13 +181,13 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
-		logutil.Logger(m.logCtx).Info("onRunnableTasks", zap.Any("task", task))
 		if _, ok := m.subtaskExecutorPools[task.Type]; !ok {
 			logutil.Logger(m.logCtx).Error("unknown task type", zap.String("type", task.Type))
 			continue
 		}
 		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending)
 		if err != nil {
+			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.onError(err)
 			continue
 		}

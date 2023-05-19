@@ -160,7 +160,7 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 	s := createHotRegionsHistoryTableSuite(t)
 
 	var unixTimeMs = func(v string) int64 {
-		tt, err := time.ParseInLocation("2006-01-02 15:04:05", v, time.Local)
+		tt, err := time.ParseInLocation(time.DateTime, v, time.Local)
 		require.NoError(t, err)
 		return tt.UnixMilli()
 	}

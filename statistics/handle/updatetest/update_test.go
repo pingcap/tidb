@@ -1968,13 +1968,7 @@ func BenchmarkHandleAutoAnalyze(b *testing.B) {
 // subtraction parses the number for counter and returns new - old.
 // string for counter will be `label:<name:"type" value:"ok" > counter:<value:0 > `
 func subtraction(newMetric *dto.Metric, oldMetric *dto.Metric) int {
-	newStr := newMetric.String()
-	oldStr := oldMetric.String()
-	newIdx := strings.LastIndex(newStr, ":")
-	newNum, _ := strconv.Atoi(newStr[newIdx+1 : len(newStr)-3])
-	oldIdx := strings.LastIndex(oldStr, ":")
-	oldNum, _ := strconv.Atoi(oldStr[oldIdx+1 : len(oldStr)-3])
-	return newNum - oldNum
+	return int(*(newMetric.Counter.Value) - *(oldMetric.Counter.Value))
 }
 
 func TestDisableFeedback(t *testing.T) {

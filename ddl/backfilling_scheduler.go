@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
@@ -286,8 +288,6 @@ func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 	}
 }
 
-const checkpointUpdateInterval = 10 * time.Minute
-
 func (b *ingestBackfillScheduler) setupWorkers() error {
 	job := b.reorgInfo.Job
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
@@ -296,12 +296,9 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	b.backendCtx = bc
-	if !b.distribute {
-		mgr, err := ingest.NewCheckpointManager(b.ctx, bc, b.sessPool, job.ID,
-			b.reorgInfo.currElement.ID, checkpointUpdateInterval)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	mgr := bc.GetCheckpointManager()
+	if mgr != nil {
+		mgr.Reset(b.tbl.GetPhysicalID(), b.reorgInfo.StartKey, b.reorgInfo.EndKey)
 		b.checkpointMgr = mgr
 	}
 	copReqSenderPool, err := b.createCopReqSenderPool()
@@ -334,7 +331,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		b.writerPool.ReleaseAndWait()
 	}
 	if b.checkpointMgr != nil {
-		b.checkpointMgr.Close()
+		b.checkpointMgr.Sync()
 		// Get the latest status after all workers are closed so that the result is more accurate.
 		cnt, nextKey := b.checkpointMgr.Status()
 		b.resultCh <- &backfillResult{
@@ -343,6 +340,9 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		}
 	}
 	close(b.resultCh)
+	if intest.InTest && len(b.copReqSenderPool.srcChkPool) != copReadChunkPoolSize() {
+		panic(fmt.Sprintf("unexpected chunk size %d", len(b.copReqSenderPool.srcChkPool)))
+	}
 	if !force {
 		jobID := b.reorgInfo.ID
 		indexID := b.reorgInfo.currElement.ID
@@ -435,7 +435,7 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
-	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.checkpointMgr), nil
+	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
 func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
@@ -450,13 +450,13 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
 		w.resultCh <- &backfillResult{taskID: rs.id, err: dbterror.ErrReorgPanic}
 	}, false)
-
+	defer w.copReqSenderPool.recycleChunk(rs.chunk)
 	result := &backfillResult{
 		taskID: rs.id,
 		err:    rs.err,
 	}
 	if result.err != nil {
-		logutil.BgLogger().Error("[ddl-ingest] finish a cop-request task with error",
+		logutil.BgLogger().Error("[ddl-ingest] encounter error when handle index chunk",
 			zap.Int("id", rs.id), zap.Error(rs.err))
 		w.resultCh <- result
 		return
@@ -484,13 +484,11 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		result.totalCount = cnt
 		result.nextKey = nextKey
 		result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
-		count = cnt
 	} else {
 		result.addedCount = count
 		result.scanCount = count
 		result.nextKey = nextKey
 	}
-	w.metricCounter.Add(float64(count))
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)
 	}

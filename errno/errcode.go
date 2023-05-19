@@ -822,11 +822,11 @@ const (
 	ErrMustChangePasswordLogin                               = 1862
 	ErrRowInWrongPartition                                   = 1863
 	ErrErrorLast                                             = 1863
-	ErrMaxExecTimeExceeded                                   = 1907
 	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
 	ErrPasswordExpireAnonymousUser                           = 3016
 	ErrInvalidArgumentForLogarithm                           = 3020
+	ErrMaxExecTimeExceeded                                   = 3024
 	ErrAggregateOrderNonAggQuery                             = 3029
 	ErrUserLockWrongName                                     = 3057
 	ErrUserLockDeadlock                                      = 3058
@@ -1062,6 +1062,8 @@ const (
 	ErrLoadDataJobNotFound                 = 8170
 	ErrLoadDataInvalidOperation            = 8171
 	ErrLoadDataLocalUnsupportedOption      = 8172
+	ErrLoadDataPreCheckFailed              = 8173
+	ErrBRJobNotFound                       = 8174
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1111,6 +1113,11 @@ const (
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
+
+	ErrCannotPauseDDLJob  = 8260
+	ErrCannotResumeDDLJob = 8261
+	ErrPausedDDLJob       = 8262
+
 	// Resource group errors.
 	ErrResourceGroupExists            = 8248
 	ErrResourceGroupNotExists         = 8249

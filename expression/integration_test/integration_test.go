@@ -1711,7 +1711,7 @@ func TestArithmeticBuiltin(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (v int);")
 	tk.MustExec("INSERT IGNORE INTO t VALUE(12 MOD 0);")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
+	tk.MustQuery("show warnings;").CheckContain("Division by 0")
 	tk.MustQuery("select v from t;").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select 0.000 % 0.11234500000000000000;").Check(testkit.Rows("0.00000000000000000000"))
 
@@ -1880,7 +1880,7 @@ func TestCompareBuiltin(t *testing.T) {
 
 	result = tk.MustQuery("select coalesce(NULL, a), coalesce(NULL, b, a), coalesce(c, NULL, a, b), coalesce(d, NULL), coalesce(d, c), coalesce(NULL, NULL, e, 1), coalesce(f), coalesce(1, a, b, c, d, e, f) from t2")
 	// coalesce(col_bit) is not same with MySQL, because it's a bug of MySQL(https://bugs.mysql.com/bug.php?id=103289&thanks=4)
-	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x00\x15 1", time.Now().In(tk.Session().GetSessionVars().Location()).Format("2006-01-02"))))
+	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x00\x15 1", time.Now().In(tk.Session().GetSessionVars().Location()).Format(time.DateOnly))))
 
 	// nullif
 	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
@@ -7172,7 +7172,7 @@ func TestIssue29708(t *testing.T) {
 	})
 
 	tk.MustExec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("show warnings;").CheckContain("Result of repeat() was larger than max_allowed_packet (67108864) - truncated")
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{nil},
 		{"a"},
@@ -7676,7 +7676,7 @@ func TestCastJSONTimeDuration(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(i INT, j JSON)")
 
-	nowDate := time.Now().Format("2006-01-02")
+	nowDate := time.Now().Format(time.DateOnly)
 
 	// DATE/DATETIME/TIME will be automatically converted to json date/datetime/duration
 	tk.MustExec("insert into t values (0, DATE('1998-06-13'))")
@@ -7922,4 +7922,27 @@ func TestIssue40015(t *testing.T) {
 		"2010-11-11 01:00:00",
 		"<nil>",
 	))
+}
+
+func TestAesDecryptionVecEvalWithZeroChunk(t *testing.T) {
+	// see issue: https://github.com/pingcap/tidb/issues/43063
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (name1 blob,name2 blob)")
+	tk.MustExec("insert into test values(aes_encrypt('a', 'x'), aes_encrypt('b', 'x'))")
+	tk.MustQuery("SELECT * FROM test WHERE CAST(AES_DECRYPT(name1, 'x') AS CHAR) = '00' AND CAST(AES_DECRYPT(name2, 'x') AS CHAR) = '1'").Check(testkit.Rows())
+}
+
+func TestIfFunctionWithNull(t *testing.T) {
+	// issue 43805
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ordres;")
+	tk.MustExec("CREATE TABLE orders (id bigint(20) unsigned NOT NULL ,account_id bigint(20) unsigned NOT NULL DEFAULT '0' ,loan bigint(20) unsigned NOT NULL DEFAULT '0' ,stage_num int(20) unsigned NOT NULL DEFAULT '0' ,apply_time bigint(20) unsigned NOT NULL DEFAULT '0' ,PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,KEY idx_orders_account_id (account_id),KEY idx_orders_apply_time (apply_time));")
+	tk.MustExec("insert into orders values (20, 210802010000721168, 20000 , 2 , 1682484268727), (22, 210802010000721168, 35100 , 4 , 1650885615002);")
+	tk.MustQuery("select min(if(apply_to_now_days <= 30,loan,null)) as min, max(if(apply_to_now_days <= 720,loan,null)) as max from (select loan, datediff(from_unixtime(unix_timestamp() + 18000), from_unixtime(apply_time/1000 + 18000)) as apply_to_now_days from orders) t1;").Sort().Check(
+		testkit.Rows("20000 35100"))
 }

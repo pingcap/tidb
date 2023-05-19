@@ -393,10 +393,14 @@ type BackendConfig struct {
 	MaxConnPerStore int
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
-	// number of import(write & ingest) workers
+	// concurrency of generateJobForRange and import(write & ingest) workers
 	WorkerConcurrency int
-	KVWriteBatchSize  int
-	CheckpointEnabled bool
+	// batch kv count and size when writing to TiKV
+	KVWriteBatchCount      int
+	KVWriteBatchSize       int64
+	RegionSplitBatchSize   int
+	RegionSplitConcurrency int
+	CheckpointEnabled      bool
 	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
 	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
 	MemTableSize            int
@@ -416,6 +420,8 @@ type BackendConfig struct {
 	// the minimum value is 128.
 	MaxOpenFiles int
 	KeyspaceName string
+	// the scope when pause PD schedulers.
+	PausePDSchedulerScope config.PausePDSchedulerScope
 }
 
 // NewBackendConfig creates a new BackendConfig.
@@ -426,7 +432,10 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
-		KVWriteBatchSize:        cfg.TikvImporter.SendKVPairs,
+		KVWriteBatchCount:       cfg.TikvImporter.SendKVPairs,
+		KVWriteBatchSize:        int64(cfg.TikvImporter.SendKVSize),
+		RegionSplitBatchSize:    cfg.TikvImporter.RegionSplitBatchSize,
+		RegionSplitConcurrency:  cfg.TikvImporter.RegionSplitConcurrency,
 		CheckpointEnabled:       cfg.Checkpoint.Enable,
 		MemTableSize:            int(cfg.TikvImporter.EngineMemCacheSize),
 		LocalWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
@@ -437,6 +446,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		ShouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
 		MaxOpenFiles:            maxOpenFiles,
 		KeyspaceName:            keyspaceName,
+		PausePDSchedulerScope:   cfg.TikvImporter.PausePDSchedulerScope,
 	}
 }
 
@@ -1073,6 +1083,7 @@ func (local *Backend) prepareAndSendJob(
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		needSplit = true
 	})
+	logger := log.FromContext(ctx).With(zap.Stringer("uuid", engine.UUID)).Begin(zap.InfoLevel, "split and scatter ranges")
 	for i := 0; i < maxRetryTimes; i++ {
 		failpoint.Inject("skipSplitAndScatter", func() {
 			failpoint.Break()
@@ -1086,8 +1097,8 @@ func (local *Backend) prepareAndSendJob(
 		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engine.UUID),
 			log.ShortError(err), zap.Int("retry", i))
 	}
+	logger.End(zap.ErrorLevel, err)
 	if err != nil {
-		log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engine.UUID), log.ShortError(err))
 		return err
 	}
 
@@ -1129,29 +1140,41 @@ func (local *Backend) generateAndSendJob(
 	}
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
-	for _, r := range jobRanges {
-		jobs, err := local.generateJobForRange(ctx, engine, r, regionSplitSize, regionSplitKeys)
-		if err != nil {
-			return err
-		}
-		for _, job := range jobs {
-			jobWg.Add(1)
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(local.WorkerConcurrency)
+	for _, jobRange := range jobRanges {
+		r := jobRange
+		eg.Go(func() error {
 			select {
-			case <-ctx.Done():
-				// this job is not put into jobToWorkerCh
-				jobWg.Done()
-				// if the context is canceled, it means worker has error, the first error can be
-				// found by worker's error group LATER. if this function returns an error it will
-				// seize the "first error".
+			case <-egCtx.Done():
 				return nil
-			case jobToWorkerCh <- job:
+			default:
 			}
-		}
+
+			jobs, err := local.generateJobForRange(egCtx, engine, r, regionSplitSize, regionSplitKeys)
+			if err != nil {
+				return err
+			}
+			for _, job := range jobs {
+				jobWg.Add(1)
+				select {
+				case <-egCtx.Done():
+					// this job is not put into jobToWorkerCh
+					jobWg.Done()
+					// if the context is canceled, it means worker has error, the first error can be
+					// found by worker's error group LATER. if this function returns an error it will
+					// seize the "first error".
+					return nil
+				case jobToWorkerCh <- job:
+				}
+			}
+			return nil
+		})
 	}
-	return nil
+	return eg.Wait()
 }
 
-// fakeRegionJobs is used in test , the injected job can be found by (startKey, endKey).
+// fakeRegionJobs is used in test, the injected job can be found by (startKey, endKey).
 var fakeRegionJobs map[[2]string]struct {
 	jobs []*regionJob
 	err  error
@@ -1265,7 +1288,7 @@ func (local *Backend) startWorker(
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
 				jobWg.Add(len(jobs) - 1)
 				for _, j := range jobs {
-					j.retryCount = job.retryCount
+					j.lastRetryableErr = job.lastRetryableErr
 					jobOutCh <- j
 				}
 			}
@@ -1300,7 +1323,7 @@ func (local *Backend) executeJob(
 ) error {
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
-			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
+			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
 	})
 	if local.ShouldCheckTiKV {
 		for _, peer := range job.region.Region.GetPeers() {
@@ -1317,8 +1340,7 @@ func (local *Backend) executeJob(
 					// The available disk percent of TiKV
 					ratio := store.Status.Available * 100 / store.Status.Capacity
 					if ratio < 10 {
-						return errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d",
-							store.Store.Address, store.Status.Available, store.Status.Capacity)
+						return errors.Errorf("the remaining storage capacity of TiKV(%s) is less than 10%%; please increase the storage capacity of TiKV and try again", store.Store.Address)
 					}
 				}
 				break
@@ -1351,6 +1373,13 @@ func (local *Backend) executeJob(
 			log.FromContext(ctx).Warn("meet retryable error when ingesting",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
 			job.lastRetryableErr = err
+			return nil
+		}
+		// if the job.stage successfully converted into "ingested", it means
+		// these data are ingested into TiKV so we handle remaining data.
+		// For other job.stage, the job should be sent back to caller to retry
+		// later.
+		if job.stage != ingested {
 			return nil
 		}
 
@@ -1396,7 +1425,8 @@ func (local *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, re
 		return err
 	}
 
-	if len(regionRanges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
+	if len(regionRanges) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+		log.FromContext(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
@@ -1536,6 +1566,18 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 	workerCancel()
 	firstErr.Set(workGroup.Wait())
 	return firstErr.Get()
+}
+
+// GetImportedKVCount returns the number of imported KV pairs of some engine.
+func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
+	v, ok := local.engines.Load(engineUUID)
+	if !ok {
+		// we get it after import, but before clean up, so this should not happen
+		// todo: return error
+		return 0
+	}
+	e := v.(*Engine)
+	return e.importedKVCount.Load()
 }
 
 // ResetEngine reset the engine and reclaim the space.
@@ -1698,6 +1740,11 @@ func (local *Backend) EngineFileSizes() (res []backend.EngineFileSize) {
 		return true
 	})
 	return
+}
+
+// GetPDClient returns the PD client.
+func (local *Backend) GetPDClient() pd.Client {
+	return local.pdCtl.GetPDClient()
 }
 
 var getSplitConfFromStoreFunc = getSplitConfFromStore

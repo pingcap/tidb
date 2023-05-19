@@ -285,8 +285,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	rc := d.getReorgCtx(jobID)
 
 	for {
-		// Give job chance to be canceled, if we not check it here,
-		// if there is panic in bf.BackfillData we will never cancel the job.
+		// Give job chance to be canceled or paused, if we not check it here,
+		// we will never cancel the job once there is panic in bf.BackfillData.
 		// Because reorgRecordTask may run a long time,
 		// we should check whether this ddl job is still runnable.
 		err := d.isReorgRunnable(jobID, false)
@@ -556,13 +556,15 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 	phyTbl := t.(table.PhysicalTable)
 	jobCtx := reorgInfo.d.jobContext(job.ID)
 	for i, keyRange := range kvRanges {
+		taskID := taskIDAlloc.alloc()
 		startKey := keyRange.StartKey
 		endKey := keyRange.EndKey
 		endK, err := getRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, keyRange.StartKey, endKey)
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] get backfill range task, get reverse key failed", zap.Error(err))
 		} else {
-			logutil.BgLogger().Info("[ddl] get backfill range task, change end key", zap.Int64("pTbl", phyTbl.GetPhysicalID()),
+			logutil.BgLogger().Info("[ddl] get backfill range task, change end key",
+				zap.Int("id", taskID), zap.Int64("pTbl", phyTbl.GetPhysicalID()),
 				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
 			endKey = endK
 		}
@@ -574,7 +576,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 		}
 
 		task := &reorgBackfillTask{
-			id:            taskIDAlloc.alloc(),
+			id:            taskID,
 			jobID:         reorgInfo.Job.ID,
 			physicalTable: phyTbl,
 			priority:      reorgInfo.Priority,
@@ -719,7 +721,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 		if len(kvRanges) == 0 {
 			break
 		}
-
 		logutil.BgLogger().Info("[ddl] start backfill workers to reorg record",
 			zap.Stringer("type", bfWorkerType),
 			zap.Int("workerCnt", scheduler.currentWorkerSize()),

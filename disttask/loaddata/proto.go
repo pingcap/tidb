@@ -15,11 +15,12 @@
 package loaddata
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/executor/importer"
 )
 
 // TaskStep of LoadData.
@@ -28,81 +29,61 @@ const (
 )
 
 // TaskMeta is the task of LoadData.
+// All the field should be serializable.
 type TaskMeta struct {
-	Table     Table
-	Format    Format
-	Dir       string
-	FileInfos []FileInfo
+	Plan  importer.Plan
+	JobID int64
+	Stmt  string
 }
 
 // SubtaskMeta is the subtask of LoadData.
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
+// All the field should be serializable.
 type SubtaskMeta struct {
-	Table  Table
-	Format Format
-	Dir    string
-	Chunks []Chunk
+	Plan     importer.Plan
+	ID       int32
+	Chunks   []Chunk
+	Checksum Checksum
+}
+
+// SharedVars is the shared variables between subtask and minimal tasks.
+// This is because subtasks cannot directly obtain the results of the minimal subtask.
+// All the fields should be concurrent safe.
+type SharedVars struct {
+	TableImporter *importer.TableImporter
+	DataEngine    *backend.OpenedEngine
+	IndexEngine   *backend.OpenedEngine
+
+	mu       sync.Mutex
+	Checksum *verification.KVChecksum
 }
 
 // MinimalTaskMeta is the minimal task of LoadData.
 // Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
 type MinimalTaskMeta struct {
-	Table  Table
-	Format Format
-	Dir    string
-	Chunk  Chunk
-	Writer backend.EngineWriter
+	Plan       importer.Plan
+	Chunk      Chunk
+	SharedVars *SharedVars
 }
 
 // IsMinimalTask implements the MinimalTask interface.
 func (MinimalTaskMeta) IsMinimalTask() {}
-
-// Table records the table information.
-type Table struct {
-	DBName        string
-	Info          *model.TableInfo
-	TargetColumns []string
-	IsRowOrdered  bool
-}
-
-// Format records the format information.
-type Format struct {
-	Type                   string
-	Compression            mydump.Compression
-	CSV                    CSV
-	SQLDump                SQLDump
-	Parquet                Parquet
-	DataCharacterSet       string
-	DataInvalidCharReplace string
-}
-
-// CSV records the CSV format information.
-type CSV struct {
-	Config config.CSVConfig
-	Strict bool
-}
-
-// SQLDump records the SQL dump format information.
-type SQLDump struct {
-	SQLMode mysql.SQLMode
-}
-
-// Parquet records the Parquet format information.
-type Parquet struct{}
 
 // Chunk records the chunk information.
 type Chunk struct {
 	Path         string
 	Offset       int64
 	EndOffset    int64
-	RealOffset   int64
 	PrevRowIDMax int64
 	RowIDMax     int64
+	Type         mydump.SourceType
+	Compression  mydump.Compression
+	Timestamp    int64
 }
 
-// FileInfo records the file information.
-type FileInfo struct {
-	Path     string
-	Size     int64
-	RealSize int64
+// Checksum records the checksum information.
+type Checksum struct {
+	Sum  uint64
+	KVs  uint64
+	Size uint64
 }

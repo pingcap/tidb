@@ -886,7 +886,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWindowExplainJSON:                                     mysql.Message("To get information about window functions use EXPLAIN FORMAT=JSON", nil),
 	ErrWindowFunctionIgnoresFrame:                            mysql.Message("Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition", nil),
 	ErrRoleNotGranted:                                        mysql.Message("%s is not granted to %s", nil),
-	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, max_execution_time exceeded.", nil),
+	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, maximum statement execution time exceeded", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           mysql.Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
 	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' cannot be set using SET_VAR hint.", nil),
 	ErrExistsInHistoryPassword:                               mysql.Message("Cannot use these credentials for '%s@%s' because they contradict the password history policy.", nil),
@@ -945,7 +945,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDropTableOnTemporaryTable:        mysql.Message("`drop global temporary table` can only drop global temporary table", nil),
 	ErrTxnTooLarge:                      mysql.Message("Transaction is too large, size: %d", nil),
 	ErrWriteConflictInTiDB:              mysql.Message("Write conflict, txnStartTS %d is stale", nil),
-	ErrInvalidPluginID:                  mysql.Message("Wrong plugin id: %s, valid plugin id is [name]-[version], both name and version should not contain '-'", nil),
+	ErrInvalidPluginID:                  mysql.Message("Wrong plugin id: %s, valid plugin id is [name]-[version], and version should not contain '-'", nil),
 	ErrInvalidPluginManifest:            mysql.Message("Cannot read plugin %s's manifest", nil),
 	ErrInvalidPluginName:                mysql.Message("Plugin load with %s but got wrong name %s", nil),
 	ErrInvalidPluginVersion:             mysql.Message("Plugin load with %s but got %s", nil),
@@ -1055,6 +1055,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataJobNotFound:              mysql.Message("Job ID %d doesn't exist", nil),
 	ErrLoadDataInvalidOperation:         mysql.Message("The current job status cannot perform the operation. %s", nil),
 	ErrLoadDataLocalUnsupportedOption:   mysql.Message("Unsupported option for LOAD DATA LOCAL INFILE: %s", nil),
+	ErrLoadDataPreCheckFailed:           mysql.Message("PreCheck failed: %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1095,6 +1096,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIERestoreFailed: mysql.Message("Restore failed: %s", nil),
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
+	ErrBRJobNotFound:     mysql.Message("BRIE Job %d not found", nil),
 
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
@@ -1137,4 +1139,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPrometheusAddrIsNotSet:    mysql.Message("Prometheus address is not set in PD and etcd", nil),
 	ErrTiKVStaleCommand:          mysql.Message("TiKV server reports stale command", nil),
 	ErrTiKVMaxTimestampNotSynced: mysql.Message("TiKV max timestamp is not synced", nil),
+
+	ErrCannotPauseDDLJob:  mysql.Message("Job [%v] can't be paused: %s", nil),
+	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed: %s", nil),
+	ErrPausedDDLJob:       mysql.Message("Job [%v] has already been paused", nil),
 }

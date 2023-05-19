@@ -307,7 +307,7 @@ func TestTableStorageStats(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	// User has no access to this schema, so the result set is empty.
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("0"))
@@ -315,14 +315,14 @@ func TestTableStorageStats(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser3",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
 }

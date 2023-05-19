@@ -16,10 +16,15 @@
 
 set -eu
 
-if grep -Fq -- "$1" "$TEST_DIR/sql_res.$TEST_NAME.txt"; then
+file_name="$TEST_DIR/sql_res.$TEST_NAME.txt"
+if [ $# -gt 1 ]; then
+	  file_name=$2
+fi
+
+if grep -Fq -- "$1" $file_name; then
     echo "TEST FAILED: OUTPUT CONTAINS '$1'"
     echo "____________________________________"
-    cat "$TEST_DIR/sql_res.$TEST_NAME.txt"
+    cat $file_name
     echo "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
     exit 1
 fi

@@ -52,7 +52,7 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 			return nil, errors.Trace(err)
 		}
 		id := openedEn.GetEngineUUID()
-		en = newEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, bc.MemRoot, bc.DiskRoot)
+		en = newEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, bc.MemRoot)
 		bc.Store(indexID, en)
 		bc.MemRoot.Consume(StructSizeEngineInfo)
 		bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
