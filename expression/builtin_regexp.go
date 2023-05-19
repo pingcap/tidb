@@ -36,6 +36,7 @@ import (
 type empty struct{}
 
 const patternIdx = 1
+const replacementIdx = 2
 const regexpLikeMatchTypeIdx = 2
 const regexpSubstrMatchTypeIdx = 4
 const regexpInstrMatchTypeIdx = 5
@@ -53,10 +54,9 @@ const (
 	invalidMatchType    = "Invalid match type"
 	invalidIndex        = "Index out of bounds in regular expression search"
 	invalidReturnOption = "Incorrect arguments to regexp_instr: return_option must be 1 or 0"
-	invalidSubstitution = "Invalid substitution"
+	invalidSubstitution = "Substitution number is out of range"
 	binaryCollateErr    = "Not support binary collation so far"
 	emptyPatternErr     = "Empty pattern is invalid"
-	tooManySubPat       = "Only support 9 subpatterns at most"
 )
 
 var validMatchType = set.NewStringSet(
@@ -1074,6 +1074,8 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 	bf.tp.SetFlen(argType.GetFlen())
 	sig := builtinRegexpReplaceFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
+		instructions:      make([]Instruction, 0),
+		memorized:         false,
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceSig)
 
@@ -1083,8 +1085,6 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 
 	return &sig, nil
 }
-
-const maxSubExprNum int = 10
 
 // Instruction contains content that used to replace the origin string
 type Instruction struct {
@@ -1104,6 +1104,8 @@ func (ins *Instruction) getCaptureGroupStr(str []byte, matchedRes []int) ([]byte
 
 type builtinRegexpReplaceFuncSig struct {
 	regexpBaseFuncSig
+	instructions []Instruction
+	memorized    bool
 }
 
 func (re *builtinRegexpReplaceFuncSig) vectorized() bool {
@@ -1294,13 +1296,11 @@ func getInstructions(repl []byte) ([]Instruction, error) {
 		instructions = append(instructions, Instruction{SubstitutionNum: -1, Literal: literals})
 	}
 
-	for _, instruction := range instructions {
-		if instruction.SubstitutionNum >= maxSubExprNum {
-			return nil, ErrRegexp.GenWithStackByArgs(tooManySubPat)
-		}
-	}
-
 	return instructions, nil
+}
+
+func (re *builtinRegexpReplaceFuncSig) canInstructionsMemorized() bool {
+	return re.args[replacementIdx].ConstItem(re.ctx.GetSessionVars().StmtCtx)
 }
 
 func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) {
@@ -1392,9 +1392,16 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		re.once.Do(memorize) // Avoid data race
 	}
 
-	instructions, err := getInstructions([]byte(repl))
-	if err != nil {
-		return "", true, err
+	if !re.memorized {
+		re.instructions, err = getInstructions([]byte(repl))
+		if err != nil {
+			return "", true, err
+		}
+
+		if re.canInstructionsMemorized() {
+			// Now, we memorize it
+			re.memorized = true
+		}
 	}
 
 	if !re.isMemorizedRegexpInitialized() {
@@ -1408,9 +1415,9 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		}
 
 		if re.isBinaryCollation() {
-			return re.getReplacedBinStr(reg, bexpr, trimmedBexpr, instructions, pos, occurrence)
+			return re.getReplacedBinStr(reg, bexpr, trimmedBexpr, re.instructions, pos, occurrence)
 		}
-		return re.getReplacedStr(reg, expr, trimmedExpr, instructions, trimmedLen+1, occurrence)
+		return re.getReplacedStr(reg, expr, trimmedExpr, re.instructions, trimmedLen+1, occurrence)
 	}
 
 	if re.memorizedErr != nil {
@@ -1418,9 +1425,9 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 	}
 
 	if re.isBinaryCollation() {
-		return re.getReplacedBinStr(re.memorizedRegexp, bexpr, trimmedBexpr, instructions, pos, occurrence)
+		return re.getReplacedBinStr(re.memorizedRegexp, bexpr, trimmedBexpr, re.instructions, pos, occurrence)
 	}
-	return re.getReplacedStr(re.memorizedRegexp, expr, trimmedExpr, instructions, trimmedLen+1, occurrence)
+	return re.getReplacedStr(re.memorizedRegexp, expr, trimmedExpr, re.instructions, trimmedLen+1, occurrence)
 }
 
 // REGEXP_REPLACE(expr, pat, repl[, pos[, occurrence[, match_type]]])
