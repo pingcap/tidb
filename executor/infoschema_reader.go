@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
+	internalutil "github.com/pingcap/tidb/executor/internal/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -2180,31 +2181,37 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context, isShow bool) (rows [][]
 			procID = chunkRow.GetUint64(10)
 		}
 
-		var RemainDurationStr interface{}
+		var remainDurationStr, progressStr, estimatedRowCntStr interface{}
 		if isShow && state == statistics.AnalyzeRunning {
-			RemainingDuration, RemainDurationErr := getRemainDurationForAnalyzeStatusHelper(sctx, startTime, dbName, tableName, partitionName, processedRows)
+			RemainingDuration, progress, estimatedRowCnt, RemainDurationErr :=
+				getRemainDurationForAnalyzeStatusHelper(sctx, startTime,
+					dbName, tableName, partitionName, processedRows)
 			if RemainDurationErr != nil {
 				log.Warn("get remaining duration failed", zap.Error(RemainDurationErr))
 			}
 			if RemainingDuration != nil {
-				RemainDurationStr = execdetails.FormatDuration(*RemainingDuration)
+				remainDurationStr = execdetails.FormatDuration(*RemainingDuration)
 			}
+			progressStr = progress
+			estimatedRowCntStr = estimatedRowCnt
 		}
 		var row []types.Datum
 		if isShow {
 			row = types.MakeDatums(
-				dbName,            // TABLE_SCHEMA
-				tableName,         // TABLE_NAME
-				partitionName,     // PARTITION_NAME
-				jobInfo,           // JOB_INFO
-				processedRows,     // ROW_COUNT
-				startTime,         // START_TIME
-				endTime,           // END_TIME
-				state,             // STATE
-				failReason,        // FAIL_REASON
-				instance,          // INSTANCE
-				procID,            // PROCESS_ID
-				RemainDurationStr, // REMAINING_TIME
+				dbName,             // TABLE_SCHEMA
+				tableName,          // TABLE_NAME
+				partitionName,      // PARTITION_NAME
+				jobInfo,            // JOB_INFO
+				processedRows,      // ROW_COUNT
+				startTime,          // START_TIME
+				endTime,            // END_TIME
+				state,              // STATE
+				failReason,         // FAIL_REASON
+				instance,           // INSTANCE
+				procID,             // PROCESS_ID
+				remainDurationStr,  // REMAINING_TIME
+				progressStr,        // PROGRESS
+				estimatedRowCntStr, // ESTIMATED_TOTAL_ROWS
 			)
 		} else {
 			row = types.MakeDatums(
@@ -2228,22 +2235,24 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context, isShow bool) (rows [][]
 
 func getRemainDurationForAnalyzeStatusHelper(
 	sctx sessionctx.Context, startTime interface{},
-	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, error) {
+	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, int64, error) {
 	var RemainingDuration = time.Duration(0)
+	var percentage = 0.0
+	var totalCnt = int64(0)
 	if startTime != nil {
 		startTime, ok := startTime.(types.Time)
 		if !ok {
-			return nil, errors.New("invalid start time")
+			return nil, percentage, totalCnt, errors.New("invalid start time")
 		}
 		start, err := startTime.GoTime(time.UTC)
 		if err != nil {
-			return nil, err
+			return nil, percentage, totalCnt, err
 		}
 		duration := time.Now().UTC().Sub(start)
 		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 		tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 		if err != nil {
-			return nil, err
+			return nil, percentage, totalCnt, err
 		}
 		var tid int64
 		if partitionName != "" {
@@ -2253,23 +2262,14 @@ func getRemainDurationForAnalyzeStatusHelper(
 			tid = tb.Meta().ID
 		}
 		if tid > 0 {
-			tikvStore, ok := sctx.GetStore().(helper.Storage)
-			if ok {
-				regionStats := &helper.PDRegionStats{}
-				pdHelper := helper.NewHelper(tikvStore)
-				err := pdHelper.GetPDRegionStats(tid, regionStats, true)
-				if err != nil {
-					return nil, err
-				}
-				totalCnt := regionStats.Count
-				remainline := int64(totalCnt) - processedRows
-				speed := (processedRows / duration.Milliseconds())
-				i := remainline / speed
-				RemainingDuration = time.Duration(i) * time.Millisecond
-			}
+			totalCnt, _ := internalutil.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
+			remainline := int64(totalCnt) - processedRows
+			speed := float64(processedRows) / duration.Seconds()
+			i := float64(remainline) / speed
+			RemainingDuration = time.Duration(i) * time.Second
 		}
 	}
-	return &RemainingDuration, nil
+	return &RemainingDuration, percentage, totalCnt, nil
 }
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
