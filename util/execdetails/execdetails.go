@@ -51,8 +51,14 @@ type DetailsNeedP90 struct {
 	TimeDetail    util.TimeDetail
 }
 
-// DetailsNeedP90Size indicates the size of DetailsNeedP90Size, used for memory tracking.
-const DetailsNeedP90Size = int64(unsafe.Sizeof(DetailsNeedP90{}))
+// detailsNeedP90StructSize indicates the size of DetailsNeedP90Size, used for memory tracking.
+const detailsNeedP90StructSize = int64(unsafe.Sizeof(DetailsNeedP90{}))
+
+// backoffEmptyMapSzie indicates the size of BackoffSleep and BackoffTimes when the map is empty.
+const backoffEmptyMapSize = 48 * 2
+
+// AvgMemorySizeForDetailsNeedP90 is the avg size of DetailsNeedP90 need.
+const AvgMemorySizeForDetailsNeedP90 = detailsNeedP90StructSize + backoffEmptyMapSize
 
 type stmtExecDetailKeyType struct{}
 

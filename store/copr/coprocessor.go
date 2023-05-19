@@ -1675,17 +1675,14 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
 	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
-	memDelta := execdetails.DetailsNeedP90Size
 	for backoff := range backoffTimes {
 		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
 		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
-		memDelta += int64(len(backoff)*2 + 12)
 	}
 	if rpcCtx != nil {
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
-	memDelta += int64(len(resp.detail.CalleeAddress))
-	worker.memTracker.Consume(memDelta)
+	worker.memTracker.Consume(execdetails.AvgMemorySizeForDetailsNeedP90)
 	sd := &util.ScanDetail{}
 	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
