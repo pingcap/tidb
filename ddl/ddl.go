@@ -1507,7 +1507,7 @@ func resumePausedJob(se *sess.Session, job *model.Job,
 func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
 	sessCtx sessionctx.Context,
 	ids []int64,
-	byWho model.AdminCommandOperator) ([]error, error) {
+	byWho model.AdminCommandOperator) (errs []error, err error) {
 	failpoint.Inject("mockFailedCommandOnConcurencyDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock commit error"))
@@ -1519,8 +1519,6 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 	}
 
 	ns := sess.NewSession(sessCtx)
-
-	var errs []error
 	// We should process (and try) all the jobs in one Transaction.
 	for tryN := uint(0); tryN < 10; tryN += 1 {
 		errs = make([]error, len(ids))
@@ -1532,7 +1530,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 			idsStr = append(idsStr, strconv.FormatInt(id, 10))
 		}
 
-		err := ns.Begin()
+		err = ns.Begin()
 		if err != nil {
 			return nil, err
 		}
@@ -1566,7 +1564,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 		}
 
 		// There may be some conflict during the update, try it again
-		if ns.Commit() != nil {
+		if err = ns.Commit(); err != nil {
 			continue
 		}
 
@@ -1574,9 +1572,10 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 			errs[idx] = dbterror.ErrDDLJobNotFound.GenWithStackByArgs(id)
 		}
 
-		break
+		return errs, nil
 	}
-	return errs, nil
+
+	return errs, err
 }
 
 // CancelJobs cancels the DDL jobs according to user command.
