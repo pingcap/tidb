@@ -569,7 +569,8 @@ func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) er
 }
 
 // getDDLReorgHandle gets DDL reorg handle.
-func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
+	startKey, endKey kv.Key, physicalTableID int64, err error) {
 	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id, reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
 	rows, err := se.Execute(ctx, sql, "get_handle")
@@ -588,18 +589,33 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 	startKey = rows[0].GetBytes(2)
 	endKey = rows[0].GetBytes(3)
 	physicalTableID = rows[0].GetInt64(4)
-	if !rows[0].IsNull(5) {
-		rawReorgMeta := rows[0].GetBytes(5)
+	return
+}
+
+func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKey kv.Key, physicalTableID int64, err error) {
+	sql := fmt.Sprintf("select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
+	rows, err := se.Execute(ctx, sql, "get_handle")
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, nil, 0, meta.ErrDDLReorgElementNotExist
+	}
+	if !rows[0].IsNull(0) {
+		rawReorgMeta := rows[0].GetBytes(0)
 		var reorgMeta ingest.JobReorgMeta
 		err = json.Unmarshal(rawReorgMeta, &reorgMeta)
 		if err != nil {
-			return nil, nil, nil, 0, errors.Trace(err)
+			return nil, nil, 0, errors.Trace(err)
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
 			logutil.BgLogger().Info("[ddl-ingest] resume physical table ID from checkpoint",
 				zap.Int64("job ID", job.ID), zap.Int64("old physical ID", physicalTableID),
 				zap.Int64("checkpoint physical ID", cp.PhysicalID))
 			physicalTableID = cp.PhysicalID
+			startKey = cp.StartKey
+			endKey = cp.EndKey
 		}
 	}
 	return
