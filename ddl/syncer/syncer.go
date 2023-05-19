@@ -238,12 +238,12 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64
 	var path string
 	if variable.EnableMDL.Load() {
 		path = fmt.Sprintf("%s/%d/%s", util.DDLAllSchemaVersionsByJob, jobID, s.ddlID)
+		err = util.PutKVToEtcd(ctx, s.etcdCli, keyOpDefaultRetryCnt, path, ver)
 	} else {
 		path = s.selfSchemaVerPath
+		err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, path, ver,
+			clientv3.WithLease(s.loadSession().Lease()))
 	}
-
-	err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, path, ver,
-		clientv3.WithLease(s.loadSession().Lease()))
 
 	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
