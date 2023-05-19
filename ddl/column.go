@@ -26,9 +26,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
@@ -52,6 +49,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 )
 
 // InitAndAddColumnToTable initializes the ColumnInfo in-place and adds it to the table.
