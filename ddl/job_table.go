@@ -124,33 +124,13 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if job.IsPaused() {
-			// If the job has been Paused, we should not process it. And the
-			// processing should have been set with 0.
+
+		isRunnable, err := d.processJobDuringUpgrade(se, &job)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !isRunnable {
 			continue
-		}
-
-		if isJobProcessing {
-			if err := d.handleUpgradingState(se, &job); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-
-		// Receive the `admin pause ...` command on this job, turn it to be
-		// not processing; And, keep continue to pause the job and the
-		// background reorganization workers.
-		if job.IsPausing() {
-			// We want the priority of the jobs keeping the same as the time
-			// (i.e., job_id) they were issued, and lower than those are still
-			// running.
-			if err = d.markJobNotProcessing(se, &job); err != nil {
-				logutil.BgLogger().Warn("[ddl] failed to mark the job as processing=0",
-					zap.Error(err), zap.String("job", job.String()))
-				return nil, errors.Trace(err)
-			}
-			// The job may have been run for a while, we need to notify the
-			// background reorganization worker to finish in worker.runDDLJob
-			// So that we should not `continue` or `return` here
 		}
 
 		// The job has already been picked up, just return to continue it.
@@ -163,19 +143,12 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 			return nil, errors.Trace(err)
 		}
 		if b {
-			if err := d.handleUpgradingState(se, &job); err != nil {
+			if err = d.markJobProcessing(se, &job); err != nil {
+				logutil.BgLogger().Warn(
+					"[ddl] handle ddl job failed: mark job is processing meet error",
+					zap.Error(err),
+					zap.String("job", job.String()))
 				return nil, errors.Trace(err)
-			}
-			if !job.IsPausing() {
-				// This should be the first time that the job is picked up.
-				// Then it should not be a pausing or paused job.
-				if err = d.markJobProcessing(se, &job); err != nil {
-					logutil.BgLogger().Warn(
-						"[ddl] handle ddl job failed: mark job is processing meet error",
-						zap.Error(err),
-						zap.String("job", job.String()))
-					return nil, errors.Trace(err)
-				}
 			}
 			return &job, nil
 		}
@@ -194,28 +167,41 @@ func hasSysDB(job *model.Job) bool {
 	return false
 }
 
-func (d *ddl) handleUpgradingState(se *sess.Session, job *model.Job) error {
-	if !d.stateSyncer.IsUpgradingState() {
-		if !job.IsPausedBySystem() || hasSysDB(job) {
-			return nil
+func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
+	if d.stateSyncer.IsUpgradingState() {
+		// We need to turn the 'pausing' job to be 'paused' in ddl worker,
+		// and stop the reorganization workers
+		if job.IsPausing() || hasSysDB(job) {
+			return true, nil
 		}
-		_, err := ResumeJobsBySystem(se.Session(), []int64{job.ID})
+		var errs []error
+		// During binary upgrade, pause all running DDL jobs
+		errs, err = PauseJobsBySystem(sess.Session(), []int64{job.ID})
+		if len(errs) > 0 && errs[0] != nil {
+			err = errs[0]
+		}
+
 		if err != nil {
-			logutil.BgLogger().Warn("[ddl] resume user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
-			return err
+			errMsg := fmt.Sprintf("[DDL] unable to pause [%d], error: %s",
+				job.ID, zap.Error(err).String)
+			logutil.BgLogger().Warn(errMsg)
 		}
-		logutil.BgLogger().Info("[ddl] resume user DDL by system successful", zap.Stringer("job", job))
-		return nil
+
+		return false, nil
 	}
-	if job.IsPausing() {
-		return nil
+
+	if job.IsPausedBySystem() && !hasSysDB(job) {
+		var errs []error
+		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
+		if len(errs) > 0 {
+			return false, errs[0]
+		}
+		if err != nil {
+			return false, err
+		}
 	}
-	if hasSysDB(job) {
-		return nil
-	}
-	_, err := PauseJobsBySystem(se.Session(), []int64{job.ID})
-	logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job), zap.Error(err))
-	return err
+
+	return true, nil
 }
 
 func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
@@ -448,14 +434,6 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	})
 }
 
-func (*ddl) markJobNotProcessing(se *sess.Session, job *model.Job) error {
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := se.Execute(context.Background(), fmt.Sprintf(
-		"update mysql.tidb_ddl_job set processing = 0 where job_id = %d", job.ID),
-		"mark_job_not_processing")
-	return errors.Trace(err)
-}
-
 func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), fmt.Sprintf(
@@ -591,7 +569,8 @@ func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) er
 }
 
 // getDDLReorgHandle gets DDL reorg handle.
-func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
+	startKey, endKey kv.Key, physicalTableID int64, err error) {
 	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id, reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
 	rows, err := se.Execute(ctx, sql, "get_handle")
@@ -610,18 +589,33 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 	startKey = rows[0].GetBytes(2)
 	endKey = rows[0].GetBytes(3)
 	physicalTableID = rows[0].GetInt64(4)
-	if !rows[0].IsNull(5) {
-		rawReorgMeta := rows[0].GetBytes(5)
+	return
+}
+
+func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKey kv.Key, physicalTableID int64, err error) {
+	sql := fmt.Sprintf("select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
+	rows, err := se.Execute(ctx, sql, "get_handle")
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, nil, 0, meta.ErrDDLReorgElementNotExist
+	}
+	if !rows[0].IsNull(0) {
+		rawReorgMeta := rows[0].GetBytes(0)
 		var reorgMeta ingest.JobReorgMeta
 		err = json.Unmarshal(rawReorgMeta, &reorgMeta)
 		if err != nil {
-			return nil, nil, nil, 0, errors.Trace(err)
+			return nil, nil, 0, errors.Trace(err)
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
 			logutil.BgLogger().Info("[ddl-ingest] resume physical table ID from checkpoint",
 				zap.Int64("job ID", job.ID), zap.Int64("old physical ID", physicalTableID),
 				zap.Int64("checkpoint physical ID", cp.PhysicalID))
 			physicalTableID = cp.PhysicalID
+			startKey = cp.StartKey
+			endKey = cp.EndKey
 		}
 	}
 	return

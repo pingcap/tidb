@@ -31,7 +31,7 @@ import (
 
 func (s *mockGCSSuite) TestOperateRunningJob() {
 	s.testOperateRunningJob(importer.LogicalImportMode)
-	s.testOperateRunningJob(importer.PhysicalImportMode)
+	//s.testOperateRunningJob(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testOperateRunningJob(importMode string) {

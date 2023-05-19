@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -312,6 +313,7 @@ func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.R
 
 func TestUpgradeWithPauseDDL(t *testing.T) {
 	session.SupportUpgradeStateVer--
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 

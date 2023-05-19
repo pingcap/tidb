@@ -49,6 +49,7 @@ func adjustOptions(options string, distributed bool) string {
 }
 
 func (s *mockGCSSuite) TestPhysicalMode() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -157,6 +158,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 }
 
 func (s *mockGCSSuite) TestInputNull() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -182,6 +184,7 @@ func (s *mockGCSSuite) TestInputNull() {
 }
 
 func (s *mockGCSSuite) TestIgnoreNLines() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},
 		Content: []byte(`1,test1,11
@@ -236,7 +239,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 
 func (s *mockGCSSuite) TestGeneratedColumns() {
 	s.testLoadDataForGeneratedColumns(importer.LogicalImportMode)
-	s.testLoadDataForGeneratedColumns(importer.PhysicalImportMode)
+	//s.testLoadDataForGeneratedColumns(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testLoadDataForGeneratedColumns(importMode string) {
@@ -286,6 +289,7 @@ func (s *mockGCSSuite) testLoadDataForGeneratedColumns(importMode string) {
 }
 
 func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -320,6 +324,7 @@ func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
 }
 
 func (s *mockGCSSuite) TestDeliverBytesRows() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -364,8 +369,8 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 
 func (s *mockGCSSuite) TestMultiValueIndex() {
 	s.testMultiValueIndex(importer.LogicalImportMode, false)
-	s.testMultiValueIndex(importer.PhysicalImportMode, false)
-	s.testMultiValueIndex(importer.PhysicalImportMode, true)
+	//s.testMultiValueIndex(importer.PhysicalImportMode, false)
+	//s.testMultiValueIndex(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) {
@@ -400,8 +405,8 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) 
 
 func (s *mockGCSSuite) TestMixedCompression() {
 	s.testMixedCompression(importer.LogicalImportMode, false)
-	s.testMixedCompression(importer.PhysicalImportMode, false)
-	s.testMixedCompression(importer.PhysicalImportMode, true)
+	//s.testMixedCompression(importer.PhysicalImportMode, false)
+	//s.testMixedCompression(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool) {
@@ -462,8 +467,8 @@ func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool)
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
 	s.testLoadSQLDump(importer.LogicalImportMode, false)
-	s.testLoadSQLDump(importer.PhysicalImportMode, false)
-	s.testLoadSQLDump(importer.PhysicalImportMode, true)
+	//s.testLoadSQLDump(importer.PhysicalImportMode, false)
+	//s.testLoadSQLDump(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
@@ -502,8 +507,8 @@ func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
 
 func (s *mockGCSSuite) TestGBK() {
 	s.testGBK(importer.LogicalImportMode, false)
-	s.testGBK(importer.PhysicalImportMode, false)
-	s.testGBK(importer.PhysicalImportMode, true)
+	//s.testGBK(importer.PhysicalImportMode, false)
+	//s.testGBK(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
@@ -620,8 +625,8 @@ func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 
 func (s *mockGCSSuite) TestOtherCharset() {
 	s.testOtherCharset(importer.LogicalImportMode, false)
-	s.testOtherCharset(importer.PhysicalImportMode, false)
-	s.testOtherCharset(importer.PhysicalImportMode, true)
+	//s.testOtherCharset(importer.PhysicalImportMode, false)
+	//s.testOtherCharset(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
@@ -715,6 +720,7 @@ func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 }
 
 func (s *mockGCSSuite) TestMaxWriteSpeed() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_write_speed;")
 	s.tk.MustExec("CREATE DATABASE load_test_write_speed;")
 	s.tk.MustExec(`CREATE TABLE load_test_write_speed.t(a int, b int)`)
@@ -757,6 +763,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 }
 
 func (s *mockGCSSuite) TestChecksumNotMatch() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.testChecksumNotMatch(importer.PhysicalImportMode, false)
 	s.testChecksumNotMatch(importer.PhysicalImportMode, true)
 }
@@ -825,8 +832,8 @@ func (s *mockGCSSuite) testChecksumNotMatch(importMode string, distributed bool)
 
 func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	s.testColumnsAndUserVars(importer.LogicalImportMode, false)
-	s.testColumnsAndUserVars(importer.PhysicalImportMode, false)
-	s.testColumnsAndUserVars(importer.PhysicalImportMode, true)
+	//s.testColumnsAndUserVars(importer.PhysicalImportMode, false)
+	//s.testColumnsAndUserVars(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed bool) {
