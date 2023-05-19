@@ -1234,6 +1234,9 @@ func (sc *StatementContext) ClearRuntimeInfo() {
 	if sc == nil {
 		return
 	}
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.allExecDetails = nil
 	sc.RuntimeStatsColl = nil
 }
 
