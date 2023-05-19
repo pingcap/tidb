@@ -282,6 +282,18 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return nil
 			}
 
+			// Change the unique index LOCK into PUT record.
+			if e.lock {
+				if !e.txn.Valid() {
+					return kv.ErrInvalidTxn
+				}
+				memBuffer := e.txn.GetMemBuffer()
+				err = memBuffer.Set(e.idxKey, e.handleVal)
+				if err != nil {
+					return err
+				}
+			}
+
 			var iv kv.Handle
 			iv, err = tablecodec.DecodeHandleInUniqueIndexValue(e.handleVal, e.tblInfo.IsCommonHandle)
 			if err != nil {
