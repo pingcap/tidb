@@ -854,6 +854,7 @@ func killQuery(conn *clientConn, maxExecutionTime bool) {
 		cancelFunc()
 	}
 	if conn.bufReadConn != nil {
+		// read cmd timeout and write result to conn timeout are both needed.
 		if err := conn.bufReadConn.SetDeadline(time.Now()); err != nil {
 			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 		}
