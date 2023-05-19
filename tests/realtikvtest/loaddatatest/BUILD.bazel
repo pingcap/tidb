@@ -17,8 +17,10 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
+        "//br/pkg/mock/mocklocal",
         "//config",
         "//disttask/framework/storage",
         "//disttask/loaddata",
@@ -32,10 +34,12 @@ go_test(
         "//tests/realtikvtest",
         "//util/dbterror/exeerrors",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_golang_mock//gomock",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
+        "@org_uber_go_zap//:zap",
     ],
 )

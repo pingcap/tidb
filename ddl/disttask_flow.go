@@ -45,6 +45,9 @@ func NewLitBackfillFlowHandle(d DDL) dispatcher.TaskFlowHandle {
 	}
 }
 
+func (*litBackfillFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
+}
+
 // ProcessNormalFlow processes the normal flow.
 func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	var globalTaskMeta BackfillGlobalMeta

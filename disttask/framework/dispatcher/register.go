@@ -25,6 +25,10 @@ import (
 
 // TaskFlowHandle is used to control the process operations for each global task.
 type TaskFlowHandle interface {
+	// OnTicker is used to handle the ticker event, if business impl need to do some periodical work, you can
+	// do it here, but don't do too much work here, because the ticker interval is small, and it will block
+	// the event is generated every checkTaskRunningInterval.
+	OnTicker(ctx context.Context, gTask *proto.Task)
 	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
 	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr [][]byte) (subtaskMeta []byte, err error)
 	// GetEligibleInstances is used to get the eligible instances for the global task.

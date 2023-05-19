@@ -24,15 +24,19 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/golang/mock/gomock"
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func (s *mockGCSSuite) prepareAndUseDB(db string) {
@@ -890,4 +894,61 @@ func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed boo
 			s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.SchedulerID)
 		}
 	}
+}
+
+func (s *mockGCSSuite) TestImportMode() {
+	withOptions := fmt.Sprintf("WITH thread=2, import_mode='%s'", "physical")
+	withOptions = adjustOptions(withOptions, true)
+
+	var intoImportTime, intoNormalTime time.Time
+	controller := gomock.NewController(s.T())
+	switcher := mocklocal.NewMockTiKVModeSwitcher(controller)
+	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		intoImportTime = time.Now()
+		return nil
+	}).Times(1)
+	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		intoNormalTime = time.Now()
+		return nil
+	}).Times(1)
+	backup := importer.NewTiKVModeSwitcher
+	importer.NewTiKVModeSwitcher = func(tls *common.TLS, pdAddr string, logger *zap.Logger) local.TiKVModeSwitcher {
+		return switcher
+	}
+	s.T().Cleanup(func() {
+		importer.NewTiKVModeSwitcher = backup
+	})
+
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
+	s.tk.MustExec("CREATE DATABASE load_data;")
+	s.tk.MustExec(`CREATE TABLE load_data.import_mode (a INT, b INT, c int);`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "import_mode-1.tsv"},
+		Content:     []byte("1,11,111"),
+	})
+
+	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
+	// better start a cluster without TiDB instance.
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/import_mode-*.tsv?endpoint=%s'
+		INTO TABLE load_data.import_mode fields terminated by ',' %s`, gcsEndpoint, withOptions)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
+	s.Greater(intoNormalTime, intoImportTime)
+
+	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
+	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		intoImportTime = time.Now()
+		return nil
+	}).Times(1)
+	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		intoNormalTime = time.Now()
+		return nil
+	}).Times(1)
+	s.tk.MustExec("truncate table load_data.import_mode;")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/import_mode-*.tsv?endpoint=%s'
+		INTO TABLE load_data.import_mode fields terminated by ',' %s`, gcsEndpoint, withOptions)
+	err := s.tk.ExecToErr(sql)
+	s.Error(err)
+	s.Greater(intoNormalTime, intoImportTime)
 }
