@@ -4090,24 +4090,6 @@ func TestIndexMergeRuntimeStats(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
 }
-<<<<<<< HEAD:session/session_test/session_test.go
-=======
-
-func TestHandleAssertionFailureForPartitionedTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	se := tk.Session()
-	se.SetConnectionID(1)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int, c int, primary key(a, b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
-	failpoint.Enable("github.com/pingcap/tidb/table/tables/addRecordForceAssertExist", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb/table/tables/addRecordForceAssertExist")
-
-	ctx, hook := testutil.WithLogHook(context.TODO(), t, "table")
-	_, err := tk.ExecWithContext(ctx, "insert into t values (1, 1, 1)")
-	require.ErrorContains(t, err, "assertion")
-	hook.CheckLogCount(t, 0)
-}
 
 func TestRandomBinary(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -4157,4 +4139,3 @@ func TestSQLModeOp(t *testing.T) {
 	a = mysql.SetSQLMode(s, mysql.ModeAllowInvalidDates)
 	require.Equal(t, mysql.ModeNoBackslashEscapes|mysql.ModeOnlyFullGroupBy|mysql.ModeAllowInvalidDates, a)
 }
->>>>>>> acc8f88097e (session: del NO_BACKSLASH_ESCAPES sql mode for internal sql (#43966)):session/sessiontest/session_test.go
