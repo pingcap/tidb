@@ -386,6 +386,16 @@ func (m SQLMode) HasAllowInvalidDatesMode() bool {
 	return m&ModeAllowInvalidDates == ModeAllowInvalidDates
 }
 
+// DelSQLMode delete sql mode from ori
+func DelSQLMode(ori SQLMode, del SQLMode) SQLMode {
+	return ori & (^del)
+}
+
+// SetSQLMode add sql mode to ori
+func SetSQLMode(ori SQLMode, add SQLMode) SQLMode {
+	return ori | add
+}
+
 // consts for sql modes.
 // see https://dev.mysql.com/doc/internals/en/query-event.html#q-sql-mode-code
 const (
