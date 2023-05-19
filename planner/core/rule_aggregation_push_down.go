@@ -283,8 +283,8 @@ func (a *aggregationPushDownSolver) checkAnyCountAndSum(aggFuncs []*aggregation.
 }
 
 // TODO:
-//   1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
-//   2. remove this method and use splitPartialAgg instead for clean code.
+//  1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
+//  2. remove this method and use splitPartialAgg instead for clean code.
 func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc,
 	gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{
@@ -482,9 +482,9 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 						newAggFuncsArgs = append(newAggFuncsArgs, newArgs)
 					}
 				}
-				for i, funcsArgs := range oldAggFuncsArgs {
+				for i, funcsArgs := range newAggFuncsArgs {
 					for j := range funcsArgs {
-						if oldAggFuncsArgs[i][j].GetType().EvalType() != newAggFuncsArgs[i][j].GetType().EvalType() {
+						if agg.AggFuncs[i].Args[j].GetType().EvalType() != newAggFuncsArgs[i][j].GetType().EvalType() {
 							noSideEffects = false
 							break
 						}

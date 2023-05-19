@@ -10600,11 +10600,9 @@ func (s *testIntegrationSuite) TestIssue33397(c *C) {
 	tk.MustQuery("select compress(a) from t").Check(testkit.Rows("", ""))
 }
 
-func TestIfFunctionWithNull(t *testing.T) {
+func (s *testIntegrationSuite) TestIfFunctionWithNull(c *C) {
 	// issue 43805
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ordres;")
 	tk.MustExec("CREATE TABLE orders (id bigint(20) unsigned NOT NULL ,account_id bigint(20) unsigned NOT NULL DEFAULT '0' ,loan bigint(20) unsigned NOT NULL DEFAULT '0' ,stage_num int(20) unsigned NOT NULL DEFAULT '0' ,apply_time bigint(20) unsigned NOT NULL DEFAULT '0' ,PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,KEY idx_orders_account_id (account_id),KEY idx_orders_apply_time (apply_time));")
