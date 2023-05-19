@@ -1507,7 +1507,7 @@ func resumePausedJob(se *sess.Session, job *model.Job,
 func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
 	sessCtx sessionctx.Context,
 	ids []int64,
-	byWho model.AdminCommandOperator) (errs []error, err error) {
+	byWho model.AdminCommandOperator) (jobErrs []error, err error) {
 	failpoint.Inject("mockFailedCommandOnConcurencyDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock commit error"))
@@ -1521,7 +1521,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 	ns := sess.NewSession(sessCtx)
 	// We should process (and try) all the jobs in one Transaction.
 	for tryN := uint(0); tryN < 10; tryN += 1 {
-		errs = make([]error, len(ids))
+		jobErrs = make([]error, len(ids))
 		// Need to figure out which one could not be paused
 		jobMap := make(map[int64]int, len(ids))
 		idsStr := make([]string, 0, len(ids))
@@ -1545,20 +1545,20 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 			if !ok {
 				logutil.BgLogger().Debug("Job ID from meta is not consistent with requested job id,",
 					zap.Int64("fetched job ID", job.ID))
-				errs[i] = dbterror.ErrInvalidDDLJob.GenWithStackByArgs(job.ID)
+				jobErrs[i] = dbterror.ErrInvalidDDLJob.GenWithStackByArgs(job.ID)
 				continue
 			}
 			delete(jobMap, job.ID)
 
 			err = process(ns, job, byWho)
 			if err != nil {
-				errs[i] = err
+				jobErrs[i] = err
 				continue
 			}
 
 			err = updateDDLJob2Table(ns, job, true)
 			if err != nil {
-				errs[i] = err
+				jobErrs[i] = err
 				continue
 			}
 		}
@@ -1569,13 +1569,13 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 		}
 
 		for id, idx := range jobMap {
-			errs[idx] = dbterror.ErrDDLJobNotFound.GenWithStackByArgs(id)
+			jobErrs[idx] = dbterror.ErrDDLJobNotFound.GenWithStackByArgs(id)
 		}
 
-		return errs, nil
+		return jobErrs, nil
 	}
 
-	return errs, err
+	return jobErrs, err
 }
 
 // CancelJobs cancels the DDL jobs according to user command.
