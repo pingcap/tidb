@@ -51,12 +51,12 @@ func adjustOptions(options string, distributed bool) string {
 }
 
 func (s *mockGCSSuite) TestPhysicalMode() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.testPhysicalMode(false)
 	s.testPhysicalMode(true)
 }
 
 func (s *mockGCSSuite) testPhysicalMode(distributed bool) {
-	//s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
