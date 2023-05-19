@@ -130,7 +130,6 @@ func (s *StorageRC) DerefAndClose() (err error) {
 	} else if s.refCnt == 0 {
 		s.refCnt = -1
 		s.done = false
-		s.err = nil
 		s.iter = 0
 		if err = s.rc.Close(); err != nil {
 			return err
@@ -255,21 +254,6 @@ func (s *StorageRC) ActionSpillForTest() *chunk.SpillDiskAction {
 	return s.rc.ActionSpillForTest()
 }
 
-<<<<<<< HEAD
-func (s *StorageRC) resetAll() error {
-	s.refCnt = -1
-	s.begCh = nil
-	s.done = false
-	s.iter = 0
-	if err := s.rc.Reset(); err != nil {
-		return err
-	}
-	s.rc = nil
-	return nil
-}
-
-=======
->>>>>>> cd334c41c5a (executor: fix cte may hang because register OOMAction repeatedly (#43758))
 func (s *StorageRC) valid() bool {
 	return s.refCnt > 0 && s.rc != nil
 }
