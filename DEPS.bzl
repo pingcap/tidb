@@ -86,8 +86,8 @@ def go_deps():
         name = "com_github_alecthomas_kingpin_v2",
         build_file_proto_mode = "disable",
         importpath = "github.com/alecthomas/kingpin/v2",
-        sum = "h1:ANLJcKmQm4nIaog7xdr/id6FM6zm5hHnfZrvtKPxqGg=",
-        version = "v2.3.1",
+        sum = "h1:H0aULhgmSzN8xQ3nX1uxtdlTHYoPLu5AhHxWrKI6ocU=",
+        version = "v2.3.2",
     )
 
     go_repository(
@@ -3545,8 +3545,8 @@ def go_deps():
         name = "com_github_prometheus_common",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/common",
-        sum = "h1:EKsfXEYo4JpWMHH5cg+KOUWeuJSov1Id8zGR8eeI1YM=",
-        version = "v0.42.0",
+        sum = "h1:iq+BVjvYLei5f27wiuNiB1DN6DYQkp1c8Bx0Vykh5us=",
+        version = "v0.43.0",
     )
     go_repository(
         name = "com_github_prometheus_procfs",
@@ -3669,8 +3669,8 @@ def go_deps():
         name = "com_github_rogpeppe_go_internal",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/rogpeppe/go-internal",
-        sum = "h1:73kH8U+JUqXU8lRuOHeVHaa/SZPifC7BkcraZVejAe8=",
-        version = "v1.9.0",
+        sum = "h1:TMyTOH3F/DB16zRVcYyreMH6GnZZrwQVAoYjRBZyWFQ=",
+        version = "v1.10.0",
     )
     go_repository(
         name = "com_github_rs_cors",
@@ -4464,6 +4464,13 @@ def go_deps():
         importpath = "github.com/xhit/go-str2duration",
         sum = "h1:BcV5u025cITWxEQKGWr1URRzrcXtu7uk8+luz3Yuhwc=",
         version = "v1.2.0",
+    )
+    go_repository(
+        name = "com_github_xhit_go_str2duration_v2",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/xhit/go-str2duration/v2",
+        sum = "h1:lxklc02Drh6ynqX+DdPyp5pCKLUQpRT8bp8Ydu2Bstc=",
+        version = "v2.1.0",
     )
 
     go_repository(
