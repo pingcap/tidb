@@ -246,6 +246,11 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			return dbterror.ErrCancelledDDLJob
 		}
 
+		err := overwriteReorgInfoFromCheckpoint(rh.s, job, reorgInfo)
+		if err != nil {
+			return err
+		}
+
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
@@ -317,6 +322,19 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 	return nil
 }
 
+func overwriteReorgInfoFromCheckpoint(sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
+	start, end, pid, err := getCheckpointReorgHandle(sess, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(start) > 0 && len(end) > 0 && pid > 0 {
+		reorgInfo.StartKey = start
+		reorgInfo.EndKey = end
+		reorgInfo.PhysicalTableID = pid
+	}
+	return nil
+}
+
 func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 	rc := w.getReorgCtx(job.ID)
 	rc.mu.Lock()
@@ -339,7 +357,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if totalCount > 0 {
 			progress = float64(addedRowCount) / float64(totalCount)
 		} else {
-			progress = 1
+			progress = 0
 		}
 		if progress > 1 {
 			progress = 1
