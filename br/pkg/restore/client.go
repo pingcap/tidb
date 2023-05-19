@@ -3170,7 +3170,7 @@ func (rc *Client) generateRepairIngestIndexSQLs(
 				return sqls, false, errors.Trace(err)
 			}
 			sqls = checkpointSQLs.SQLs
-			log.Info("[ingest] load ingest index repair sqls from checkpoint")
+			log.Info("[ingest] load ingest index repair sqls from checkpoint", zap.Reflect("sqls", sqls))
 			return sqls, true, nil
 		}
 	}
@@ -3261,14 +3261,14 @@ NEXTSQL:
 		}
 		oldIndexIDFound := false
 		if fromCheckpoint {
-		NEXTINDEX:
 			for _, idx := range tableInfo.Indices() {
 				indexInfo := idx.Meta()
 				if indexInfo.ID == sql.IndexID {
 					// the original index id is not dropped
 					oldIndexIDFound = true
-					break NEXTINDEX
+					break
 				}
+				// what if index's state is not public?
 				if indexInfo.Name.O == sql.IndexName {
 					// find the same name index, but not the same index id,
 					// which means the repaired index id is created
