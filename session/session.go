@@ -1098,6 +1098,7 @@ func (s *session) getTiDBTableValue(name, val string) (string, error) {
 
 var _ sqlexec.SQLParser = &session{}
 
+<<<<<<< HEAD
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
@@ -1107,6 +1108,25 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
 	s.parser.SetParserConfig(s.sessionVars.BuildParserConfig())
 	return s.parser.Parse(sql, charset, collation)
+=======
+func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
+	defer tracing.StartRegion(ctx, "ParseSQL").End()
+
+	p := parserPool.Get().(*parser.Parser)
+	defer parserPool.Put(p)
+
+	sqlMode := s.sessionVars.SQLMode
+	if s.isInternal() {
+		sqlMode = mysql.DelSQLMode(sqlMode, mysql.ModeNoBackslashEscapes)
+	}
+	p.SetSQLMode(sqlMode)
+	p.SetParserConfig(s.sessionVars.BuildParserConfig())
+	tmp, warn, err := p.ParseSQL(sql, params...)
+	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
+	res := make([]ast.StmtNode, len(tmp))
+	copy(res, tmp)
+	return res, warn, err
+>>>>>>> acc8f88097e (session: del NO_BACKSLASH_ESCAPES sql mode for internal sql (#43966))
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
