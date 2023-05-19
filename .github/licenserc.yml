@@ -40,4 +40,10 @@ header:
     - "tidb-binlog/proto/go-binlog/secondary_binlog.pb.go"
     - "**/*.sql"
     - ".bazelversion"
+<<<<<<< HEAD
+=======
+    - "build/image/.ci_bazel"
+    - "**/OWNERS"
+    - "OWNERS_ALIASES"
+>>>>>>> 631fdfaf536 (chore: migrate to new prow reviewing (#42833))
   comment: on-failure
