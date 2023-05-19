@@ -2024,10 +2024,6 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
-	if _, ok := er.p.(*LogicalUnionAll); ok && v.Table.O != "" {
-		er.err = ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[er.b.curClause])
-		return
-	}
 	col, name, err := findFieldNameFromNaturalUsingJoin(er.p, v)
 	if err != nil {
 		er.err = err
@@ -2048,6 +2044,10 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
 			return
 		}
+	}
+	if _, ok := er.p.(*LogicalUnionAll); ok && v.Table.O != "" {
+		er.err = ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[er.b.curClause])
+		return
 	}
 	if er.b.curClause == globalOrderByClause {
 		er.b.curClause = orderByClause
