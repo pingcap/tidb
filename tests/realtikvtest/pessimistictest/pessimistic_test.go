@@ -534,7 +534,7 @@ func TestOptimisticConflicts(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	// This SQL use BatchGet and cache data in the txn snapshot.
 	// It can be changed to other SQLs that use BatchGet.
-	tk.MustExec("select * from conflict where id in (1, 2, 3)")
+	tk.MustExec("insert ignore into conflict values (1, 2)")
 
 	tk2.MustExec("update conflict set c = c - 1")
 

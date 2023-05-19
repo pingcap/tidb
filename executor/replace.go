@@ -86,10 +86,6 @@ func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle 
 	}
 	if rowUnchanged {
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-		_, err := appendUnchangedRowForLock(e.ctx, r.t, handle, oldRow)
-		if err != nil {
-			return false, err
-		}
 		return true, nil
 	}
 
