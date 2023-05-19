@@ -803,6 +803,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		plans:            e.tblPlans,
 		netDataSize:      e.avgRowSize * float64(len(task.handles)),
 		byItems:          e.byItems,
+		memTracker:       e.memTracker,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
