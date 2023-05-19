@@ -2209,7 +2209,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context, isShow bool) (rows [][]
 				failReason,         // FAIL_REASON
 				instance,           // INSTANCE
 				procID,             // PROCESS_ID
-				remainDurationStr,  // REMAINING_TIME
+				remainDurationStr,  // REMAINING_SECONDS
 				progressStr,        // PROGRESS
 				estimatedRowCntStr, // ESTIMATED_TOTAL_ROWS
 			)
