@@ -2816,37 +2816,60 @@ func TestAsyncCommitCalTSFail(t *testing.T) {
 	tk2.MustExec("commit")
 }
 
-func TestIssue28011(t *testing.T) {
+func TestChangeLockToPut(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk2.MustExec("use test")
 
-	for _, tt := range []struct {
-		name      string
-		lockQuery string
-		finalRows [][]interface{}
-	}{
-		{"Update", "update t set b = 'x' where a = 'a'", testkit.Rows("a x", "b y", "c z")},
-		{"BatchUpdate", "update t set b = 'x' where a in ('a', 'b', 'c')", testkit.Rows("a x", "b y", "c x")},
-		{"SelectForUpdate", "select a from t where a = 'a' for update", testkit.Rows("a x", "b y", "c z")},
-		{"BatchSelectForUpdate", "select a from t where a in ('a', 'b', 'c') for update", testkit.Rows("a x", "b y", "c z")},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			tk.MustExec("drop table if exists t")
-			tk.MustExec("create table t (a varchar(10) primary key nonclustered, b varchar(10))")
-			tk.MustExec("insert into t values ('a', 'x'), ('b', 'x'), ('c', 'z')")
-			tk.MustExec("begin")
-			tk.MustExec(tt.lockQuery)
-			tk.MustQuery("select a from t").Check(testkit.Rows("a", "b", "c"))
-			tk.MustExec("replace into t values ('b', 'y')")
-			tk.MustQuery("select a from t").Check(testkit.Rows("a", "b", "c"))
-			tk.MustQuery("select a, b from t order by a").Check(tt.finalRows)
-			tk.MustExec("commit")
-			tk.MustQuery("select a, b from t order by a").Check(tt.finalRows)
-			tk.MustExec("admin check table t")
-		})
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table t1(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
+	tk.MustExec(`insert into t1 values ("1", 1, 1), ("2", 2, 2), ("3", 3, 3)`)
+
+	// Test point get change lock to put.
+	for _, mode := range []string{"REPEATABLE-READ", "READ-COMMITTED"} {
+		tk.MustExec(fmt.Sprintf(`set tx_isolation = "%s"`, mode))
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 = "1" for update`).Check(testkit.Rows("1 1 1"))
+		tk.MustExec("commit")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 = "1" for update`).Check(testkit.Rows("1 1 1"))
+		tk.MustExec("commit")
+		tk.MustExec("admin check table t1")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k1) where c2 = "1" for update`).Check(testkit.Rows("1 1 1"))
+		tk2.MustQuery(`select * from t1 use index(k1) where c2 = "3" for update`).Check(testkit.Rows("3 3 3"))
+		tk2.MustExec("commit")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 = 1`).Check(testkit.Rows("1 1 1"))
+		tk2.MustQuery("select * from t1 use index(k2) where c3 > 1").Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk2.MustExec("commit")
 	}
+
+	// Test batch point get change lock to put.
+	for _, mode := range []string{"REPEATABLE-READ", "READ-COMMITTED"} {
+		tk.MustExec(fmt.Sprintf(`set tx_isolation = "%s"`, mode))
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 in ("1", "5", "3") for update`).Check(testkit.Rows("1 1 1", "3 3 3"))
+		tk.MustExec("commit")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 in ("1", "2", "8") for update`).Check(testkit.Rows("1 1 1", "2 2 2"))
+		tk.MustExec("commit")
+		tk.MustExec("admin check table t1")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k1) where c2 in ("1", "2", "3") for update`).Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
+		tk2.MustQuery(`select * from t1 use index(k2) where c2 in ("2") for update`).Check(testkit.Rows("2 2 2"))
+		tk2.MustExec("commit")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 in (5, 8)`).Check(testkit.Rows())
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 in (1, 8) for update`).Check(testkit.Rows("1 1 1"))
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 > 1`).Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk2.MustExec("commit")
+	}
+
+	tk.MustExec("admin check table t1")
 }
 
 func createTable(part bool, columnNames []string, columnTypes []string) string {
