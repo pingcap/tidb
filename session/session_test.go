@@ -5972,18 +5972,18 @@ func (s *testSessionSuite) TestRandomBinary(c *C) {
 	c.Assert(err, Equals, nil)
 }
 
-func (suite *testSessionSuite) TestSQLModeOp(c *C) {
-	s := mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
-	d := mysql.DelSQLMode(s, mysql.ModeANSIQuotes)
-	c.Assert(s, Equals, d)
+func (s *testSessionSuite) TestSQLModeOp(c *C) {
+	m := mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
+	d := mysql.DelSQLMode(m, mysql.ModeANSIQuotes)
+	c.Assert(m, Equals, d)
 
-	d = mysql.DelSQLMode(s, mysql.ModeNoBackslashEscapes)
+	d = mysql.DelSQLMode(m, mysql.ModeNoBackslashEscapes)
 	c.Assert(mysql.ModeOnlyFullGroupBy, Equals, d)
 
-	s = mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
-	a := mysql.SetSQLMode(s, mysql.ModeOnlyFullGroupBy)
-	c.Assert(s, Equals, a)
+	m = mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
+	a := mysql.SetSQLMode(m, mysql.ModeOnlyFullGroupBy)
+	c.Assert(m, Equals, a)
 
-	a = mysql.SetSQLMode(s, mysql.ModeAllowInvalidDates)
+	a = mysql.SetSQLMode(m, mysql.ModeAllowInvalidDates)
 	c.Assert(mysql.ModeNoBackslashEscapes|mysql.ModeOnlyFullGroupBy|mysql.ModeAllowInvalidDates, Equals, a)
 }
