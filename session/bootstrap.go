@@ -1145,7 +1145,7 @@ func syncUpgradeState(s Session) {
 	dom := domain.GetDomain(s)
 	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
 	if err != nil {
-		logutil.BgLogger().Fatal("upgrade update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
+		logutil.BgLogger().Fatal("[upgrading] update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
 	}
 
 	retryTimes := 10
@@ -1156,9 +1156,9 @@ func syncUpgradeState(s Session) {
 			break
 		}
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("upgrade get owner op failed", zap.Stringer("state", op), zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
 		}
-		logutil.BgLogger().Warn("upgrade get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
 		time.Sleep(interval)
 	}
 
@@ -1181,22 +1181,21 @@ func syncUpgradeState(s Session) {
 		}
 
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("upgrade pause all jobs failed", zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Error(err))
 		}
-		logutil.BgLogger().Warn("upgrade pause all jobs failed", zap.Error(err))
+		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Error(err))
 		time.Sleep(interval)
 	}
-	logutil.BgLogger().Info("upgrade update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
 }
 
 func syncNormalRunning(s Session) {
 	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
-		logutil.BgLogger().Warn("[upgrading] unexpected error to resume all paused jobs: ", zap.Error(err))
+		logutil.BgLogger().Warn("[upgrading] resume all paused jobs failed", zap.Error(err))
 	}
-
 	for _, e := range jobErrs {
-		logutil.BgLogger().Warn("[upgrading] unable to resume the job, error: ", zap.Error(e))
+		logutil.BgLogger().Warn("[upgrading] resume the job failed ", zap.Error(e))
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1204,9 +1203,9 @@ func syncNormalRunning(s Session) {
 	dom := domain.GetDomain(s)
 	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
 	if err != nil {
-		logutil.BgLogger().Fatal("upgrade update global state failed", zap.String("state", syncer.StateNormalRunning), zap.Error(err))
+		logutil.BgLogger().Fatal("[upgrading] update global state to normal failed", zap.Error(err))
 	}
-	logutil.BgLogger().Info("upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
+	logutil.BgLogger().Info("[upgrading] update global state to normal running finished")
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
