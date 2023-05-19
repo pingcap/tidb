@@ -7458,7 +7458,8 @@ func TestAesDecryptionVecEvalWithZeroChunk(t *testing.T) {
 
 func TestIfFunctionWithNull(t *testing.T) {
 	// issue 43805
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
