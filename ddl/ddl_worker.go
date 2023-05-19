@@ -380,11 +380,11 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 
 			if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
 				if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
-					logutil.BgLogger().Warn("[ddl] pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
+					logutil.BgLogger().Warn("[ddl-upgrading] pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 					task.cacheErr = err
 					continue
 				}
-				logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job))
+				logutil.BgLogger().Info("[ddl-upgrading] pause user DDL by system successful", zap.Stringer("job", job))
 			}
 
 			jobTasks = append(jobTasks, job)
