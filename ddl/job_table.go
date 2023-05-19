@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -611,7 +612,9 @@ func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKe
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
 			logutil.BgLogger().Info("[ddl-ingest] resume physical table ID from checkpoint",
-				zap.Int64("job ID", job.ID), zap.Int64("old physical ID", physicalTableID),
+				zap.Int64("jobID", job.ID),
+				zap.String("start", hex.EncodeToString(cp.StartKey)),
+				zap.String("end", hex.EncodeToString(cp.EndKey)),
 				zap.Int64("checkpoint physical ID", cp.PhysicalID))
 			physicalTableID = cp.PhysicalID
 			startKey = cp.StartKey
@@ -632,9 +635,19 @@ func updateDDLReorgHandle(se *sess.Session, jobID int64, startKey kv.Key, endKey
 
 // initDDLReorgHandle initializes the handle for ddl reorg.
 func initDDLReorgHandle(s *sess.Session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	rawReorgMeta, err := json.Marshal(ingest.JobReorgMeta{
+		Checkpoint: &ingest.ReorgCheckpoint{
+			PhysicalID: physicalTableID,
+			StartKey:   startKey,
+			EndKey:     endKey,
+			Version:    ingest.JobCheckpointVersionCurrent,
+		}})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	del := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", jobID)
-	ins := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
-		jobID, element.ID, util.WrapKey2String(element.TypeKey), util.WrapKey2String(startKey), util.WrapKey2String(endKey), physicalTableID)
+	ins := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id, reorg_meta) values (%d, %d, %s, %s, %s, %d, %s)",
+		jobID, element.ID, util.WrapKey2String(element.TypeKey), util.WrapKey2String(startKey), util.WrapKey2String(endKey), physicalTableID, util.WrapKey2String(rawReorgMeta))
 	return s.RunInTxn(func(se *sess.Session) error {
 		_, err := se.Execute(context.Background(), del, "init_handle")
 		if err != nil {
