@@ -854,7 +854,7 @@ func killQuery(conn *clientConn, maxExecutionTime bool) {
 		cancelFunc()
 	}
 	if conn.bufReadConn != nil {
-		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+		if err := conn.bufReadConn.SetDeadline(time.Now()); err != nil {
 			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 		}
 	}
