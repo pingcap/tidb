@@ -20,9 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
-
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/timer/api"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -320,6 +319,61 @@ func TestWorkerProcessDelayOrErr(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, timer, tm)
 
+	// update timer unknown error
+	mockCore, mockStore := newMockStore()
+	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
+		Return(api.PreSchedEventResult{}, nil).Once()
+	mockCore.On("Update", mock.Anything, mock.Anything, mock.Anything).
+		Return(errors.New("mockErr")).Once()
+	request.store = mockStore
+	sendWorkerRequestAndCheckResp(t, w, request, respChan, func(resp *triggerEventResponse) {
+		require.False(t, resp.success)
+		require.Equal(t, timer.ID, resp.timerID)
+		require.Equal(t, eventID, resp.eventID)
+		delay, ok := resp.retryAfter.Get()
+		require.True(t, ok)
+		require.Equal(t, workerEventDefaultRetryInterval, delay)
+		_, ok = resp.newTimerRecord.Get()
+		require.False(t, ok)
+	})
+
+	// timer meta changed then get record error
+	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
+		Return(api.PreSchedEventResult{}, nil).Once()
+	mockCore.On("Update", mock.Anything, mock.Anything, mock.Anything).
+		Return(api.ErrVersionNotMatch).Once()
+	mockCore.On("List", mock.Anything, mock.Anything).
+		Return([]*api.TimerRecord(nil), errors.New("mockErr")).Once()
+	sendWorkerRequestAndCheckResp(t, w, request, respChan, func(resp *triggerEventResponse) {
+		require.False(t, resp.success)
+		require.Equal(t, timer.ID, resp.timerID)
+		require.Equal(t, eventID, resp.eventID)
+		delay, ok := resp.retryAfter.Get()
+		require.True(t, ok)
+		require.Equal(t, workerEventDefaultRetryInterval, delay)
+		_, ok = resp.newTimerRecord.Get()
+		require.False(t, ok)
+	})
+
+	// timer event updated then get record error
+	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
+		Return(api.PreSchedEventResult{}, nil).Once()
+	mockCore.On("Update", mock.Anything, mock.Anything, mock.Anything).
+		Return(nil).Once()
+	mockCore.On("List", mock.Anything, mock.Anything).
+		Return([]*api.TimerRecord(nil), errors.New("mockErr")).Once()
+	sendWorkerRequestAndCheckResp(t, w, request, respChan, func(resp *triggerEventResponse) {
+		require.False(t, resp.success)
+		require.Equal(t, timer.ID, resp.timerID)
+		require.Equal(t, eventID, resp.eventID)
+		delay, ok := resp.retryAfter.Get()
+		require.True(t, ok)
+		require.Equal(t, workerEventDefaultRetryInterval, delay)
+		_, ok = resp.newTimerRecord.Get()
+		require.False(t, ok)
+	})
+	request.store = store
+
 	// timer meta changed
 	err = cli.UpdateTimer(ctx, timer.ID, api.WithSetSchedExpr(api.SchedEventInterval, "2m"))
 	require.NoError(t, err)
@@ -336,9 +390,8 @@ func TestWorkerProcessDelayOrErr(t *testing.T) {
 		require.False(t, resp.success)
 		require.Equal(t, timer.ID, resp.timerID)
 		require.Equal(t, eventID, resp.eventID)
-		delay, ok := resp.retryAfter.Get()
-		require.True(t, ok)
-		require.Equal(t, time.Duration(0), delay)
+		_, ok := resp.retryAfter.Get()
+		require.False(t, ok)
 		newTimer, ok := resp.newTimerRecord.Get()
 		require.True(t, ok)
 		require.Equal(t, timer, newTimer)

@@ -145,29 +145,29 @@ func (rt *TimerGroupRuntime) loop() {
 
 	var lastTryTriggerTime time.Time
 	rt.fullRefreshTimers()
-	rt.resetTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
+	rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
 	for {
 		select {
 		case <-rt.ctx.Done():
 			return
 		case <-fullRefreshTimersTicker.C:
 			rt.fullRefreshTimers()
-			rt.resetTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
+			rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
 		case <-tryTriggerEventTimer.C:
 			rt.tryTriggerTimerEvents()
 			lastTryTriggerTime = time.Now()
-			rt.resetTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
+			rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
 		case resp := <-rt.workerRespCh:
 			rt.handleWorkerResponse(resp)
-			rt.resetTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
+			rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
 		case <-batchHandleResponsesTimer.C:
 			if rt.batchHandleWatchResponses(batchResponses) {
-				rt.resetTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
+				rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
 			}
 			batchResponses = batchResponses[:0]
 		case <-checkWaitCloseTimerTicker.C:
 			if rt.partialRefreshTimers(rt.cache.waitCloseTimerIDs) {
-				rt.resetTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
+				rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
 			}
 		case resp, ok := <-watchCh:
 			if !ok {
@@ -257,7 +257,7 @@ func (rt *TimerGroupRuntime) tryTriggerTimerEvents() {
 	}
 }
 
-func (rt *TimerGroupRuntime) resetTryTriggerTimer(t *time.Timer, lastTryTriggerTime time.Time) {
+func (rt *TimerGroupRuntime) setTryTriggerTimer(t *time.Timer, lastTryTriggerTime time.Time) {
 	duration := maxTriggerEventInterval
 	now := time.Now()
 	rt.cache.iterTryTriggerTimers(func(timer *api.TimerRecord, tryTriggerTime time.Time, _ *time.Time) bool {
@@ -286,12 +286,8 @@ func (rt *TimerGroupRuntime) handleWorkerResponse(resp *triggerEventResponse) {
 	if resp.success {
 		rt.cache.setTimerProcStatus(resp.timerID, procWaitTriggerClose, resp.eventID)
 	} else {
-		retryAfter := workerEventDefaultRetryInterval
-		if after, ok := resp.retryAfter.Get(); ok {
-			retryAfter = after
-		}
 		rt.cache.setTimerProcStatus(resp.timerID, procIdle, "")
-		if retryAfter > 0 {
+		if retryAfter, ok := resp.retryAfter.Get(); ok {
 			rt.cache.updateNextTryTriggerTime(resp.timerID, time.Now().Add(retryAfter))
 		}
 	}

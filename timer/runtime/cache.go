@@ -38,19 +38,22 @@ type timerCacheItem struct {
 	triggerEventID     string
 }
 
-func (c *timerCacheItem) update(timer *api.TimerRecord) bool {
+func (c *timerCacheItem) update(timer *api.TimerRecord, nowFunc func() time.Time) bool {
 	if c.timer != nil && timer.Version <= c.timer.Version {
 		return false
 	}
 
+	timer = timer.Clone()
 	c.timer = timer
 	c.nextEventTime = nil
-	c.nextTryTriggerTime = time.Now().Add(time.Hour)
+	c.nextTryTriggerTime = nowFunc().Add(time.Hour)
 
-	p, err := timer.CreateSchedEventPolicy()
-	if err == nil {
-		if t, ok := p.NextEventTime(c.timer.Watermark); ok {
-			c.nextEventTime = &t
+	if timer.Enable {
+		p, err := timer.CreateSchedEventPolicy()
+		if err == nil {
+			if t, ok := p.NextEventTime(c.timer.Watermark); ok {
+				c.nextEventTime = &t
+			}
 		}
 	}
 
@@ -60,7 +63,7 @@ func (c *timerCacheItem) update(timer *api.TimerRecord) bool {
 			c.nextTryTriggerTime = *c.nextEventTime
 		}
 	case api.SchedEventTrigger:
-		c.nextTryTriggerTime = time.Now()
+		c.nextTryTriggerTime = nowFunc()
 	}
 
 	return true
@@ -71,6 +74,7 @@ type timersCache struct {
 	// sorted is the sorted timers by `nextTryTriggerTime`
 	sorted            *list.List
 	waitCloseTimerIDs map[string]struct{}
+	nowFunc           func() time.Time
 }
 
 func newTimersCache() *timersCache {
@@ -78,6 +82,7 @@ func newTimersCache() *timersCache {
 		items:             make(map[string]*timerCacheItem),
 		sorted:            list.New(),
 		waitCloseTimerIDs: make(map[string]struct{}),
+		nowFunc:           time.Now,
 	}
 }
 
@@ -89,7 +94,7 @@ func (c *timersCache) updateTimer(timer *api.TimerRecord) bool {
 	}
 
 	var change bool
-	if change = item.update(timer); change {
+	if change = item.update(timer, c.nowFunc); change {
 		c.resort(item)
 	}
 
@@ -175,6 +180,7 @@ func (c *timersCache) resort(item *timerCacheItem) {
 	ele := item.sortEle
 	if ele == nil {
 		ele = c.sorted.PushBack(item)
+		item.sortEle = ele
 	}
 
 	nextTrigger := item.nextTryTriggerTime
@@ -185,7 +191,7 @@ func (c *timersCache) resort(item *timerCacheItem) {
 			cur = prev
 			prev = cur.Prev()
 		}
-		c.sorted.MoveBefore(ele, prev)
+		c.sorted.MoveBefore(ele, cur)
 		return
 	}
 
@@ -195,7 +201,7 @@ func (c *timersCache) resort(item *timerCacheItem) {
 			cur = next
 			next = cur.Next()
 		}
-		c.sorted.MoveAfter(ele, next)
+		c.sorted.MoveAfter(ele, cur)
 		return
 	}
 }

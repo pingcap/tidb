@@ -295,8 +295,10 @@ func runTimerStoreInsertAndGet(ctx context.Context, t *testing.T, store *TimerSt
 	recordTpl.EventStatus = SchedEventIdle
 
 	// get by id
-	record, err = store.GetByID(ctx, id)
+	got, err := store.GetByID(ctx, id)
 	require.NoError(t, err)
+	require.NotSame(t, record, got)
+	record = got
 	require.Equal(t, recordTpl.ID, record.ID)
 	require.NotZero(t, record.Version)
 	recordTpl.Version = record.Version
@@ -342,13 +344,16 @@ func runTimerStoreInsertAndGet(ctx context.Context, t *testing.T, store *TimerSt
 
 func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *TimerStore, tpl *TimerRecord) {
 	// normal update
+	orgRecord, err := store.GetByID(ctx, tpl.ID)
+	require.NoError(t, err)
 	require.Equal(t, "1h", tpl.SchedPolicyExpr)
-	err := store.Update(ctx, tpl.ID, &TimerUpdate{
+	err = store.Update(ctx, tpl.ID, &TimerUpdate{
 		SchedPolicyExpr: NewOptionalVal("2h"),
 	})
 	require.NoError(t, err)
 	record, err := store.GetByID(ctx, tpl.ID)
 	require.NoError(t, err)
+	require.NotSame(t, orgRecord, record)
 	require.Greater(t, record.Version, tpl.Version)
 	tpl.Version = record.Version
 	tpl.SchedPolicyExpr = "2h"

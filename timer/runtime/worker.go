@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -141,7 +140,7 @@ func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) 
 
 			if err != nil {
 				logger.Error(
-					"error occurs when invoke hook.OnPreSchedEvent",
+					"error occurs when invoking hook.OnPreSchedEvent",
 					zap.Error(err),
 					zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 				)
@@ -178,7 +177,6 @@ func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) 
 				if newTimer, err := req.store.GetByID(w.ctx, timer.ID); err == nil {
 					resp.newTimerRecord.Set(newTimer)
 				}
-				resp.retryAfter.Set(0)
 			} else {
 				logger.Error("error occurs to change timer to trigger state,",
 					zap.Error(err),
@@ -222,7 +220,7 @@ func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) 
 
 		if err != nil {
 			logger.Error(
-				"failed to invoke hook OnTimerEvent",
+				"error occurs when invoking hook OnTimerEvent",
 				zap.Error(err),
 				zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 			)

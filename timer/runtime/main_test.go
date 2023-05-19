@@ -65,6 +65,49 @@ func (h *mockHook) OnSchedEvent(ctx context.Context, event api.TimerShedEvent) e
 	return args.Error(0)
 }
 
+type mockStoreCore struct {
+	mock.Mock
+}
+
+func newMockStore() (*mockStoreCore, *api.TimerStore) {
+	core := &mockStoreCore{}
+	return core, &api.TimerStore{TimerStoreCore: core}
+}
+
+func (s *mockStoreCore) mock() *mock.Mock {
+	return &s.Mock
+}
+
+func (s *mockStoreCore) Create(ctx context.Context, record *api.TimerRecord) (string, error) {
+	args := s.Called(ctx, record)
+	return args.String(0), args.Error(1)
+}
+
+func (s *mockStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.TimerRecord, error) {
+	args := s.Called(ctx, cond)
+	return args.Get(0).([]*api.TimerRecord), args.Error(1)
+}
+
+func (s *mockStoreCore) Update(ctx context.Context, timerID string, update *api.TimerUpdate) error {
+	args := s.Called(ctx, timerID, update)
+	return args.Error(0)
+}
+
+func (s *mockStoreCore) Delete(ctx context.Context, timerID string) (bool, error) {
+	args := s.Called(ctx, timerID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (s *mockStoreCore) WatchSupported() bool {
+	args := s.Called()
+	return args.Bool(0)
+}
+
+func (s *mockStoreCore) Watch(ctx context.Context) api.WatchTimerChan {
+	args := s.Called(ctx)
+	return args.Get(0).(api.WatchTimerChan)
+}
+
 func waitDone(obj any, timeout time.Duration) {
 	var ch <-chan struct{}
 	switch o := obj.(type) {

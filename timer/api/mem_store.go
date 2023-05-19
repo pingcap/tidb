@@ -102,7 +102,7 @@ func (s *memoryStoreCore) List(_ context.Context, cond Cond) ([]*TimerRecord, er
 	for _, ns := range s.namespaces {
 		for _, t := range ns {
 			if cond == nil || cond.Match(t) {
-				result = append(result, t)
+				result = append(result, t.Clone())
 			}
 		}
 	}
