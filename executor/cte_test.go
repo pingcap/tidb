@@ -462,7 +462,8 @@ func TestCTEsInView(t *testing.T) {
 }
 
 func TestCTEPanic(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t1(c1 int)")
