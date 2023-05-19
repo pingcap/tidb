@@ -270,19 +270,14 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 }
 
 // OnSubtaskFinished implements the Scheduler interface.
-<<<<<<< HEAD
 func (*backfillSchedulerHandle) OnSubtaskFinished(context.Context, []byte) error {
-	return nil
-=======
-func (*backfillSchedulerHandle) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
 	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
 	})
-	return meta, nil
->>>>>>> c071a8999b3 (ddl: fix a bug that rollback distributed adding index is not handled correctly (#43917))
+	return nil
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler interface.
