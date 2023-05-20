@@ -296,7 +296,6 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
 				req := template
 				req.SetSnapshotId(oldVol.SnapshotID)
-				req.SetAvailabilityZone(oldVol.VolumeAZ)
 				if targetAZ == "" {
 					req.SetAvailabilityZone(oldVol.VolumeAZ)
 				} else {
