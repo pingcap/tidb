@@ -91,7 +91,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 	eg, _ := errgroup.WithContext(context.Background())
 
 	vst := GenerateVolumeSnapshotTags(backupInfo)
-	taggingAndFillResult := func(createOutput *ec2.CreateSnapshotsOutput, vst VolumeSnapshotTags, k8sClusterName string) error {
+	taggingAndFillResult := func(createOutput *ec2.CreateSnapshotsOutput, vst VolumeSnapshotTags, k8sClusterName *string) error {
 		mutex.Lock()
 		defer mutex.Unlock()
 		for j := range createOutput.Snapshots {
@@ -104,10 +104,10 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				},
 				Tags: []*ec2.Tag{
 					ec2Tag(SourcePvcNameKey, vst[*snapshot.VolumeId].sourcePVCName),
-					ec2Tag(SourceVolumeIdKey, *snapshot.VolumeId),
+					ec2Tag(SourceVolumeIdKey, aws.StringValue(snapshot.VolumeId)),
 					ec2Tag(SourceTikvNameKey, vst[*snapshot.VolumeId].sourceTiKVName),
 					ec2Tag(SourceNamespaceKey, vst[*snapshot.VolumeId].sourceNameSpace),
-					ec2Tag(SourceContextKey, k8sClusterName),
+					ec2Tag(SourceContextKey, aws.StringValue(k8sClusterName)),
 				},
 			}
 			_, err := e.ec2.CreateTags(createTagInput)
@@ -150,12 +150,13 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			}
 
 			// retrieve the k8s cluster name from EC2 instance tags
-			var k8sClusterName = ""
+			var k8sClusterName *string
 
 			for j := range resp1.Reservations[0].Instances[0].Tags {
 				tag := resp1.Reservations[0].Instances[0].Tags[j]
 				if *tag.Key == EC2K8SClusterNameKey {
-					k8sClusterName = *tag.Value
+					k8sClusterName = tag.Value
+					break
 				}
 			}
 
@@ -186,9 +187,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				instanceSpecification := ec2.InstanceSpecification{}
 				createSnapshotInput := ec2.CreateSnapshotsInput{}
 
-				instanceSpecification.SetInstanceId(*ec2InstanceId)
-				instanceSpecification.SetExcludeBootVolume(true)
-				instanceSpecification.SetExcludeDataVolumeIds(excludedVolumeIDs)
+				instanceSpecification.SetInstanceId(*ec2InstanceId).SetExcludeBootVolume(true).SetExcludeDataVolumeIds(excludedVolumeIDs)
 
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
 
