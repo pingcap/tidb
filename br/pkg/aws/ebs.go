@@ -28,6 +28,7 @@ const (
 	NamespaceLabelKey    string = "app.kubernetes.io/namespace"
 	NameLabelKey         string = "app.kubernetes.io/name"
 	AnnTemporaryVolumeID string = "temporary/volume-id"
+	EC2K8SClusterNameKey string = "eksctl.cluster.k8s.io/v1alpha1/cluster-name"
 
 	SourcePvcNameKey   string = "source/pvcName"
 	SourceVolumeIdKey  string = "source/VolumeId"
@@ -48,7 +49,6 @@ type SnapshotTags struct {
 	sourcePVCName   string
 	sourceTiKVName  string
 	sourceNameSpace string
-	sourceContext   string
 }
 
 type VolumeSnapshotTags map[string]SnapshotTags
@@ -77,7 +77,6 @@ func GenerateVolumeSnapshotTags(backupInfo *config.EBSBasedBRMeta) VolumeSnapsho
 			pv.GetName(),
 			pv.GetAnnotations()[AnnPodNameKey],
 			pv.GetLabels()[NamespaceLabelKey],
-			pv.GetLabels()[NameLabelKey],
 		}
 	}
 	return vst
@@ -92,7 +91,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 	eg, _ := errgroup.WithContext(context.Background())
 
 	vst := GenerateVolumeSnapshotTags(backupInfo)
-	taggingAndFillResult := func(createOutput *ec2.CreateSnapshotsOutput, vst VolumeSnapshotTags) error {
+	taggingAndFillResult := func(createOutput *ec2.CreateSnapshotsOutput, vst VolumeSnapshotTags, k8sClusterName string) error {
 		mutex.Lock()
 		defer mutex.Unlock()
 		for j := range createOutput.Snapshots {
@@ -108,7 +107,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 					ec2Tag(SourceVolumeIdKey, *snapshot.VolumeId),
 					ec2Tag(SourceTikvNameKey, vst[*snapshot.VolumeId].sourceTiKVName),
 					ec2Tag(SourceNamespaceKey, vst[*snapshot.VolumeId].sourceNameSpace),
-					ec2Tag(SourceContextKey, vst[*snapshot.VolumeId].sourceContext),
+					ec2Tag(SourceContextKey, k8sClusterName),
 				},
 			}
 			_, err := e.ec2.CreateTags(createTagInput)
@@ -149,6 +148,17 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			if err != nil {
 				return snapIDMap, nil, errors.Trace(err)
 			}
+
+			// retrieve the k8s cluster name from EC2 instance tags
+			var k8sClusterName = ""
+
+			for j := range resp1.Reservations[0].Instances[0].Tags {
+				tag := resp1.Reservations[0].Instances[0].Tags[j]
+				if *tag.Key == EC2K8SClusterNameKey {
+					k8sClusterName = *tag.Value
+				}
+			}
+
 			for j := range resp1.Reservations[0].Instances[0].BlockDeviceMappings {
 				device := resp1.Reservations[0].Instances[0].BlockDeviceMappings[j]
 				// skip root volume
@@ -180,14 +190,13 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				instanceSpecification.SetExcludeBootVolume(true)
 				instanceSpecification.SetExcludeDataVolumeIds(excludedVolumeIDs)
 
-				createSnapshotInput.SetCopyTagsFromSource("volume")
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
 
 				resp, err := e.ec2.CreateSnapshots(&createSnapshotInput)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				err = taggingAndFillResult(resp, vst)
+				err = taggingAndFillResult(resp, vst, k8sClusterName)
 				if err != nil {
 					return errors.Trace(err)
 				}
