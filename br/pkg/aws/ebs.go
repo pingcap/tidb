@@ -183,13 +183,11 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			// create snapshots for volumes on this ec2 instance
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				// Prepare for aws requests
+
 				instanceSpecification := ec2.InstanceSpecification{}
+				instanceSpecification.SetInstanceId(*ec2InstanceId).SetExcludeBootVolume(true).SetExcludeDataVolumeIds(excludedVolumeIDs)
+
 				createSnapshotInput := ec2.CreateSnapshotsInput{}
-
-				instanceSpecification.SetInstanceId(*ec2InstanceId)
-				instanceSpecification.SetExcludeBootVolume(true)
-				instanceSpecification.SetExcludeDataVolumeIds(excludedVolumeIDs)
-
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
 
 				resp, err := e.ec2.CreateSnapshots(&createSnapshotInput)
@@ -399,7 +397,6 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 						Tags:         tags,
 					},
 				})
-				req.SetAvailabilityZone(oldVol.VolumeAZ)
 				if targetAZ == "" {
 					req.SetAvailabilityZone(oldVol.VolumeAZ)
 				} else {
