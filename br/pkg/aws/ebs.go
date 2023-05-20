@@ -351,8 +351,8 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	fetchTagValue := func(tags []*ec2.Tag, key string) string {
 		for i := range tags {
 			tag := tags[i]
-			if *tag.Key == key {
-				return *tag.Value
+			if aws.StringValue(tag.Key) == key {
+				return aws.StringValue(tag.Value)
 			}
 		}
 		return ""
