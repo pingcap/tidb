@@ -358,11 +358,17 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
 				req := template
 
-				req.SetSnapshotId(oldVol.SnapshotID)
+			req.SetSnapshotId(oldVol.SnapshotID)
 				if targetAZ == "" {
 					req.SetAvailabilityZone(oldVol.VolumeAZ)
 				} else {
 					req.SetAvailabilityZone(targetAZ)
+
+
+				// Copy interested tags of snapshots to the restored volume
+				tags := []*ec2.Tag{
+					ec2Tag("TiDBCluster-BR", "new"),
+					ec2Tag("ebs.csi.aws.com/cluster", "true"),
 				}
 				snapshotIds := make([]*string, 0)
 
@@ -371,15 +377,8 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 				if err != nil {
 					return errors.Trace(err)
 				}
-
 				if len(resp.Snapshots) <= 0 {
 					return errors.Errorf("specified snapshot [%s] is not found", oldVol.SnapshotID)
-				}
-
-				// Copy interested tags of snapshots to the restored volume
-				tags := []*ec2.Tag{
-					ec2Tag("TiDBCluster-BR", "new"),
-					ec2Tag("ebs.csi.aws.com/cluster", "true"),
 				}
 
 				snapshotTags := resp.Snapshots[0].Tags
@@ -396,8 +395,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 						Tags:         tags,
 					},
 				})
-				req.SetAvailabilityZone(oldVol.VolumeAZ)
->>>>>>> 721d0bae6c (br: add tags to snapshots and restored volumes)
+
 				newVol, err := e.ec2.CreateVolume(&req)
 				if err != nil {
 					return errors.Trace(err)
