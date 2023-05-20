@@ -1510,7 +1510,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 	byWho model.AdminCommandOperator) (jobErrs []error, err error) {
 	failpoint.Inject("mockFailedCommandOnConcurencyDDL", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("mock commit error"))
+			failpoint.Return(nil, errors.New("mock failed admin command on ddl jobs"))
 		}
 	})
 
@@ -1520,7 +1520,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 
 	ns := sess.NewSession(sessCtx)
 	// We should process (and try) all the jobs in one Transaction.
-	for tryN := uint(0); tryN < 10; tryN += 1 {
+	for tryN := uint(0); tryN < 3; tryN += 1 {
 		jobErrs = make([]error, len(ids))
 		// Need to figure out which one could not be paused
 		jobMap := make(map[int64]int, len(ids))
@@ -1562,6 +1562,12 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 				continue
 			}
 		}
+
+		failpoint.Inject("mockCommitFailedOnDDLCommand", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(jobErrs, errors.New("mock commit failed on admin command on ddl jobs"))
+			}
+		})
 
 		// There may be some conflict during the update, try it again
 		if err = ns.Commit(); err != nil {
