@@ -135,7 +135,7 @@ func (b *backfillSchedulerHandle) UpdateStatLoop() {
 	}
 	path := fmt.Sprintf("%s/%d/%s:%d", rowCountEtcdPath, b.job.ID, ser.IP, ser.Port)
 	writeToEtcd := func() {
-		err := ddlutil.PutKVToEtcd(b.ctx, b.d.etcdCli, 3, path, strconv.Itoa(int(b.totalRowCnt)))
+		err := ddlutil.PutKVToEtcd(context.TODO(), b.d.etcdCli, 3, path, strconv.Itoa(int(b.totalRowCnt)))
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] update row count for distributed add index failed", zap.Error(err))
 		}
@@ -322,7 +322,7 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
 
 	if b.isPartition || b.stepForImport {
-		b.bc.Unregister(b.job.ID, b.index.ID)
+		ingest.LitBackCtxMgr.Unregister(b.job.ID)
 	}
 
 	if !b.stepForImport {
@@ -335,10 +335,7 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 // Rollback implements the Scheduler interface.
 func (b *backfillSchedulerHandle) Rollback(context.Context) error {
 	logutil.BgLogger().Info("[ddl] rollback backfill add index task", zap.Int64("jobID", b.job.ID))
-	bc, ok := ingest.LitBackCtxMgr.Load(b.job.ID)
-	if ok {
-		bc.Unregister(b.job.ID, b.index.ID)
-	}
+	ingest.LitBackCtxMgr.Unregister(b.job.ID)
 	b.d.removeReorgCtx(b.job.ID)
 	return nil
 }
