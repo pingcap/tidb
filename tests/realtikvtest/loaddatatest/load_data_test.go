@@ -79,7 +79,6 @@ func (s *mockGCSSuite) testPhysicalMode(distributed bool) {
 		Content: []byte("5\ttest5\t55\n" +
 			"6\ttest6\t66"),
 	})
-	s.prepareVariables(distributed)
 	s.prepareAndUseDB("load_data")
 
 	allData := []string{"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44", "5 test5 55", "6 test6 66"}
