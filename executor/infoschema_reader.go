@@ -2264,9 +2264,8 @@ func getRemainDurationForAnalyzeStatusHelper(
 		if tid > 0 {
 			totalCnt, _ := internalutil.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
 			remainline := int64(totalCnt) - processedRows
-			speed := float64(processedRows) / duration.Seconds()
-			i := float64(remainline) / speed
-			RemainingDuration = time.Duration(i) * time.Second
+			i := float64(remainline) * duration.Seconds() / float64(processedRows)
+			RemainingDuration = time.Duration(i)
 		}
 	}
 	return &RemainingDuration, percentage, totalCnt, nil
