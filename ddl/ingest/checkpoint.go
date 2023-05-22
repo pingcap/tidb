@@ -41,10 +41,6 @@ type CheckpointManager struct {
 	jobID     int64
 	indexID   int64
 
-	physicalID int64
-	startKey   kv.Key
-	endKey     kv.Key
-
 	// Derived and unchanged after the initialization.
 	instanceAddr     string
 	localDataIsValid bool
@@ -54,12 +50,20 @@ type CheckpointManager struct {
 	mu              sync.Mutex
 	minTaskIDSynced int
 	dirty           bool
+	// Local meta.
+	pidLocal   int64
+	startLocal kv.Key
+	endLocal   kv.Key
 
 	// Persisted to the storage.
 	minKeySyncLocal  kv.Key
 	minKeySyncGlobal kv.Key
 	localCnt         int
 	globalCnt        int
+	// Global meta.
+	pidGlobal   int64
+	startGlobal kv.Key
+	endGlobal   kv.Key
 
 	// For persisting the checkpoint periodically.
 	updating      bool
@@ -173,18 +177,23 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	if !flushed || err != nil {
 		return err
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.progressLocalSyncMinKey()
 	if imported && s.minKeySyncGlobal.Cmp(s.minKeySyncLocal) != 0 {
 		s.minKeySyncGlobal = s.minKeySyncLocal
 		s.globalCnt = s.localCnt
 		s.dirty = true
+
+		s.pidGlobal = s.pidLocal
+		s.startGlobal = s.startLocal
+		s.endGlobal = s.endLocal
 	}
 	return nil
 }
 
 func (s *CheckpointManager) progressLocalSyncMinKey() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	for {
 		cp := s.checkpoints[s.minTaskIDSynced+1]
 		if cp == nil || !cp.lastBatchSent || cp.currentKeys < cp.totalKeys {
@@ -212,7 +221,9 @@ func (s *CheckpointManager) Sync() {
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl-ingest] flush local engine failed", zap.Error(err))
 	}
+	s.mu.Lock()
 	s.progressLocalSyncMinKey()
+	s.mu.Unlock()
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	s.updaterCh <- &wg
@@ -221,22 +232,18 @@ func (s *CheckpointManager) Sync() {
 
 // Reset resets the checkpoint manager between two partitions.
 func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
-	reset := false
 	s.mu.Lock()
-	if s.physicalID != newPhysicalID {
+	defer s.mu.Unlock()
+	logutil.BgLogger().Info("[ddl-ingest] reset checkpoint manager",
+		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.pidLocal),
+		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
+	if s.pidLocal != newPhysicalID {
 		s.minKeySyncLocal = nil
 		s.minKeySyncGlobal = nil
 		s.minTaskIDSynced = 0
-		s.physicalID = newPhysicalID
-		s.startKey = start
-		s.endKey = end
-		reset = true
-	}
-	s.mu.Unlock()
-	if reset {
-		logutil.BgLogger().Info("[ddl-ingest] reset checkpoint manager",
-			zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.physicalID),
-			zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
+		s.pidLocal = newPhysicalID
+		s.startLocal = start
+		s.endLocal = end
 	}
 }
 
@@ -293,18 +300,19 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 		if cp := reorgMeta.Checkpoint; cp != nil {
 			s.minKeySyncGlobal = cp.GlobalSyncKey
 			s.globalCnt = cp.GlobalKeyCount
-			if s.instanceAddr == cp.InstanceAddr {
+			if s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */ {
 				s.localDataIsValid = true
 				s.minKeySyncLocal = cp.LocalSyncKey
 				s.localCnt = cp.LocalKeyCount
-				s.physicalID = cp.PhysicalID
-				s.startKey = cp.StartKey
-				s.endKey = cp.EndKey
+				s.pidGlobal = cp.PhysicalID
+				s.startGlobal = cp.StartKey
+				s.endGlobal = cp.EndKey
 			}
 			logutil.BgLogger().Info("[ddl-ingest] resume checkpoint",
 				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
 				zap.String("local checkpoint", hex.EncodeToString(s.minKeySyncLocal)),
 				zap.String("global checkpoint", hex.EncodeToString(s.minKeySyncGlobal)),
+				zap.Int64("physical table ID", cp.PhysicalID),
 				zap.String("previous instance", cp.InstanceAddr),
 				zap.String("current instance", s.instanceAddr))
 			return nil
@@ -321,6 +329,9 @@ func (s *CheckpointManager) updateCheckpoint() error {
 	currentGlobalKey := s.minKeySyncGlobal
 	currentLocalCnt := s.localCnt
 	currentGlobalCnt := s.globalCnt
+	currentGlobalPID := s.pidGlobal
+	currentGlobalStart := s.startGlobal
+	currentGlobalEnd := s.endGlobal
 	s.updating = true
 	s.mu.Unlock()
 	defer func() {
@@ -343,9 +354,9 @@ func (s *CheckpointManager) updateCheckpoint() error {
 			LocalKeyCount:  currentLocalCnt,
 			GlobalKeyCount: currentGlobalCnt,
 			InstanceAddr:   s.instanceAddr,
-			PhysicalID:     s.physicalID,
-			StartKey:       s.startKey,
-			EndKey:         s.endKey,
+			PhysicalID:     currentGlobalPID,
+			StartKey:       currentGlobalStart,
+			EndKey:         currentGlobalEnd,
 			Version:        JobCheckpointVersionCurrent,
 		}
 		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})
@@ -367,6 +378,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
 		zap.String("local checkpoint", hex.EncodeToString(currentLocalKey)),
 		zap.String("global checkpoint", hex.EncodeToString(currentGlobalKey)),
+		zap.Int64("global physical ID", currentGlobalPID),
 		zap.Error(err))
 	return err
 }
