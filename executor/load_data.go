@@ -529,11 +529,17 @@ func (ji *logicalJobImporter) Result() importer.JobImportResult {
 	}
 
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
+	warns := make([]stmtctx.SQLWarn, numWarnings)
+	n := copy(warns, stmtCtx.GetWarnings())
+	for i := 0; i < int(numRecords) && n < len(warns); i++ {
+		n += copy(warns[n:], colAssignExprWarnings)
+	}
+
 	return importer.JobImportResult{
 		Msg:          msg,
 		LastInsertID: ji.encodeWorker.lastInsertID,
 		Affected:     numAffected,
-		Warnings:     stmtCtx.GetWarnings(),
+		Warnings:     warns,
 	}
 }
 
