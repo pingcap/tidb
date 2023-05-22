@@ -52,7 +52,7 @@ func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt s
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
-		logger:         logutil.BgLogger().With(zap.String("component", "distribute importer"), zap.Int("id", int(param.Job.ID))),
+		logger:         logutil.BgLogger().With(zap.String("component", "importer"), zap.Int("id", int(param.Job.ID))),
 	}, nil
 }
 
@@ -67,6 +67,7 @@ func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan
 		plan:           plan,
 		stmt:           stmt,
 		instance:       serverInfo,
+		logger:         logutil.BgLogger().With(zap.String("component", "importer"), zap.Int("id", int(param.Job.ID))),
 	}, nil
 }
 
