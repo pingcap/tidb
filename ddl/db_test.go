@@ -1112,7 +1112,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 		}
 	}
 	tk1.MustExec("alter table t add index (id)")
-	require.EqualError(t, cancelErr, "mock commit error")
+	require.EqualError(t, cancelErr, "mock failed admin command on ddl jobs")
 
 	// Test when cancelling is retried only once and adding index is cancelled in the end.
 	var jobID int64
