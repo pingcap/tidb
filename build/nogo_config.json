@@ -509,7 +509,6 @@
       "planner/core/rule_topn_push_down.go": "planner/core/rule_topn_push_down.go", 
       "planner/core/plan_cost_ver1.go": "planner/core/plan_cost_ver1.go", 
       "planner/core/expression_rewriter.go": "planner/core/expression_rewriter.go", 
-      "planner/core/stats.go": "planner/core/stats.go", 
       "planner/core/find_best_task.go": "planner/core/find_best_task.go", 
       "planner/core/task.go": "planner/core/task.go", 
       "planner/core/preprocess.go": "planner/core/preprocess.go", 
