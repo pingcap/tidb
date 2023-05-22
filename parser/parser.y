@@ -169,7 +169,6 @@ import (
 	outfile           "OUTFILE"
 	is                "IS"
 	insert            "INSERT"
-	ingest            "INGEST"
 	intType           "INT"
 	int1Type          "INT1"
 	int2Type          "INT2"
@@ -798,6 +797,7 @@ import (
 	depth                      "DEPTH"
 	drainer                    "DRAINER"
 	dry                        "DRY"
+	ingest                     "INGEST"
 	jobs                       "JOBS"
 	job                        "JOB"
 	nodeID                     "NODE_ID"
@@ -979,7 +979,7 @@ import (
 	InsertIntoStmt             "INSERT INTO statement"
 	CallStmt                   "CALL statement"
 	IndexAdviseStmt            "INDEX ADVISE statement"
-	IngestIntoStmt	    	   "INGEST INTO statement"
+	IngestIntoStmt             "INGEST INTO statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
@@ -3143,7 +3143,7 @@ ColumnDef:
 	ColumnName Type ColumnOptionListOpt
 	{
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.([]*ast.ColumnOption)}
-	        if err := colDef.Validate(); err != nil {
+		if err := colDef.Validate(); err != nil {
 			yylex.AppendError(err)
 			return 1
 		}
@@ -3157,7 +3157,7 @@ ColumnDef:
 		options = append(options, $3.([]*ast.ColumnOption)...)
 		tp.AddFlag(mysql.UnsignedFlag)
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: tp, Options: options}
-	        if err := colDef.Validate(); err != nil {
+		if err := colDef.Validate(); err != nil {
 			yylex.AppendError(err)
 			return 1
 		}
@@ -14264,20 +14264,19 @@ LoadDataOption:
 	}
 
 IngestIntoStmt:
-	"INGEST" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
-	"FROM" stringLit "FORMAT" stringLit CharsetOpt Fields Lines IgnoreLines LoadDataOptionListOpt
+	"INGEST" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" stringLit "FORMAT" stringLit CharsetOpt Fields Lines IgnoreLines LoadDataOptionListOpt
 	{
 		$$ = &ast.IngestIntoStmt{
-			Table:     $3.(*ast.TableName),
-                        ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
-                        ColumnAssignments: $5.([]*ast.Assignment),
-                        Path: $7.(string),
-			Format: $9.(string),
-                        Charset: $10.(*string),
-                        FieldsInfo: $11.(*ast.FieldsClause),
-                        LinesInfo: $12.(*ast.LinesClause),
-                        IgnoreLines: $13.(*int64),
-                        Options: $14.([]*ast.LoadDataOpt),
+			Table:              $3.(*ast.TableName),
+			ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
+			ColumnAssignments:  $5.([]*ast.Assignment),
+			Path:               $7,
+			Format:             $9,
+			Charset:            $10.(*string),
+			FieldsInfo:         $11.(*ast.FieldsClause),
+			LinesInfo:          $12.(*ast.LinesClause),
+			IgnoreLines:        $13.(*uint64),
+			Options:            $14.([]*ast.LoadDataOpt),
 		}
 	}
 
