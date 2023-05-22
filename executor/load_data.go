@@ -20,6 +20,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -317,40 +318,40 @@ func (e *LoadDataWorker) TestLoad(parser mydump.Parser) error {
 	if err2 != nil {
 		return err2
 	}
-	err := ResetContextOfStmt(jobImporter.encodeWorkers[0].ctx, &ast.LoadDataStmt{})
+	err := ResetContextOfStmt(jobImporter.encodeWorker.ctx, &ast.LoadDataStmt{})
 	if err != nil {
 		return err
 	}
-	setNonRestrictiveFlags(jobImporter.encodeWorkers[0].ctx.GetSessionVars().StmtCtx)
-	err = ResetContextOfStmt(jobImporter.commitWorkers[0].ctx, &ast.LoadDataStmt{})
+	setNonRestrictiveFlags(jobImporter.encodeWorker.ctx.GetSessionVars().StmtCtx)
+	err = ResetContextOfStmt(jobImporter.commitWorker.ctx, &ast.LoadDataStmt{})
 	if err != nil {
 		return err
 	}
-	setNonRestrictiveFlags(jobImporter.commitWorkers[0].ctx.GetSessionVars().StmtCtx)
+	setNonRestrictiveFlags(jobImporter.commitWorker.ctx.GetSessionVars().StmtCtx)
 
 	ctx := context.Background()
 	for i := uint64(0); i < jobImporter.controller.IgnoreLines; i++ {
 		//nolint: errcheck
 		_ = parser.ReadRow()
 	}
-	err = jobImporter.encodeWorkers[0].readOneBatchRows(ctx, parser)
+	err = jobImporter.encodeWorker.readOneBatchRows(ctx, parser)
 	if err != nil {
 		return err
 	}
-	err = sessiontxn.NewTxn(ctx, jobImporter.commitWorkers[0].ctx)
+	err = sessiontxn.NewTxn(ctx, jobImporter.commitWorker.ctx)
 	if err != nil {
 		return err
 	}
-	err = jobImporter.commitWorkers[0].checkAndInsertOneBatch(
+	err = jobImporter.commitWorker.checkAndInsertOneBatch(
 		ctx,
-		jobImporter.encodeWorkers[0].rows,
-		jobImporter.encodeWorkers[0].curBatchCnt)
+		jobImporter.encodeWorker.rows,
+		jobImporter.encodeWorker.curBatchCnt)
 	if err != nil {
 		return err
 	}
-	jobImporter.encodeWorkers[0].resetBatch()
-	jobImporter.commitWorkers[0].ctx.StmtCommit(ctx)
-	err = jobImporter.commitWorkers[0].ctx.CommitTxn(ctx)
+	jobImporter.encodeWorker.resetBatch()
+	jobImporter.commitWorker.ctx.StmtCommit(ctx)
+	err = jobImporter.commitWorker.ctx.CommitTxn(ctx)
 	if err != nil {
 		return err
 	}
@@ -359,15 +360,17 @@ func (e *LoadDataWorker) TestLoad(parser mydump.Parser) error {
 	return nil
 }
 
+// TODO: remove or rename this struct
 type logicalJobImporter struct {
 	*importer.JobImportParam
 	// only used on interactive load data
 	userSctx   sessionctx.Context
 	controller *importer.LoadDataController
 
-	encodeWorkers []*encodeWorker
-	commitWorkers []*commitWorker
-	readerInfos   []importer.LoadDataReaderInfo
+	// encodeWorker and commitWorker will share same InsertValues
+	encodeWorker *encodeWorker
+	commitWorker *commitWorker
+	readerInfos  []importer.LoadDataReaderInfo
 }
 
 var _ importer.JobImporter = &logicalJobImporter{}
@@ -399,83 +402,32 @@ func newLogicalJobImporter(param *importer.JobImportParam, e *LoadDataWorker, r 
 }
 
 func (ji *logicalJobImporter) initEncodeCommitWorkers(e *LoadDataWorker) (err error) {
-	var createdSessions []sessionctx.Context
-	defer func() {
-		if err != nil {
-			for _, s := range createdSessions {
-				CloseSession(s)
-			}
-		}
-	}()
-	encodeWorkers := make([]*encodeWorker, 0, e.controller.ThreadCnt)
-	commitWorkers := make([]*commitWorker, 0, e.controller.ThreadCnt)
-
-	// TODO: create total ThreadCnt workers rather than 2*ThreadCnt?
-	for i := int64(0); i < e.controller.ThreadCnt; i++ {
-		encodeCore, err2 := ji.createInsertValues(e)
-		if err2 != nil {
-			return err2
-		}
-		createdSessions = append(createdSessions, encodeCore.ctx)
-		commitCore, err2 := ji.createInsertValues(e)
-		if err2 != nil {
-			return err2
-		}
-		createdSessions = append(createdSessions, commitCore.ctx)
-		colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(encodeCore.ctx)
-		if err2 != nil {
-			return err2
-		}
-		encode := &encodeWorker{
-			InsertValues:   encodeCore,
-			controller:     e.controller,
-			colAssignExprs: colAssignExprs,
-			exprWarnings:   exprWarnings,
-			killed:         &e.UserSctx.GetSessionVars().Killed,
-		}
-		encode.resetBatch()
-		encodeWorkers = append(encodeWorkers, encode)
-		commit := &commitWorker{
-			InsertValues: commitCore,
-			controller:   e.controller,
-			progress:     e.progress,
-		}
-		commitWorkers = append(commitWorkers, commit)
+	insertValues, err2 := ji.createInsertValues(e)
+	if err2 != nil {
+		return err2
 	}
-	ji.encodeWorkers = encodeWorkers
-	ji.commitWorkers = commitWorkers
+	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.ctx)
+	if err2 != nil {
+		return err2
+	}
+	ji.encodeWorker = &encodeWorker{
+		InsertValues:   insertValues,
+		controller:     e.controller,
+		colAssignExprs: colAssignExprs,
+		exprWarnings:   exprWarnings,
+		killed:         &e.UserSctx.GetSessionVars().Killed,
+	}
+	ji.encodeWorker.resetBatch()
+	ji.commitWorker = &commitWorker{
+		InsertValues: insertValues,
+		controller:   e.controller,
+		progress:     e.progress,
+	}
 	return nil
 }
 
-// createInsertValues creates InsertValues whose session context is a clone of
-// userSctx.
+// createInsertValues creates InsertValues from userSctx.
 func (ji *logicalJobImporter) createInsertValues(e *LoadDataWorker) (insertVal *InsertValues, err error) {
-	sysSession, err2 := CreateSession(e.UserSctx)
-	if err2 != nil {
-		return nil, err2
-	}
-	defer func() {
-		if err != nil {
-			CloseSession(sysSession)
-		}
-	}()
-
-	err = ResetContextOfStmt(sysSession, &ast.LoadDataStmt{})
-	if err != nil {
-		return nil, err
-	}
-	// copy the related variables to the new session
-	// I have no confident that all needed variables are copied :(
-	fromVars := e.UserSctx.GetSessionVars()
-	toVars := sysSession.GetSessionVars()
-	toVars.User = fromVars.User
-	toVars.CurrentDB = fromVars.CurrentDB
-	toVars.SQLMode = fromVars.SQLMode
-	if !e.controller.Restrictive {
-		setNonRestrictiveFlags(toVars.StmtCtx)
-	}
-	toVars.StmtCtx.InitSQLDigest(fromVars.StmtCtx.SQLDigest())
-
 	insertColumns := e.controller.InsertColumns
 	hasExtraHandle := false
 	for _, col := range insertColumns {
@@ -488,7 +440,7 @@ func (ji *logicalJobImporter) createInsertValues(e *LoadDataWorker) (insertVal *
 		}
 	}
 	ret := &InsertValues{
-		baseExecutor:   newBaseExecutor(sysSession, nil, e.planInfo.ID),
+		baseExecutor:   newBaseExecutor(ji.userSctx, nil, e.planInfo.ID),
 		Table:          e.table,
 		Columns:        e.planInfo.Columns,
 		GenExprs:       e.planInfo.GenColExprs,
@@ -496,6 +448,8 @@ func (ji *logicalJobImporter) createInsertValues(e *LoadDataWorker) (insertVal *
 		insertColumns:  insertColumns,
 		rowLen:         len(insertColumns),
 		hasExtraHandle: hasExtraHandle,
+		isLoadData:     true,
+		txnInUse:       sync.Mutex{},
 	}
 	if len(insertColumns) > 0 {
 		ret.initEvalBuffer()
@@ -511,28 +465,26 @@ func (ji *logicalJobImporter) Param() *importer.JobImportParam {
 // Import implements importer.JobImporter interface.
 func (ji *logicalJobImporter) Import() {
 	// main goroutine -> readerInfoCh -> processOneStream goroutines
-	readerInfoCh := make(chan importer.LoadDataReaderInfo, ji.controller.ThreadCnt)
+	readerInfoCh := make(chan importer.LoadDataReaderInfo, 1)
 	// processOneStream goroutines -> commitTaskCh -> commitWork goroutines
 	commitTaskCh := make(chan commitTask, taskQueueSize)
 	// commitWork goroutines -> done -> UpdateJobProgress goroutine
 
 	param := ji.JobImportParam
+
+	waitStartCtx := make(chan struct{})
+	// TODO: support explicit transaction
+	param.Group.Go(func() error {
+		err := sessiontxn.NewTxn(param.GroupCtx, ji.userSctx)
+		close(waitStartCtx)
+		return err
+	})
+
+	<-waitStartCtx
+
 	// processOneStream goroutines.
 	param.Group.Go(func() error {
-		encodeGroup, encodeCtx := errgroup.WithContext(param.GroupCtx)
-
-		for i := range ji.encodeWorkers {
-			worker := ji.encodeWorkers[i]
-			encodeGroup.Go(func() error {
-				err2 := sessiontxn.NewTxn(encodeCtx, worker.ctx)
-				if err2 != nil {
-					return err2
-				}
-				return worker.processStream(encodeCtx, readerInfoCh, commitTaskCh)
-			})
-		}
-
-		err2 := encodeGroup.Wait()
+		err2 := ji.encodeWorker.processStream(param.GroupCtx, readerInfoCh, commitTaskCh)
 		if err2 == nil {
 			close(commitTaskCh)
 		}
@@ -540,17 +492,8 @@ func (ji *logicalJobImporter) Import() {
 	})
 	// commitWork goroutines.
 	param.Group.Go(func() error {
-		commitGroup, commitCtx := errgroup.WithContext(param.GroupCtx)
-
-		for i := range ji.commitWorkers {
-			worker := ji.commitWorkers[i]
-			commitGroup.Go(func() error {
-				failpoint.Inject("BeforeCommitWork", nil)
-				return worker.commitWork(commitCtx, commitTaskCh)
-			})
-		}
-
-		err2 := commitGroup.Wait()
+		failpoint.Inject("BeforeCommitWork", nil)
+		err2 := ji.commitWorker.commitWork(param.GroupCtx, commitTaskCh)
 		if err2 == nil {
 			close(param.Done)
 		}
@@ -569,29 +512,16 @@ func (ji *logicalJobImporter) Import() {
 
 // Result implements the importer.JobImporter interface.
 func (ji *logicalJobImporter) Result() importer.JobImportResult {
-	var (
-		numWarnings uint64
-		numAffected uint64
-		numRecords  uint64
-		numDeletes  uint64
-		numSkipped  uint64
-	)
-
-	for _, w := range ji.encodeWorkers {
-		numWarnings += uint64(w.ctx.GetSessionVars().StmtCtx.WarningCount())
-	}
-	for _, w := range ji.commitWorkers {
-		commitStmtCtx := w.ctx.GetSessionVars().StmtCtx
-		numWarnings += uint64(commitStmtCtx.WarningCount())
-		numAffected += commitStmtCtx.AffectedRows()
-		numRecords += commitStmtCtx.RecordRows()
-		numDeletes += commitStmtCtx.DeletedRows()
-		numSkipped += commitStmtCtx.RecordRows() - commitStmtCtx.CopiedRows()
-	}
+	stmtCtx := ji.userSctx.GetSessionVars().StmtCtx
+	numWarnings := uint64(stmtCtx.WarningCount())
+	numAffected := stmtCtx.AffectedRows()
+	numRecords := stmtCtx.RecordRows()
+	numDeletes := stmtCtx.DeletedRows()
+	numSkipped := stmtCtx.RecordRows() - stmtCtx.CopiedRows()
 
 	// col assign expr warnings is generated during init, it's static
 	// we need to generate it for each row processed.
-	colAssignExprWarnings := ji.encodeWorkers[0].exprWarnings
+	colAssignExprWarnings := ji.encodeWorker.exprWarnings
 	numWarnings += numRecords * uint64(len(colAssignExprWarnings))
 
 	if numWarnings > math.MaxUint16 {
@@ -599,54 +529,19 @@ func (ji *logicalJobImporter) Result() importer.JobImportResult {
 	}
 
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	warns := make([]stmtctx.SQLWarn, numWarnings)
-	n := 0
-	for _, w := range ji.encodeWorkers {
-		n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
-	}
-	for _, w := range ji.commitWorkers {
-		n += copy(warns[n:], w.ctx.GetSessionVars().StmtCtx.GetWarnings())
-	}
-	for i := 0; i < int(numRecords) && n < len(warns); i++ {
-		n += copy(warns[n:], colAssignExprWarnings)
-	}
 	return importer.JobImportResult{
 		Msg:          msg,
-		LastInsertID: ji.getLastInsertID(),
+		LastInsertID: ji.encodeWorker.lastInsertID,
 		Affected:     numAffected,
-		Warnings:     warns,
+		Warnings:     stmtCtx.GetWarnings(),
 	}
-}
-
-func (ji *logicalJobImporter) getLastInsertID() uint64 {
-	lastInsertID := uint64(0)
-	for _, w := range ji.encodeWorkers {
-		if w.lastInsertID != 0 && (lastInsertID == 0 || w.lastInsertID < lastInsertID) {
-			lastInsertID = w.lastInsertID
-		}
-	}
-	for _, w := range ji.commitWorkers {
-		if w.lastInsertID != 0 && (lastInsertID == 0 || w.lastInsertID < lastInsertID) {
-			lastInsertID = w.lastInsertID
-		}
-	}
-	return lastInsertID
 }
 
 // Close implements the importer.JobImporter interface.
 func (ji *logicalJobImporter) Close() error {
-	for _, w := range ji.encodeWorkers {
-		w.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.id, w.stats)
-	}
-	for _, w := range ji.commitWorkers {
-		w.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.id, w.stats)
-	}
-
-	for _, w := range ji.encodeWorkers {
-		CloseSession(w.ctx)
-	}
-	for _, w := range ji.commitWorkers {
-		CloseSession(w.ctx)
+	v := ji.encodeWorker.InsertValues
+	if v.runtimeStats != nil && v.stats != nil {
+		ji.userSctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(v.id, v.stats)
 	}
 	return nil
 }
@@ -914,6 +809,8 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 		select {
 		case <-ctx.Done():
 			w.ctx.StmtRollback(backgroundCtx, false)
+			w.txnInUse.Lock()
+			defer w.txnInUse.Unlock()
 			_ = w.ctx.RefreshTxnCtx(backgroundCtx)
 			return ctx.Err()
 		case task, ok := <-inCh:
@@ -958,6 +855,8 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 		return errors.New("mock commit one task error")
 	})
 	w.ctx.StmtCommit(ctx)
+	w.txnInUse.Lock()
+	defer w.txnInUse.Unlock()
 	// Make sure that there are no retries when committing.
 	if err = w.ctx.RefreshTxnCtx(ctx); err != nil {
 		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
