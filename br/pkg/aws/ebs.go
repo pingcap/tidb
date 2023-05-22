@@ -368,6 +368,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 		}
 		return ""
 	}
+
 	workerPool := utils.NewWorkerPool(e.concurrency, "create volume")
 	for i := range meta.TiKVComponent.Stores {
 		store := meta.TiKVComponent.Stores[i]
@@ -377,12 +378,14 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
 				req := template
 
-			req.SetSnapshotId(oldVol.SnapshotID)
+				req.SetSnapshotId(oldVol.SnapshotID)
+
+				// set target AZ
 				if targetAZ == "" {
 					req.SetAvailabilityZone(oldVol.VolumeAZ)
 				} else {
 					req.SetAvailabilityZone(targetAZ)
-
+				}
 
 				// Copy interested tags of snapshots to the restored volume
 				tags := []*ec2.Tag{
