@@ -351,7 +351,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 		},
 		{
 			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
-			expected: []string{"4", "4", "4", "4", "4"},
+			expected: []string{"4", "1", "1", "1", "4", "4", "4", "4", "4"},
 		},
 	}
 
