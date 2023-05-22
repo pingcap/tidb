@@ -177,7 +177,6 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	if !flushed || err != nil {
 		return err
 	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.progressLocalSyncMinKey()

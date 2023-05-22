@@ -1104,18 +1104,19 @@ func TestCancelJobWriteConflict(t *testing.T) {
 	// Test when cancelling cannot be retried and adding index succeeds.
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
-			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
 			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL", `return(true)`))
 			defer func() {
 				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL"))
 			}()
+
+			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}
 	tk1.MustExec("alter table t add index (id)")
-	require.EqualError(t, cancelErr, "mock commit error")
+	require.EqualError(t, cancelErr, "mock failed admin command on ddl jobs")
 
 	// Test when cancelling is retried only once and adding index is cancelled in the end.
 	var jobID int64
@@ -1131,72 +1132,6 @@ func TestCancelJobWriteConflict(t *testing.T) {
 	tk1.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
 	require.NoError(t, cancelErr)
 	result := tk2.ResultSetToResultWithCtx(context.Background(), rs[0], "cancel ddl job fails")
-	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
-}
-
-func TestPauseJobWriteConflict(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-
-	tk1.MustExec("use test")
-
-	tk1.MustExec("create table t(id int)")
-
-	var jobID int64
-	var pauseErr error
-	var pauseRS []sqlexec.RecordSet
-	hook := &callback.TestDDLCallback{Do: dom}
-	d := dom.DDL()
-	originalHook := d.GetHook()
-	d.SetHook(hook)
-	defer d.SetHook(originalHook)
-
-	// Test when pause cannot be retried and adding index succeeds.
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
-			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL", `return(true)`))
-			defer func() {
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL"))
-			}()
-
-			jobID = job.ID
-			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID)
-			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
-		}
-	}
-	tk1.MustExec("alter table t add index (id)")
-	require.EqualError(t, pauseErr, "mock commit error")
-
-	var cancelRS []sqlexec.RecordSet
-	var cancelErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
-			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL", `return(false)`))
-			defer func() {
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL"))
-			}()
-
-			jobID = job.ID
-			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID)
-			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
-
-			time.Sleep(5 * time.Second)
-			stmt = fmt.Sprintf("admin cancel ddl jobs %d", jobID)
-			cancelRS, cancelErr = tk2.Session().Execute(context.Background(), stmt)
-		}
-	}
-	tk1.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
-	require.NoError(t, pauseErr)
-	require.NoError(t, cancelErr)
-	result := tk2.ResultSetToResultWithCtx(context.Background(), pauseRS[0], "pause ddl job successfully")
-	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
-	result = tk2.ResultSetToResultWithCtx(context.Background(), cancelRS[0], "cancel ddl job successfully")
 	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
 }
 

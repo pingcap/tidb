@@ -246,6 +246,11 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			return dbterror.ErrCancelledDDLJob
 		}
 
+		err := overwriteReorgInfoFromGlobalCheckpoint(w, rh.s, job, reorgInfo)
+		if err != nil {
+			return err
+		}
+
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
