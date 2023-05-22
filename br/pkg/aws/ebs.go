@@ -402,11 +402,11 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 
 				snapshotTags := resp.Snapshots[0].Tags
 				tags = append(tags, ec2Tag("snapshot/createdFromSnapshotId", oldVol.SnapshotID),
-					ec2Tag("snapshot/"+SourcePvcNameKey, fetchTagValue(snapshotTags, "source/pvcName")),
-					ec2Tag("snapshot/"+SourceVolumeIdKey, fetchTagValue(snapshotTags, "source/VolumeId")),
-					ec2Tag("snapshot/"+SourceTikvNameKey, fetchTagValue(snapshotTags, "source/TikvName")),
-					ec2Tag("snapshot/"+SourceNamespaceKey, fetchTagValue(snapshotTags, "source/Namespace")),
-					ec2Tag("snapshot/"+SourceContextKey, fetchTagValue(snapshotTags, "source/context")))
+					ec2Tag("snapshot/"+SourcePvcNameKey, fetchTagValue(snapshotTags, SourcePvcNameKey)),
+					ec2Tag("snapshot/"+SourceVolumeIdKey, fetchTagValue(snapshotTags, SourceVolumeIdKey)),
+					ec2Tag("snapshot/"+SourceTikvNameKey, fetchTagValue(snapshotTags, SourceTikvNameKey)),
+					ec2Tag("snapshot/"+SourceNamespaceKey, fetchTagValue(snapshotTags, SourceNamespaceKey)),
+					ec2Tag("snapshot/"+SourceContextKey, fetchTagValue(snapshotTags, SourceContextKey)))
 
 				req.SetTagSpecifications([]*ec2.TagSpecification{
 					{
