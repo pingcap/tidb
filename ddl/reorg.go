@@ -326,6 +326,10 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		// Merging the temporary index uses txn mode, so we don't need to consider the checkpoint.
 		return nil
 	}
+	if job.ReorgMeta.IsDistReorg {
+		// The global checkpoint is not used in distributed tasks.
+		return nil
+	}
 	if w.getReorgCtx(job.ID) != nil {
 		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
 		return nil
