@@ -87,6 +87,31 @@ func TestCheckpointMeta(t *testing.T) {
 	require.Equal(t, taskInfo.RestoreTS, uint64(2))
 	require.Equal(t, taskInfo.RewriteTS, uint64(3))
 	require.Equal(t, taskInfo.TiFlashItems[1].Count, uint64(1))
+
+	exists, err = checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, s, "123")
+	require.NoError(t, err)
+	require.False(t, exists)
+	err = checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, s, &checkpoint.CheckpointIngestIndexRepairSQLs{
+		SQLs: []checkpoint.CheckpointIngestIndexRepairSQL{
+			{
+				IndexID:    1,
+				SchemaName: model.NewCIStr("2"),
+				TableName:  model.NewCIStr("3"),
+				IndexName:  "4",
+				AddSQL:     "5",
+				AddArgs:    []interface{}{"6", "7", "8"},
+			},
+		},
+	}, "123")
+	require.NoError(t, err)
+	repairSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, s, "123")
+	require.NoError(t, err)
+	require.Equal(t, repairSQLs.SQLs[0].IndexID, int64(1))
+	require.Equal(t, repairSQLs.SQLs[0].SchemaName, model.NewCIStr("2"))
+	require.Equal(t, repairSQLs.SQLs[0].TableName, model.NewCIStr("3"))
+	require.Equal(t, repairSQLs.SQLs[0].IndexName, "4")
+	require.Equal(t, repairSQLs.SQLs[0].AddSQL, "5")
+	require.Equal(t, repairSQLs.SQLs[0].AddArgs, []interface{}{"6", "7", "8"})
 }
 
 type mockTimer struct {
