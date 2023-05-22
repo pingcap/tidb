@@ -137,7 +137,7 @@ func (p *baseLogicalPlan) recursiveDeriveStats(colGroups [][]*expression.Column)
 }
 
 // ExtractColGroups implements LogicalPlan ExtractColGroups interface.
-func (p *baseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
+func (*baseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
 	return nil
 }
 
@@ -767,7 +767,7 @@ func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [
 	return extracted
 }
 
-func (la *LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, gbyCols []*expression.Column) []property.GroupNDV {
+func (*LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, gbyCols []*expression.Column) []property.GroupNDV {
 	if len(colGroups) == 0 {
 		return nil
 	}
@@ -1046,7 +1046,7 @@ func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expr
 	return p.stats, nil
 }
 
-func (p *LogicalWindow) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
+func (*LogicalWindow) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
 	if len(colGroups) > 0 {
 		return childStats[0].GroupNDVs
 	}
