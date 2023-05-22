@@ -964,6 +964,7 @@
       "br/pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated"
     },
     "only_files": {
+      "expression/bench_test.go": "expression/bench_test.go",
       "domain/": "domain code",
       "util/gctuner": "util/gctuner",
       "util/cgroup": "util/cgroup code",

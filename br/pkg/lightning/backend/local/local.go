@@ -394,8 +394,10 @@ type BackendConfig struct {
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
 	// concurrency of generateJobForRange and import(write & ingest) workers
-	WorkerConcurrency      int
-	KVWriteBatchSize       int
+	WorkerConcurrency int
+	// batch kv count and size when writing to TiKV
+	KVWriteBatchCount      int
+	KVWriteBatchSize       int64
 	RegionSplitBatchSize   int
 	RegionSplitConcurrency int
 	CheckpointEnabled      bool
@@ -430,7 +432,8 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
-		KVWriteBatchSize:        cfg.TikvImporter.SendKVPairs,
+		KVWriteBatchCount:       cfg.TikvImporter.SendKVPairs,
+		KVWriteBatchSize:        int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:    cfg.TikvImporter.RegionSplitBatchSize,
 		RegionSplitConcurrency:  cfg.TikvImporter.RegionSplitConcurrency,
 		CheckpointEnabled:       cfg.Checkpoint.Enable,

@@ -92,11 +92,15 @@ func (t *TimerSpec) Clone() *TimerSpec {
 // Validate validates the TimerSpec
 func (t *TimerSpec) Validate() error {
 	if t.Namespace == "" {
-		return errors.New("field 'namespace' should not be empty")
+		return errors.New("field 'Namespace' should not be empty")
 	}
 
 	if t.Key == "" {
-		return errors.New("field 'key' should not be empty")
+		return errors.New("field 'Key' should not be empty")
+	}
+
+	if t.SchedPolicyType == "" {
+		return errors.New("field 'SchedPolicyType' should not be empty")
 	}
 
 	if _, err := t.CreateSchedEventPolicy(); err != nil {
@@ -112,7 +116,7 @@ func (t *TimerSpec) CreateSchedEventPolicy() (SchedEventPolicy, error) {
 	case SchedEventInterval:
 		return NewSchedIntervalPolicy(t.SchedPolicyExpr)
 	default:
-		return nil, errors.Errorf("invalid schedule event type: '%s'", t.SchedPolicyExpr)
+		return nil, errors.Errorf("invalid schedule event type: '%s'", t.SchedPolicyType)
 	}
 }
 
@@ -149,6 +153,8 @@ type TimerRecord struct {
 	SummaryData []byte
 	// CreateTime is the creation time of the timer
 	CreateTime time.Time
+	// Version is the version of the record, when the record updated, version will be increased.
+	Version uint64
 }
 
 // Clone returns a cloned TimerRecord

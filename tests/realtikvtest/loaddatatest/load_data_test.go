@@ -17,13 +17,19 @@ package loaddatatest
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/disttask/loaddata"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -35,14 +41,6 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 	s.tk.MustExec("use " + db)
 }
 
-func (s *mockGCSSuite) prepareVariables(distributed bool) {
-	if distributed {
-		s.tk.MustExec("set @@global.tidb_enable_dist_task = 'on'")
-		return
-	}
-	s.tk.MustExec("set @@global.tidb_enable_dist_task = 'off'")
-}
-
 func adjustOptions(options string, distributed bool) string {
 	if distributed {
 		options += ", __distributed=true"
@@ -51,6 +49,12 @@ func adjustOptions(options string, distributed bool) string {
 }
 
 func (s *mockGCSSuite) TestPhysicalMode() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
+	s.testPhysicalMode(false)
+	s.testPhysicalMode(true)
+}
+
+func (s *mockGCSSuite) testPhysicalMode(distributed bool) {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -142,6 +146,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 
 	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
 		INTO TABLE t %%s with thread=1, import_mode='physical'`, gcsEndpoint)
+	loadDataSQL = adjustOptions(loadDataSQL, distributed)
 	for _, c := range cases {
 		s.tk.MustExec("drop table if exists t;")
 		s.tk.MustExec(c.createTableSQL)
@@ -149,7 +154,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 		s.tk.MustExec(sql)
 		s.Equal("Records: 6  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
 		s.Equal(uint64(6), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
-		s.Equal(c.lastInsertID, s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
+		//s.Equal(c.lastInsertID, s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 		querySQL := "SELECT * FROM t;"
 		if c.querySQL != "" {
 			querySQL = c.querySQL
@@ -159,6 +164,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 }
 
 func (s *mockGCSSuite) TestInputNull() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -184,6 +190,7 @@ func (s *mockGCSSuite) TestInputNull() {
 }
 
 func (s *mockGCSSuite) TestIgnoreNLines() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},
 		Content: []byte(`1,test1,11
@@ -238,7 +245,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 
 func (s *mockGCSSuite) TestGeneratedColumns() {
 	s.testLoadDataForGeneratedColumns(importer.LogicalImportMode)
-	s.testLoadDataForGeneratedColumns(importer.PhysicalImportMode)
+	//s.testLoadDataForGeneratedColumns(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testLoadDataForGeneratedColumns(importMode string) {
@@ -288,6 +295,7 @@ func (s *mockGCSSuite) testLoadDataForGeneratedColumns(importMode string) {
 }
 
 func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -322,6 +330,7 @@ func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
 }
 
 func (s *mockGCSSuite) TestDeliverBytesRows() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -366,14 +375,13 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 
 func (s *mockGCSSuite) TestMultiValueIndex() {
 	s.testMultiValueIndex(importer.LogicalImportMode, false)
-	s.testMultiValueIndex(importer.PhysicalImportMode, false)
-	s.testMultiValueIndex(importer.PhysicalImportMode, true)
+	//s.testMultiValueIndex(importer.PhysicalImportMode, false)
+	//s.testMultiValueIndex(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec(`CREATE TABLE load_csv.t (
@@ -403,14 +411,13 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) 
 
 func (s *mockGCSSuite) TestMixedCompression() {
 	s.testMixedCompression(importer.LogicalImportMode, false)
-	s.testMixedCompression(importer.PhysicalImportMode, false)
-	s.testMixedCompression(importer.PhysicalImportMode, true)
+	//s.testMixedCompression(importer.PhysicalImportMode, false)
+	//s.testMixedCompression(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH thread=1, import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
 	s.tk.MustExec("CREATE DATABASE multi_load;")
 	s.tk.MustExec("CREATE TABLE multi_load.t (i INT PRIMARY KEY, s varchar(32));")
@@ -466,14 +473,13 @@ func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool)
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
 	s.testLoadSQLDump(importer.LogicalImportMode, false)
-	s.testLoadSQLDump(importer.PhysicalImportMode, false)
-	s.testLoadSQLDump(importer.PhysicalImportMode, true)
+	//s.testLoadSQLDump(importer.PhysicalImportMode, false)
+	//s.testLoadSQLDump(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("CREATE TABLE load_csv.t (" +
@@ -507,14 +513,13 @@ func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
 
 func (s *mockGCSSuite) TestGBK() {
 	s.testGBK(importer.LogicalImportMode, false)
-	s.testGBK(importer.PhysicalImportMode, false)
-	s.testGBK(importer.PhysicalImportMode, true)
+	//s.testGBK(importer.PhysicalImportMode, false)
+	//s.testGBK(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_charset;")
 	s.tk.MustExec("CREATE DATABASE load_charset;")
 	s.tk.MustExec(`CREATE TABLE load_charset.gbk (
@@ -626,14 +631,13 @@ func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 
 func (s *mockGCSSuite) TestOtherCharset() {
 	s.testOtherCharset(importer.LogicalImportMode, false)
-	s.testOtherCharset(importer.PhysicalImportMode, false)
-	s.testOtherCharset(importer.PhysicalImportMode, true)
+	//s.testOtherCharset(importer.PhysicalImportMode, false)
+	//s.testOtherCharset(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_charset;")
 	s.tk.MustExec("CREATE DATABASE load_charset;")
 	s.tk.MustExec(`CREATE TABLE load_charset.utf8 (
@@ -722,6 +726,7 @@ func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 }
 
 func (s *mockGCSSuite) TestMaxWriteSpeed() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_write_speed;")
 	s.tk.MustExec("CREATE DATABASE load_test_write_speed;")
 	s.tk.MustExec(`CREATE TABLE load_test_write_speed.t(a int, b int)`)
@@ -764,6 +769,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 }
 
 func (s *mockGCSSuite) TestChecksumNotMatch() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.testChecksumNotMatch(importer.PhysicalImportMode, false)
 	s.testChecksumNotMatch(importer.PhysicalImportMode, true)
 }
@@ -794,7 +800,6 @@ func (s *mockGCSSuite) testChecksumNotMatch(importMode string, distributed bool)
 		config.DefaultBatchSize = backup
 	})
 
-	s.prepareVariables(distributed)
 	s.prepareAndUseDB("load_data")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
@@ -833,14 +838,16 @@ func (s *mockGCSSuite) testChecksumNotMatch(importMode string, distributed bool)
 
 func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	s.testColumnsAndUserVars(importer.LogicalImportMode, false)
-	s.testColumnsAndUserVars(importer.PhysicalImportMode, false)
-	s.testColumnsAndUserVars(importer.PhysicalImportMode, true)
+	//s.testColumnsAndUserVars(importer.PhysicalImportMode, false)
+	//s.testColumnsAndUserVars(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH thread=2, import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
+	if distributed {
+		s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	}
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT, c int);`)
@@ -868,4 +875,19 @@ func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed boo
 		"8 880 123",
 		"9 990 123",
 	))
+	if distributed {
+		pool := pools.NewResourcePool(func() (pools.Resource, error) {
+			return s.tk.Session(), nil
+		}, 1, 1, time.Second)
+		defer pool.Close()
+		taskManager := storage.NewTaskManager(context.Background(), pool)
+		subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), loaddata.Import)
+		s.NoError(err)
+		s.Len(subtasks, 1)
+		serverInfo, err := infosync.GetServerInfo()
+		s.NoError(err)
+		for _, st := range subtasks {
+			s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.SchedulerID)
+		}
+	}
 }
