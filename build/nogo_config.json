@@ -526,6 +526,7 @@
       "autoid_service/": "autoid_service",
       "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
+      "br/pkg/aws/ebs.go": "br/pkg/aws/ebs.go",
       "executor/aggregate.go": "executor/aggregate.go",
       "executor/analyze_utils.go": "executor/analyze_utils.go",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
