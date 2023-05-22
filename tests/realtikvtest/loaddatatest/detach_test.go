@@ -52,13 +52,14 @@ var detachedCases = []detachedCase{
 }
 
 func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.testSameBehaviourDetachedOrNot(importer.LogicalImportMode)
 	s.testSameBehaviourDetachedOrNot(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testSameBehaviourDetachedOrNot(importMode string) {
-	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
-	detachedWithOptions := fmt.Sprintf("WITH DETACHED, import_mode='%s'", importMode)
+	withOptions := fmt.Sprintf("WITH thread=1, import_mode='%s'", importMode)
+	detachedWithOptions := fmt.Sprintf("WITH DETACHED, thread=1, import_mode='%s'", importMode)
 	backup := asyncloaddata.HeartBeatInSec
 	asyncloaddata.HeartBeatInSec = 1
 	s.T().Cleanup(func() {

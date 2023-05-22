@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/hex"
 	"sync"
 
 	"github.com/pingcap/tidb/kv"
@@ -66,6 +67,9 @@ func (m *MockBackendCtxMgr) Unregister(jobID int64) {
 		err := mCtx.sessCtx.CommitTxn(context.Background())
 		logutil.BgLogger().Info("mock backend mgr unregister", zap.Int64("jobID", jobID), zap.Error(err))
 		delete(m.runningJobs, jobID)
+		if mCtx.checkpointMgr != nil {
+			mCtx.checkpointMgr.Close()
+		}
 	}
 }
 
@@ -80,8 +84,9 @@ func (m *MockBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
 
 // MockBackendCtx is a mock backend context.
 type MockBackendCtx struct {
-	sessCtx sessionctx.Context
-	mu      sync.Mutex
+	sessCtx       sessionctx.Context
+	mu            sync.Mutex
+	checkpointMgr *CheckpointManager
 }
 
 // Register implements BackendCtx.Register interface.
@@ -112,7 +117,7 @@ func (*MockBackendCtx) ResetWorkers(_, _ int64) {
 }
 
 // Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(_ int64, _ bool) (flushed bool, imported bool, err error) {
+func (*MockBackendCtx) Flush(_ int64, _ FlushMode) (flushed bool, imported bool, err error) {
 	return false, false, nil
 }
 
@@ -123,6 +128,16 @@ func (*MockBackendCtx) Done() bool {
 
 // SetDone implements BackendCtx.SetDone interface.
 func (*MockBackendCtx) SetDone() {
+}
+
+// AttachCheckpointManager attaches a checkpoint manager to the backend context.
+func (m *MockBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
+	m.checkpointMgr = mgr
+}
+
+// GetCheckpointManager returns the checkpoint manager attached to the backend context.
+func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
+	return m.checkpointMgr
 }
 
 // MockEngineInfo is a mock engine info.
@@ -159,7 +174,9 @@ type MockWriter struct {
 
 // WriteRow implements Writer.WriteRow interface.
 func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
-	logutil.BgLogger().Info("mock writer write row", zap.Binary("key", key), zap.Binary("idxVal", idxVal))
+	logutil.BgLogger().Info("mock writer write row",
+		zap.String("key", hex.EncodeToString(key)),
+		zap.String("idxVal", hex.EncodeToString(idxVal)))
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	txn, err := m.sessCtx.Txn(true)
@@ -167,4 +184,9 @@ func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
 		return err
 	}
 	return txn.Set(key, idxVal)
+}
+
+// LockForWrite implements Writer.LockForWrite interface.
+func (*MockWriter) LockForWrite() func() {
+	return func() {}
 }

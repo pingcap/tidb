@@ -571,10 +571,12 @@ import (
 	reverse               "REVERSE"
 	role                  "ROLE"
 	rollback              "ROLLBACK"
+	rollup                "ROLLUP"
 	routine               "ROUTINE"
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
+	hypo                  "HYPO"
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	second                "SECOND"
@@ -1385,6 +1387,7 @@ import (
 	WindowNameOrSpec                       "WINDOW name or spec"
 	WindowSpec                             "WINDOW spec"
 	WindowSpecDetails                      "WINDOW spec details"
+	WithRollupClause                       "With rollup clause"
 	BetweenOrNotOp                         "Between predicate"
 	IsOrNotOp                              "Is predicate"
 	InOrNotOp                              "In predicate"
@@ -1557,6 +1560,8 @@ import (
 %precedence next
 %precedence lowerThanValueKeyword
 %precedence value
+%precedence lowerThanWith
+%precedence with
 %precedence lowerThanStringLitToken
 %precedence stringLit
 %precedence lowerThanSetKeyword
@@ -3136,8 +3141,8 @@ ColumnDef:
 	ColumnName Type ColumnOptionListOpt
 	{
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.([]*ast.ColumnOption)}
-		if !colDef.Validate() {
-			yylex.AppendError(yylex.Errorf("Invalid column definition"))
+	        if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
 			return 1
 		}
 		$$ = colDef
@@ -3150,8 +3155,8 @@ ColumnDef:
 		options = append(options, $3.([]*ast.ColumnOption)...)
 		tp.AddFlag(mysql.UnsignedFlag)
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: tp, Options: options}
-		if !colDef.Validate() {
-			yylex.AppendError(yylex.Errorf("Invalid column definition"))
+	        if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
 			return 1
 		}
 		$$ = colDef
@@ -6056,10 +6061,20 @@ FieldList:
 		$$ = append(fl, field)
 	}
 
-GroupByClause:
-	"GROUP" "BY" ByList
+WithRollupClause:
+	%prec lowerThanWith
 	{
-		$$ = &ast.GroupByClause{Items: $3.([]*ast.ByItem)}
+		$$ = false
+	}
+|	"WITH" "ROLLUP"
+	{
+		$$ = true
+	}
+
+GroupByClause:
+	"GROUP" "BY" ByList WithRollupClause
+	{
+		$$ = &ast.GroupByClause{Items: $3.([]*ast.ByItem), Rollup: $4.(bool)}
 	}
 
 HavingClause:
@@ -6259,6 +6274,10 @@ IndexTypeName:
 	{
 		$$ = model.IndexTypeRtree
 	}
+|	"HYPO"
+	{
+		$$ = model.IndexTypeHypo
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -6368,6 +6387,7 @@ UnReservedKeyword:
 |	"RESTART"
 |	"ROLE"
 |	"ROLLBACK"
+|	"ROLLUP"
 |	"SESSION"
 |	"SIGNED"
 |	"SHARD_ROW_ID_BITS"
@@ -6532,6 +6552,7 @@ UnReservedKeyword:
 |	"VALIDATION"
 |	"WITHOUT"
 |	"RTREE"
+|	"HYPO"
 |	"EXCHANGE"
 |	"COLUMN_FORMAT"
 |	"REPAIR"
@@ -10711,6 +10732,20 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp:     ast.AdminCancelDDLJobs,
+			JobIDs: $5.([]int64),
+		}
+	}
+|	"ADMIN" "PAUSE" "DDL" "JOBS" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp:     ast.AdminPauseDDLJobs,
+			JobIDs: $5.([]int64),
+		}
+	}
+|	"ADMIN" "RESUME" "DDL" "JOBS" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp:     ast.AdminResumeDDLJobs,
 			JobIDs: $5.([]int64),
 		}
 	}
@@ -15584,5 +15619,4 @@ CalibrateResourceWorkloadOption:
 	{
 		$$ = ast.OLTPWRITEONLY
 	}
-
 %%

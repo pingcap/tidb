@@ -2024,6 +2024,14 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
+	col, name, err := findFieldNameFromNaturalUsingJoin(er.p, v)
+	if err != nil {
+		er.err = err
+		return
+	} else if col != nil {
+		er.ctxStackAppend(col, name)
+		return
+	}
 	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
 		outerSchema, outerName := er.b.outerSchemas[i], er.b.outerNames[i]
 		idx, err = expression.FindFieldName(outerName, v)
@@ -2039,14 +2047,6 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if _, ok := er.p.(*LogicalUnionAll); ok && v.Table.O != "" {
 		er.err = ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[er.b.curClause])
-		return
-	}
-	col, name, err := findFieldNameFromNaturalUsingJoin(er.p, v)
-	if err != nil {
-		er.err = err
-		return
-	} else if col != nil {
-		er.ctxStackAppend(col, name)
 		return
 	}
 	if er.b.curClause == globalOrderByClause {

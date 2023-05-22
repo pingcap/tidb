@@ -68,7 +68,7 @@ func (ss *Schemas) SetCheckpointChecksum(checkpointChecksum map[int64]*checkpoin
 func (ss *Schemas) BackupSchemas(
 	ctx context.Context,
 	metaWriter *metautil.MetaWriter,
-	checkpointRunner *checkpoint.BackupRunner,
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.BackupKeyType, checkpoint.BackupValueType],
 	store kv.Storage,
 	statsHandle *handle.Handle,
 	backupTS uint64,
@@ -130,22 +130,18 @@ func (ss *Schemas) BackupSchemas(
 							return errors.Trace(err)
 						}
 						calculateCost := time.Since(start)
-						var flushCost time.Duration
 						if checkpointRunner != nil {
 							// if checkpoint runner is running and the checksum is not from checkpoint
 							// then flush the checksum by the checkpoint runner
-							startFlush := time.Now()
-							if err = checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes, calculateCost.Seconds()); err != nil {
+							if err = checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes); err != nil {
 								return errors.Trace(err)
 							}
-							flushCost = time.Since(startFlush)
 						}
 						logger.Info("Calculate table checksum completed",
 							zap.Uint64("Crc64Xor", schema.crc64xor),
 							zap.Uint64("TotalKvs", schema.totalKvs),
 							zap.Uint64("TotalBytes", schema.totalBytes),
-							zap.Duration("calculate-take", calculateCost),
-							zap.Duration("flush-take", flushCost))
+							zap.Duration("calculate-take", calculateCost))
 					}
 				}
 				if statsHandle != nil {

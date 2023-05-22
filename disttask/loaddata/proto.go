@@ -15,8 +15,12 @@
 package loaddata
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 )
 
@@ -28,26 +32,42 @@ const (
 // TaskMeta is the task of LoadData.
 // All the field should be serializable.
 type TaskMeta struct {
-	Plan importer.Plan
+	Plan   importer.Plan
+	JobID  int64
+	Stmt   string
+	Result Result
 }
 
 // SubtaskMeta is the subtask of LoadData.
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type SubtaskMeta struct {
-	Plan   importer.Plan
-	ID     int32
-	Chunks []Chunk
+	Plan     importer.Plan
+	ID       int32
+	Chunks   []Chunk
+	Checksum Checksum
+	Result   Result
+}
+
+// SharedVars is the shared variables between subtask and minimal tasks.
+// This is because subtasks cannot directly obtain the results of the minimal subtask.
+// All the fields should be concurrent safe.
+type SharedVars struct {
+	TableImporter *importer.TableImporter
+	DataEngine    *backend.OpenedEngine
+	IndexEngine   *backend.OpenedEngine
+	Progress      *asyncloaddata.Progress
+
+	mu       sync.Mutex
+	Checksum *verification.KVChecksum
 }
 
 // MinimalTaskMeta is the minimal task of LoadData.
 // Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
 type MinimalTaskMeta struct {
-	Plan          importer.Plan
-	Chunk         Chunk
-	TableImporter *importer.TableImporter
-	DataEngine    *backend.OpenedEngine
-	IndexEngine   *backend.OpenedEngine
+	Plan       importer.Plan
+	Chunk      Chunk
+	SharedVars *SharedVars
 }
 
 // IsMinimalTask implements the MinimalTask interface.
@@ -63,4 +83,18 @@ type Chunk struct {
 	Type         mydump.SourceType
 	Compression  mydump.Compression
 	Timestamp    int64
+}
+
+// Checksum records the checksum information.
+type Checksum struct {
+	Sum  uint64
+	KVs  uint64
+	Size uint64
+}
+
+// Result records the metrics information.
+// This portion of the code may be implemented uniformly in the framework in the future.
+type Result struct {
+	ReadRowCnt   uint64
+	LoadedRowCnt uint64
 }

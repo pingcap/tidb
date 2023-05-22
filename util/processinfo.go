@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -85,7 +86,7 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	}
 	var host string
 	if pi.Port != "" {
-		host = fmt.Sprintf("%s:%s", pi.Host, pi.Port)
+		host = net.JoinHostPort(pi.Host, pi.Port)
 	} else {
 		host = pi.Host
 	}
@@ -184,7 +185,7 @@ type SessionManager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
 	ShowTxnList() []*txninfo.TxnInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
-	Kill(connectionID uint64, query bool)
+	Kill(connectionID uint64, query bool, maxExecutionTime bool)
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64

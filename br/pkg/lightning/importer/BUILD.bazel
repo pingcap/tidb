@@ -75,7 +75,6 @@ go_library(
         "@com_github_jedib0t_go_pretty_v6//text",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_pd_client//:client",

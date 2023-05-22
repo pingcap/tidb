@@ -27,6 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -956,7 +957,21 @@ func isDeadlineExceedError(err error) bool {
 	return strings.Contains(err.Error(), "context deadline exceeded")
 }
 
+func isConnectionResetError(err error) bool {
+	return strings.Contains(err.Error(), "read: connection reset")
+}
+
 func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
+	// for unit test
+	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
+		log.Info("original error", zap.Error(r.Error))
+		if r.Error != nil {
+			r.Error = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
+		}
+	})
+	if isConnectionResetError(r.Error) {
+		return true
+	}
 	if isDeadlineExceedError(r.Error) && r.HTTPRequest.URL.Host == ec2MetaAddress {
 		// fast fail for unreachable linklocal address in EC2 containers.
 		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))

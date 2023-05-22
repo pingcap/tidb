@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -19,6 +20,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -90,11 +92,12 @@ type BackupConfig struct {
 	CompressionConfig
 
 	// for ebs-based backup
-	FullBackupType      FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
-	VolumeFile          string         `json:"volume-file" toml:"volume-file"`
-	SkipAWS             bool           `json:"skip-aws" toml:"skip-aws"`
-	CloudAPIConcurrency uint           `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
-	ProgressFile        string         `json:"progress-file" toml:"progress-file"`
+	FullBackupType          FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
+	VolumeFile              string         `json:"volume-file" toml:"volume-file"`
+	SkipAWS                 bool           `json:"skip-aws" toml:"skip-aws"`
+	CloudAPIConcurrency     uint           `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
+	ProgressFile            string         `json:"progress-file" toml:"progress-file"`
+	SkipPauseGCAndScheduler bool           `json:"skip-pause-gc-and-scheduler" toml:"skip-pause-gc-and-scheduler"`
 }
 
 // DefineBackupFlags defines common flags for the backup command.
@@ -184,11 +187,6 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		cfg.UseCheckpoint = false
 		log.Info("since incremental backup is used, turn off checkpoint mode")
 	}
-	if cfg.UseBackupMetaV2 {
-		// TODO: compatible with backup meta v2, maybe just clean the meta files
-		cfg.UseCheckpoint = false
-		log.Info("since backup meta v2 is used, turn off checkpoint mode")
-	}
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
 		return errors.Trace(err)
@@ -244,6 +242,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 			return errors.Trace(err)
 		}
 		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -603,11 +605,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			ctx, cmdName, int64(len(ranges)), !cfg.LogProgress)
 	}
 
-	progressCount := 0
+	progressCount := uint64(0)
 	progressCallBack := func(callBackUnit backup.ProgressUnit) {
 		if unit == callBackUnit {
 			updateCh.Inc()
-			progressCount++
+			atomic.AddUint64(&progressCount, 1)
 			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
 				log.Info("failpoint progress-call-back injected")
 				if fileName, ok := v.(string); ok {
@@ -615,7 +617,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 					if osErr != nil {
 						log.Warn("failed to create file", zap.Error(osErr))
 					}
-					msg := []byte(fmt.Sprintf("%s:%d\n", unit, progressCount))
+					msg := []byte(fmt.Sprintf("%s:%d\n", unit, atomic.LoadUint64(&progressCount)))
 					_, err = f.Write(msg)
 					if err != nil {
 						log.Warn("failed to write data to file", zap.Error(err))
@@ -632,7 +634,15 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		defer func() {
 			if !gcSafePointKeeperRemovable {
 				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint(ctx)
+				client.WaitForFinishCheckpoint(ctx, true)
+			} else {
+				log.Info("start to remove checkpoint data for backup")
+				client.WaitForFinishCheckpoint(ctx, false)
+				if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
+					log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
+				} else {
+					log.Info("the checkpoint data for backup is removed.")
+				}
 			}
 		}()
 	}

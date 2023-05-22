@@ -57,7 +57,7 @@ func (push *pushDown) pushBackup(
 	req backuppb.BackupRequest,
 	pr *rtree.ProgressRange,
 	stores []*metapb.Store,
-	checkpointRunner *checkpoint.BackupRunner,
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.BackupKeyType, checkpoint.BackupValueType],
 	progressCallBack func(ProgressUnit),
 ) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -119,7 +119,6 @@ func (push *pushDown) pushBackup(
 		close(push.respCh)
 	}()
 
-	regionErrorIngestedOnce := false
 	for {
 		select {
 		case respAndStore, ok := <-push.respCh:
@@ -151,19 +150,16 @@ func (push *pushDown) pushBackup(
 				}
 			})
 			failpoint.Inject("tikv-region-error", func(val failpoint.Value) {
-				if !regionErrorIngestedOnce {
-					msg := val.(string)
-					logutil.CL(ctx).Debug("failpoint tikv-regionh-error injected.", zap.String("msg", msg))
-					resp.Error = &backuppb.Error{
-						// Msg: msg,
-						Detail: &backuppb.Error_RegionError{
-							RegionError: &errorpb.Error{
-								Message: msg,
-							},
+				msg := val.(string)
+				logutil.CL(ctx).Debug("failpoint tikv-region-error injected.", zap.String("msg", msg))
+				resp.Error = &backuppb.Error{
+					// Msg: msg,
+					Detail: &backuppb.Error_RegionError{
+						RegionError: &errorpb.Error{
+							Message: msg,
 						},
-					}
+					},
 				}
-				regionErrorIngestedOnce = true
 			})
 			if resp.GetError() == nil {
 				// None error means range has been backuped successfully.

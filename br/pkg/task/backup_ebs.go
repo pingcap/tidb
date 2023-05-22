@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -55,12 +57,14 @@ func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
 	flags.Uint(flagCloudAPIConcurrency, defaultCloudAPIConcurrency, "concurrency of calling cloud api")
 	flags.String(flagProgressFile, "progress.txt", "the file name of progress file")
+	flags.Bool(flagOperatorPausedGCAndSchedulers, false, "if the GC and scheduler are paused by the `operator` command in another therad, set this so we can skip pausing GC and schedulers.")
 
 	_ = flags.MarkHidden(flagFullBackupType)
 	_ = flags.MarkHidden(flagBackupVolumeFile)
 	_ = flags.MarkHidden(flagSkipAWS)
 	_ = flags.MarkHidden(flagCloudAPIConcurrency)
 	_ = flags.MarkHidden(flagProgressFile)
+	_ = flags.MarkHidden(flagOperatorPausedGCAndSchedulers)
 }
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
@@ -131,24 +135,28 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	}
 
 	// Step.1.1 stop scheduler as much as possible.
-	log.Info("starting to remove some PD schedulers")
-	restoreFunc, e := mgr.RemoveAllPDSchedulers(ctx)
-	if e != nil {
-		return errors.Trace(err)
+	log.Info("starting to remove some PD schedulers and pausing GC", zap.Bool("already-paused-by-operator", cfg.SkipPauseGCAndScheduler))
+	var restoreFunc pdutil.UndoFunc
+
+	if !cfg.SkipPauseGCAndScheduler {
+		var e error
+		restoreFunc, e = mgr.RemoveAllPDSchedulers(ctx)
+		if e != nil {
+			return errors.Trace(err)
+		}
+		defer func() {
+			if ctx.Err() != nil {
+				log.Warn("context canceled, doing clean work with background context")
+				ctx = context.Background()
+			}
+			if restoreFunc == nil {
+				return
+			}
+			if restoreE := restoreFunc(ctx); restoreE != nil {
+				log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+			}
+		}()
 	}
-	var scheduleRestored bool
-	defer func() {
-		if ctx.Err() != nil {
-			log.Warn("context canceled, doing clean work with background context")
-			ctx = context.Background()
-		}
-		if scheduleRestored {
-			return
-		}
-		if restoreE := restoreFunc(ctx); restoreE != nil {
-			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-		}
-	}()
 
 	if err := waitAllScheduleStoppedAndNoRegionHole(ctx, cfg.Config, mgr); err != nil {
 		return errors.Trace(err)
@@ -159,15 +167,17 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sp := utils.BRServiceSafePoint{
-		BackupTS: resolvedTs,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
-	}
-	log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
-	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
-	if err != nil {
-		return errors.Trace(err)
+	if !cfg.SkipPauseGCAndScheduler {
+		sp := utils.BRServiceSafePoint{
+			BackupTS: resolvedTs,
+			TTL:      utils.DefaultBRGCSafePointTTL,
+			ID:       utils.MakeSafePointID(),
+		}
+		log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
+		err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
@@ -186,7 +196,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	progress := g.StartProgress(ctx, "backup", int64(storeCount)*100, !cfg.LogProgress)
 	go progressFileWriterRoutine(ctx, progress, int64(storeCount)*100, cfg.ProgressFile)
 
-	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency)
+	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency, cfg.S3.Region)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -210,7 +220,8 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		if restoreE := restoreFunc(ctx); restoreE != nil {
 			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
 		} else {
-			scheduleRestored = true
+			// Clear the restore func, so we won't execute it many times.
+			restoreFunc = nil
 		}
 
 		log.Info("wait async snapshots finish")
@@ -223,8 +234,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		for i := 0; i < int(storeCount); i++ {
 			progress.IncBy(100)
 			totalSize = 1024
-			log.Info("mock snapshot finished.", zap.Int("index", i))
-			time.Sleep(800 * time.Millisecond)
+			timeToSleep := getMockSleepTime()
+			log.Info("mock snapshot finished.", zap.Int("index", i), zap.Duration("time-to-sleep", timeToSleep))
+			select {
+			case <-ctx.Done():
+				return errors.Trace(ctx.Err())
+			case <-time.After(timeToSleep):
+			}
 		}
 	}
 	progress.Close()
@@ -243,6 +259,19 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	}
 	finished = true
 	return nil
+}
+
+func getMockSleepTime() time.Duration {
+	dft := 800 * time.Millisecond
+	v, ok := os.LookupEnv("br_ebs_backup_mocking_wait_snapshot_duration")
+	if !ok {
+		return dft
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return dft
+	}
+	return d
 }
 
 func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr *conn.Mgr) error {

@@ -339,7 +339,7 @@ func GetHistory(ctx sessionctx.Context) *StmtHistory {
 }
 
 // GetRows4Test gets all the rows from a RecordSet, only used for test.
-func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
+func GetRows4Test(ctx context.Context, _ sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}
