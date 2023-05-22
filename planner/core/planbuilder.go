@@ -975,11 +975,27 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 				char, col := b.ctx.GetSessionVars().GetCharsetInfo()
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
 			}
-			mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+			mockTablePlan := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 			var err error
-			assign.Expr, _, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
+			var possiblePlan LogicalPlan
+			assign.Expr, possiblePlan, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
 			if err != nil {
 				return nil, err
+			}
+			if _, ok := possiblePlan.(*LogicalTableDual); !ok {
+				physicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, possiblePlan)
+				if err != nil {
+					return nil, err
+				}
+				row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
+				if err != nil {
+					return nil, err
+				}
+				constant := &expression.Constant{
+					Value:   row[0],
+					RetType: assign.Expr.GetType(),
+				}
+				assign.Expr = constant
 			}
 		} else {
 			assign.IsDefault = true
