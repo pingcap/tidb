@@ -1412,7 +1412,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage()); err != nil {
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage(), taskName); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
@@ -1807,6 +1807,10 @@ func checkPiTRTaskInfo(
 			if curTaskInfo.StartTS == cfg.StartTS && curTaskInfo.RestoreTS == cfg.RestoreTS {
 				// the same task, check whether skip snapshot restore
 				doFullRestore = doFullRestore && (curTaskInfo.Progress == checkpoint.InSnapshotRestore)
+				// update the snapshot restore task name to clean up in final
+				if !doFullRestore && (len(cfg.FullBackupStorage) > 0) {
+					_ = cfg.generateSnapshotRestoreTaskName(clusterID)
+				}
 				log.Info("the same task", zap.Bool("skip-snapshot-restore", !doFullRestore))
 			} else {
 				// not the same task, so overwrite the taskInfo with a new task
