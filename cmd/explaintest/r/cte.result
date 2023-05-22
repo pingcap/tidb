@@ -596,6 +596,7 @@ create table tpk1(c1 int primary key);
 insert into tpk1 values(1), (2), (3);
 explain with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Projection_20	10000.00	root		test.tpk1.c1, test.tpk.c1, test.tpk.c1
 └─HashJoin_22	10000.00	root		inner join, equal:[eq(test.tpk.c1, test.tpk.c1)]
   ├─Selection_23(Build)	6400.00	root		not(isnull(test.tpk.c1))
@@ -610,6 +611,20 @@ CTE_0	8000.00	root		Non-Recursive CTE
 └─Selection_13(Seed Part)	8000.00	root		or(not(isnull(test.tpk.c1)), not(isnull(test.tpk.c1)))
   └─TableReader_16	10000.00	root		data:TableFullScan_15
     └─TableFullScan_15	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
+=======
+HashJoin_19	12500.00	root		inner join, equal:[eq(test.tpk.c1, test.tpk.c1)]
+├─Selection_28(Build)	8000.00	root		not(isnull(test.tpk.c1))
+│ └─CTEFullScan_29	10000.00	root	CTE:cte1 AS dt3	data:CTE_0
+└─MergeJoin_21(Probe)	10000.00	root		inner join, left key:test.tpk1.c1, right key:test.tpk.c1
+  ├─Sort_27(Build)	8000.00	root		test.tpk.c1
+  │ └─Selection_25	8000.00	root		not(isnull(test.tpk.c1))
+  │   └─CTEFullScan_26	10000.00	root	CTE:cte1 AS dt2	data:CTE_0
+  └─TableReader_23(Probe)	10000.00	root		data:TableFullScan_22
+    └─TableFullScan_22	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
+CTE_0	10000.00	root		Non-Recursive CTE
+└─TableReader_15(Seed Part)	10000.00	root		data:TableFullScan_14
+  └─TableFullScan_14	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
+>>>>>>> d82ed59e497 (planner: wrong execution when CTE meet non-correlated subquery (#44054))
 with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
 c1	c1	c1
 1	1	1

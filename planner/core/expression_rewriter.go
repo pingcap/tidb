@@ -828,8 +828,28 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		return v, true
 	}
 	np = er.popExistsSubPlan(np)
+<<<<<<< HEAD
 	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, hasRewriteHint)
+=======
+
+	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
+	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
+		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
+		noDecorrelate = false
+	}
+	semiJoinRewrite := hintFlags&HintFlagSemiJoinRewrite > 0
+	if semiJoinRewrite && noDecorrelate {
+		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective."))
+		noDecorrelate = false
+		semiJoinRewrite = false
+	}
+
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
+		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, semiJoinRewrite, noDecorrelate)
+>>>>>>> d82ed59e497 (planner: wrong execution when CTE meet non-correlated subquery (#44054))
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
@@ -1012,8 +1032,21 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
+<<<<<<< HEAD
 	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)
+=======
+
+	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
+	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
+		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
+		noDecorrelate = false
+	}
+
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
+		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin, noDecorrelate)
+>>>>>>> d82ed59e497 (planner: wrong execution when CTE meet non-correlated subquery (#44054))
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
 			for _, col := range np.Schema().Columns {
@@ -1070,6 +1103,34 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	return v, true
 }
 
+<<<<<<< HEAD
+=======
+func hasCTEConsumerInSubPlan(p LogicalPlan) bool {
+	if _, ok := p.(*LogicalCTE); ok {
+		return true
+	}
+	for _, child := range p.Children() {
+		if hasCTEConsumerInSubPlan(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func initConstantRepertoire(c *expression.Constant) {
+	c.SetRepertoire(expression.ASCII)
+	if c.GetType().EvalType() == types.ETString {
+		for _, b := range c.Value.GetBytes() {
+			// if any character in constant is not ascii, set the repertoire to UNICODE.
+			if b >= 0x80 {
+				c.SetRepertoire(expression.UNICODE)
+				break
+			}
+		}
+	}
+}
+
+>>>>>>> d82ed59e497 (planner: wrong execution when CTE meet non-correlated subquery (#44054))
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	if er.err != nil {
