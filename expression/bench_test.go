@@ -1514,7 +1514,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.BlockEncryptionMode, testCase.aesModes)
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
 			require.NoError(t, err)
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
