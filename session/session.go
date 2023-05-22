@@ -1565,7 +1565,12 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	p := parserPool.Get().(*parser.Parser)
 	defer parserPool.Put(p)
-	p.SetSQLMode(s.sessionVars.SQLMode)
+
+	sqlMode := s.sessionVars.SQLMode
+	if s.isInternal() {
+		sqlMode = mysql.DelSQLMode(sqlMode, mysql.ModeNoBackslashEscapes)
+	}
+	p.SetSQLMode(sqlMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
