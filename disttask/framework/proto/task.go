@@ -58,7 +58,7 @@ type Task struct {
 	Type  string
 	State string
 	Step  int64
-	// not used now.
+	// DispatcherID is not used now.
 	DispatcherID    string
 	Concurrency     uint64
 	StartTime       time.Time
