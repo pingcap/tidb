@@ -31,6 +31,7 @@ go_library(
         "//util/regexpr-router",
         "//util/slice",
         "//util/table-filter",
+        "//util/zeropool",
         "@com_github_pingcap_errors//:errors",
         "@com_github_spkg_bom//:bom",
         "@com_github_xitongsys_parquet_go//parquet",
