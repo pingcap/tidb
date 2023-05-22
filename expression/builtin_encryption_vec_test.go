@@ -30,7 +30,7 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, newRandLenStrGener(16, 17)}, aesModes: "aes-128-cfb"},
 	},
 	ast.Uncompress: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb"},
 	},
 	ast.AesDecrypt: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, aesModes: "aes-128-ecb"},
@@ -40,43 +40,43 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, newRandLenStrGener(16, 17)}, aesModes: "aes-128-cfb"},
 	},
 	ast.Compress: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb"},
 	},
 	ast.MD5: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb"},
 	},
 	ast.SHA: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb"},
 	},
 	ast.RandomBytes: {},
 	ast.UncompressedLength: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newRandLenStrGener(1, 5)}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb"},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb", geners: []dataGenerator{newRandLenStrGener(1, 5)}},
 	},
 	ast.SHA1: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb"},
 	},
 	ast.PasswordFunc: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newRandLenStrGener(10, 20)}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb", geners: []dataGenerator{newRandLenStrGener(10, 20)}},
 	},
 	ast.SHA2: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA0, SHA0+1)}},
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA224, SHA224+1)}},
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA256, SHA256+1)}},
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA384, SHA384+1)}},
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA512, SHA512+1)}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, aesModes: "aes-128-ecb", geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA0, SHA0+1)}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, aesModes: "aes-128-ecb", geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA224, SHA224+1)}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, aesModes: "aes-128-ecb", geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA256, SHA256+1)}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, aesModes: "aes-128-ecb", geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA384, SHA384+1)}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, aesModes: "aes-128-ecb", geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA512, SHA512+1)}},
 	},
 	ast.SM3: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb"},
 	},
 	ast.Encode: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, aesModes: "aes-128-ecb"},
 	},
 	ast.Decode: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{newRandLenStrGener(10, 20)}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{newRandLenStrGener(10, 20)}, aesModes: "aes-128-ecb"},
 	},
 	ast.ValidatePasswordStrength: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb"},
 	},
 }
 
