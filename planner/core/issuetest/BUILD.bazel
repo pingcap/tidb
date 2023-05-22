@@ -6,5 +6,18 @@ go_test(
     srcs = ["planner_issue_test.go"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     deps = ["//testkit"],
+=======
+    shard_count = 4,
+    deps = [
+        "//parser",
+        "//planner",
+        "//planner/core",
+        "//testkit",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+>>>>>>> d82ed59e497 (planner: wrong execution when CTE meet non-correlated subquery (#44054))
 )
