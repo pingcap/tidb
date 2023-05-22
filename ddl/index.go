@@ -910,13 +910,6 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 		return false, ver, errors.Trace(err)
 	}
-	if bc.GetCheckpointManager() == nil {
-		mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, indexInfo.ID)
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl-ingest] create checkpoint manager failed", zap.Error(err))
-		}
-		bc.AttachCheckpointManager(mgr)
-	}
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	if err != nil {
 		if !errorIsRetryable(err, job) {
@@ -1006,6 +999,10 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if err != nil || reorgInfo == nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
+		return false, ver, errors.Trace(err)
+	}
+	err = overwriteReorgInfoFromGlobalCheckpoint(w, rh.s, job, reorgInfo)
+	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
 	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
