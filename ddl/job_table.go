@@ -181,9 +181,9 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		}
 
 		if err != nil {
-			errMsg := fmt.Sprintf("[DDL] unable to pause [%d], error: %s",
-				job.ID, zap.Error(err).String)
-			logutil.BgLogger().Warn(errMsg)
+			logutil.BgLogger().Warn("[ddl-upgrading] pause the job failed", zap.Stringer("job", job), zap.Bool("has job err", len(errs) > 0), zap.Error(err))
+		} else {
+			logutil.BgLogger().Warn("[ddl-upgrading] pause the job successfully", zap.Stringer("job", job))
 		}
 
 		return false, nil
@@ -193,11 +193,14 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		var errs []error
 		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
 		if len(errs) > 0 {
+			logutil.BgLogger().Warn("[ddl-upgrading] normal cluster state, resume the job failed", zap.Stringer("job", job), zap.Error(errs[0]))
 			return false, errs[0]
 		}
 		if err != nil {
+			logutil.BgLogger().Warn("[ddl-upgrading] normal cluster state, resume the job failed", zap.Stringer("job", job), zap.Error(err))
 			return false, err
 		}
+		logutil.BgLogger().Warn("[ddl-upgrading] normal cluster state, resume the job successfully", zap.Stringer("job", job))
 	}
 
 	return true, nil
