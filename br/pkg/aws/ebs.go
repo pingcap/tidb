@@ -26,9 +26,8 @@ import (
 const (
 	AnnPodNameKey        string = "tidb.pingcap.com/pod-name"
 	NamespaceLabelKey    string = "app.kubernetes.io/namespace"
-	NameLabelKey         string = "app.kubernetes.io/name"
 	AnnTemporaryVolumeID string = "temporary/volume-id"
-	EC2K8SClusterNameKey string = "eksctl.cluster.k8s.io/v1alpha1/cluster-name"
+	EC2K8SClusterNameKey string = "aws:eks:cluster-name"
 
 	SourcePvcNameKey   string = "source/pvcName"
 	SourceVolumeIdKey  string = "source/VolumeId"
