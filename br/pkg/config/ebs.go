@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	corev1 "k8s.io/api/core/v1"
 )
 
 type EBSVolumeType string
@@ -63,10 +64,10 @@ type ClusterInfo struct {
 }
 
 type Kubernetes struct {
-	PVs     []interface{}          `json:"pvs" toml:"pvs"`
-	PVCs    []interface{}          `json:"pvcs" toml:"pvcs"`
-	CRD     interface{}            `json:"crd_tidb_cluster" toml:"crd_tidb_cluster"`
-	Options map[string]interface{} `json:"options" toml:"options"`
+	PVs     []*corev1.PersistentVolume      `json:"pvs" toml:"pvs"`
+	PVCs    []*corev1.PersistentVolumeClaim `json:"pvcs" toml:"pvcs"`
+	CRD     interface{}                     `json:"crd_tidb_cluster" toml:"crd_tidb_cluster"`
+	Options map[string]interface{}          `json:"options" toml:"options"`
 }
 
 type TiKVComponent struct {
