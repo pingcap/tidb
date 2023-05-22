@@ -329,17 +329,17 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 			if !cop.indexPlanFinished { // only consider index cost in this case
 				idxCost, err := getPlanCost(t.(*copTask).indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
 				return idxCost, false, err
-			} else { // consider both sides
-				idxCost, err := getPlanCost(t.(*copTask).indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
-				if err != nil {
-					return 0, false, err
-				}
-				tblCost, err := getPlanCost(t.(*copTask).tablePlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
-				if err != nil {
-					return 0, false, err
-				}
-				return idxCost + tblCost, false, nil
 			}
+			// consider both sides
+			idxCost, err := getPlanCost(t.(*copTask).indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+			if err != nil {
+				return 0, false, err
+			}
+			tblCost, err := getPlanCost(t.(*copTask).tablePlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+			if err != nil {
+				return 0, false, err
+			}
+			return idxCost + tblCost, false, nil
 		}
 
 		taskType = property.CopSingleReadTaskType
