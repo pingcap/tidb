@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
@@ -31,7 +32,6 @@ import (
 )
 
 var (
-	distLoadDataConcurrency = 16
 	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
@@ -41,6 +41,8 @@ type DistImporter struct {
 	plan   *importer.Plan
 	stmt   string
 	logger *zap.Logger
+	// the instance to import data, used for single-node import, nil means import data on all instances.
+	instance *infosync.ServerInfo
 }
 
 var _ importer.JobImporter = &DistImporter{}
@@ -52,6 +54,20 @@ func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt s
 		plan:           plan,
 		stmt:           stmt,
 		logger:         logutil.BgLogger().With(zap.String("component", "distribute importer"), zap.Int("id", int(param.Job.ID))),
+	}, nil
+}
+
+// NewDistImporterCurrNode creates a new DistImporter to import data on current node.
+func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan, stmt string) (*DistImporter, error) {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return nil, err
+	}
+	return &DistImporter{
+		JobImportParam: param,
+		plan:           plan,
+		stmt:           stmt,
+		instance:       serverInfo,
 	}, nil
 }
 
@@ -109,12 +125,21 @@ func buildDistTask(plan *importer.Plan, jobID int64, stmt string) TaskMeta {
 }
 
 func (ti *DistImporter) doImport(ctx context.Context) error {
-	task := buildDistTask(ti.plan, ti.Job.ID, ti.stmt)
+	var instances []*infosync.ServerInfo
+	if ti.instance != nil {
+		instances = append(instances, ti.instance)
+	}
+	task := TaskMeta{
+		Plan:              *ti.plan,
+		JobID:             ti.Job.ID,
+		Stmt:              ti.stmt,
+		EligibleInstances: instances,
+	}
 	taskMeta, err := json.Marshal(task)
 	if err != nil {
 		return err
 	}
-	return handle.SubmitAndRunGlobalTask(ctx, ti.taskKey(), proto.LoadData, distLoadDataConcurrency, taskMeta)
+	return handle.SubmitAndRunGlobalTask(ctx, ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
 }
 
 func (ti *DistImporter) taskKey() string {

@@ -16,7 +16,6 @@ package dispatcher
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -419,34 +418,21 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	}
 
 	// Generate all available TiDB nodes for this global tasks.
-	serverNodes, err1 := GenerateSchedulerNodes(d.ctx)
+	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
 	if err1 != nil {
 		return err1
 	}
+	if len(serverNodes) == 0 {
+		return errors.New("no available TiDB node")
+	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
-		instanceID, err := GetEligibleInstance(serverNodes, i)
-		if err != nil {
-			logutil.BgLogger().Warn("get a eligible instance failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
-			return err
-		}
+		// we assign the subtask to the instance in a round-robin way.
+		pos := i % len(serverNodes)
+		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
 	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
-}
-
-// GetEligibleInstance gets an eligible instance.
-func GetEligibleInstance(serverNodes []*infosync.ServerInfo, pos int) (string, error) {
-	if pos >= len(serverNodes) && pos < 0 {
-		errMsg := fmt.Sprintf("available TiDB nodes range is 0 to %d, but request position: %d", len(serverNodes)-1, pos)
-		return "", errors.New(errMsg)
-	}
-	if len(serverNodes) == 0 {
-		return "", errors.New("no available TiDB node")
-	}
-	pos = pos % len(serverNodes)
-	serverID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
-	return serverID, nil
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.

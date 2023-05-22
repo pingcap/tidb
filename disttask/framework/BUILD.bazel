@@ -11,6 +11,7 @@ go_test(
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
         "//disttask/framework/storage",
+        "//domain/infosync",
         "//testkit",
         "@com_github_stretchr_testify//require",
     ],

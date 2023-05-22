@@ -290,13 +290,19 @@ func (e *LoadDataWorker) getJobImporter(ctx context.Context, job *asyncloaddata.
 		Progress: e.progress,
 	}
 
-	if variable.EnableDistTask.Load() && e.importPlan.Distributed {
-		return loaddata.NewDistImporter(param, e.importPlan, e.stmt)
+	if e.importPlan.Distributed {
+		// TODO: Right now some test cases will fail if we run single-node import using NewDistImporterCurrNode
+		// directly, so we use EnableDistTask(false on default) to difference them now.
+		if variable.EnableDistTask.Load() {
+			return loaddata.NewDistImporter(param, e.importPlan, e.stmt)
+		}
+		return loaddata.NewDistImporterCurrNode(param, e.importPlan, e.stmt)
 	}
 
 	if e.controller.ImportMode == importer.LogicalImportMode {
 		return newLogicalJobImporter(param, e, r)
 	}
+	// TODO: Replace it with NewDistImporterCurrNode after we fix the test cases.
 	return importer.NewTableImporter(param, e.controller)
 }
 
