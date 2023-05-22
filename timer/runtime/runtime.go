@@ -25,11 +25,12 @@ import (
 	"github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
-const (
+var (
 	fullRefreshTimersInterval     = time.Minute
-	maxTriggerEventInterval       = 30 * time.Second
+	maxTriggerEventInterval       = 60 * time.Second
 	minTriggerEventInterval       = time.Second
 	reWatchInterval               = 5 * time.Second
 	batchProcessWatchRespInterval = time.Second
@@ -57,6 +58,7 @@ func NewTimerRuntimeBuilder(groupID string, store *api.TimerStore) *TimerRuntime
 			factories:    make(map[string]api.HookFactory),
 			workerRespCh: make(chan *triggerEventResponse, workerRespChanCap),
 			workers:      make(map[string]*hookWorker),
+			nowFunc:      time.Now,
 		},
 	}
 }
@@ -96,6 +98,8 @@ type TimerGroupRuntime struct {
 
 	workerRespCh chan *triggerEventResponse
 	workers      map[string]*hookWorker
+	// nowFunc is only used by test
+	nowFunc func() time.Time
 }
 
 // Start starts the TimerGroupRuntime
@@ -107,8 +111,12 @@ func (rt *TimerGroupRuntime) Start() {
 	}
 
 	rt.wg.Add(1)
-	rt.ctx, rt.cancel = context.WithCancel(context.Background())
+	rt.initCtx()
 	go rt.loop()
+}
+
+func (rt *TimerGroupRuntime) initCtx() {
+	rt.ctx, rt.cancel = context.WithCancel(context.Background())
 }
 
 // Stop stops the runtime
@@ -132,20 +140,23 @@ func (rt *TimerGroupRuntime) loop() {
 	fullRefreshTimersTicker := time.NewTicker(fullRefreshTimersInterval)
 	defer fullRefreshTimersTicker.Stop()
 
-	tryTriggerEventTimer := time.NewTimer(maxTriggerEventInterval)
-	defer tryTriggerEventTimer.Stop()
-
 	checkWaitCloseTimerTicker := time.NewTicker(checkWaitCloseTimerInterval)
 	defer checkWaitCloseTimerTicker.Stop()
 
+	tryTriggerEventTimer := time.NewTimer(minTriggerEventInterval)
+	defer tryTriggerEventTimer.Stop()
+
+	reWatchTimer := time.NewTimer(time.Minute)
+	defer reWatchTimer.Stop()
+
+	batchHandleResponsesTimer := time.NewTimer(batchProcessWatchRespInterval)
+	defer batchHandleResponsesTimer.Stop()
+
 	watchCh := rt.createWatchTimerChan()
-	reWatchTimer := time.NewTicker(reWatchInterval)
-	batchHandleResponsesTimer := time.NewTimer(time.Second)
 	batchResponses := make([]api.WatchTimerResponse, 0, 1)
 
 	var lastTryTriggerTime time.Time
 	rt.fullRefreshTimers()
-	rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
 	for {
 		select {
 		case <-rt.ctx.Done():
@@ -155,29 +166,33 @@ func (rt *TimerGroupRuntime) loop() {
 			rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
 		case <-tryTriggerEventTimer.C:
 			rt.tryTriggerTimerEvents()
-			lastTryTriggerTime = time.Now()
+			lastTryTriggerTime = rt.nowFunc()
 			rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
 		case resp := <-rt.workerRespCh:
 			rt.handleWorkerResponse(resp)
 			rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
+		case <-checkWaitCloseTimerTicker.C:
+			if rt.tryCloseTriggeringTimers() {
+				rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
+			}
 		case <-batchHandleResponsesTimer.C:
 			if rt.batchHandleWatchResponses(batchResponses) {
 				rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
 			}
 			batchResponses = batchResponses[:0]
-		case <-checkWaitCloseTimerTicker.C:
-			if rt.partialRefreshTimers(rt.cache.waitCloseTimerIDs) {
-				rt.setTryTriggerTimer(tryTriggerEventTimer, lastTryTriggerTime)
-			}
 		case resp, ok := <-watchCh:
-			if !ok {
-				rt.logger.Warn("WatchTimerChan closed, retry watch after a while", zap.Duration("after", reWatchInterval))
-				reWatchTimer.Reset(reWatchInterval)
-			} else {
-				batchResponses = append(batchResponses, resp)
-				if len(batchResponses) == 1 {
+			if ok {
+				if len(batchResponses) == 0 {
 					batchHandleResponsesTimer.Reset(batchProcessWatchRespInterval)
 				}
+				batchResponses = append(batchResponses, resp)
+			} else {
+				rt.logger.Warn("WatchTimerChan closed, retry watch after a while",
+					zap.Bool("storeSupportWatch", rt.store.WatchSupported()),
+					zap.Duration("after", reWatchInterval),
+				)
+				watchCh = idleWatchChan
+				reWatchTimer.Reset(reWatchInterval)
 			}
 		case <-reWatchTimer.C:
 			if watchCh == idleWatchChan {
@@ -197,19 +212,22 @@ func (rt *TimerGroupRuntime) fullRefreshTimers() {
 }
 
 func (rt *TimerGroupRuntime) tryTriggerTimerEvents() {
-	now := time.Now()
+	now := rt.nowFunc()
 	var retryTimerIDs []string
 	var retryTimerKeys []string
 	var busyWorkers map[string]struct{}
 	rt.cache.iterTryTriggerTimers(func(timer *api.TimerRecord, tryTriggerTime time.Time, nextEventTime *time.Time) bool {
-		goOn := !tryTriggerTime.After(now)
-		if nextEventTime == nil {
-			return goOn
+		if tryTriggerTime.After(now) {
+			return false
+		}
+
+		if nextEventTime == nil || nextEventTime.After(now) {
+			return true
 		}
 
 		worker, ok := rt.ensureWorker(timer.HookClass)
 		if !ok {
-			return goOn
+			return true
 		}
 
 		eventID := timer.EventID
@@ -231,11 +249,15 @@ func (rt *TimerGroupRuntime) tryTriggerTimerEvents() {
 		case worker.ch <- req:
 			rt.cache.setTimerProcStatus(timer.ID, procTriggering, eventID)
 		default:
+			if busyWorkers == nil {
+				busyWorkers = make(map[string]struct{})
+			}
+
 			busyWorkers[timer.HookClass] = struct{}{}
 			retryTimerIDs = append(retryTimerIDs, timer.ID)
 			retryTimerKeys = append(retryTimerKeys, fmt.Sprintf("[%s] %s", timer.Namespace, timer.Key))
 		}
-		return goOn
+		return true
 	})
 
 	if len(retryTimerIDs) > 0 {
@@ -257,9 +279,17 @@ func (rt *TimerGroupRuntime) tryTriggerTimerEvents() {
 	}
 }
 
+func (rt *TimerGroupRuntime) tryCloseTriggeringTimers() bool {
+	return rt.partialRefreshTimers(rt.cache.waitCloseTimerIDs)
+}
+
 func (rt *TimerGroupRuntime) setTryTriggerTimer(t *time.Timer, lastTryTriggerTime time.Time) {
+	t.Reset(rt.getNextTryTriggerDuration(lastTryTriggerTime))
+}
+
+func (rt *TimerGroupRuntime) getNextTryTriggerDuration(lastTryTriggerTime time.Time) time.Duration {
 	duration := maxTriggerEventInterval
-	now := time.Now()
+	now := rt.nowFunc()
 	rt.cache.iterTryTriggerTimers(func(timer *api.TimerRecord, tryTriggerTime time.Time, _ *time.Time) bool {
 		if interval := tryTriggerTime.Sub(now); interval < duration {
 			duration = interval
@@ -271,10 +301,14 @@ func (rt *TimerGroupRuntime) setTryTriggerTimer(t *time.Timer, lastTryTriggerTim
 	if duration < minDuration {
 		duration = minDuration
 	}
-	t.Reset(duration)
+	return duration
 }
 
 func (rt *TimerGroupRuntime) handleWorkerResponse(resp *triggerEventResponse) {
+	if !rt.cache.hasTimer(resp.timerID) {
+		return
+	}
+
 	if updateTimer, ok := resp.newTimerRecord.Get(); ok {
 		if updateTimer == nil {
 			rt.cache.removeTimer(resp.timerID)
@@ -288,7 +322,7 @@ func (rt *TimerGroupRuntime) handleWorkerResponse(resp *triggerEventResponse) {
 	} else {
 		rt.cache.setTimerProcStatus(resp.timerID, procIdle, "")
 		if retryAfter, ok := resp.retryAfter.Get(); ok {
-			rt.cache.updateNextTryTriggerTime(resp.timerID, time.Now().Add(retryAfter))
+			rt.cache.updateNextTryTriggerTime(resp.timerID, rt.nowFunc().Add(retryAfter))
 		}
 	}
 }
@@ -305,17 +339,36 @@ func (rt *TimerGroupRuntime) partialRefreshTimers(timerIDs map[string]struct{}) 
 		return false
 	}
 
+	if len(timers) != len(timerIDs) {
+		noExistTimers := maps.Clone(timerIDs)
+		for _, timer := range timers {
+			delete(noExistTimers, timer.ID)
+		}
+
+		for timerID := range noExistTimers {
+			rt.cache.removeTimer(timerID)
+		}
+	}
+
 	return rt.cache.partialBatchUpdateTimers(timers)
 }
 
 func (rt *TimerGroupRuntime) createWatchTimerChan() api.WatchTimerChan {
-	if rt.store.WatchSupported() {
+	watchSupported := rt.store.WatchSupported()
+	rt.logger.Info("create watch chan if possible for timer runtime",
+		zap.Bool("storeSupportWatch", watchSupported),
+	)
+	if watchSupported {
 		return rt.store.Watch(rt.ctx)
 	}
 	return idleWatchChan
 }
 
 func (rt *TimerGroupRuntime) batchHandleWatchResponses(responses []api.WatchTimerResponse) bool {
+	if len(responses) == 0 {
+		return false
+	}
+
 	updateTimerIDs := make(map[string]struct{}, len(responses))
 	delTimerIDs := make(map[string]struct{}, len(responses))
 	for _, resp := range responses {
@@ -365,7 +418,13 @@ func (rt *TimerGroupRuntime) buildTimerIDsCond(ids map[string]struct{}) api.Cond
 		condList = append(condList, &api.TimerCond{ID: api.NewOptionalVal(timerID)})
 	}
 	return api.And(
-		api.Or(condList...),
 		rt.cond,
+		api.Or(condList...),
 	)
+}
+
+// setNowFunc is only used by test
+func (rt *TimerGroupRuntime) setNowFunc(fn func() time.Time) {
+	rt.nowFunc = fn
+	rt.cache.nowFunc = fn
 }

@@ -63,7 +63,7 @@ func (c *timerCacheItem) update(timer *api.TimerRecord, nowFunc func() time.Time
 			c.nextTryTriggerTime = *c.nextEventTime
 		}
 	case api.SchedEventTrigger:
-		c.nextTryTriggerTime = nowFunc()
+		c.nextTryTriggerTime = timer.EventStart
 	}
 
 	return true
@@ -115,6 +115,11 @@ func (c *timersCache) removeTimer(timerID string) bool {
 	c.sorted.Remove(item.sortEle)
 	delete(c.waitCloseTimerIDs, timerID)
 	return true
+}
+
+func (c *timersCache) hasTimer(timerID string) (exist bool) {
+	_, exist = c.items[timerID]
+	return
 }
 
 func (c *timersCache) partialBatchUpdateTimers(timers []*api.TimerRecord) bool {
@@ -187,7 +192,7 @@ func (c *timersCache) resort(item *timerCacheItem) {
 
 	if cur := ele.Prev(); cur != nil && cur.Value.(*timerCacheItem).nextTryTriggerTime.After(nextTrigger) {
 		prev := cur.Prev()
-		for prev != nil && prev.Value.(*timerCacheItem).nextEventTime.After(nextTrigger) {
+		for prev != nil && prev.Value.(*timerCacheItem).nextTryTriggerTime.After(nextTrigger) {
 			cur = prev
 			prev = cur.Prev()
 		}
@@ -197,7 +202,7 @@ func (c *timersCache) resort(item *timerCacheItem) {
 
 	if cur := ele.Next(); cur != nil && cur.Value.(*timerCacheItem).nextTryTriggerTime.Before(nextTrigger) {
 		next := cur.Next()
-		for next != nil && next.Value.(*timerCacheItem).nextEventTime.Before(nextTrigger) {
+		for next != nil && next.Value.(*timerCacheItem).nextTryTriggerTime.Before(nextTrigger) {
 			cur = next
 			next = cur.Next()
 		}

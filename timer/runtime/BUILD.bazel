@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "runtime",
+    srcs = [
+        "cache.go",
+        "runtime.go",
+        "worker.go",
+    ],
+    importpath = "github.com/pingcap/tidb/timer/runtime",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//timer/api",
+        "//util/logutil",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "runtime_test",
+    timeout = "short",
+    srcs = [
+        "cache_test.go",
+        "main_test.go",
+        "runtime_test.go",
+        "worker_test.go",
+    ],
+    embed = [":runtime"],
+    flaky = True,
+    shard_count = 10,
+    deps = [
+        "//testkit/testsetup",
+        "//timer/api",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//mock",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

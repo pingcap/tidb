@@ -372,6 +372,47 @@ func TestWorkerProcessDelayOrErr(t *testing.T) {
 		_, ok = resp.newTimerRecord.Get()
 		require.False(t, ok)
 	})
+
+	// timer event updated then get record return nil
+	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
+		Return(api.PreSchedEventResult{}, nil).Once()
+	mockCore.On("Update", mock.Anything, mock.Anything, mock.Anything).
+		Return(nil).Once()
+	mockCore.On("List", mock.Anything, mock.Anything).
+		Return([]*api.TimerRecord(nil), nil).Once()
+	sendWorkerRequestAndCheckResp(t, w, request, respChan, func(resp *triggerEventResponse) {
+		require.False(t, resp.success)
+		require.Equal(t, timer.ID, resp.timerID)
+		require.Equal(t, eventID, resp.eventID)
+		_, ok := resp.retryAfter.Get()
+		require.False(t, ok)
+		newRecord, ok := resp.newTimerRecord.Get()
+		require.True(t, ok)
+		require.Nil(t, newRecord)
+	})
+
+	// timer event updated then get record return different eventID
+	anotherEventIDTimer := timer.Clone()
+	anotherEventIDTimer.Version += 2
+	anotherEventIDTimer.EventStatus = api.SchedEventTrigger
+	anotherEventIDTimer.EventID = "anothereventid"
+	anotherEventIDTimer.EventStart = time.Now()
+	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
+		Return(api.PreSchedEventResult{}, nil).Once()
+	mockCore.On("Update", mock.Anything, mock.Anything, mock.Anything).
+		Return(nil).Once()
+	mockCore.On("List", mock.Anything, mock.Anything).
+		Return([]*api.TimerRecord{anotherEventIDTimer}, nil).Once()
+	sendWorkerRequestAndCheckResp(t, w, request, respChan, func(resp *triggerEventResponse) {
+		require.False(t, resp.success)
+		require.Equal(t, timer.ID, resp.timerID)
+		require.Equal(t, eventID, resp.eventID)
+		_, ok := resp.retryAfter.Get()
+		require.False(t, ok)
+		newRecord, ok := resp.newTimerRecord.Get()
+		require.True(t, ok)
+		require.Equal(t, anotherEventIDTimer, newRecord)
+	})
 	request.store = store
 
 	// timer meta changed

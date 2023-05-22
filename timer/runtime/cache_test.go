@@ -31,6 +31,7 @@ func newTestTimer(id string, policyExpr string, watermark time.Time) *api.TimerR
 			Key:             fmt.Sprintf("key-" + id),
 			SchedPolicyType: api.SchedEventInterval,
 			SchedPolicyExpr: policyExpr,
+			HookClass:       "hook1",
 			Enable:          true,
 		},
 		EventStatus: api.SchedEventIdle,
@@ -51,6 +52,7 @@ func TestCacheUpdate(t *testing.T) {
 	// update
 	t1 := newTestTimer("t1", "10m", now)
 	require.True(t, cache.updateTimer(t1))
+	require.NotSame(t, t1, cache.items[t1.ID].timer)
 	checkSortedCache(t, cache, [][]any{{t1, now.Add(10 * time.Minute)}})
 	require.Equal(t, 1, len(cache.items))
 
@@ -71,8 +73,16 @@ func TestCacheUpdate(t *testing.T) {
 	checkSortedCache(t, cache, [][]any{{t1, now.Add(7 * time.Second)}})
 	require.Equal(t, 1, len(cache.items))
 
-	// should not change procTriggering state
+	// not enable
 	t1.SchedPolicyExpr = "1m"
+	t1.Enable = false
+	t1.Version++
+	require.True(t, cache.updateTimer(t1))
+	checkSortedCache(t, cache, [][]any{{t1, now.Add(time.Hour)}})
+	require.Equal(t, 1, len(cache.items))
+
+	// should not change procTriggering state
+	t1.Enable = true
 	t1.Version++
 	cache.setTimerProcStatus(t1.ID, procTriggering, "event1")
 	require.True(t, cache.updateTimer(t1))
@@ -81,16 +91,31 @@ func TestCacheUpdate(t *testing.T) {
 	require.Equal(t, procTriggering, cache.items[t1.ID].procStatus)
 	require.Equal(t, "event1", cache.items[t1.ID].triggerEventID)
 
-	// should reset procWaitTriggerClose to procIdle
+	// test SchedEventTrigger but procIdle
 	t1.SchedPolicyExpr = "1m"
 	t1.EventStatus = api.SchedEventTrigger
-	t1.EventStart = now
+	t1.EventStart = now.Add(-10 * time.Second)
 	t1.EventID = "event1"
 	t1.Version++
 	require.True(t, cache.updateTimer(t1))
+	cache.setTimerProcStatus(t1.ID, procIdle, "event1")
+	checkSortedCache(t, cache, [][]any{{t1, now.Add(-10 * time.Second)}})
+	require.Equal(t, 1, len(cache.items))
+	require.Equal(t, 0, len(cache.waitCloseTimerIDs))
+
+	// should reset procWaitTriggerClose to procIdle
 	cache.setTimerProcStatus(t1.ID, procWaitTriggerClose, "event1")
 	checkSortedCache(t, cache, nil)
 	require.Equal(t, 1, len(cache.items))
+	require.Equal(t, 1, len(cache.waitCloseTimerIDs))
+	require.Contains(t, cache.waitCloseTimerIDs, t1.ID)
+
+	t1.Version++
+	require.True(t, cache.updateTimer(t1))
+	require.Equal(t, 1, len(cache.items))
+	require.Equal(t, 1, len(cache.waitCloseTimerIDs))
+	require.Contains(t, cache.waitCloseTimerIDs, t1.ID)
+	require.Equal(t, procWaitTriggerClose, cache.items[t1.ID].procStatus)
 
 	t1.EventStatus = api.SchedEventIdle
 	t1.EventID = ""
@@ -98,6 +123,8 @@ func TestCacheUpdate(t *testing.T) {
 	require.True(t, cache.updateTimer(t1))
 	require.Equal(t, procIdle, cache.items[t1.ID].procStatus)
 	require.Equal(t, "", cache.items[t1.ID].triggerEventID)
+	require.Equal(t, 0, len(cache.waitCloseTimerIDs))
+	require.NotContains(t, cache.waitCloseTimerIDs, t1.ID)
 }
 
 func TestCacheSort(t *testing.T) {
@@ -225,14 +252,30 @@ func TestCacheSort(t *testing.T) {
 		{t4, now.Add(16 * time.Minute)},
 	})
 
+	cache.updateNextTryTriggerTime(t4.ID, now.Add(9*time.Minute))
+	checkSortedCache(t, cache, [][]any{
+		{t2, now.Add(1 * time.Minute)},
+		{t3, now.Add(8 * time.Minute)},
+		{t4, now.Add(9 * time.Minute)},
+		{t1, now.Add(11 * time.Minute)},
+	})
+
+	cache.updateNextTryTriggerTime(t2.ID, now.Add(15*time.Minute))
+	checkSortedCache(t, cache, [][]any{
+		{t3, now.Add(8 * time.Minute)},
+		{t4, now.Add(9 * time.Minute)},
+		{t1, now.Add(11 * time.Minute)},
+		{t2, now.Add(15 * time.Minute)},
+	})
+
 	// test version update should reset updateNextTryTriggerTime
 	t3.Version++
 	require.True(t, cache.updateTimer(t3))
 	checkSortedCache(t, cache, [][]any{
-		{t2, now.Add(1 * time.Minute)},
+		{t4, now.Add(9 * time.Minute)},
 		{t1, now.Add(11 * time.Minute)},
 		{t3, now.Add(12 * time.Minute)},
-		{t4, now.Add(16 * time.Minute)},
+		{t2, now.Add(15 * time.Minute)},
 	})
 }
 
@@ -283,7 +326,7 @@ func checkSortedCache(t *testing.T, cache *timersCache, sorted [][]any) {
 		require.True(t, ok)
 		require.Equal(t, *expectedTimer, *item.timer)
 
-		if p, err := timer.CreateSchedEventPolicy(); err == nil {
+		if p, err := timer.CreateSchedEventPolicy(); err == nil && timer.Enable {
 			require.NotNil(t, nextEventTime)
 			tm, ok := p.NextEventTime(timer.Watermark)
 			if !ok {
