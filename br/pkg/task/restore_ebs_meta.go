@@ -41,6 +41,7 @@ const (
 	flagVolumeType       = "volume-type"
 	flagVolumeIOPS       = "volume-iops"
 	flagVolumeThroughput = "volume-throughput"
+	flagTargetAZ         = "target-az"
 )
 
 // DefineRestoreSnapshotFlags defines common flags for the backup command.
@@ -54,6 +55,7 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
+	command.Flags().String(flagTargetAZ, "", "the target AZ for restored volumes")
 
 	_ = command.Flags().MarkHidden(flagFullBackupType)
 	_ = command.Flags().MarkHidden(flagPrepare)
@@ -64,6 +66,7 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	_ = command.Flags().MarkHidden(flagVolumeIOPS)
 	_ = command.Flags().MarkHidden(flagVolumeThroughput)
 	_ = command.Flags().MarkHidden(flagProgressFile)
+	_ = command.Flags().MarkHidden(flagTargetAZ)
 }
 
 // RunRestoreEBSMeta phase 1 of EBS based restore
@@ -235,7 +238,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		}
 	}()
 	volumeIDMap, err = ec2Session.CreateVolumes(h.metaInfo,
-		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput)
+		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput, h.cfg.TargetAZ)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
