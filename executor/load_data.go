@@ -63,27 +63,18 @@ type LoadDataExec struct {
 	FileLocRef     ast.FileLocRefTp
 	OnDuplicate    ast.OnDuplicateKeyHandlingType
 	loadDataWorker *LoadDataWorker
-	detachHandled  bool
 }
 
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.maxChunkSize)
-	if e.detachHandled {
-		// need to return an empty req to indicate all results have been written
-		return nil
-	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
 
 	switch e.FileLocRef {
 	case ast.FileLocServerOrRemote:
-		jobID, err2 := e.loadDataWorker.loadRemote(ctx)
+		_, err2 := e.loadDataWorker.loadRemote(ctx)
 		if err2 != nil {
 			return err2
-		}
-		if e.loadDataWorker.controller.Detached {
-			req.AppendInt64(0, jobID)
-			e.detachHandled = true
 		}
 	case ast.FileLocClient:
 		// let caller use handleQuerySpecial to read data in this connection
@@ -188,13 +179,7 @@ func (e *LoadDataWorker) load(ctx context.Context, r io.ReadCloser) (jboID int64
 	if err2 != nil {
 		return 0, err2
 	}
-	defer func() {
-		// if the job is detached and there's no error during init, we will close the session in the detached routine.
-		// else we close the session here.
-		if !e.controller.Detached || err != nil {
-			CloseSession(s)
-		}
-	}()
+	defer CloseSession(s)
 
 	sqlExec := s.(sqlexec.SQLExecutor)
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
@@ -215,25 +200,12 @@ func (e *LoadDataWorker) load(ctx context.Context, r io.ReadCloser) (jboID int64
 	}
 
 	importCtx := ctx
-	if e.controller.Detached {
-		importCtx = context.Background()
-		importCtx = kv.WithInternalSourceType(importCtx, kv.InternalLoadData)
-	}
 
 	jobImporter, err2 := e.getJobImporter(importCtx, job, r)
 	if err2 != nil {
 		return 0, err2
 	}
 
-	if e.controller.Detached {
-		go func() {
-			defer CloseSession(s)
-			// error is stored in system table, so we can ignore it here
-			//nolint: errcheck
-			_ = e.importJob(importCtx, jobImporter)
-		}()
-		return job.ID, nil
-	}
 	return job.ID, e.importJob(importCtx, jobImporter)
 }
 
@@ -267,9 +239,7 @@ func (e *LoadDataWorker) importJob(ctx context.Context, jobImporter importer.Job
 	jobImporter.Import()
 	err = group.Wait()
 	result = jobImporter.Result()
-	if !e.controller.Detached {
-		e.setResult(result)
-	}
+	e.setResult(result)
 	return err
 }
 
