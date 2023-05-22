@@ -382,6 +382,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		if handle.IsRetryableErr(err) {
 			return err
 		}
+		gTask.Error = []byte(err.Error())
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),
