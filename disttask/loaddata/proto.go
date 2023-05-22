@@ -32,10 +32,10 @@ const (
 // TaskMeta is the task of LoadData.
 // All the field should be serializable.
 type TaskMeta struct {
-	Plan    importer.Plan
-	JobID   int64
-	Stmt    string
-	Metrics Metrics
+	Plan   importer.Plan
+	JobID  int64
+	Stmt   string
+	Result Result
 }
 
 // SubtaskMeta is the subtask of LoadData.
@@ -46,7 +46,7 @@ type SubtaskMeta struct {
 	ID       int32
 	Chunks   []Chunk
 	Checksum Checksum
-	Metrics  Metrics
+	Result   Result
 }
 
 // SharedVars is the shared variables between subtask and minimal tasks.
@@ -92,10 +92,9 @@ type Checksum struct {
 	Size uint64
 }
 
-// Metrics records the metrics information.
+// Result records the metrics information.
 // This portion of the code may be implemented uniformly in the framework in the future.
-type Metrics struct {
+type Result struct {
 	ReadRowCnt   uint64
 	LoadedRowCnt uint64
-	LastInsertID uint64
 }

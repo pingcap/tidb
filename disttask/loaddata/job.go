@@ -84,14 +84,13 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 		numDeletes  uint64
 		numSkipped  uint64
 	)
-	numRecords = taskMeta.Metrics.ReadRowCnt
+	numRecords = taskMeta.Result.ReadRowCnt
 	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
 	// we can have it when there's duplicate detection.
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	return importer.JobImportResult{
-		Msg:          msg,
-		Affected:     taskMeta.Metrics.ReadRowCnt,
-		LastInsertID: taskMeta.Metrics.LastInsertID,
+		Msg:      msg,
+		Affected: taskMeta.Result.ReadRowCnt,
 	}
 }
 

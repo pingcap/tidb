@@ -43,7 +43,6 @@ func TestProgressMarshalUnmarshal(t *testing.T) {
 	p.ReadRowCnt.Store(790)
 	p.EncodeFileSize.Store(100)
 	p.LoadedRowCnt.Store(789)
-	p.LastInsertID.Store(1)
 
 	s = p.String()
 	require.Equal(t, `{"SourceFileSize":123,"ReadRowCnt":790,"EncodeFileSize":100,"LoadedRowCnt":789}`, s)

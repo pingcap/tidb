@@ -32,7 +32,7 @@ type ImportMinimalTaskExecutor struct {
 
 // Run implements the SubtaskExecutor.Run interface.
 func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
-	logger := logutil.BgLogger().With(zap.String("component", "minimal task executor"), zap.String("type", proto.LoadData))
+	logger := logutil.BgLogger().With(zap.String("component", "minimal task executor"), zap.String("type", proto.LoadData), zap.Int64("table_id", e.task.Plan.TableInfo.ID))
 	logger.Info("subtask executor run", zap.Any("task", e.task))
 	chunkCheckpoint := toChunkCheckpoint(e.task.Chunk)
 	sharedVars := e.task.SharedVars

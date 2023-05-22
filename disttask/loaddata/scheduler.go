@@ -159,10 +159,9 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
 	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
 	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
-	subtaskMeta.Metrics = Metrics{
+	subtaskMeta.Result = Result{
 		ReadRowCnt:   sharedVars.Progress.ReadRowCnt.Load(),
 		LoadedRowCnt: uint64(dataKVCount),
-		LastInsertID: sharedVars.Progress.LastInsertID.Load(),
 	}
 	s.sharedVars.Delete(subtaskMeta.ID)
 	return json.Marshal(subtaskMeta)
@@ -189,7 +188,7 @@ func init() {
 			if err := json.Unmarshal(bs, &taskMeta); err != nil {
 				return nil, err
 			}
-			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.LoadData), zap.Int64("ID", taskMeta.JobID))
+			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.LoadData), zap.Int64("table_id", taskMeta.Plan.TableInfo.ID))
 			logger.Info("create new load data scheduler", zap.Any("taskMeta", taskMeta))
 			return &ImportScheduler{
 				taskMeta: &taskMeta,

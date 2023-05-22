@@ -126,7 +126,7 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 		return err
 	}
 
-	updateMetrics(taskMeta, subtaskMetas, logger)
+	updateResult(taskMeta, subtaskMetas, logger)
 	return updateMeta(gTask, taskMeta)
 }
 
@@ -143,15 +143,12 @@ func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, 
 	return tableImporter.VerifyChecksum(ctx, localChecksum)
 }
 
-func updateMetrics(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta, logger *zap.Logger) {
+func updateResult(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta, logger *zap.Logger) {
 	for _, subtaskMeta := range subtaskMetas {
-		taskMeta.Metrics.ReadRowCnt += subtaskMeta.Metrics.ReadRowCnt
-		taskMeta.Metrics.LoadedRowCnt += subtaskMeta.Metrics.LoadedRowCnt
-		if taskMeta.Metrics.LastInsertID == 0 || subtaskMeta.Metrics.LastInsertID < taskMeta.Metrics.LastInsertID {
-			taskMeta.Metrics.LastInsertID = subtaskMeta.Metrics.LastInsertID
-		}
+		taskMeta.Result.ReadRowCnt += subtaskMeta.Result.ReadRowCnt
+		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
 	}
-	logger.Info("update metrics", zap.Any("task_meta", taskMeta))
+	logger.Info("update result", zap.Any("task_meta", taskMeta))
 }
 
 func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {

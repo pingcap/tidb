@@ -131,11 +131,7 @@ func (p *chunkProcessor) process(ctx context.Context) (err error) {
 	group.Go(func() error {
 		return p.encodeLoop(gCtx)
 	})
-	if err := group.Wait(); err != nil {
-		return err
-	}
-	p.progress.LastInsertID.Store(p.encoder.GetLastInsertID())
-	return nil
+	return group.Wait()
 }
 
 func (p *chunkProcessor) initProgress() error {
