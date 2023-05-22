@@ -71,7 +71,7 @@ var allRules = append([]lint.Rule{
 	//&rule.ArgumentsLimitRule{},
 	//&rule.CyclomaticRule{},
 	//&rule.FileHeaderRule{},
-	//&rule.EmptyBlockRule{},
+	&rule.EmptyBlockRule{},
 	&rule.SuperfluousElseRule{},
 	//&rule.ConfusingNamingRule{},
 	&rule.GetReturnRule{},
