@@ -291,7 +291,7 @@ func (e *LoadDataWorker) getJobImporter(ctx context.Context, job *asyncloaddata.
 	}
 
 	if e.importPlan.Distributed {
-		// todo: right now some test cases will fail if we run single-node import using NewDistImporterCurrNode
+		// TODO: Right now some test cases will fail if we run single-node import using NewDistImporterCurrNode
 		// directly, so we use EnableDistTask(false on default) to difference them now.
 		if variable.EnableDistTask.Load() {
 			return loaddata.NewDistImporter(param, e.importPlan, e.stmt)
