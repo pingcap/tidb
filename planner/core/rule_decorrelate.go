@@ -95,18 +95,6 @@ func ExtractCorrelatedCols4LogicalPlan(p LogicalPlan) []*expression.CorrelatedCo
 	return corCols
 }
 
-func HasCTEConsumerInSubPlan(p LogicalPlan) bool {
-	if _, ok := p.(*LogicalCTE); ok {
-		return true
-	}
-	for _, child := range p.Children() {
-		if HasCTEConsumerInSubPlan(child) {
-			return true
-		}
-	}
-	return false
-}
-
 // ExtractCorrelatedCols4PhysicalPlan recursively extracts all of the correlated columns
 // from a plan tree by calling PhysicalPlan.ExtractCorrelatedCols.
 func ExtractCorrelatedCols4PhysicalPlan(p PhysicalPlan) []*expression.CorrelatedColumn {
