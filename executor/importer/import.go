@@ -416,11 +416,6 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other")
 	}
 
-	// only use for test
-	if e.Distributed && !variable.EnableDistTask.Load() {
-		return errors.Errorf("must enable %s before use distributed load data", variable.TiDBEnableDistTask)
-	}
-
 	return nil
 }
 
