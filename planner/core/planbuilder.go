@@ -975,6 +975,8 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 				char, col := b.ctx.GetSessionVars().GetCharsetInfo()
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
 			}
+			// The mocked plan need one output for the complex cases.
+			// See the following IF branch.
 			mockTablePlan := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 			var err error
 			var possiblePlan LogicalPlan
@@ -982,6 +984,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 			if err != nil {
 				return nil, err
 			}
+			// It's possible that the subquery of the SET_VAR is a complex one so we need to get the result by evaluating the plan.
 			if _, ok := possiblePlan.(*LogicalTableDual); !ok {
 				physicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, possiblePlan)
 				if err != nil {

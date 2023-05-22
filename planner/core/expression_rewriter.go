@@ -853,7 +853,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		semiJoinRewrite = false
 	}
 
-	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, semiJoinRewrite, noDecorrelate)
 		if er.err != nil || !er.asScalar {
 			return v, true
