@@ -31,40 +31,39 @@ import (
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
-
-type taskInfo struct {
-	lastSwitchTime time.Time
-}
 
 type flowHandle struct {
 	mu sync.RWMutex
 	// the last time we switch TiKV into IMPORT mode, this is a global operation, do it for one task makes
 	// no difference to do it for all tasks. So we do not need to record the switch time for each task.
-	lastSwitchTime time.Time
+	lastSwitchTime atomic.Time
 }
 
 var _ dispatcher.TaskFlowHandle = (*flowHandle)(nil)
 
 func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
-	if task.State != proto.TaskStateRunning {
-		// only switch TiKV mode when task is running
+	// only switch TiKV mode when task is running and reach the interval
+	if task.State != proto.TaskStateRunning || time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
 		return
 	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
-	if time.Since(h.lastSwitchTime) >= config.DefaultSwitchTiKVModeInterval {
-		logger := logutil.BgLogger().With(zap.Int64("task_id", task.ID))
-		switcher, err := importer.GetTiKVModeSwitcher(logger)
-		if err != nil {
-			logger.Warn("get tikv mode switcher failed", zap.Error(err))
-			return
-		}
-		switcher.ToImportMode(ctx)
-		h.lastSwitchTime = time.Now()
+	if time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
+		return
 	}
+
+	logger := logutil.BgLogger().With(zap.Int64("task_id", task.ID))
+	switcher, err := importer.GetTiKVModeSwitcher(logger)
+	if err != nil {
+		logger.Warn("get tikv mode switcher failed", zap.Error(err))
+		return
+	}
+	switcher.ToImportMode(ctx)
+	h.lastSwitchTime.Store(time.Now())
 }
 
 func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
@@ -134,6 +133,9 @@ func (*flowHandle) IsRetryableErr(error) bool {
 }
 
 func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logger) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	switcher, err := importer.GetTiKVModeSwitcher(logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
@@ -141,10 +143,8 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 	}
 	switcher.ToNormalMode(ctx)
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	// clear it, so next task can switch TiKV mode again.
-	h.lastSwitchTime = time.Time{}
+	h.lastSwitchTime.Store(time.Time{})
 }
 
 // postProcess does the post processing for the task.

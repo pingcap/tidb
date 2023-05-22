@@ -27,7 +27,7 @@ import (
 type TaskFlowHandle interface {
 	// OnTicker is used to handle the ticker event, if business impl need to do some periodical work, you can
 	// do it here, but don't do too much work here, because the ticker interval is small, and it will block
-	// the event is generated every checkTaskRunningInterval.
+	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
 	OnTicker(ctx context.Context, gTask *proto.Task)
 	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
 	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr [][]byte) (subtaskMeta []byte, err error)
