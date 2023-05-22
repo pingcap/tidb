@@ -852,7 +852,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		semiJoinRewrite = false
 	}
 
-	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, semiJoinRewrite, noDecorrelate)
 		if er.err != nil || !er.asScalar {
 			return v, true
@@ -1052,7 +1052,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		noDecorrelate = false
 	}
 
-	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin, noDecorrelate)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
@@ -1110,6 +1110,34 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	return v, true
 }
 
+<<<<<<< HEAD
+=======
+func hasCTEConsumerInSubPlan(p LogicalPlan) bool {
+	if _, ok := p.(*LogicalCTE); ok {
+		return true
+	}
+	for _, child := range p.Children() {
+		if hasCTEConsumerInSubPlan(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func initConstantRepertoire(c *expression.Constant) {
+	c.SetRepertoire(expression.ASCII)
+	if c.GetType().EvalType() == types.ETString {
+		for _, b := range c.Value.GetBytes() {
+			// if any character in constant is not ascii, set the repertoire to UNICODE.
+			if b >= 0x80 {
+				c.SetRepertoire(expression.UNICODE)
+				break
+			}
+		}
+	}
+}
+
+>>>>>>> d82ed59e497 (planner: wrong execution when CTE meet non-correlated subquery (#44054))
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	if er.err != nil {

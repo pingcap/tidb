@@ -6,6 +6,10 @@ go_test(
     srcs = ["oom_test.go"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD:executor/oomtest/BUILD.bazel
+=======
+    shard_count = 4,
+>>>>>>> d82ed59e497 (planner: wrong execution when CTE meet non-correlated subquery (#44054)):planner/core/issuetest/BUILD.bazel
     deps = [
         "//testkit",
         "//testkit/testsetup",
