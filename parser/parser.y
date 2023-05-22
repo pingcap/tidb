@@ -169,6 +169,7 @@ import (
 	outfile           "OUTFILE"
 	is                "IS"
 	insert            "INSERT"
+	ingest            "INGEST"
 	intType           "INT"
 	int1Type          "INT1"
 	int2Type          "INT2"
@@ -978,6 +979,7 @@ import (
 	InsertIntoStmt             "INSERT INTO statement"
 	CallStmt                   "CALL statement"
 	IndexAdviseStmt            "INDEX ADVISE statement"
+	IngestIntoStmt	    	   "INGEST INTO statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
@@ -6676,6 +6678,7 @@ TiDBKeyword:
 |	"DEPENDENCY"
 |	"DEPTH"
 |	"DRAINER"
+|	"INGEST"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
@@ -11713,6 +11716,7 @@ Statement:
 |	GrantProxyStmt
 |	GrantRoleStmt
 |	CallStmt
+|	IngestIntoStmt
 |	InsertIntoStmt
 |	IndexAdviseStmt
 |	KillStmt
@@ -14257,6 +14261,24 @@ LoadDataOption:
 |	identifier "=" SignedLiteral
 	{
 		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
+	}
+
+IngestIntoStmt:
+	"INGEST" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"FROM" stringLit "FORMAT" stringLit CharsetOpt Fields Lines IgnoreLines LoadDataOptionListOpt
+	{
+		$$ = &ast.IngestIntoStmt{
+			Table:     $3.(*ast.TableName),
+                        ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
+                        ColumnAssignments: $5.([]*ast.Assignment),
+                        Path: $7.(string),
+			Format: $9.(string),
+                        Charset: $10.(*string),
+                        FieldsInfo: $11.(*ast.FieldsClause),
+                        LinesInfo: $12.(*ast.LinesClause),
+                        IgnoreLines: $13.(*int64),
+                        Options: $14.([]*ast.LoadDataOpt),
+		}
 	}
 
 /*********************************************************************
