@@ -42,6 +42,11 @@ type TaskManager struct {
 
 var taskManagerInstance atomic.Pointer[TaskManager]
 
+var (
+	// TestLastTaskID is used for test to set the last task ID.
+	TestLastTaskID atomic.Int64
+)
+
 // NewTaskManager creates a new task manager.
 func NewTaskManager(ctx context.Context, sePool *pools.ResourcePool) *TaskManager {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
@@ -172,6 +177,7 @@ func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta [
 		if err != nil {
 			return err
 		}
+		failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
 
 		return nil
 	})

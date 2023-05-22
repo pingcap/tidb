@@ -98,7 +98,7 @@ func (s *mockGCSSuite) testOperateRunningJob(importMode string) {
 	wg.Wait()
 
 	// test CANCEL
-
+	s.tk.MustExec("TRUNCATE TABLE test_operate.t")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-operate/t.tsv?endpoint=%s'
 		REPLACE INTO TABLE test_operate.t  %s;`, gcsEndpoint, withOptions)
 	wg.Add(1)
