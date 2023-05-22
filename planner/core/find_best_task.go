@@ -322,18 +322,24 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 	case *rootTask:
 		taskType = property.RootTaskType
 	case *copTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
-		if t.(*copTask).indexPlan != nil && t.(*copTask).tablePlan != nil {
-			// keep compatible with the old cost interface, for CopMultiReadTask, the cost is idxCost + tblCost.
+		cop := t.(*copTask)
+		if cop.indexPlan != nil && cop.tablePlan != nil { // handle IndexLookup specially
 			taskType = property.CopMultiReadTaskType
-			idxCost, err := getPlanCost(t.(*copTask).indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
-			if err != nil {
-				return 0, false, err
+			// keep compatible with the old cost interface, for CopMultiReadTask, the cost is idxCost + tblCost.
+			if !cop.indexPlanFinished { // only consider index cost in this case
+				idxCost, err := getPlanCost(t.(*copTask).indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+				return idxCost, false, err
+			} else { // consider both sides
+				idxCost, err := getPlanCost(t.(*copTask).indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+				if err != nil {
+					return 0, false, err
+				}
+				tblCost, err := getPlanCost(t.(*copTask).tablePlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+				if err != nil {
+					return 0, false, err
+				}
+				return idxCost + tblCost, false, nil
 			}
-			tblCost, err := getPlanCost(t.(*copTask).tablePlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
-			if err != nil {
-				return 0, false, err
-			}
-			return idxCost + tblCost, false, nil
 		}
 
 		taskType = property.CopSingleReadTaskType
