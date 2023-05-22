@@ -121,14 +121,17 @@ const (
 // UnFreeze are invoked successfully during the execution of TryIncrease.
 func (rf *ReferenceCount) TryIncrease() bool {
 	refCnt := atomic.LoadInt32((*int32)(rf))
-	for ; refCnt != ReferenceCountIsFrozen && !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt+1); refCnt = atomic.LoadInt32((*int32)(rf)) {
+	for refCnt != ReferenceCountIsFrozen && !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt+1) {
+		refCnt = atomic.LoadInt32((*int32)(rf))
 	}
 	return refCnt != ReferenceCountIsFrozen
 }
 
 // Decrease decreases the reference count.
 func (rf *ReferenceCount) Decrease() {
-	for refCnt := atomic.LoadInt32((*int32)(rf)); !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt-1); refCnt = atomic.LoadInt32((*int32)(rf)) {
+	refCnt := atomic.LoadInt32((*int32)(rf))
+	for !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt-1) {
+		refCnt = atomic.LoadInt32((*int32)(rf))
 	}
 }
 
