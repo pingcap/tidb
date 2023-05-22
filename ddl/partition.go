@@ -1980,6 +1980,16 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Trace(err)
 	}
 
+	tableBundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
+	}
+
 	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 	if err != nil {
 		job.State = model.JobStateCancelled
