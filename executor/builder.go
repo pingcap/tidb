@@ -186,6 +186,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildBatchPointGet(v)
 	case *plannercore.Insert:
 		return b.buildInsert(v)
+	case *plannercore.IngestInto:
+		return b.buildIngestInto(v)
 	case *plannercore.LoadData:
 		return b.buildLoadData(v)
 	case *plannercore.LoadStats:
@@ -961,6 +963,27 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 	}
 	return insert
+}
+
+func (b *executorBuilder) buildIngestInto(v *plannercore.IngestInto) Executor {
+	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
+		return nil
+	}
+	if !tbl.Meta().IsBaseTable() {
+		b.err = plannercore.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		return nil
+	}
+
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
+	exec, err := newIngestIntoExec(base, b.ctx, v, tbl)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
+	return exec
 }
 
 func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {

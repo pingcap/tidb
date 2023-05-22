@@ -289,6 +289,46 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 	return p, nil
 }
 
+// NewIngestPlan creates a new ingest into plan.
+func NewIngestPlan(userSctx sessionctx.Context, plan *plannercore.IngestInto, tbl table.Table) (*Plan, error) {
+	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
+	logger := log.L().With(zap.String("table", fullTableName))
+	format := strings.ToLower(plan.Format)
+	charset := plan.Charset
+	if charset == nil {
+		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
+		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
+			context.Background(), variable.CharsetDatabase)
+		if err2 != nil {
+			logger.Error("LOAD DATA get charset failed", zap.Error(err2))
+		} else {
+			charset = &d
+		}
+	}
+	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
+
+	p := &Plan{
+		TableInfo: tbl.Meta(),
+		DBName:    plan.Table.Schema.O,
+		DBID:      plan.Table.DBInfo.ID,
+
+		Path:        plan.Path,
+		Format:      format,
+		Restrictive: restrictive,
+		IgnoreLines: plan.IgnoreLines,
+
+		SQLMode:          userSctx.GetSessionVars().SQLMode,
+		Charset:          charset,
+		ImportantSysVars: getImportantSysVars(userSctx),
+
+		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
+	}
+	if err := p.initOptions(userSctx, plan.Options); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
 // ASTArgsFromPlan creates ASTArgs from plan.
 func ASTArgsFromPlan(plan *plannercore.LoadData) *ASTArgs {
 	return &ASTArgs{
@@ -301,23 +341,37 @@ func ASTArgsFromPlan(plan *plannercore.LoadData) *ASTArgs {
 	}
 }
 
+// ASTArgsFromIngestPlan creates ASTArgs from plan.
+func ASTArgsFromIngestPlan(plan *plannercore.IngestInto) *ASTArgs {
+	// FileLocRef are not used in IngestIntoStmt, OnDuplicate not used now.
+	return &ASTArgs{
+		FileLocRef:         ast.FileLocServerOrRemote,
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		OnDuplicate:        ast.OnDuplicateKeyHandlingReplace,
+		FieldsInfo:         plan.FieldsInfo,
+		LinesInfo:          plan.LinesInfo,
+	}
+}
+
 // ASTArgsFromStmt creates ASTArgs from statement.
 func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 	stmtNode, err := parser.New().ParseOneStmt(stmt, "", "")
 	if err != nil {
 		return nil, err
 	}
-	loadDataStmt, ok := stmtNode.(*ast.LoadDataStmt)
+	ingestIntoStmt, ok := stmtNode.(*ast.IngestIntoStmt)
 	if !ok {
-		return nil, errors.Errorf("stmt %s is not load data stmt", stmt)
+		return nil, errors.Errorf("stmt %s is not ingest into stmt", stmt)
 	}
+	// FileLocRef are not used in IngestIntoStmt, OnDuplicate not used now.
 	return &ASTArgs{
-		FileLocRef:         loadDataStmt.FileLocRef,
-		ColumnsAndUserVars: loadDataStmt.ColumnsAndUserVars,
-		ColumnAssignments:  loadDataStmt.ColumnAssignments,
-		OnDuplicate:        loadDataStmt.OnDuplicate,
-		FieldsInfo:         loadDataStmt.FieldsInfo,
-		LinesInfo:          loadDataStmt.LinesInfo,
+		FileLocRef:         ast.FileLocServerOrRemote,
+		ColumnsAndUserVars: ingestIntoStmt.ColumnsAndUserVars,
+		ColumnAssignments:  ingestIntoStmt.ColumnAssignments,
+		OnDuplicate:        ast.OnDuplicateKeyHandlingReplace,
+		FieldsInfo:         ingestIntoStmt.FieldsInfo,
+		LinesInfo:          ingestIntoStmt.LinesInfo,
 	}, nil
 }
 

@@ -204,18 +204,16 @@ func TestGetMsgFromBRError(t *testing.T) {
 }
 
 func TestASTArgsFromStmt(t *testing.T) {
-	stmt := "load data infile 'gs://test-load/test.tsv' into table tb(a, é);"
+	stmt := "ingest into tb (a, é) from 'gs://test-load/test.tsv' format 'delimited';"
 	stmtNode, err := parser.New().ParseOneStmt(stmt, "latin1", "latin1_bin")
 	require.NoError(t, err)
 	text := stmtNode.Text()
 	require.Equal(t, stmt, text)
 	astArgs, err := ASTArgsFromStmt(text)
 	require.NoError(t, err)
-	loadDataStmt := stmtNode.(*ast.LoadDataStmt)
-	require.Equal(t, astArgs.FileLocRef, loadDataStmt.FileLocRef)
-	require.Equal(t, astArgs.ColumnAssignments, loadDataStmt.ColumnAssignments)
-	require.Equal(t, astArgs.ColumnsAndUserVars, loadDataStmt.ColumnsAndUserVars)
-	require.Equal(t, astArgs.FieldsInfo, loadDataStmt.FieldsInfo)
-	require.Equal(t, astArgs.LinesInfo, loadDataStmt.LinesInfo)
-	require.Equal(t, astArgs.OnDuplicate, loadDataStmt.OnDuplicate)
+	ingestIntoStmt := stmtNode.(*ast.IngestIntoStmt)
+	require.Equal(t, astArgs.ColumnAssignments, ingestIntoStmt.ColumnAssignments)
+	require.Equal(t, astArgs.ColumnsAndUserVars, ingestIntoStmt.ColumnsAndUserVars)
+	require.Equal(t, astArgs.FieldsInfo, ingestIntoStmt.FieldsInfo)
+	require.Equal(t, astArgs.LinesInfo, ingestIntoStmt.LinesInfo)
 }

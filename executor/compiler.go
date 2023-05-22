@@ -330,6 +330,11 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			dbLabel := x.Table.Schema.O
 			dbLabelSet[dbLabel] = struct{}{}
 		}
+	case *ast.IngestIntoStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.SplitRegionStmt:
 		if x.Table != nil {
 			dbLabel := x.Table.Schema.O
