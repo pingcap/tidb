@@ -72,11 +72,10 @@ func TestBackfillFlowHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
-	// test normal table not supported yet
 	tk.MustExec("create table t1(id int primary key, v int)")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.BackfillTaskType)
 	_, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
-	require.EqualError(t, err, "Non-partition table not supported yet")
+	require.NoError(t, err)
 }
 
 func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, taskType string) *proto.Task {

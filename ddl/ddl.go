@@ -551,8 +551,10 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
+		logutil.BgLogger().Error("cannot find reorgCtx", zap.Int64("jobID", job.ID))
 		return
 	}
+	logutil.BgLogger().Info("[ddl] notify reorg worker during canceling ddl job", zap.Int64("jobID", job.ID))
 	rc.notifyJobState(job.State)
 }
 
@@ -678,7 +680,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	scheduler.RegisterSchedulerConstructor("backfill",
 		func(taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(taskMeta, d)
+			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
 		})
 
 	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
