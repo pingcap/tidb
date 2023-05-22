@@ -197,9 +197,10 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		defer func() {
 			err = mu.Unlock(bc.ctx)
 			if err != nil {
-				logutil.BgLogger().Warn("[ddl] release lock error", zap.Error(err))
+				logutil.BgLogger().Warn("[ddl] release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
+			} else {
+				logutil.BgLogger().Info("[ddl] release distributed flush lock success", zap.Int64("jobID", bc.jobID))
 			}
-			logutil.BgLogger().Info("[ddl] release distributed flush lock success")
 			err = se.Close()
 			if err != nil {
 				logutil.BgLogger().Warn("[ddl] close session error", zap.Error(err))
