@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -28,18 +29,10 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
 )
-
-type testPauseAndResumeJob struct {
-	sql         string
-	ok          bool
-	jobState    interface{} // model.SchemaState | []model.SchemaState
-	onJobBefore bool
-	onJobUpdate bool
-	prepareSQL  []string
-}
 
 type TestTableUser struct {
 	id          int64
@@ -104,6 +97,15 @@ func (tu *TestTableUser) generateAttributes() (err error) {
 func (tu *TestTableUser) insertStmt() string {
 	return fmt.Sprintf("INSERT INTO t_user(user, name, age, province, city, phone, created_time, updated_time) VALUES ('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')",
 		tu.user, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime)
+}
+
+type testPauseAndResumeJob struct {
+	sql         string
+	ok          bool
+	jobState    interface{} // model.SchemaState | []model.SchemaState
+	onJobBefore bool
+	onJobUpdate bool
+	prepareSQL  []string
 }
 
 var allPauseJobTestCase = []testPauseAndResumeJob{
@@ -226,10 +228,6 @@ func TestPauseAndResumeMain(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillSlow"))
-	}()
 
 	hook := &callback.TestDDLCallback{Do: dom}
 	i := atomicutil.NewInt64(0)
@@ -298,4 +296,148 @@ func TestPauseAndResumeMain(t *testing.T) {
 
 		// TODO: should add some check on Job during reorganization
 	}
+}
+
+func TestPauseJobWriteConflict(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+
+	tk1.MustExec("create table t(id int)")
+
+	var jobID int64
+	var pauseErr error
+	var pauseRS []sqlexec.RecordSet
+	hook := &callback.TestDDLCallback{Do: dom}
+	d := dom.DDL()
+	originalHook := d.GetHook()
+	d.SetHook(hook)
+	defer d.SetHook(originalHook)
+
+	// Test when pause cannot be retried and adding index succeeds.
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL"))
+			}()
+
+			jobID = job.ID
+			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID)
+			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
+		}
+	}
+	tk1.MustExec("alter table t add index (id)")
+	require.EqualError(t, pauseErr, "mock failed admin command on ddl jobs")
+
+	var cancelRS []sqlexec.RecordSet
+	var cancelErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			jobID = job.ID
+			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID)
+			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
+
+			time.Sleep(5 * time.Second)
+			stmt = fmt.Sprintf("admin cancel ddl jobs %d", jobID)
+			cancelRS, cancelErr = tk2.Session().Execute(context.Background(), stmt)
+		}
+	}
+	tk1.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
+	require.NoError(t, pauseErr)
+	require.NoError(t, cancelErr)
+	result := tk2.ResultSetToResultWithCtx(context.Background(), pauseRS[0], "pause ddl job successfully")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+	result = tk2.ResultSetToResultWithCtx(context.Background(), cancelRS[0], "cancel ddl job successfully")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+}
+
+func TestPauseJobNegative(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(id int)")
+
+	d := dom.DDL()
+
+	var jobID int64
+	var pauseErr error
+	var jobErrs []error
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(hook)
+	// Test when pause cannot be retried and adding index succeeds.
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
+			job.SchemaState == model.StateWriteReorganization {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCommitFailedOnDDLCommand", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockCommitFailedOnDDLCommand"))
+			}()
+			jobID = job.ID
+			jobErrs, pauseErr = ddl.PauseJobs(tk2.Session(), []int64{jobID})
+		}
+	}
+	tk1.MustExec("alter table t add index (id)")
+	require.EqualError(t, pauseErr, "mock commit failed on admin command on ddl jobs")
+	require.Len(t, jobErrs, 1)
+}
+
+func TestResumeJobPositive(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(id int)")
+
+	d := dom.DDL()
+
+	var jobID int64
+	var pauseErr error
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(hook)
+
+	var pauseRS []sqlexec.RecordSet
+	var resumeRS []sqlexec.RecordSet
+	var resumeErr error
+	// Test when pause cannot be retried and adding index succeeds.
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
+			job.SchemaState == model.StateWriteReorganization {
+			jobID = job.ID
+			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID)
+			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
+		}
+	}
+	// Test when pause cannot be retried and adding index succeeds.
+	hook.OnJobRunAfterExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStatePaused {
+			time.Sleep(5 * time.Second)
+			stmt := fmt.Sprintf("admin resume ddl jobs %d", jobID)
+			resumeRS, resumeErr = tk2.Session().Execute(context.Background(), stmt)
+		}
+	}
+
+	tk1.MustExec("alter table t add index (id)")
+
+	require.NoError(t, pauseErr)
+	result := tk2.ResultSetToResultWithCtx(context.Background(), pauseRS[0], "pause ddl job successfully")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+
+	require.NoError(t, resumeErr)
+	result = tk2.ResultSetToResultWithCtx(context.Background(), resumeRS[0], "resume ddl job successfully")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
 }
