@@ -25,7 +25,6 @@ import (
 
 const (
 	AnnPodNameKey        string = "tidb.pingcap.com/pod-name"
-	NamespaceLabelKey    string = "app.kubernetes.io/namespace"
 	AnnTemporaryVolumeID string = "temporary/volume-id"
 	EC2K8SClusterNameKey string = "aws:eks:cluster-name"
 
@@ -68,17 +67,21 @@ func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 	return &EC2Session{ec2: ec2Session, concurrency: concurrency}, nil
 }
 
-func GenerateVolumeSnapshotTags(backupInfo *config.EBSBasedBRMeta) VolumeSnapshotTags {
+func GenerateVolumeSnapshotTags(backupInfo *config.EBSBasedBRMeta, pvVolumeMap map[string]string) (VolumeSnapshotTags, error) {
 	vst := make(VolumeSnapshotTags)
-	for j := range backupInfo.KubernetesMeta.PVs {
-		pv := backupInfo.KubernetesMeta.PVs[j]
-		vst[pv.GetAnnotations()[AnnTemporaryVolumeID]] = SnapshotTags{
-			pv.GetName(),
-			pv.GetAnnotations()[AnnPodNameKey],
-			pv.GetLabels()[NamespaceLabelKey],
+	for j := range backupInfo.KubernetesMeta.PVCs {
+		pvc := backupInfo.KubernetesMeta.PVCs[j]
+		volID := pvVolumeMap[pvc.Spec.VolumeName]
+		if volID == "" {
+			return vst, errors.Errorf("No matching pv is found with name of [%s]", pvc.Spec.VolumeName)
+		}
+		vst[volID] = SnapshotTags{
+			pvc.GetName(),
+			pvc.GetLabels()[AnnPodNameKey],
+			pvc.GetNamespace(),
 		}
 	}
-	return vst
+	return vst, nil
 }
 
 // CreateSnapshots is the mainly steps to control the data volume snapshots.
@@ -89,7 +92,16 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 	var mutex sync.Mutex
 	eg, _ := errgroup.WithContext(context.Background())
 
-	vst := GenerateVolumeSnapshotTags(backupInfo)
+	pvVolumeMap := make(map[string]string)
+	for j := range backupInfo.KubernetesMeta.PVs {
+		pv := backupInfo.KubernetesMeta.PVs[j]
+		pvVolumeMap[pv.GetName()] = pv.GetAnnotations()[AnnTemporaryVolumeID]
+	}
+
+	vst, err := GenerateVolumeSnapshotTags(backupInfo, pvVolumeMap)
+	if err != nil {
+		return snapIDMap, nil, errors.Trace(err)
+	}
 	taggingAndFillResult := func(createOutput *ec2.CreateSnapshotsOutput, vst VolumeSnapshotTags, k8sClusterName string) error {
 		mutex.Lock()
 		defer mutex.Unlock()
