@@ -103,10 +103,10 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 					snapshot.SnapshotId,
 				},
 				Tags: []*ec2.Tag{
-					ec2Tag(SourcePvcNameKey, vst[*snapshot.VolumeId].sourcePVCName),
+					ec2Tag(SourcePvcNameKey, vst[aws.StringValue(snapshot.VolumeId)].sourcePVCName),
 					ec2Tag(SourceVolumeIdKey, aws.StringValue(snapshot.VolumeId)),
-					ec2Tag(SourceTikvNameKey, vst[*snapshot.VolumeId].sourceTiKVName),
-					ec2Tag(SourceNamespaceKey, vst[*snapshot.VolumeId].sourceNameSpace),
+					ec2Tag(SourceTikvNameKey, vst[aws.StringValue(snapshot.VolumeId)].sourceTiKVName),
+					ec2Tag(SourceNamespaceKey, vst[aws.StringValue(snapshot.VolumeId)].sourceNameSpace),
 					ec2Tag(SourceContextKey, aws.StringValue(k8sClusterName)),
 				},
 			}
@@ -154,7 +154,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 
 			for j := range resp1.Reservations[0].Instances[0].Tags {
 				tag := resp1.Reservations[0].Instances[0].Tags[j]
-				if *tag.Key == EC2K8SClusterNameKey {
+				if aws.StringValue(tag.Key) == EC2K8SClusterNameKey {
 					k8sClusterName = tag.Value
 					break
 				}
@@ -187,7 +187,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				instanceSpecification := ec2.InstanceSpecification{}
 				createSnapshotInput := ec2.CreateSnapshotsInput{}
 
-				instanceSpecification.SetInstanceId(*ec2InstanceId).SetExcludeBootVolume(true).SetExcludeDataVolumeIds(excludedVolumeIDs)
+				instanceSpecification.SetInstanceId(aws.StringValue(ec2InstanceId)).SetExcludeBootVolume(true).SetExcludeDataVolumeIds(excludedVolumeIDs)
 
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
 
