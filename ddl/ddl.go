@@ -554,6 +554,7 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 		logutil.BgLogger().Error("cannot find reorgCtx", zap.Int64("jobID", job.ID))
 		return
 	}
+	logutil.BgLogger().Info("[ddl] notify reorg worker during canceling ddl job", zap.Int64("jobID", job.ID))
 	rc.notifyJobState(job.State)
 }
 

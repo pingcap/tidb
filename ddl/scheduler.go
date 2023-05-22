@@ -296,8 +296,8 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	}
 	ingestScheduler.close(false)
 
-	if consumer.getResult() != nil {
-		return nil, consumer.getResult()
+	if err := consumer.getResult(); err != nil {
+		return nil, err
 	}
 
 	if b.isPartition {
