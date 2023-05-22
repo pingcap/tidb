@@ -43,36 +43,36 @@ var (
 	// the workload.
 	workloadBaseRUCostMap = map[ast.CalibrateResourceType]*baseResourceCost{
 		ast.TPCC: {
-			tidbCPU:       0.6,
-			kvCPU:         0.15,
-			readBytes:     units.MiB / 2,
-			writeBytes:    units.MiB,
-			readReqCount:  300,
-			writeReqCount: 1750,
+			tidbToKVCPURatio: 0.6,
+			kvCPU:            0.15,
+			readBytes:        units.MiB / 2,
+			writeBytes:       units.MiB,
+			readReqCount:     300,
+			writeReqCount:    1750,
 		},
 		ast.OLTPREADWRITE: {
-			tidbCPU:       1.25,
-			kvCPU:         0.35,
-			readBytes:     units.MiB * 4.25,
-			writeBytes:    units.MiB / 3,
-			readReqCount:  1600,
-			writeReqCount: 1400,
+			tidbToKVCPURatio: 1.25,
+			kvCPU:            0.35,
+			readBytes:        units.MiB * 4.25,
+			writeBytes:       units.MiB / 3,
+			readReqCount:     1600,
+			writeReqCount:    1400,
 		},
 		ast.OLTPREADONLY: {
-			tidbCPU:       2,
-			kvCPU:         0.52,
-			readBytes:     units.MiB * 28,
-			writeBytes:    0,
-			readReqCount:  4500,
-			writeReqCount: 0,
+			tidbToKVCPURatio: 2,
+			kvCPU:            0.52,
+			readBytes:        units.MiB * 28,
+			writeBytes:       0,
+			readReqCount:     4500,
+			writeReqCount:    0,
 		},
 		ast.OLTPWRITEONLY: {
-			tidbCPU:       1,
-			kvCPU:         0,
-			readBytes:     0,
-			writeBytes:    units.MiB,
-			readReqCount:  0,
-			writeReqCount: 3550,
+			tidbToKVCPURatio: 1,
+			kvCPU:            0,
+			readBytes:        0,
+			writeBytes:       units.MiB,
+			readReqCount:     0,
+			writeReqCount:    3550,
 		},
 	}
 
@@ -92,10 +92,10 @@ func GetResourceGroupController() *rmclient.ResourceGroupsController {
 
 // the resource cost rate of a specified workload per 1 tikv cpu.
 type baseResourceCost struct {
-	// the average tikv cpu time, this is used to calculate whether tikv cpu
+	// represents the average ratio of TiDB CPU time to TiKV CPU time, this is used to calculate whether tikv cpu
 	// or tidb cpu is the performance bottle neck.
-	tidbCPU float64
-	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage.
+	tidbToKVCPURatio float64
+	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage. The unit is seconds.
 	kvCPU float64
 	// the read bytes rate per 1 tikv cpu.
 	readBytes uint64
@@ -231,7 +231,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		}
 		tikvQuota, tidbQuota := tikvCPUs[idx]/totalKVCPUQuota, tidbCPUs[idx]/totalTiDBCPU
 		// If one of the two cpu usage is greater than the `valuableUsageThreshold`, we can accept it.
-		// And if both are greater than the `lowUsageThreshold`, we can also accpet it.
+		// And if both are greater than the `lowUsageThreshold`, we can also accept it.
 		if tikvQuota > valuableUsageThreshold || tidbQuota > valuableUsageThreshold {
 			quotas = append(quotas, ru/mathutil.Max(tikvQuota, tidbQuota))
 		} else if tikvQuota < lowUsageThreshold || tidbQuota < lowUsageThreshold {
@@ -247,7 +247,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		sort.Slice(quotas, func(i, j int) bool {
 			return quotas[i] > quotas[j]
 		})
-		lowerBound := int(math.Round(float64(len(quotas)) * float64(discardRate)))
+		lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
 		upperBound := len(quotas) - lowerBound
 		sum := 0.
 		for i := lowerBound; i < upperBound; i++ {
@@ -288,12 +288,12 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 		return errors.Errorf("unknown workload '%T'", e.workloadType)
 	}
 
-	if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
-		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbCPU
+	if totalTiDBCPU/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
+		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbToKVCPURatio
 	}
 	ruCfg := resourceGroupCtl.GetConfig()
 	ruPerKVCPU := float64(ruCfg.ReadBaseCost)*float64(baseCost.readReqCount) +
-		float64(ruCfg.CPUMsCost)*baseCost.kvCPU +
+		float64(ruCfg.CPUMsCost)*baseCost.kvCPU*1000 + // convert to ms
 		float64(ruCfg.ReadBytesCost)*float64(baseCost.readBytes) +
 		float64(ruCfg.WriteBaseCost)*float64(baseCost.writeReqCount) +
 		float64(ruCfg.WriteBytesCost)*float64(baseCost.writeBytes)
