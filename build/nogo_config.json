@@ -499,7 +499,7 @@
       "planner/core/rule_aggregation_push_down.go": "planner/core/rule_aggregation_push_down.go", 
       "planner/core/rule_max_min_eliminate.go": "planner/core/rule_max_min_eliminate.go", 
       "planner/core/rule_predicate_simplification.go": "planner/core/rule_predicate_simplification.go", 
-      "planner/core/indexmerge_path.go": "planner/core/indexmerge_path.go",
+      "planner/core/indexmerge_path.go": "planner/core/indexmerge_path.go", 
       "planner/core/rule_join_reorder.go": "planner/core/rule_join_reorder.go", 
       "planner/core/plan_cacheable_checker.go": "planner/core/plan_cacheable_checker.go", 
       "planner/core/rule_decorrelate.go": "planner/core/rule_decorrelate.go", 
