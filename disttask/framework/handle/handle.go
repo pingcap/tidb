@@ -29,7 +29,7 @@ var (
 	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
-// SubmitGlobalTaskAndRun submits a global task and returns a channel that will be closed when the task is done.
+// SubmitAndRunGlobalTask submits a global task wait the task is done.
 func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
@@ -86,6 +86,7 @@ func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concu
 	}
 }
 
+// CancelGlobalTask cancels a global task.
 func CancelGlobalTask(taskKey string) error {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
