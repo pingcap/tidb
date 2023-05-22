@@ -15,9 +15,11 @@
 package api
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,4 +119,111 @@ func TestUpdateTimerOption(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []byte("hello"), summary)
 	require.Equal(t, []string{"Enable", "SchedPolicyType", "SchedPolicyExpr", "Watermark", "SummaryData"}, update.FieldsSet())
+}
+
+func TestDefaultClient(t *testing.T) {
+	store := NewMemoryTimerStore()
+	cli := NewDefaultTimerClient(store)
+	ctx := context.Background()
+	spec := TimerSpec{
+		Key:             "k1",
+		SchedPolicyType: SchedEventInterval,
+		SchedPolicyExpr: "1h",
+		Data:            []byte("data1"),
+	}
+
+	// create
+	timer, err := cli.CreateTimer(ctx, spec)
+	require.NoError(t, err)
+	spec.Namespace = "default"
+	require.NotEmpty(t, timer.ID)
+	require.Equal(t, spec, timer.TimerSpec)
+	require.Equal(t, SchedEventIdle, timer.EventStatus)
+	require.Equal(t, "", timer.EventID)
+	require.Empty(t, timer.EventData)
+	require.Empty(t, timer.SummaryData)
+
+	// get by id
+	got, err := cli.GetTimerByID(ctx, timer.ID)
+	require.NoError(t, err)
+	require.Equal(t, timer, got)
+
+	// get by key
+	got, err = cli.GetTimerByKey(ctx, timer.Key)
+	require.NoError(t, err)
+	require.Equal(t, timer, got)
+
+	// get by key prefix
+	tms, err := cli.GetTimers(ctx, WithKeyPrefix("k"))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tms))
+	require.Equal(t, timer, tms[0])
+
+	// update
+	err = cli.UpdateTimer(ctx, timer.ID, WithSetSchedExpr(SchedEventInterval, "3h"))
+	require.NoError(t, err)
+	timer.SchedPolicyType = SchedEventInterval
+	timer.SchedPolicyExpr = "3h"
+	got, err = cli.GetTimerByID(ctx, timer.ID)
+	require.NoError(t, err)
+	require.Greater(t, got.Version, timer.Version)
+	timer.Version = got.Version
+	require.Equal(t, timer, got)
+
+	// close event
+	eventStart := time.Now().Add(-time.Second)
+	err = store.Update(ctx, timer.ID, &TimerUpdate{
+		EventStatus: NewOptionalVal(SchedEventTrigger),
+		EventID:     NewOptionalVal("event1"),
+		EventData:   NewOptionalVal([]byte("d1")),
+		SummaryData: NewOptionalVal([]byte("s1")),
+		EventStart:  NewOptionalVal(eventStart),
+	})
+	require.NoError(t, err)
+	err = cli.CloseTimerEvent(ctx, timer.ID, "event2")
+	require.True(t, errors.ErrorEqual(ErrEventIDNotMatch, err))
+
+	err = cli.CloseTimerEvent(ctx, timer.ID, "event2", WithSetSchedExpr(SchedEventInterval, "1h"))
+	require.EqualError(t, err, "The field(s) [SchedPolicyType, SchedPolicyExpr] are not allowed to update when close event")
+
+	err = cli.CloseTimerEvent(ctx, timer.ID, "event1")
+	require.NoError(t, err)
+	timer, err = cli.GetTimerByID(ctx, timer.ID)
+	require.NoError(t, err)
+	require.Equal(t, SchedEventIdle, timer.EventStatus)
+	require.Empty(t, timer.EventID)
+	require.Empty(t, timer.EventData)
+	require.True(t, timer.EventStart.IsZero())
+	require.Equal(t, []byte("s1"), timer.SummaryData)
+	require.Equal(t, eventStart, timer.Watermark)
+
+	// close event with option
+	err = store.Update(ctx, timer.ID, &TimerUpdate{
+		EventID:     NewOptionalVal("event1"),
+		EventData:   NewOptionalVal([]byte("d1")),
+		SummaryData: NewOptionalVal([]byte("s1")),
+	})
+	require.NoError(t, err)
+
+	watermark := time.Now().Add(time.Hour)
+	err = cli.CloseTimerEvent(ctx, timer.ID, "event1", WithSetWatermark(watermark), WithSetSummaryData([]byte("s2")))
+	require.NoError(t, err)
+	timer, err = cli.GetTimerByID(ctx, timer.ID)
+	require.NoError(t, err)
+	require.Equal(t, SchedEventIdle, timer.EventStatus)
+	require.Empty(t, timer.EventID)
+	require.Empty(t, timer.EventData)
+	require.True(t, timer.EventStart.IsZero())
+	require.Equal(t, []byte("s2"), timer.SummaryData)
+	require.Equal(t, watermark, timer.Watermark)
+
+	// delete
+	exit, err := cli.DeleteTimer(ctx, timer.ID)
+	require.NoError(t, err)
+	require.True(t, exit)
+
+	// delete no exist
+	exit, err = cli.DeleteTimer(ctx, timer.ID)
+	require.NoError(t, err)
+	require.False(t, exit)
 }
