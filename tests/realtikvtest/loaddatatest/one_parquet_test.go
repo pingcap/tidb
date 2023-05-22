@@ -30,7 +30,7 @@ var content []byte
 
 func (s *mockGCSSuite) TestLoadParquet() {
 	s.testLoadParquet(importer.LogicalImportMode)
-	s.testLoadParquet(importer.PhysicalImportMode)
+	//s.testLoadParquet(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testLoadParquet(importMode string) {

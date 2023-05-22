@@ -1158,13 +1158,13 @@ func RunStreamRestore(
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
-	} else {
+	} else if len(cfg.FullBackupStorage) > 0 {
 		skipMsg := []byte(fmt.Sprintf("%s command is skipped due to checkpoint mode for restore\n", FullRestoreCmd))
 		if _, err := glue.GetConsole(g).Out().Write(skipMsg); err != nil {
 			return errors.Trace(err)
 		}
 		if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
-			log.Info("load tiflash records from checkpoint")
+			log.Info("load tiflash records of snapshot restore from checkpoint")
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1296,7 +1296,7 @@ func restoreStream(
 		}
 		defer func() {
 			log.Info("wait for flush checkpoint...")
-			checkpointRunner.WaitForFinish(ctx)
+			checkpointRunner.WaitForFinish(ctx, !gcDisabledRestorable)
 		}()
 	}
 

@@ -26,6 +26,7 @@ go_library(
         "//disttask/framework/storage",
         "//executor/asyncloaddata",
         "//executor/importer",
+        "//parser/mysql",
         "//table/tables",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",

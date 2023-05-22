@@ -101,8 +101,8 @@ type TimerClient interface {
 	DeleteTimer(ctx context.Context, timerID string) (bool, error)
 }
 
-// DefaultNamespace is the default namespace
-const DefaultNamespace = "default"
+// DefaultStoreNamespace is the default namespace
+const DefaultStoreNamespace = "default"
 
 // defaultTimerClient is the default implement of timer client
 type defaultTimerClient struct {
@@ -113,7 +113,7 @@ type defaultTimerClient struct {
 // NewDefaultTimerClient creates a new defaultTimerClient
 func NewDefaultTimerClient(store *TimerStore) TimerClient {
 	return &defaultTimerClient{
-		namespace: DefaultNamespace,
+		namespace: DefaultStoreNamespace,
 		store:     store,
 	}
 }
