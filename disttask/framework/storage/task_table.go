@@ -393,8 +393,8 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, isSubtaskRevert bool) error {
 	return stm.withNewTxn(func(se sessionctx.Context) error {
-		_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, error = %? where id = %?",
-			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Error, gTask.ID)
+		_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %?",
+			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, gTask.Error, gTask.ID)
 		if err != nil {
 			return err
 		}
