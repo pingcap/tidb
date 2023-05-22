@@ -34,8 +34,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
-	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -62,6 +61,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -1859,6 +1859,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	}
 
 	taskType := BackfillTaskType
+	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
 	taskMeta := &BackfillGlobalMeta{
 		Job:        *reorgInfo.Job.Clone(),
 		EleID:      reorgInfo.currElement.ID,
@@ -1870,74 +1871,37 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		return err
 	}
 
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
+	done := make(chan struct{})
+	g, ctx := errgroup.WithContext(context.Background())
 
-	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
-	if err != nil {
-		return err
-	}
+	g.Go(func() error {
+		defer close(done)
+		return handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
+	})
 
-	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, distPhysicalTableConcurrency, metaData)
-		if err != nil {
-			return nil
-		}
+	g.Go(func() error {
+		ticker := time.NewTicker(CheckBackfillJobFinishInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return nil
+			case <-ticker.C:
+				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+					if !dbterror.ErrCancelledDDLJob.Equal(err) {
+						return errors.Trace(err)
+					}
 
-		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
-		if err != nil {
-			return err
-		}
-
-		if globalTask == nil {
-			return errors.Errorf("cannot find global task with ID %d", taskID)
-		}
-	}
-
-	ticker := time.NewTicker(CheckBackfillJobFinishInterval)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-		found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
-		if err != nil {
-			logutil.BgLogger().Info("[ddl] get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
-			continue
-		}
-
-		if found == nil {
-			return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
-		}
-
-		if found.State == proto.TaskStateSucceed {
-			return nil
-		}
-
-		if found.State == proto.TaskStateReverted {
-			logutil.BgLogger().Error("[ddl] global task reverted", zap.Int64("taskID", globalTask.ID), zap.String("error", string(found.Error)))
-			return errors.New(string(found.Error))
-		}
-
-		// TODO: get the original error message.
-		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled {
-			return errors.Errorf("ddl task stopped with state %s, err %s", found.State, found.Error)
-		}
-
-		if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
-			if !dbterror.ErrCancelledDDLJob.Equal(err) {
-				return errors.Trace(err)
-			}
-
-			if found.State == proto.TaskStatePending || found.State == proto.TaskStateRunning {
-				if err = globalTaskManager.CancelGlobalTask(globalTask.ID); err != nil {
-					logutil.BgLogger().Error("[ddl] cancel global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
+					if err = handle.CancelGlobalTask(taskKey); err != nil {
+						logutil.BgLogger().Error("[ddl] cancel global task error", zap.String("task_key", taskKey), zap.Error(err))
+						// continue to cancel global task
+						continue
+					}
 				}
 			}
 		}
-	}
+	})
+	return g.Wait()
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {

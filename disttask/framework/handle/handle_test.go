@@ -40,7 +40,7 @@ func TestHandle(t *testing.T) {
 	storage.SetTaskManager(mgr)
 
 	// no dispatcher registered
-	err := handle.SubmitGlobalTaskAndRun(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
+	err := handle.SubmitAndRunGlobalTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
 	require.Error(t, err)
 
 	task, err := mgr.GetGlobalTaskByID(1)
@@ -53,4 +53,6 @@ func TestHandle(t *testing.T) {
 	require.Equal(t, proto.StepInit, task.Step)
 	require.Equal(t, uint64(2), task.Concurrency)
 	require.Equal(t, []byte("byte"), task.Meta)
+
+	require.NoError(t, handle.CancelGlobalTask("1"))
 }

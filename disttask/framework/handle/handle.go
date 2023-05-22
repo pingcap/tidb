@@ -30,7 +30,7 @@ var (
 )
 
 // SubmitGlobalTaskAndRun submits a global task and returns a channel that will be closed when the task is done.
-func SubmitGlobalTaskAndRun(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
+func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
@@ -88,4 +88,19 @@ func SubmitGlobalTaskAndRun(ctx context.Context, taskKey, taskType string, concu
 			}
 		}
 	}
+}
+
+func CancelGlobalTask(taskKey string) error {
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	if err != nil {
+		return err
+	}
+	if globalTask == nil {
+		return nil
+	}
+	return globalTaskManager.CancelGlobalTask(globalTask.ID)
 }
