@@ -426,17 +426,12 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
-		instanceID := GetInstanceForSubtask(serverNodes, i)
+		// we assign the subtask to the instance in a round-robin way.
+		pos := i % len(serverNodes)
+		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
 	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
-}
-
-// GetInstanceForSubtask gets an eligible instance.
-// we assign the subtask to the instance in a round-robin way.
-func GetInstanceForSubtask(serverNodes []*infosync.ServerInfo, taskIdx int) string {
-	pos := taskIdx % len(serverNodes)
-	return disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.

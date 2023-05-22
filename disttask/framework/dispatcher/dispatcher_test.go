@@ -93,17 +93,8 @@ func TestGetInstance(t *testing.T) {
 		},
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
-	require.NoError(t, err)
-	instanceID := dispatcher.GetInstanceForSubtask(serverNodes, 0)
-	require.NoError(t, err)
-	require.Equal(t, serverIDs[0], instanceID)
-	instanceID = dispatcher.GetInstanceForSubtask(serverNodes, 1)
-	if instanceID != serverIDs[0] && instanceID != serverIDs[1] {
-		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
-	}
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, 1)
-	require.Lenf(t, instanceIDs, 0, "instanceID:%d", instanceID)
+	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs")
 	require.NoError(t, err)
 
 	// server ids: uuid0, uuid1
