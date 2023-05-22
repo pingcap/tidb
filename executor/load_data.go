@@ -810,6 +810,7 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 		case <-ctx.Done():
 			w.ctx.StmtRollback(backgroundCtx, false)
 			w.txnInUse.Lock()
+			//nolint:revive,all_revive
 			defer w.txnInUse.Unlock()
 			_ = w.ctx.RefreshTxnCtx(backgroundCtx)
 			return ctx.Err()
