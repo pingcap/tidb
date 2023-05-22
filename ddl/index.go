@@ -624,7 +624,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateNone:
 		// none -> delete only
 		var reorgTp model.ReorgType
-		initDistReorg(job.ReorgMeta)
 		reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique, d)
 		if err != nil {
 			break
@@ -733,7 +732,7 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
-			if job.ReorgMeta.IsDistReorg {
+			if variable.EnableDistTask.Load() {
 				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli)
 			} else {
 				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil)
@@ -742,6 +741,9 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 				return model.ReorgTypeNone, err
 			}
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+			if variable.EnableDistTask.Load() {
+				job.ReorgMeta.IsDistReorg = true
+			}
 			return model.ReorgTypeLitMerge, nil
 		}
 	}
