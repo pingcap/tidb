@@ -62,12 +62,11 @@ func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concu
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		case <-ticker.C:
 			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
 			if err != nil {
-				logutil.BgLogger().Info("get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
-				continue
+				return errors.Errorf("cannot get global task with ID %d, err %s", globalTask.ID, err.Error())
 			}
 
 			if found == nil {
