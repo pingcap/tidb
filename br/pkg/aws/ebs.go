@@ -103,10 +103,10 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 					snapshot.SnapshotId,
 				},
 				Tags: []*ec2.Tag{
-					ec2Tag(SourcePvcNameKey, vst[*snapshot.VolumeId].sourcePVCName),
-					ec2Tag(SourceVolumeIdKey, *snapshot.VolumeId),
-					ec2Tag(SourceTikvNameKey, vst[*snapshot.VolumeId].sourceTiKVName),
-					ec2Tag(SourceNamespaceKey, vst[*snapshot.VolumeId].sourceNameSpace),
+					ec2Tag(SourcePvcNameKey, vst[aws.StringValue(snapshot.VolumeId)].sourcePVCName),
+					ec2Tag(SourceVolumeIdKey, aws.StringValue(snapshot.VolumeId)),
+					ec2Tag(SourceTikvNameKey, vst[aws.StringValue(snapshot.VolumeId)].sourceTiKVName),
+					ec2Tag(SourceNamespaceKey, vst[aws.StringValue(snapshot.VolumeId)].sourceNameSpace),
 					ec2Tag(SourceContextKey, k8sClusterName),
 				},
 			}
@@ -154,8 +154,8 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 
 			for j := range resp1.Reservations[0].Instances[0].Tags {
 				tag := resp1.Reservations[0].Instances[0].Tags[j]
-				if *tag.Key == EC2K8SClusterNameKey {
-					k8sClusterName = *tag.Value
+				if aws.StringValue(tag.Key) == EC2K8SClusterNameKey {
+					k8sClusterName = aws.StringValue(tag.Value)
 				}
 			}
 
@@ -185,7 +185,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				// Prepare for aws requests
 
 				instanceSpecification := ec2.InstanceSpecification{}
-				instanceSpecification.SetInstanceId(*ec2InstanceId).SetExcludeBootVolume(true).SetExcludeDataVolumeIds(excludedVolumeIDs)
+				instanceSpecification.SetInstanceId(aws.StringValue(ec2InstanceId)).SetExcludeBootVolume(true).SetExcludeDataVolumeIds(excludedVolumeIDs)
 
 				createSnapshotInput := ec2.CreateSnapshotsInput{}
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
@@ -350,8 +350,8 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	fetchTagValue := func(tags []*ec2.Tag, key string) string {
 		for i := range tags {
 			tag := tags[i]
-			if *tag.Key == key {
-				return *tag.Value
+			if aws.StringValue(tag.Key) == key {
+				return aws.StringValue(tag.Value)
 			}
 		}
 		return ""
