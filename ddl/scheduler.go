@@ -256,7 +256,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	mockReorgInfo.elements = elements
 	mockReorgInfo.currElement = mockReorgInfo.elements[0]
 
-	ingestScheduler := newIngestBackfillScheduler(d.ctx, mockReorgInfo, d.sessPool, tbl, true)
+	ingestScheduler := newIngestBackfillScheduler(ctx, mockReorgInfo, d.sessPool, tbl, true)
 	defer ingestScheduler.close(true)
 
 	consumer := newResultConsumer(d.ddlCtx, mockReorgInfo, nil, true)
@@ -346,7 +346,7 @@ type BackFillSubtaskExecutor struct {
 }
 
 // Run implements the Executor interface.
-func (b *BackFillSubtaskExecutor) Run(ctx context.Context) error {
+func (b *BackFillSubtaskExecutor) Run(_ context.Context) error {
 	return nil
 }
 
