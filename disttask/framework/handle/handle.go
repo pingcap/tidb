@@ -74,16 +74,13 @@ func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concu
 				return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
 			}
 
-			if found.State == proto.TaskStateSucceed {
+			switch found.State {
+			case proto.TaskStateSucceed:
 				return nil
-			}
-
-			if found.State == proto.TaskStateReverted {
+			case proto.TaskStateReverted:
 				logutil.BgLogger().Error("global task reverted", zap.Int64("taskID", globalTask.ID), zap.String("error", string(found.Error)))
 				return errors.New(string(found.Error))
-			}
-
-			if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled {
+			case proto.TaskStateFailed, proto.TaskStateCanceled:
 				return errors.Errorf("task stopped with state %s, err %s", found.State, found.Error)
 			}
 		}
