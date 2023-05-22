@@ -1281,6 +1281,7 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	if p.cte.seedPartPhysicalPlan == nil {
 		// Build push-downed predicates.
 		if len(p.cte.pushDownPredicates) > 0 {
+			p.cte.optFlag |= flagPredicatePushDown
 			newCond := expression.ComposeDNFCondition(p.ctx, p.cte.pushDownPredicates...)
 			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.SelectBlockOffset())
 			newSel.SetChildren(p.cte.seedPartLogicalPlan)
