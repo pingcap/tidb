@@ -38,11 +38,12 @@ type ImportScheduler struct {
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
 	sharedVars    sync.Map
+	logger        *zap.Logger
 }
 
 // InitSubtaskExecEnv implements the Scheduler.InitSubtaskExecEnv interface.
 func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
-	logutil.BgLogger().Info("InitSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("InitSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
 
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.taskMeta.Plan.TableInfo)
@@ -77,7 +78,7 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 
 // SplitSubtask implements the Scheduler.SplitSubtask interface.
 func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
-	logutil.BgLogger().Info("SplitSubtask", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("SplitSubtask", zap.Any("taskMeta", s.taskMeta))
 	var subtaskMeta SubtaskMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
@@ -102,6 +103,7 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 		TableImporter: s.tableImporter,
 		DataEngine:    dataEngine,
 		IndexEngine:   indexEngine,
+		Progress:      asyncloaddata.NewProgress(s.taskMeta.Plan.ImportMode == importer.LogicalImportMode),
 		Checksum:      &verification.KVChecksum{},
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
@@ -119,7 +121,7 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 
 // OnSubtaskFinished implements the Scheduler.OnSubtaskFinished interface.
 func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
-	logutil.BgLogger().Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
 	var subtaskMeta SubtaskMeta
 	if err := json.Unmarshal(subtaskMetaBytes, &subtaskMeta); err != nil {
 		return nil, err
@@ -135,17 +137,20 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 	}
 
 	// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
-	logutil.BgLogger().Info("import data engine", zap.Any("id", subtaskMeta.ID))
-	if closedEngine, err := sharedVars.DataEngine.Close(ctx); err != nil {
+	s.logger.Info("import data engine", zap.Any("id", subtaskMeta.ID))
+	closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
+	if err != nil {
 		return nil, err
-	} else if err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
+	}
+	dataKVCount, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
+	if err != nil {
 		return nil, err
 	}
 
 	logutil.BgLogger().Info("import index engine", zap.Any("id", subtaskMeta.ID))
 	if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
 		return nil, err
-	} else if err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
+	} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
 		return nil, err
 	}
 
@@ -154,13 +159,17 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
 	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
 	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
+	subtaskMeta.Result = Result{
+		ReadRowCnt:   sharedVars.Progress.ReadRowCnt.Load(),
+		LoadedRowCnt: uint64(dataKVCount),
+	}
 	s.sharedVars.Delete(subtaskMeta.ID)
 	return json.Marshal(subtaskMeta)
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.
 func (s *ImportScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
-	logutil.BgLogger().Info("CleanupSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("CleanupSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
 	return s.tableImporter.Close()
 }
 
@@ -179,8 +188,12 @@ func init() {
 			if err := json.Unmarshal(bs, &taskMeta); err != nil {
 				return nil, err
 			}
-			logutil.BgLogger().Info("register scheduler constructor", zap.Any("taskMeta", taskMeta))
-			return &ImportScheduler{taskMeta: &taskMeta}, nil
+			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.LoadData), zap.Int64("table_id", taskMeta.Plan.TableInfo.ID))
+			logger.Info("create new load data scheduler", zap.Any("taskMeta", taskMeta))
+			return &ImportScheduler{
+				taskMeta: &taskMeta,
+				logger:   logger,
+			}, nil
 		},
 		scheduler.WithConcurrentSubtask(),
 	)

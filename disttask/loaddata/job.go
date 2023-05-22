@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -36,8 +37,9 @@ var (
 // DistImporter is a JobImporter for distributed load data.
 type DistImporter struct {
 	*importer.JobImportParam
-	plan *importer.Plan
-	stmt string
+	plan   *importer.Plan
+	stmt   string
+	logger *zap.Logger
 }
 
 var _ importer.JobImporter = &DistImporter{}
@@ -48,6 +50,7 @@ func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt s
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
+		logger:         logutil.BgLogger().With(zap.String("component", "distribute importer"), zap.Int("id", int(param.Job.ID))),
 	}, nil
 }
 
@@ -58,7 +61,7 @@ func (ti *DistImporter) Param() *importer.JobImportParam {
 
 // Import implements JobImporter.Import.
 func (ti *DistImporter) Import() {
-	logutil.BgLogger().Info("start distribute load data", zap.Int64("jobID", ti.Job.ID))
+	ti.logger.Info("start distribute load data")
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
 		return ti.doImport(ti.GroupCtx)
@@ -66,8 +69,29 @@ func (ti *DistImporter) Import() {
 }
 
 // Result implements JobImporter.Result.
-func (*DistImporter) Result() importer.JobImportResult {
-	return importer.JobImportResult{}
+func (ti *DistImporter) Result() importer.JobImportResult {
+	var result importer.JobImportResult
+	taskMeta, err := ti.getTaskMeta()
+	if err != nil {
+		result.Msg = err.Error()
+		return result
+	}
+
+	ti.logger.Info("finish distribute load data", zap.Any("task meta", taskMeta))
+	var (
+		numWarnings uint64
+		numRecords  uint64
+		numDeletes  uint64
+		numSkipped  uint64
+	)
+	numRecords = taskMeta.Result.ReadRowCnt
+	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
+	// we can have it when there's duplicate detection.
+	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
+	return importer.JobImportResult{
+		Msg:      msg,
+		Affected: taskMeta.Result.ReadRowCnt,
+	}
 }
 
 // Close implements the io.Closer interface.
@@ -148,8 +172,29 @@ func (ti *DistImporter) doImport(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	taskType := proto.LoadData
-	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, ti.Job.ID)
+	return submitGlobalTaskAndRun(ctx, ti.taskKey(), proto.LoadData, distLoadDataConcurrency, taskMeta)
+}
 
-	return submitGlobalTaskAndRun(ctx, taskKey, taskType, distLoadDataConcurrency, taskMeta)
+func (ti *DistImporter) taskKey() string {
+	return fmt.Sprintf("ddl/%s/%d", proto.LoadData, ti.Job.ID)
+}
+
+func (ti *DistImporter) getTaskMeta() (*TaskMeta, error) {
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return nil, err
+	}
+	taskKey := ti.taskKey()
+	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	if err != nil {
+		return nil, err
+	}
+	if globalTask == nil {
+		return nil, errors.Errorf("cannot find global task with key %s", taskKey)
+	}
+	var taskMeta TaskMeta
+	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {
+		return nil, err
+	}
+	return &taskMeta, nil
 }
