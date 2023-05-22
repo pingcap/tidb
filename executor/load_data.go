@@ -302,7 +302,7 @@ func (e *LoadDataWorker) getJobImporter(ctx context.Context, job *asyncloaddata.
 	if e.controller.ImportMode == importer.LogicalImportMode {
 		return newLogicalJobImporter(param, e, r)
 	}
-	// todo: replace it with NewDistImporterCurrNode after we fix the test cases.
+	// TODO: Replace it with NewDistImporterCurrNode after we fix the test cases.
 	return importer.NewTableImporter(param, e.controller)
 }
 
