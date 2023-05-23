@@ -21,6 +21,7 @@ go_library(
         "//br/pkg/lightning/mydump",
         "//br/pkg/lightning/verification",
         "//disttask/framework/dispatcher",
+        "//disttask/framework/handle",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
         "//disttask/framework/storage",

@@ -25,7 +25,6 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/loaddata"
@@ -806,12 +805,7 @@ func (s *mockGCSSuite) testChecksumNotMatch(importMode string, distributed bool)
 	loadDataSQL := adjustOptions(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
 		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical'`, gcsEndpoint), distributed)
 	err := s.tk.ExecToErr(loadDataSQL)
-	if !distributed {
-		require.ErrorIs(s.T(), err, common.ErrChecksumMismatch)
-	} else {
-		// TODO(gmhdbjd): get real error
-		require.Error(s.T(), err)
-	}
+	require.ErrorContains(s.T(), err, "ErrChecksumMismatch")
 	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
