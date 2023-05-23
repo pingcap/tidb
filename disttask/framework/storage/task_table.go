@@ -163,7 +163,7 @@ func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string
 // AddNewGlobalTask adds a new task to global task table.
 func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
 	err = stm.withNewSession(func(se sessionctx.Context) error {
-		_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_global_task(task_key, type, state, concurrency, meta, state_update_time) values (%?, %?, %?, %?, %?, %?)", key, tp, proto.TaskStatePending, concurrency, meta, time.Now().UTC().String())
+		_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, state_update_time) values (%?, %?, %?, %?, %?, %?, %?)", key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta, time.Now().UTC().String())
 		if err != nil {
 			return err
 		}
