@@ -18,7 +18,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"math"
 	"os"
 	"sort"
@@ -227,6 +229,12 @@ func sortKeys(keys [][]byte) [][]byte {
 
 // PessimisticLock will add pessimistic lock on key
 func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.PessimisticLockRequest, resp *kvrpcpb.PessimisticLockResponse) (*lockwaiter.Waiter, error) {
+	logutil.BgLogger().Info("-------unistore pessimistic lock request",
+		zap.Uint64("startTs", req.StartVersion),
+		zap.Int("len-mutations", len(req.Mutations)),
+		zap.String("first-key", hex.EncodeToString(req.Mutations[0].Key)),
+		zap.Uint64("forUpdateTs", req.ForUpdateTs))
+
 	waiter, err := store.pessimisticLockInner(reqCtx, req, resp)
 	if err != nil && req.GetWakeUpMode() == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
 		// The execution of `pessimisticLockInner` is broken by error. If resp.Results is not completely set yet, fill it with LockResultFailed.
@@ -729,6 +737,13 @@ func (store *MVCCStore) Prewrite(reqCtx *requestCtx, req *kvrpcpb.PrewriteReques
 
 	regCtx.AcquireLatches(hashVals)
 	defer regCtx.ReleaseLatches(hashVals)
+
+	logutil.BgLogger().Info("-------unistore prewrite",
+		zap.Uint64("startTs", req.StartVersion),
+		zap.Int("len-mutations", len(req.Mutations)),
+		zap.String("first-key", hex.EncodeToString(req.Mutations[0].Key)),
+		zap.Bool("is-pessimistic", req.ForUpdateTs > 0),
+		zap.Uint64("forUpdateTs", req.ForUpdateTs))
 
 	isPessimistic := req.ForUpdateTs > 0
 	var err error
