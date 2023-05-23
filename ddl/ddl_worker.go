@@ -451,14 +451,13 @@ func (w *worker) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 }
 
 // handleUpdateJobError handles the too large DDL job.
-func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) error {
+func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error, txn kv.Transaction) error {
 	if err == nil {
 		return nil
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
 		logutil.Logger(w.logCtx).Warn("[ddl] update DDL job failed", zap.String("job", job.String()), zap.Error(err))
-		w.sess.rollback()
-		err1 := w.sess.begin()
+		err1 := w.rollbackOrReset(txn)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -471,6 +470,16 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		err = w.finishDDLJob(t, job)
 	}
 	return errors.Trace(err)
+}
+
+func (w *worker) rollbackOrReset(txn kv.Transaction) error {
+	if w.concurrentDDL {
+		w.sess.rollback()
+		return w.sess.begin()
+	} else {
+		txn.Reset()
+		return nil
+	}
 }
 
 // updateDDLJob updates the DDL job information.
@@ -870,7 +879,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 	err = w.updateDDLJob(t, job, runJobErr != nil)
-	if err = w.handleUpdateJobError(t, job, err); err != nil {
+	if err = w.handleUpdateJobError(t, job, err, txn); err != nil {
 		w.sess.rollback()
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
@@ -1009,7 +1018,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				schemaVer = 0
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
-			if err = w.handleUpdateJobError(t, job, err); err != nil {
+			if err = w.handleUpdateJobError(t, job, err, txn); err != nil {
 				return errors.Trace(err)
 			}
 			writeBinlog(d.binlogCli, txn, job)
