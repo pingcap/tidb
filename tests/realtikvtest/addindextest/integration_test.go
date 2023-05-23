@@ -84,7 +84,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	tk2.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
 
 	// Mock there is a running ingest job.
-	_, err := ingest.LitBackCtxMgr.Register(context.Background(), false, 65535)
+	_, err := ingest.LitBackCtxMgr.Register(context.Background(), false, 65535, nil)
 	require.NoError(t, err)
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
