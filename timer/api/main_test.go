@@ -12,15 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package api
 
 import (
-	"time"
+	"testing"
+
+	"github.com/pingcap/tidb/testkit/testsetup"
+	"go.uber.org/goleak"
 )
 
-// CheckBackfillJobFinishInterval is export for test.
-var CheckBackfillJobFinishInterval = 300 * time.Millisecond
-
-const (
-	distPhysicalTableConcurrency = 16
-)
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	goleak.VerifyTestMain(m)
+}

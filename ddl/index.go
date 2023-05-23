@@ -624,7 +624,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateNone:
 		// none -> delete only
 		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique)
+		reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique, d)
 		if err != nil {
 			break
 		}
@@ -666,10 +666,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
-
-		if job.MultiSchemaInfo == nil && tblInfo.GetPartitionInfo() != nil {
-			initDistReorg(job.ReorgMeta)
-		}
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		tbl, err := getTable(d.store, schemaID, tblInfo)
@@ -716,7 +712,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 // pickBackfillType determines which backfill process will be used.
-func pickBackfillType(ctx context.Context, job *model.Job, unique bool) (model.ReorgType, error) {
+func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCtx) (model.ReorgType, error) {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't change the backfill type.
@@ -736,11 +732,18 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool) (model.R
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
-			_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID)
+			if variable.EnableDistTask.Load() {
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli)
+			} else {
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil)
+			}
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+			if variable.EnableDistTask.Load() {
+				job.ReorgMeta.IsDistReorg = true
+			}
 			return model.ReorgTypeLitMerge, nil
 		}
 	}
@@ -834,7 +837,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
-	reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique)
+	reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique, d)
 	if err != nil {
 		return false, ver, err
 	}
@@ -905,17 +908,10 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if ok && bc.Done() {
 		return true, 0, nil
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID)
+	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, nil)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 		return false, ver, errors.Trace(err)
-	}
-	if bc.GetCheckpointManager() == nil {
-		mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, indexInfo.ID)
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl-ingest] create checkpoint manager failed", zap.Error(err))
-		}
-		bc.AttachCheckpointManager(mgr)
 	}
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	if err != nil {
@@ -1006,6 +1002,10 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if err != nil || reorgInfo == nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
+		return false, ver, errors.Trace(err)
+	}
+	err = overwriteReorgInfoFromGlobalCheckpoint(w, rh.s, job, reorgInfo)
+	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
 	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
@@ -1817,7 +1817,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 				return errors.New("unexpected error, can't find index info")
 			}
 			if indexInfo.Unique {
-				bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, reorgInfo.ID)
+				bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, reorgInfo.ID, nil)
 				if err != nil {
 					return err
 				}

@@ -12,15 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package api
 
-import (
-	"time"
-)
+import "errors"
 
-// CheckBackfillJobFinishInterval is export for test.
-var CheckBackfillJobFinishInterval = 300 * time.Millisecond
+// ErrTimerNotExist indicates that the specified timer not exist
+var ErrTimerNotExist = errors.New("timer not exist")
 
-const (
-	distPhysicalTableConcurrency = 16
-)
+// ErrTimerExists indicates that the specified timer already exits
+var ErrTimerExists = errors.New("timer already exists")
+
+// ErrVersionNotMatch indicates that the timer's version not match
+var ErrVersionNotMatch = errors.New("timer version not match")
+
+// ErrEventIDNotMatch indicates that the timer's event id not match
+var ErrEventIDNotMatch = errors.New("timer event id not match")
