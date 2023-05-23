@@ -1147,17 +1147,15 @@ func (n *ParenthesesExpr) acceptV2(t *trampoline, v Visitor, cc0 func(Node, bool
 	n = newNode.(*ParenthesesExpr)
 
 	cc1 := func(node Node, succ bool) {
-		if !ok {
+		if !succ {
 			t.continueWith(cc0, n, false)
 			return
 		}
 		n.Expr = node.(ExprNode)
-		ret, succ := v.Leave(n)
-		t.continueWith(cc0, ret, succ)
-		return
+		ret, succ1 := v.Leave(n)
+		t.continueWith(cc0, ret, succ1)
 	}
 	t.tailcallWith(n.Expr.(nonRecursive), v, cc1)
-	return
 }
 
 // PositionExpr is the expression for order by and group by position.
