@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -778,7 +777,7 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 		return false, 0
 	}
 	var initialMaxCores uint64 = 10000
-	var minLogicalCores uint64 = initialMaxCores // set to a large enough value here
+	var minLogicalCores = initialMaxCores // set to a large enough value here
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
 			logicalCpus, err := strconv.Atoi(row[5].GetString())
@@ -811,7 +810,7 @@ func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Cont
 		return false, 0 // probably won't reach this path
 	}
 
-	var tiflashServerCount uint64 = 0
+	var tiflashServerCount uint64
 	switch (*tiflashServerCountInfo).itemStatus {
 	case unInitialized:
 		serversInfo, err := infoschema.GetTiFlashServerInfo(sctx)
