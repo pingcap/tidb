@@ -16,7 +16,9 @@ package executor
 
 import (
 	"context"
+	"sync/atomic"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
@@ -28,6 +30,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/sync/errgroup"
+)
+
+var (
+	// TestDetachedTaskFinished is a flag for test.
+	TestDetachedTaskFinished atomic.Bool
 )
 
 // ImportIntoExec represents a IMPORT INTO executor.
@@ -108,6 +115,9 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck
 			_ = e.doImport(distImporter, task)
+			failpoint.Inject("testDetachedTaskFinished", func() {
+				TestDetachedTaskFinished.Store(true)
+			})
 		}()
 		req.AppendInt64(0, task.ID)
 		e.detachHandled = true
