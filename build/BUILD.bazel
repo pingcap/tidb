@@ -120,6 +120,7 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/unreachable:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unsafeptr:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
+<<<<<<< HEAD
                "//build/linter/asciicheck:asciicheck",
                "//build/linter/bodyclose:bodyclose",
                "//build/linter/durationcheck:durationcheck",
@@ -136,6 +137,26 @@ nogo(
                "//build/linter/predeclared:predeclared",
                "//build/linter/unconvert:unconvert",
                "//build/linter/rowserrcheck:rowserrcheck",
+=======
+               "//build/linter/asciicheck",
+               "//build/linter/bodyclose",
+               "//build/linter/durationcheck",
+               "//build/linter/etcdconfig",
+               "//build/linter/exportloopref",
+               "//build/linter/forcetypeassert",
+               "//build/linter/gofmt",
+               "//build/linter/gci",
+               "//build/linter/gosec",
+               "//build/linter/ineffassign",
+               "//build/linter/makezero",
+               "//build/linter/mirror",
+               "//build/linter/misspell",
+               "//build/linter/noloopclosure",
+               "//build/linter/prealloc",
+               "//build/linter/predeclared",
+               "//build/linter/unconvert",
+               "//build/linter/rowserrcheck",
+>>>>>>> 8c1fae88e5a (linter: check AutoSyncInterval for etcd config (#44081))
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
