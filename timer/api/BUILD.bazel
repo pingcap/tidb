@@ -1,0 +1,42 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "api",
+    srcs = [
+        "client.go",
+        "error.go",
+        "hook.go",
+        "mem_store.go",
+        "store.go",
+        "timer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/timer/api",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/duration",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+go_test(
+    name = "api_test",
+    timeout = "short",
+    srcs = [
+        "client_test.go",
+        "main_test.go",
+        "schedule_policy_test.go",
+        "store_test.go",
+        "timer_test.go",
+    ],
+    embed = [":api"],
+    flaky = True,
+    shard_count = 12,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

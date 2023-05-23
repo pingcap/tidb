@@ -395,8 +395,12 @@ type BackendConfig struct {
 	ConnCompressType config.CompressionType
 	// concurrency of generateJobForRange and import(write & ingest) workers
 	WorkerConcurrency int
-	KVWriteBatchSize  int
-	CheckpointEnabled bool
+	// batch kv count and size when writing to TiKV
+	KVWriteBatchCount      int
+	KVWriteBatchSize       int64
+	RegionSplitBatchSize   int
+	RegionSplitConcurrency int
+	CheckpointEnabled      bool
 	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
 	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
 	MemTableSize            int
@@ -428,7 +432,10 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
-		KVWriteBatchSize:        cfg.TikvImporter.SendKVPairs,
+		KVWriteBatchCount:       cfg.TikvImporter.SendKVPairs,
+		KVWriteBatchSize:        int64(cfg.TikvImporter.SendKVSize),
+		RegionSplitBatchSize:    cfg.TikvImporter.RegionSplitBatchSize,
+		RegionSplitConcurrency:  cfg.TikvImporter.RegionSplitConcurrency,
 		CheckpointEnabled:       cfg.Checkpoint.Enable,
 		MemTableSize:            int(cfg.TikvImporter.EngineMemCacheSize),
 		LocalWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
@@ -1076,6 +1083,7 @@ func (local *Backend) prepareAndSendJob(
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		needSplit = true
 	})
+	logger := log.FromContext(ctx).With(zap.Stringer("uuid", engine.UUID)).Begin(zap.InfoLevel, "split and scatter ranges")
 	for i := 0; i < maxRetryTimes; i++ {
 		failpoint.Inject("skipSplitAndScatter", func() {
 			failpoint.Break()
@@ -1089,8 +1097,8 @@ func (local *Backend) prepareAndSendJob(
 		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engine.UUID),
 			log.ShortError(err), zap.Int("retry", i))
 	}
+	logger.End(zap.ErrorLevel, err)
 	if err != nil {
-		log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engine.UUID), log.ShortError(err))
 		return err
 	}
 

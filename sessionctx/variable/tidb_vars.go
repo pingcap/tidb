@@ -1009,8 +1009,8 @@ const (
 	AuthenticationLDAPSASLBindBaseDN = "authentication_ldap_sasl_bind_base_dn"
 	// AuthenticationLDAPSASLBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
 	AuthenticationLDAPSASLBindRootDN = "authentication_ldap_sasl_bind_root_dn"
-	// AuthenticationLDAPSASLBindRootPW defines the password of the user to login the LDAP server and perform search.
-	AuthenticationLDAPSASLBindRootPW = "authentication_ldap_sasl_bind_root_pw"
+	// AuthenticationLDAPSASLBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootPWD = "authentication_ldap_sasl_bind_root_pwd"
 	// AuthenticationLDAPSASLInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
 	AuthenticationLDAPSASLInitPoolSize = "authentication_ldap_sasl_init_pool_size"
 	// AuthenticationLDAPSASLMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
@@ -1033,8 +1033,8 @@ const (
 	AuthenticationLDAPSimpleBindBaseDN = "authentication_ldap_simple_bind_base_dn"
 	// AuthenticationLDAPSimpleBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
 	AuthenticationLDAPSimpleBindRootDN = "authentication_ldap_simple_bind_root_dn"
-	// AuthenticationLDAPSimpleBindRootPW defines the password of the user to login the LDAP server and perform search.
-	AuthenticationLDAPSimpleBindRootPW = "authentication_ldap_simple_bind_root_pw"
+	// AuthenticationLDAPSimpleBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootPWD = "authentication_ldap_simple_bind_root_pwd"
 	// AuthenticationLDAPSimpleInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
 	AuthenticationLDAPSimpleInitPoolSize = "authentication_ldap_simple_init_pool_size"
 	// AuthenticationLDAPSimpleMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.

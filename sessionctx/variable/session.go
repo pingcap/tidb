@@ -1803,6 +1803,8 @@ type ConnectionInfo struct {
 	SSLVersion        string
 	PID               int
 	DB                string
+	AuthMethod        string
+	Attributes        map[string]string
 }
 
 const (

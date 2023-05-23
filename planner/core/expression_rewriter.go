@@ -853,7 +853,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		semiJoinRewrite = false
 	}
 
-	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, semiJoinRewrite, noDecorrelate)
 		if er.err != nil || !er.asScalar {
 			return v, true
@@ -1053,7 +1053,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		noDecorrelate = false
 	}
 
-	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin, noDecorrelate)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
@@ -1109,6 +1109,18 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		er.ctxStackAppend(constant, types.EmptyName)
 	}
 	return v, true
+}
+
+func hasCTEConsumerInSubPlan(p LogicalPlan) bool {
+	if _, ok := p.(*LogicalCTE); ok {
+		return true
+	}
+	for _, child := range p.Children() {
+		if hasCTEConsumerInSubPlan(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func initConstantRepertoire(c *expression.Constant) {
@@ -2024,10 +2036,6 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
-	if _, ok := er.p.(*LogicalUnionAll); ok && v.Table.O != "" {
-		er.err = ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[er.b.curClause])
-		return
-	}
 	col, name, err := findFieldNameFromNaturalUsingJoin(er.p, v)
 	if err != nil {
 		er.err = err
@@ -2048,6 +2056,10 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
 			return
 		}
+	}
+	if _, ok := er.p.(*LogicalUnionAll); ok && v.Table.O != "" {
+		er.err = ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[er.b.curClause])
+		return
 	}
 	if er.b.curClause == globalOrderByClause {
 		er.b.curClause = orderByClause
