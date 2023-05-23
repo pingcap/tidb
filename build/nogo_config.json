@@ -1161,5 +1161,11 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
+  },
+  "etcdconfig": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code"
+    }
   }
 }
