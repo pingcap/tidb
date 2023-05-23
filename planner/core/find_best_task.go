@@ -1359,6 +1359,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	sessVars := ds.ctx.GetSessionVars()
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
+		Columns:         tidbutil.ShallowCloneSlice(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
@@ -1367,7 +1368,6 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
 	}.Init(ds.ctx, ds.blockOffset)
-	ts.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(ts.Columns, ds.Columns)
 	ts.SetSchema(ds.schema.Clone())
 	err := setIndexMergeTableScanHandleCols(ds, ts)
@@ -2490,6 +2490,7 @@ func (ts *PhysicalTableScan) getScanRowSize() float64 {
 func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64) {
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
+		Columns:         tidbutil.ShallowCloneSlice(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
@@ -2502,11 +2503,8 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		tblColHists:     ds.TblColHists,
 		constColsByCond: path.ConstCols,
 		prop:            prop,
+		filterCondition: tidbutil.ShallowCloneSlice(path.TableFilters),
 	}.Init(ds.ctx, ds.blockOffset)
-	ts.Columns = make([]*model.ColumnInfo, len(ds.Columns))
-	copy(ts.Columns, ds.Columns)
-	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))
-	copy(ts.filterCondition, path.TableFilters)
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {

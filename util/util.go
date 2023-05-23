@@ -283,3 +283,9 @@ func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, erro
 	}
 	return lines, nil
 }
+
+func ShallowCloneSlice[T any](s []T) []T {
+	ret := make([]T, len(s))
+	copy(ret, s)
+	return ret
+}
