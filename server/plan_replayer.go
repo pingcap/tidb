@@ -16,12 +16,9 @@ package server
 
 import (
 	"fmt"
-<<<<<<< HEAD
-	"io/ioutil"
-=======
 	"io"
+	"io/ioutil"
 	"net"
->>>>>>> 96fa4692b09 (fix join address on ipv6 (#43259))
 	"net/http"
 	"os"
 	"path/filepath"
