@@ -219,6 +219,7 @@ func (gs GroupingSet) IsEmpty() bool {
 	return true
 }
 
+// AllColIDs collect all the grouping col's uniqueID. (here assuming that all the grouping expressions are single col)
 func (gs GroupingSet) AllColIDs() *fd.FastIntSet {
 	res := fd.NewFastIntSet()
 	for _, groupingExprs := range gs {
