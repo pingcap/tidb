@@ -17,6 +17,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
+        "//ddl/placement",
         "//domain/infosync",
         "//errno",
         "//kv",
@@ -33,6 +34,7 @@ go_library(
         "//util/mathutil",
         "//util/memory",
         "//util/paging",
+        "//util/tiflash",
         "//util/tiflashcompute",
         "//util/tracing",
         "//util/trxevents",

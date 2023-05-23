@@ -34,6 +34,7 @@ go_library(
         "//util/logutil",
         "//util/memory",
         "//util/set",
+        "//util/tiflash",
         "//util/tiflashcompute",
         "//util/trxevents",
         "@com_github_coocood_freecache//:freecache",
