@@ -421,9 +421,9 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionMultiSchemaChange:
 		err = rollingBackMultiSchemaChange(job)
 	case model.ActionAddCheckConstraint:
-		ver, err = rollingbackAddConstraint(d, t, job)
+		ver, err = rollingBackAddConstraint(d, t, job)
 	case model.ActionDropCheckConstraint:
-		ver, err = rollingbackDropConstraint(t, job)
+		ver, err = rollingBackDropConstraint(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -470,7 +470,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	return
 }
 
-func rollingbackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	job.State = model.JobStateRollingback
 	_, tblInfo, constrInfoInMeta, _, err := checkAddCheckConstraint(t, job)
 	if err != nil {
@@ -496,7 +496,7 @@ func rollingbackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	return ver, dbterror.ErrCancelledDDLJob
 }
 
-func rollingbackDropConstraint(t *meta.Meta, job *model.Job) (ver int64, err error) {
+func rollingBackDropConstraint(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	_, constrInfoInMeta, err := checkDropCheckConstraint(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)

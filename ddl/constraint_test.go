@@ -7,6 +7,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -851,5 +852,47 @@ func TestShowCheckConstraint(t *testing.T) {
 		"CONSTRAINT `my_constr` CHECK ((`a` < 10)),\n" +
 		"CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table if exists t")
+}
+
+func TestAlterConstraintAddDrop(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int check(a>1), b int, constraint a_b check(a<b))")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	_, err := tk1.Exec("insert into t (a, b) values(2, 3)")
+	require.NoError(t, err)
+	_, err = tk1.Exec("insert into t (a, b) values(3, 4)")
+	require.NoError(t, err)
+	_, err = tk1.Exec("insert into t (a, b) values(4, 3)")
+	require.Error(t, err)
+
+	var checkErr error
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &callback.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StateWriteOnly {
+			// StateNone -> StateWriteOnly -> StatePublic
+			// Node in StateWriteOnly and StatePublic should check the constraint check.
+			_, checkErr = tk1.Exec("insert into t (a, b) values(5,6) ")
+			// Don't do the assert in the callback function.
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+	tk.MustExec("alter table t add constraint cc check ( b < 5 )")
+	require.Errorf(t, err, "[table:3819]Check constraint 'cc' is violated.")
+
+	tk.MustExec("alter table t drop constraint cc")
+	require.Errorf(t, err, "[table:3819]Check constraint 'cc' is violated.")
 	tk.MustExec("drop table if exists t")
 }
