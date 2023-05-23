@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -92,6 +93,11 @@ type InsertValues struct {
 	rowLen int
 
 	stats *InsertRuntimeStat
+
+	// in LOAD DATA, one InsertValues is used by two goroutine, we need to lock
+	// when using the txn
+	isLoadData bool
+	txnInUse   sync.Mutex
 
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
@@ -1049,6 +1055,10 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	if shardFmt.IncrementalMask()&autoRandomID != autoRandomID {
 		return 0, autoid.ErrAutoRandReadFailed
+	}
+	if e.isLoadData {
+		e.txnInUse.Lock()
+		defer e.txnInUse.Unlock()
 	}
 	_, err = e.ctx.Txn(true)
 	if err != nil {

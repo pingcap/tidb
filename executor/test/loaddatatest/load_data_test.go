@@ -77,8 +77,6 @@ func TestLoadDataInitParam(t *testing.T) {
 		exeerrors.ErrLoadDataUnsupportedFormat)
 	require.ErrorIs(t, tk.ExecToErr("load data local infile '/a' format 'parquet' into table load_data_test"),
 		exeerrors.ErrLoadParquetFromLocal)
-	require.ErrorIs(t, tk.ExecToErr("load data local infile '/a' into table load_data_test with detached"),
-		exeerrors.ErrLoadDataLocalUnsupportedOption)
 	require.ErrorIs(t, tk.ExecToErr("load data local infile '/a' into table load_data_test with import_mode='physical'"),
 		exeerrors.ErrLoadDataLocalUnsupportedOption)
 	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'sql file' into table load_data_test fields terminated by 'a'"),

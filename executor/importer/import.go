@@ -83,14 +83,13 @@ const (
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
+	detachedOption      = "detached"
 
 	// test option, not for user
 	distributedOption = "__distributed"
 )
 
 var (
-	detachedOption = plannercore.DetachedOption
-
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
 		importModeOption:    true,
