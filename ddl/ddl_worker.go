@@ -457,8 +457,8 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
 		logutil.Logger(w.logCtx).Warn("[ddl] update DDL job failed", zap.String("job", job.String()), zap.Error(err))
-		w.sess.Rollback()
-		err1 := w.sess.Begin()
+		w.sess.rollback()
+		err1 := w.sess.begin()
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
