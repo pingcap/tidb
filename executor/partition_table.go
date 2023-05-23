@@ -35,6 +35,12 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, recursive b
 			m := tmp.(map[int64]struct{})
 			m[partitionIDs[0]] = struct{}{}
 		}
+		if exec.TblScan.KeepOrder == nil || (*exec.TblScan.KeepOrder == true && len(exec.TblScan.PushedDownFilterConditions) > 0) {
+			return errors.Errorf("no keep order is set for table scan")
+		}
+		if *exec.TblScan.KeepOrder == true && len(exec.TblScan.PushedDownFilterConditions) > 0 {
+			return errors.Errorf("there's lazy meterialization but keep order is set")
+		}
 	case tipb.ExecType_TypePartitionTableScan:
 		exec.PartitionTableScan.PartitionIds = partitionIDs
 	case tipb.ExecType_TypeIndexScan:
