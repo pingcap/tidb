@@ -254,12 +254,8 @@ func NewPdController(
 		}
 	}
 	if failure != nil {
-<<<<<<< HEAD
-		return nil, errors.Annotatef(berrors.ErrPDUpdateFailed, "pd address (%s) not available, please check network", pdAddrs)
-=======
 		return nil, errors.Annotatef(berrors.ErrPDUpdateFailed,
 			"pd address (%s) not available, error is %s, please check network", pdAddrs, failure)
->>>>>>> ce1b6f986e2 (br/cmd: implement the `operator pause-gc-and-schedulers` command (#43562))
 	}
 
 	version := parseVersion(versionBytes)
