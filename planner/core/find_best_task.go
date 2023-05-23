@@ -342,8 +342,6 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 		}
 
 		taskType = property.CopSingleReadTaskType
-<<<<<<< HEAD
-=======
 
 		// TiFlash can run cop task as well, check whether this cop task will run on TiKV or TiFlash.
 		if cop.tablePlan != nil {
@@ -355,7 +353,6 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 				taskType = property.MppTaskType
 			}
 		}
->>>>>>> fc99198e056 (planner: fix incorrect cost when the plan has `IndexLookup->Limit/Agg/TopN` (#44041))
 	case *mppTask:
 		taskType = property.MppTaskType
 	default:
