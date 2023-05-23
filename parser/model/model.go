@@ -1838,24 +1838,22 @@ func (p *PlacementSettings) Clone() *PlacementSettings {
 	return &cloned
 }
 
-type RunawayElapsedType int32
-
-const (
-	ElapsedWallType RunawayElapsedType = iota
-)
-
+// RunawayActionType is the type of runaway action.
 type RunawayActionType int32
 
 const (
+	// RunawayActionNone is used to check whether user set the action type.
 	RunawayActionNone RunawayActionType = iota
 	RunawayActionDryRun
 	RunawayActionCooldown
 	RunawayActionKill
 )
 
+// RunawayWatchType is the type of runaway watch.
 type RunawayWatchType int32
 
 const (
+	// WatchExact indicates exact match in watching check.
 	WatchExact RunawayWatchType = iota
 	WatchSimilar
 )
@@ -1872,10 +1870,12 @@ func RunawayWatchValueToName(value int32) string {
 	}
 }
 
+// RunawayOptionType is the runaway's option type.
 type RunawayOptionType int
 
 const (
-	RunawayExecuteElapsed RunawayElapsedType = iota
+	// RunawayRule only includes execute elapsed time currently.
+	RunawayRule RunawayOptionType = iota
 	RunawayAction
 	RunawayWatch
 )

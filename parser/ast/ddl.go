@@ -2175,7 +2175,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 type RunawayOptionType int
 
 const (
-	RunawayExecuteElapsed RunawayOptionType = iota
+	RunawayRule RunawayOptionType = iota
 	RunawayAction
 	RunawayWatch
 )
@@ -2190,7 +2190,7 @@ type ResourceGroupRunawayOption struct {
 func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	fn := func() error {
 		switch n.Tp {
-		case RunawayExecuteElapsed:
+		case RunawayRule:
 			ctx.WriteKeyWord("QUERY LIMIT EXEC_ELAPSED_IN_SEC ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
