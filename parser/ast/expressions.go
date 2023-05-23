@@ -241,8 +241,8 @@ type continuation interface {
 }
 
 type tailcall struct {
-	n nonRecursive
-	v Visitor
+	n  nonRecursive
+	v  Visitor
 	cc func(Node, bool)
 }
 
@@ -251,8 +251,8 @@ func (tc *tailcall) exec(t *trampoline) {
 }
 
 type continued struct {
-	cc func(Node, bool)
-	res Node
+	cc   func(Node, bool)
+	res  Node
 	succ bool
 }
 
@@ -267,7 +267,7 @@ func (t *trampoline) tailcallWith(n nonRecursive, v Visitor, cc func(Node, bool)
 	t.next = &t.tailcall
 }
 
-func (t *trampoline) continueWith(cc func(Node, bool),res Node,succ bool) {
+func (t *trampoline) continueWith(cc func(Node, bool), res Node, succ bool) {
 	t.continued.cc = cc
 	t.continued.res = res
 	t.continued.succ = succ
@@ -320,14 +320,11 @@ func (n *BinaryOperationExpr) acceptV2(t *trampoline, v Visitor, cc0 func(Node, 
 			n.R = node.(ExprNode)
 			ret, succ := v.Leave(n)
 			t.continueWith(cc0, ret, succ)
-			return
 		}
 
 		t.tailcallWith(r, v, cc2)
-		return
 	}
 	t.tailcallWith(l, v, cc1)
-	return
 }
 
 // WhenClause is the when clause in Case expression for "when condition then result".
@@ -1136,26 +1133,26 @@ func (n *ParenthesesExpr) acceptV2(t *trampoline, v Visitor, cc0 func(Node, bool
 		_, ok = n.Expr.(nonRecursive)
 	}
 	if !ok {
-		ret, succ :=  n.acceptV1(v)
+		ret, succ := n.acceptV1(v)
 		t.continueWith(cc0, ret, succ)
 		return
 	}
 
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		ret, succ :=  v.Leave(newNode)
+		ret, succ := v.Leave(newNode)
 		t.continueWith(cc0, ret, succ)
 		return
 	}
 	n = newNode.(*ParenthesesExpr)
-	
+
 	cc1 := func(node Node, succ bool) {
 		if !ok {
 			t.continueWith(cc0, n, false)
 			return
 		}
 		n.Expr = node.(ExprNode)
-		ret, succ :=  v.Leave(n)
+		ret, succ := v.Leave(n)
 		t.continueWith(cc0, ret, succ)
 		return
 	}
