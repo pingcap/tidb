@@ -331,7 +331,7 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 				return idxCost, false, err
 			}
 			// consider both sides
-			idxCost, err := getPlanCost(t.(*copTask).indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+			idxCost, err := getPlanCost(cop.indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
 			if err != nil {
 				return 0, false, err
 			}
