@@ -596,7 +596,6 @@ func TestNonExistTableIllegalGrant(t *testing.T) {
 	tk.MustGetErrCode("grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;", mysql.ErrWrongUsage)
 }
 
-<<<<<<< HEAD
 func TestIssue38293(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -610,9 +609,12 @@ func TestIssue38293(t *testing.T) {
 	}()
 	tk.MustExec("GRANT SELECT ON `mysql`.`db` TO test")
 	tk.MustQuery("SELECT `Grantor` FROM `mysql`.`tables_priv` WHERE User = 'test'").Check(testkit.Rows("root@localhost"))
-=======
+}
+
 func TestIssue34610(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS d1;")
 	tk.MustExec("CREATE DATABASE d1;")
@@ -627,5 +629,4 @@ func TestIssue34610(t *testing.T) {
 	tk.MustGetErrCode("CREATE TABLE t1(f1 INT);", mysql.ErrTableExists)
 	tk.MustExec("GRANT SELECT ON T1 to user_1@localhost;")
 	tk.MustExec("GRANT SELECT ON t1 to user_1@localhost;")
->>>>>>> 671fe708760 (executor: grant privilege to table now check table existence use case insensitive (#36778))
 }
