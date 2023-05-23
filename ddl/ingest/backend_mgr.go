@@ -127,14 +127,9 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 
 const checkpointUpdateInterval = 10 * time.Minute
 
-<<<<<<< HEAD
 func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
-	cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot) *litBackendCtx {
+	cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot, etcdClient *clientv3.Client) *litBackendCtx {
 	return &litBackendCtx{
-=======
-func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot, etcdClient *clientv3.Client) *litBackendCtx {
-	bCtx := &litBackendCtx{
->>>>>>> 3d02b63dc30 (ddl: support distributed adding index for normal table (#43289))
 		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
 		MemRoot:        memRoot,
 		DiskRoot:       diskRoot,
