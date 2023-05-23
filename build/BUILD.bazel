@@ -123,7 +123,7 @@ nogo(
                "//build/linter/asciicheck:asciicheck",
                "//build/linter/bodyclose:bodyclose",
                "//build/linter/durationcheck:durationcheck",
-               "//build/linter/etcdconfig:etcdconfig"
+               "//build/linter/etcdconfig:etcdconfig",
                "//build/linter/exportloopref:exportloopref",
                "//build/linter/forcetypeassert:forcetypeassert",
                "//build/linter/gofmt:gofmt",
