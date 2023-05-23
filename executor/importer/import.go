@@ -510,6 +510,11 @@ func (p *Plan) initDefaultOptions() {
 	p.MaxRecordedErrors = 100
 	p.Detached = false
 	p.Distributed = false
+
+	// todo: remove it when load data is reverted
+	if p.InImportInto {
+		p.ImportMode = PhysicalImportMode
+	}
 }
 
 func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {

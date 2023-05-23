@@ -718,7 +718,6 @@ func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 }
 
 func (s *mockGCSSuite) TestMaxWriteSpeed() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_write_speed;")
 	s.tk.MustExec("CREATE DATABASE load_test_write_speed;")
 	s.tk.MustExec(`CREATE TABLE load_test_write_speed.t(a int, b int)`)
@@ -739,34 +738,29 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 
 	// without speed limit
 	start := time.Now()
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/speed-test.csv?endpoint=%s'
-		INTO TABLE load_test_write_speed.t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+	sql := fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'`,
+		gcsEndpoint)
 	s.tk.MustExec(sql)
 	duration := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
 
+	// the encoded KV size is about 34744 bytes, so it would take about 5 more seconds to write all data.
 	// with speed limit
 	s.tk.MustExec("TRUNCATE TABLE load_test_write_speed.t;")
 	start = time.Now()
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/speed-test.csv?endpoint=%s'
-		INTO TABLE load_test_write_speed.t fields terminated by ',' with import_mode='physical', max_write_speed=6000`, gcsEndpoint)
+	sql = fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'
+		with max_write_speed=6000`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	durationWithLimit := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
-	require.Less(s.T(), duration, durationWithLimit)
+	require.Less(s.T(), duration+5, durationWithLimit)
 }
 
 func (s *mockGCSSuite) TestChecksumNotMatch() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
-	s.testChecksumNotMatch(importer.PhysicalImportMode, false)
-	s.testChecksumNotMatch(importer.PhysicalImportMode, true)
-}
-
-func (s *mockGCSSuite) testChecksumNotMatch(importMode string, distributed bool) {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -786,6 +780,7 @@ func (s *mockGCSSuite) testChecksumNotMatch(importMode string, distributed bool)
 6,test6,66`),
 	})
 
+	// populate into 2 engines
 	backup := config.DefaultBatchSize
 	config.DefaultBatchSize = 1
 	s.T().Cleanup(func() {
@@ -795,29 +790,26 @@ func (s *mockGCSSuite) testChecksumNotMatch(importMode string, distributed bool)
 	s.prepareAndUseDB("load_data")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
-	loadDataSQL := adjustOptions(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical'`, gcsEndpoint), distributed)
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
 	err := s.tk.ExecToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "ErrChecksumMismatch")
-	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
 	}...))
 
 	s.tk.MustExec("truncate table t;")
-	loadDataSQL = adjustOptions(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical', checksum_table='off'`, gcsEndpoint), distributed)
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
+		with thread=1, checksum_table='off'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
-	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
 	}...))
 
 	s.tk.MustExec("truncate table t;")
-	loadDataSQL = adjustOptions(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical', checksum_table='optional'`, gcsEndpoint), distributed)
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
+		with thread=1, checksum_table='optional'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
-	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
 	}...))
