@@ -290,7 +290,7 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 	return p, nil
 }
 
-// NewImportPlan creates a new ingest into plan.
+// NewImportPlan creates a new import into plan.
 func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
 	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
@@ -368,7 +368,7 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 	}
 	importIntoStmt, ok := stmtNode.(*ast.ImportIntoStmt)
 	if !ok {
-		return nil, errors.Errorf("stmt %s is not ingest into stmt", stmt)
+		return nil, errors.Errorf("stmt %s is not import into stmt", stmt)
 	}
 	// FileLocRef are not used in ImportIntoStmt, OnDuplicate not used now.
 	return &ASTArgs{

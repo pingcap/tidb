@@ -204,7 +204,7 @@ func TestGetMsgFromBRError(t *testing.T) {
 }
 
 func TestASTArgsFromStmt(t *testing.T) {
-	stmt := "ingest into tb (a, é) from 'gs://test-load/test.tsv' format 'delimited';"
+	stmt := "IMPORT INTO tb (a, é) FROM 'gs://test-load/test.tsv';"
 	stmtNode, err := parser.New().ParseOneStmt(stmt, "latin1", "latin1_bin")
 	require.NoError(t, err)
 	text := stmtNode.Text()
@@ -214,6 +214,4 @@ func TestASTArgsFromStmt(t *testing.T) {
 	importIntoStmt := stmtNode.(*ast.ImportIntoStmt)
 	require.Equal(t, astArgs.ColumnAssignments, importIntoStmt.ColumnAssignments)
 	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
-	require.Equal(t, astArgs.FieldsInfo, importIntoStmt.FieldsInfo)
-	require.Equal(t, astArgs.LinesInfo, importIntoStmt.LinesInfo)
 }

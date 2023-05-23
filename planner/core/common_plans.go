@@ -600,9 +600,7 @@ type ImportInto struct {
 	Options            []*LoadDataOpt
 
 	GenCols InsertGeneratedColumns
-
-	// only use for distributed load data
-	Stmt string
+	Stmt    string
 }
 
 // LoadStats represents a load stats plan.
