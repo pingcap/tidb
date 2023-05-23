@@ -247,6 +247,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 	pi := tbl.Meta().Partition
 	partExpr := tbl.(partitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
+	pe := &tables.ForKeyPruning{KeyPartCols: partCols}
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, nil, err
@@ -263,7 +264,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 
 			colVals := make([]types.Datum, 0, len(r.HighVal))
 			colVals = append(colVals, r.HighVal...)
-			idx, err := partExpr.LocateKeyPartition(pi, partCols, colVals)
+			idx, err := pe.LocateKeyPartition(pi.Num, colVals)
 			if err != nil {
 				// If we failed to get the point position, we can just skip and ignore it.
 				continue
@@ -305,7 +306,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 				if rangeScalar < float64(pi.Num) && !highIsNull && !lowIsNull {
 					for i := posLow; i <= posHigh; i++ {
 						d := types.NewIntDatum(i)
-						idx, err := partExpr.LocateKeyPartition(pi, partCols, []types.Datum{d})
+						idx, err := pe.LocateKeyPartition(pi.Num, []types.Datum{d})
 						if err != nil {
 							// If we failed to get the point position, we can just skip and ignore it.
 							continue
@@ -1485,8 +1486,7 @@ func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.C
 	args := partFn.GetArgs()
 	// The partition function may be floor(unix_timestamp(ts)) instead of a simple fn(col).
 	if partFn.FuncName.L == ast.Floor {
-		ut := args[0].(*expression.ScalarFunction)
-		if ut.FuncName.L == ast.UnixTimestamp {
+		if ut, ok := args[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
 			args = ut.GetArgs()
 			args[0] = con
 			return partFn

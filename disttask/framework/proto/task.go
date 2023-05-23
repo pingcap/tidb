@@ -53,11 +53,12 @@ const (
 
 // Task represents the task of distribute framework.
 type Task struct {
-	ID              int64
-	Key             string
-	Type            string
-	State           string
-	Step            int64
+	ID    int64
+	Key   string
+	Type  string
+	State string
+	Step  int64
+	// DispatcherID is not used now.
 	DispatcherID    string
 	Concurrency     uint64
 	StartTime       time.Time
@@ -74,10 +75,14 @@ func (t *Task) IsFinished() bool {
 // Subtask represents the subtask of distribute framework.
 // Each task is divided into multiple subtasks by dispatcher.
 type Subtask struct {
-	ID          int64
-	Type        string
-	TaskID      int64
-	State       string
+	ID   int64
+	Step int64
+	Type string
+	// taken from task_key of the subtask table
+	TaskID int64
+	State  string
+	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
+	// its value is IP:PORT, see GenerateExecID
 	SchedulerID string
 	StartTime   uint64
 	EndTime     time.Time

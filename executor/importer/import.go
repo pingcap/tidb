@@ -83,14 +83,13 @@ const (
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
+	detachedOption      = "detached"
 
 	// test option, not for user
 	distributedOption = "__distributed"
 )
 
 var (
-	detachedOption = plannercore.DetachedOption
-
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
 		importModeOption:    true,
@@ -414,11 +413,6 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 	if len(e.FieldsEnclosedBy) > 0 &&
 		(strings.HasPrefix(e.FieldsEnclosedBy, e.FieldsTerminatedBy) || strings.HasPrefix(e.FieldsTerminatedBy, e.FieldsEnclosedBy)) {
 		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other")
-	}
-
-	// only use for test
-	if e.Distributed && !variable.EnableDistTask.Load() {
-		return errors.Errorf("must enable %s before use distributed load data", variable.TiDBEnableDistTask)
 	}
 
 	return nil

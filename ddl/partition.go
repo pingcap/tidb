@@ -445,34 +445,31 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	var enable bool
 	switch s.Tp {
 	case model.PartitionTypeRange:
-		if s.Sub == nil {
-			enable = true
-		}
-	case model.PartitionTypeHash:
-		// Partition by hash is enabled by default.
-		// Note that linear hash is simply ignored, and creates non-linear hash.
-		if s.Linear {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack("LINEAR HASH is not supported, using non-linear HASH instead"))
-		}
-		if s.Sub == nil {
-			enable = true
-		}
-	case model.PartitionTypeKey:
-		// Note that linear key is simply ignored, and creates non-linear hash.
-		if s.Linear {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack("LINEAR KEY is not supported, using non-linear KEY instead"))
-		}
-		if s.Sub == nil && len(s.ColumnNames) != 0 {
-			enable = true
-		}
+		enable = true
 	case model.PartitionTypeList:
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		// Partition by hash and key is enabled by default.
+		if s.Sub != nil {
+			// Subpartitioning only allowed with Range or List
+			return ast.ErrSubpartition
+		}
+		// Note that linear hash is simply ignored, and creates non-linear hash/key.
+		if s.Linear {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
+		}
+		if s.Tp == model.PartitionTypeHash || len(s.ColumnNames) != 0 {
+			enable = true
+		}
 	}
 
 	if !enable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
+	}
+	if s.Sub != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
 	}
 
 	pi := &model.PartitionInfo{
@@ -1981,6 +1978,16 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+
+	tableBundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
 	}
 
 	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
