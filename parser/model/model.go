@@ -1841,10 +1841,9 @@ func (p *PlacementSettings) Clone() *PlacementSettings {
 // RunawayActionType is the type of runaway action.
 type RunawayActionType int32
 
+//revive:disable:exported
 const (
-	// RunawayActionNone is used to check whether user set the action type.
 	RunawayActionNone RunawayActionType = iota
-	// RunawayActionDryRun
 	RunawayActionDryRun
 	RunawayActionCooldown
 	RunawayActionKill
