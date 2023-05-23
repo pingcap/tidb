@@ -345,8 +345,8 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 		taskType = property.CopSingleReadTaskType
 
 		// TiFlash can run cop task as well, check whether this cop task will run on TiKV or TiFlash.
-		if t.(*copTask).tablePlan != nil {
-			leafNode := t.(*copTask).tablePlan
+		if cop.tablePlan != nil {
+			leafNode := cop.tablePlan
 			for len(leafNode.Children()) > 0 {
 				leafNode = leafNode.Children()[0]
 			}
