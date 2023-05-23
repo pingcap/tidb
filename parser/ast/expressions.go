@@ -200,8 +200,7 @@ func (n *BinaryOperationExpr) Format(w io.Writer) {
 	n.R.Format(w)
 }
 
-// Accept implements Node interface.
-func (n *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
+func (n *BinaryOperationExpr) acceptV1(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
@@ -221,6 +220,114 @@ func (n *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	n.R = node.(ExprNode)
 
 	return v.Leave(n)
+}
+
+type trampoline struct {
+	next continuation
+
+	// Embed in the struct to reduce allocation
+	tailcall
+	continued
+}
+
+func (t *trampoline) run() {
+	for t.next != nil {
+		t.next.exec(t)
+	}
+}
+
+type continuation interface {
+	exec(*trampoline)
+}
+
+type tailcall struct {
+	n nonRecursive
+	v Visitor
+	cc func(Node, bool)
+}
+
+func (tc *tailcall) exec(t *trampoline) {
+	tc.n.acceptV2(t, tc.v, tc.cc)
+}
+
+type continued struct {
+	cc func(Node, bool)
+	res Node
+	succ bool
+}
+
+func (f *continued) exec(t *trampoline) {
+	f.cc(f.res, f.succ)
+}
+
+func (t *trampoline) tailcallWith(n nonRecursive, v Visitor, cc func(Node, bool)) {
+	t.tailcall.n = n
+	t.tailcall.v = v
+	t.tailcall.cc = cc
+	t.next = &t.tailcall
+}
+
+func (t *trampoline) continueWith(cc func(Node, bool),res Node,succ bool) {
+	t.continued.cc = cc
+	t.continued.res = res
+	t.continued.succ = succ
+	t.next = &t.continued
+}
+
+// Accept implements Node interface.
+func (n *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
+	var t trampoline
+	t.tailcall.n = n
+	t.tailcall.v = v
+	t.tailcall.cc = func(Node, bool) { t.next = nil }
+	t.next = &t.tailcall
+	t.run()
+	return t.continued.res, t.continued.succ
+}
+
+type nonRecursive interface {
+	acceptV2(t *trampoline, v Visitor, cc0 func(Node, bool))
+}
+
+func (n *BinaryOperationExpr) acceptV2(t *trampoline, v Visitor, cc0 func(Node, bool)) {
+	l, ok1 := n.L.(nonRecursive)
+	r, ok2 := n.R.(nonRecursive)
+	if !ok1 || !ok2 {
+		res, succ := n.acceptV1(v)
+		t.continueWith(cc0, res, succ)
+		return
+	}
+
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		res, succ := v.Leave(newNode)
+		t.continueWith(cc0, res, succ)
+		return
+	}
+	n = newNode.(*BinaryOperationExpr)
+	cc1 := func(node Node, ok bool) {
+		if !ok {
+			t.continueWith(cc0, n, false)
+			return
+		}
+		n.L = node.(ExprNode)
+
+		cc2 := func(node Node, ok bool) {
+			if !ok {
+				t.continueWith(cc0, n, false)
+				return
+			}
+			n.R = node.(ExprNode)
+			ret, succ := v.Leave(n)
+			t.continueWith(cc0, ret, succ)
+			return
+		}
+
+		t.tailcallWith(r, v, cc2)
+		return
+	}
+	t.tailcallWith(l, v, cc1)
+	return
 }
 
 // WhenClause is the when clause in Case expression for "when condition then result".
@@ -1004,6 +1111,10 @@ func (n *ParenthesesExpr) Format(w io.Writer) {
 
 // Accept implements Node Accept interface.
 func (n *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
+	return n.acceptV1(v)
+}
+
+func (n *ParenthesesExpr) acceptV1(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
@@ -1017,6 +1128,39 @@ func (n *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
 		n.Expr = node.(ExprNode)
 	}
 	return v.Leave(n)
+}
+
+func (n *ParenthesesExpr) acceptV2(t *trampoline, v Visitor, cc0 func(Node, bool)) {
+	var ok bool
+	if n.Expr != nil {
+		_, ok = n.Expr.(nonRecursive)
+	}
+	if !ok {
+		ret, succ :=  n.acceptV1(v)
+		t.continueWith(cc0, ret, succ)
+		return
+	}
+
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		ret, succ :=  v.Leave(newNode)
+		t.continueWith(cc0, ret, succ)
+		return
+	}
+	n = newNode.(*ParenthesesExpr)
+	
+	cc1 := func(node Node, succ bool) {
+		if !ok {
+			t.continueWith(cc0, n, false)
+			return
+		}
+		n.Expr = node.(ExprNode)
+		ret, succ :=  v.Leave(n)
+		t.continueWith(cc0, ret, succ)
+		return
+	}
+	t.tailcallWith(n.Expr.(nonRecursive), v, cc1)
+	return
 }
 
 // PositionExpr is the expression for order by and group by position.
