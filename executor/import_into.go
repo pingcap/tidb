@@ -17,11 +17,13 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -78,14 +80,14 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	group, groupCtx := errgroup.WithContext(ctx)
 	param := &importer.JobImportParam{
 		Job: &asyncloaddata.Job{
-			ID: 1,
+			ID: 1, // todo: we don't need Job now, remove it later.
 		},
 		Group:    group,
 		GroupCtx: groupCtx,
 		Done:     make(chan struct{}),
 		Progress: asyncloaddata.NewProgress(false),
 	}
-	distImporter, err := loaddata.NewDistImporter(param, e.importPlan, e.stmt)
+	distImporter, err := e.getJobImporter(param)
 	if err != nil {
 		return err
 	}
@@ -93,22 +95,36 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		_ = distImporter.Close()
 	}()
 	param.Progress.SourceFileSize = e.controller.TotalFileSize
+	task, err := distImporter.SubmitTask()
+	if err != nil {
+		return err
+	}
 
 	if e.controller.Detached {
 		go func() {
+			// todo: there's no need to wait for the import to finish, we can just return here.
 			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck
-			_ = e.doImport(distImporter)
+			_ = e.doImport(distImporter, task)
 		}()
-		req.AppendInt64(0, 1) // todo: use real id
+		req.AppendInt64(0, task.ID)
 		e.detachHandled = true
 		return nil
 	}
-	return e.doImport(distImporter)
+	return e.doImport(distImporter, task)
 }
 
-func (*ImportIntoExec) doImport(distImporter *loaddata.DistImporter) error {
-	distImporter.Import()
+func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*loaddata.DistImporter, error) {
+	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
+	// todo: if we import from local directory, we should also import on current node.
+	if variable.EnableDistTask.Load() {
+		return loaddata.NewDistImporter(param, e.importPlan, e.stmt)
+	}
+	return loaddata.NewDistImporterCurrNode(param, e.importPlan, e.stmt)
+}
+
+func (*ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *proto.Task) error {
+	distImporter.ImportTask(task)
 	group := distImporter.Param().Group
 	return group.Wait()
 }
