@@ -83,7 +83,7 @@ const (
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
-	detachedOption      = "detached"
+	detachedOption      = plannercore.DetachedOption
 
 	// test option, not for user
 	distributedOption = "__distributed"
@@ -174,6 +174,8 @@ type Plan struct {
 
 	// test
 	Distributed bool `json:"-"`
+	// todo: remove it when load data code is reverted.
+	InImportInto bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -299,7 +301,8 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 		// without FORMAT 'xxx' clause, default to DELIMITED DATA
 		format = LoadDataFormatDelimitedData
 	}
-	charset := plan.Charset
+	// todo: use charset in options
+	var charset *string
 	if charset == nil {
 		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
 		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
@@ -320,13 +323,13 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 		Path:        plan.Path,
 		Format:      format,
 		Restrictive: restrictive,
-		IgnoreLines: plan.IgnoreLines,
 
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		Charset:          charset,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
+		InImportInto:           true,
 	}
 	if err := p.initOptions(userSctx, plan.Options); err != nil {
 		return nil, err
@@ -354,8 +357,6 @@ func ASTArgsFromImportPlan(plan *plannercore.ImportInto) *ASTArgs {
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
 		ColumnAssignments:  plan.ColumnAssignments,
 		OnDuplicate:        ast.OnDuplicateKeyHandlingReplace,
-		FieldsInfo:         plan.FieldsInfo,
-		LinesInfo:          plan.LinesInfo,
 	}
 }
 
@@ -375,8 +376,6 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 		ColumnsAndUserVars: importIntoStmt.ColumnsAndUserVars,
 		ColumnAssignments:  importIntoStmt.ColumnAssignments,
 		OnDuplicate:        ast.OnDuplicateKeyHandlingReplace,
-		FieldsInfo:         importIntoStmt.FieldsInfo,
-		LinesInfo:          importIntoStmt.LinesInfo,
 	}, nil
 }
 
@@ -384,11 +383,25 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
+	lineFieldsInfo := plannercore.NewLineFieldsInfo(astArgs.FieldsInfo, astArgs.LinesInfo)
+	if plan.InImportInto {
+		// todo: refactor this part when load data reverted
+		// those are the default values for lightning CSV format too
+		lineFieldsInfo = plannercore.LineFieldsInfo{
+			FieldsTerminatedBy: `,`,
+			FieldsEnclosedBy:   `"`,
+			FieldsEscapedBy:    `\`,
+			FieldsOptEnclosed:  false,
+			LinesStartingBy:    ``,
+			// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
+			LinesTerminatedBy: ``,
+		}
+	}
 	c := &LoadDataController{
 		Plan:           plan,
 		ASTArgs:        astArgs,
 		Table:          tbl,
-		LineFieldsInfo: plannercore.NewLineFieldsInfo(astArgs.FieldsInfo, astArgs.LinesInfo),
+		LineFieldsInfo: lineFieldsInfo,
 		logger:         logger,
 	}
 	if err := c.initFieldParams(plan); err != nil {
@@ -763,21 +776,25 @@ func (e *LoadDataController) GetFieldCount() int {
 
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
 func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
-	return &config.CSVConfig{
+	csvConfig := &config.CSVConfig{
 		Separator: e.FieldsTerminatedBy,
 		// ignore optionally enclosed
-		Delimiter:        e.FieldsEnclosedBy,
-		Terminator:       e.LinesTerminatedBy,
-		NotNull:          false,
-		Null:             e.FieldNullDef,
-		Header:           false,
-		TrimLastSep:      false,
-		EscapedBy:        e.FieldsEscapedBy,
-		StartingBy:       e.LinesStartingBy,
-		AllowEmptyLine:   true,
-		QuotedNullIsText: !e.NullValueOptEnclosed,
-		UnescapedQuote:   true,
+		Delimiter:   e.FieldsEnclosedBy,
+		Terminator:  e.LinesTerminatedBy,
+		NotNull:     false,
+		Null:        e.FieldNullDef,
+		Header:      false,
+		TrimLastSep: false,
+		EscapedBy:   e.FieldsEscapedBy,
+		StartingBy:  e.LinesStartingBy,
 	}
+	if !e.InImportInto {
+		// for load data
+		csvConfig.AllowEmptyLine = true
+		csvConfig.QuotedNullIsText = !e.NullValueOptEnclosed
+		csvConfig.UnescapedQuote = true
+	}
+	return csvConfig
 }
 
 // InitDataFiles initializes the data store and load data files.

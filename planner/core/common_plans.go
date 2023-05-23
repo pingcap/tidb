@@ -597,10 +597,6 @@ type ImportInto struct {
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Path               string
 	Format             *string
-	Charset            *string
-	FieldsInfo         *ast.FieldsClause
-	LinesInfo          *ast.LinesClause
-	IgnoreLines        *uint64
 	Options            []*LoadDataOpt
 
 	GenCols InsertGeneratedColumns

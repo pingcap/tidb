@@ -2061,7 +2061,7 @@ func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// ImportIntoStmt represents a INGEST INTO statement node.
+// ImportIntoStmt represents a IMPORT INTO statement node.
 // this statement is used to import data into TiDB using lightning local mode.
 // see  https://github.com/pingcap/tidb/issues/42930
 type ImportIntoStmt struct {
@@ -2072,16 +2072,12 @@ type ImportIntoStmt struct {
 	ColumnAssignments  []*Assignment
 	Path               string
 	Format             *string
-	Charset            *string
-	FieldsInfo         *FieldsClause
-	LinesInfo          *LinesClause
-	IgnoreLines        *uint64
 	Options            []*LoadDataOpt
 }
 
 // Restore implements Node interface.
 func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("INGEST INTO ")
+	ctx.WriteKeyWord("IMPORT INTO ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.Table")
 	}
@@ -2115,25 +2111,6 @@ func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Format != nil {
 		ctx.WriteKeyWord(" FORMAT ")
 		ctx.WriteString(*n.Format)
-	}
-	if n.Charset != nil {
-		ctx.WriteKeyWord(" CHARACTER SET ")
-		ctx.WritePlain(*n.Charset)
-	}
-	if n.FieldsInfo != nil {
-		if err := n.FieldsInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.FieldsInfo")
-		}
-	}
-	if n.LinesInfo != nil {
-		if err := n.LinesInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.LinesInfo")
-		}
-	}
-	if n.IgnoreLines != nil {
-		ctx.WriteKeyWord(" IGNORE ")
-		ctx.WritePlainf("%d", *n.IgnoreLines)
-		ctx.WriteKeyWord(" LINES")
 	}
 
 	if len(n.Options) > 0 {

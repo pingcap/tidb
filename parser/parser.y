@@ -14262,7 +14262,7 @@ LoadDataOption:
 	}
 
 ImportIntoStmt:
-	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" stringLit FormatOpt CharsetOpt Fields Lines IgnoreLines LoadDataOptionListOpt
+	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" stringLit FormatOpt LoadDataOptionListOpt
 	{
 		$$ = &ast.ImportIntoStmt{
 			Table:              $3.(*ast.TableName),
@@ -14270,11 +14270,7 @@ ImportIntoStmt:
 			ColumnAssignments:  $5.([]*ast.Assignment),
 			Path:               $7,
 			Format:             $8.(*string),
-			Charset:            $9.(*string),
-			FieldsInfo:         $10.(*ast.FieldsClause),
-			LinesInfo:          $11.(*ast.LinesClause),
-			IgnoreLines:        $12.(*uint64),
-			Options:            $13.([]*ast.LoadDataOpt),
+			Options:            $9.([]*ast.LoadDataOpt),
 		}
 	}
 
