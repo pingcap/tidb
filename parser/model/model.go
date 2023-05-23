@@ -1844,6 +1844,7 @@ type RunawayActionType int32
 const (
 	// RunawayActionNone is used to check whether user set the action type.
 	RunawayActionNone RunawayActionType = iota
+	// RunawayActionDryRun
 	RunawayActionDryRun
 	RunawayActionCooldown
 	RunawayActionKill
@@ -1852,8 +1853,8 @@ const (
 // RunawayWatchType is the type of runaway watch.
 type RunawayWatchType int32
 
+//revive:disable:exported
 const (
-	// WatchExact indicates exact match in watching check.
 	WatchExact RunawayWatchType = iota
 	WatchSimilar
 )
@@ -1873,8 +1874,8 @@ func RunawayWatchValueToName(value int32) string {
 // RunawayOptionType is the runaway's option type.
 type RunawayOptionType int
 
+//revive:disable:exported
 const (
-	// RunawayRule only includes execute elapsed time currently.
 	RunawayRule RunawayOptionType = iota
 	RunawayAction
 	RunawayWatch
