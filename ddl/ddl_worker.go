@@ -476,10 +476,9 @@ func (w *worker) rollbackOrReset(txn kv.Transaction) error {
 	if w.concurrentDDL {
 		w.sess.rollback()
 		return w.sess.begin()
-	} else {
-		txn.Reset()
-		return nil
 	}
+	txn.Reset()
+	return nil
 }
 
 // updateDDLJob updates the DDL job information.
