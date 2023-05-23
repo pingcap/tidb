@@ -125,6 +125,7 @@ nogo(
                "//build/linter/asciicheck",
                "//build/linter/bodyclose",
                "//build/linter/durationcheck",
+               "//build/linter/etcdconfig",
                "//build/linter/exportloopref",
                "//build/linter/forcetypeassert",
                "//build/linter/gofmt",

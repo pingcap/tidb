@@ -88,7 +88,7 @@ func TestFailpointCPUValue(t *testing.T) {
 		require.Equal(t, value, 0.0)
 	}
 	sch := scheduler.CPUScheduler{}
-	require.Equal(t, scheduler.Hold, sch.Tune(util.UNKNOWN, util.NewMockGPool("test")))
+	require.Equal(t, scheduler.Hold, sch.Tune(util.UNKNOWN, util.NewMockGPool("test", 10)))
 	// we do not stop the observer, because we inject the fail-point and the observer will not start.
 	// if this test case happen goleak, it must have a bug.
 	close(exit)

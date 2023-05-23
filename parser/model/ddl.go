@@ -749,7 +749,7 @@ func (job *Job) IsPaused() bool {
 
 // IsPausedBySystem returns whether the job is paused by system.
 func (job *Job) IsPausedBySystem() bool {
-	return job.State == JobStatePaused && job.AdminOperator == AdminCommandBySystem
+	return job.IsPaused() && job.AdminOperator == AdminCommandBySystem
 }
 
 // IsPausing indicates whether the job is pausing.
@@ -949,6 +949,17 @@ const (
 	// DDL job is issued by TiDB itself, such as Upgrade(bootstrap).
 	AdminCommandBySystem
 )
+
+func (a *AdminCommandOperator) String() string {
+	switch *a {
+	case AdminCommandByEndUser:
+		return "EndUser"
+	case AdminCommandBySystem:
+		return "System"
+	default:
+		return "None"
+	}
+}
 
 // SchemaDiff contains the schema modification at a particular schema version.
 // It is used to reduce schema reload cost.
