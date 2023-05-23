@@ -1215,7 +1215,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 }
 
 func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool) (indexPlan PhysicalPlan) {
-	is := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
+	is := ds.getOriginalPhysicalIndexScan(prop, path, matchProp, false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
 	if len(indexConds) > 0 {
@@ -1234,8 +1234,6 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		return indexPlan
 	}
 	if matchProp {
-		is.KeepOrder = true
-		is.Desc = prop.SortItems[0].Desc
 		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 			is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
 			is.schema.Append(&expression.Column{
@@ -1268,7 +1266,7 @@ func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool
 }
 
 func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool) (tablePlan PhysicalPlan) {
-	ts, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
+	ts, rowCount := ds.getOriginalPhysicalTableScan(prop, path, matchProp)
 	overwritePartialTableScanSchema(ds, ts)
 	// remove ineffetive filter condition after overwriting physicalscan schema
 	newFilterConds := make([]expression.Expression, 0, len(path.TableFilters))
@@ -1290,8 +1288,6 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		return tablePlan
 	}
 	if matchProp {
-		ts.KeepOrder = true
-		ts.Desc = prop.SortItems[0].Desc
 		if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 			ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
 			ts.schema.Append(&expression.Column{
