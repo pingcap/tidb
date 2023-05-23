@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -149,7 +150,8 @@ func (ti *DistImporter) doImport(ctx context.Context) error {
 		return err
 	}
 	taskType := proto.LoadData
-	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, ti.Job.ID)
+	// task key is meaningless to IMPORT INTO, so we use a random uuid.
+	taskKey := fmt.Sprintf("%s/%s", taskType, uuid.New().String())
 
 	return submitGlobalTaskAndRun(ctx, taskKey, taskType, distLoadDataConcurrency, taskMeta)
 }

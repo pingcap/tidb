@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// ImportIntoExec represents a ingest into executor.
+// ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
 	baseExecutor
 	importPlan *importer.Plan
@@ -74,6 +74,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 
+	// todo: we don't need Job now, remove it later.
 	group, groupCtx := errgroup.WithContext(ctx)
 	param := &importer.JobImportParam{
 		Job: &asyncloaddata.Job{
@@ -97,15 +98,16 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		go func() {
 			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck
-			_ = e.doIngest(distImporter)
+			_ = e.doImport(distImporter)
 		}()
-		req.AppendInt64(0, 1)
+		req.AppendInt64(0, 1) // todo: use real id
 		e.detachHandled = true
+		return nil
 	}
-	return e.doIngest(distImporter)
+	return e.doImport(distImporter)
 }
 
-func (*ImportIntoExec) doIngest(distImporter *loaddata.DistImporter) error {
+func (*ImportIntoExec) doImport(distImporter *loaddata.DistImporter) error {
 	distImporter.Import()
 	group := distImporter.Param().Group
 	return group.Wait()
