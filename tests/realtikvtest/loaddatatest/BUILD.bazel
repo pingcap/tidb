@@ -4,13 +4,16 @@ go_test(
     name = "loaddatatest_test",
     timeout = "moderate",
     srcs = [
+        "detach_test.go",
         "load_data_test.go",
         "main_test.go",
+        "one_parquet_test.go",
         "operate_test.go",
         "precheck_test.go",
         "show_test.go",
         "util_test.go",
     ],
+    embedsrcs = ["test.parquet"],
     flaky = True,
     race = "on",
     deps = [
