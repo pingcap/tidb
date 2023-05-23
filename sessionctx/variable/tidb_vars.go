@@ -17,6 +17,7 @@ package variable
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/tiflash"
 	"math"
 	"time"
 
@@ -1331,7 +1332,7 @@ const (
 	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
 	DefAuthenticationLDAPSimpleInitPoolSize           = 10
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
-	DefTiDBTiflashNodeSelectionPolicy                 = "all_nodes"
+	DefTiDBTiflashNodeSelectionPolicy                 = tiflash.AllNodesStr
 )
 
 // Process global variables.
