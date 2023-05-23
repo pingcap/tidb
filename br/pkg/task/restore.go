@@ -213,6 +213,7 @@ type RestoreConfig struct {
 	VolumeIOPS          int64                 `json:"volume-iops" toml:"volume-iops"`
 	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
+	TargetAZ            string                `json:"target-az" toml:"target-az"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -370,6 +371,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		}
 
 		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		cfg.TargetAZ, err = flags.GetString(flagTargetAZ)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -747,10 +753,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		defer func() {
 			// need to flush the whole checkpoint data so that br can quickly jump to
 			// the log kv restore step when the next retry.
-			if len(cfg.FullBackupStorage) > 0 || !schedulersRemovable {
-				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint(ctx)
-			}
+			log.Info("wait for flush checkpoint...")
+			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
 		}()
 	}
 

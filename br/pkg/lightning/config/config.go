@@ -70,7 +70,10 @@ const (
 	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
 
-	KVWriteBatchSize        = 32768
+	KVWriteBatchCount = 32768
+	// KVWriteBatchSize batch size when write to TiKV.
+	// this is the default value of linux send buffer size(net.ipv4.tcp_wmem) too.
+	KVWriteBatchSize        = 16 * units.KiB
 	DefaultRangeConcurrency = 16
 
 	defaultDistSQLScanConcurrency     = 15
@@ -79,6 +82,8 @@ const (
 	defaultChecksumTableConcurrency   = 2
 	DefaultTableConcurrency           = 6
 	defaultIndexConcurrency           = 2
+	DefaultRegionCheckBackoffLimit    = 1800
+	DefaultRegionSplitBatchSize       = 4096
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName     = "lightning_metadata"
@@ -738,21 +743,25 @@ type FileRouteRule struct {
 // TikvImporter is the config for tikv-importer.
 type TikvImporter struct {
 	// Deprecated: only used to keep the compatibility.
-	Addr                string                       `toml:"addr" json:"addr"`
-	Backend             string                       `toml:"backend" json:"backend"`
-	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
-	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
-	CompressKVPairs     CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
-	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
-	RegionSplitKeys     int                          `toml:"region-split-keys" json:"region-split-keys"`
-	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
-	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
-	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
-	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
-	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
-	KeyspaceName        string                       `toml:"keyspace-name" json:"keyspace-name"`
-	AddIndexBySQL       bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
+	Addr                    string                       `toml:"addr" json:"addr"`
+	Backend                 string                       `toml:"backend" json:"backend"`
+	OnDuplicate             string                       `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs              int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	SendKVPairs             int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	SendKVSize              ByteSize                     `toml:"send-kv-size" json:"send-kv-size"`
+	CompressKVPairs         CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
+	RegionSplitSize         ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	RegionSplitKeys         int                          `toml:"region-split-keys" json:"region-split-keys"`
+	RegionSplitBatchSize    int                          `toml:"region-split-batch-size" json:"region-split-batch-size"`
+	RegionSplitConcurrency  int                          `toml:"region-split-concurrency" json:"region-split-concurrency"`
+	RegionCheckBackoffLimit int                          `toml:"region-check-backoff-limit" json:"region-check-backoff-limit"`
+	SortedKVDir             string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota               ByteSize                     `toml:"disk-quota" json:"disk-quota"`
+	RangeConcurrency        int                          `toml:"range-concurrency" json:"range-concurrency"`
+	DuplicateResolution     DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport       bool                         `toml:"incremental-import" json:"incremental-import"`
+	KeyspaceName            string                       `toml:"keyspace-name" json:"keyspace-name"`
+	AddIndexBySQL           bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -944,14 +953,18 @@ func NewConfig() *Config {
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
-			Backend:               "",
-			OnDuplicate:           ReplaceOnDup,
-			MaxKVPairs:            4096,
-			SendKVPairs:           KVWriteBatchSize,
-			RegionSplitSize:       0,
-			DiskQuota:             ByteSize(math.MaxInt64),
-			DuplicateResolution:   DupeResAlgNone,
-			PausePDSchedulerScope: PausePDSchedulerScopeTable,
+			Backend:                 "",
+			OnDuplicate:             ReplaceOnDup,
+			MaxKVPairs:              4096,
+			SendKVPairs:             KVWriteBatchCount,
+			SendKVSize:              KVWriteBatchSize,
+			RegionSplitSize:         0,
+			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,
+			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
+			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
+			DiskQuota:               ByteSize(math.MaxInt64),
+			DuplicateResolution:     DupeResAlgNone,
+			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -1182,6 +1195,12 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 		cfg.PostRestore.Analyze = OpLevelOff
 		cfg.PostRestore.Compact = false
 	case BackendLocal:
+		if cfg.TikvImporter.RegionSplitBatchSize <= 0 {
+			return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack("`tikv-importer.region-split-batch-size` got %d, should be larger than 0", cfg.TikvImporter.RegionSplitBatchSize)
+		}
+		if cfg.TikvImporter.RegionSplitConcurrency <= 0 {
+			return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack("`tikv-importer.region-split-concurrency` got %d, should be larger than 0", cfg.TikvImporter.RegionSplitConcurrency)
+		}
 		// RegionConcurrency > NumCPU is meaningless.
 		cpuCount := runtime.NumCPU()
 		if cfg.App.RegionConcurrency > cpuCount {

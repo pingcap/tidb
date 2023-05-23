@@ -61,7 +61,16 @@ func TestIssue43461(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, p)
 
-	idxLookUpPlan, ok := p.(*core.PhysicalLimit).Children()[0].(*core.PhysicalProjection).Children()[0].(*core.PhysicalIndexLookUpReader)
+	var idxLookUpPlan *core.PhysicalIndexLookUpReader
+	var ok bool
+
+	for {
+		idxLookUpPlan, ok = p.(*core.PhysicalIndexLookUpReader)
+		if ok {
+			break
+		}
+		p = p.(core.PhysicalPlan).Children()[0]
+	}
 	require.True(t, ok)
 
 	is := idxLookUpPlan.IndexPlans[0].(*core.PhysicalIndexScan)
@@ -82,4 +91,18 @@ func TestIssue43645(t *testing.T) {
 
 	rs := tk.MustQuery("WITH tmp AS (SELECT t2.* FROM t2) select (SELECT tmp.col1 FROM tmp WHERE tmp.id=t1.id ) col1, (SELECT tmp.col2 FROM tmp WHERE tmp.id=t1.id ) col2, (SELECT tmp.col3 FROM tmp WHERE tmp.id=t1.id ) col3 from t1;")
 	rs.Sort().Check(testkit.Rows("a aa aaa", "b bb bbb", "c cc ccc"))
+}
+
+func TestIssue44051(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));")
+	tk.MustExec("CREATE TABLE t2(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));")
+	tk.MustExec("INSERT INTO t1 values(1,NULL,NULL,null),(2,NULL,NULL,null),(3,NULL,NULL,null);")
+	tk.MustExec("INSERT INTO t2 values(1,'a','aa','aaa'),(2,'b','bb','bbb'),(3,'c','cc','ccc');")
+
+	rs := tk.MustQuery("WITH tmp AS (SELECT t2.* FROM t2) SELECT * FROM t1 WHERE t1.id = (select id from tmp where id = 1) or t1.id = (select id from tmp where id = 2) or t1.id = (select id from tmp where id = 3)")
+	rs.Sort().Check(testkit.Rows("1 <nil> <nil> <nil>", "2 <nil> <nil> <nil>", "3 <nil> <nil> <nil>"))
 }

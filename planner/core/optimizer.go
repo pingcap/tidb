@@ -1160,7 +1160,11 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range"))
 	}
 	if t.invalid() {
-		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
+		errMsg := "Can't find a proper physical plan for this query"
+		if config.GetGlobalConfig().DisaggregatedTiFlash && !logic.SCtx().GetSessionVars().IsMPPAllowed() {
+			errMsg += ": cop and batchCop are not allowed in disaggregated tiflash mode, you should turn on tidb_allow_mpp switch"
+		}
+		return nil, 0, ErrInternal.GenWithStackByArgs(errMsg)
 	}
 
 	if err = t.plan().ResolveIndices(); err != nil {

@@ -499,7 +499,6 @@
       "planner/core/rule_aggregation_push_down.go": "planner/core/rule_aggregation_push_down.go", 
       "planner/core/rule_max_min_eliminate.go": "planner/core/rule_max_min_eliminate.go", 
       "planner/core/rule_predicate_simplification.go": "planner/core/rule_predicate_simplification.go", 
-      "planner/core/rule_derive_topn_from_window.go": "planner/core/rule_derive_topn_from_window.go", 
       "planner/core/indexmerge_path.go": "planner/core/indexmerge_path.go", 
       "planner/core/rule_join_reorder.go": "planner/core/rule_join_reorder.go", 
       "planner/core/plan_cacheable_checker.go": "planner/core/plan_cacheable_checker.go", 
@@ -509,7 +508,6 @@
       "planner/core/rule_topn_push_down.go": "planner/core/rule_topn_push_down.go", 
       "planner/core/plan_cost_ver1.go": "planner/core/plan_cost_ver1.go", 
       "planner/core/expression_rewriter.go": "planner/core/expression_rewriter.go", 
-      "planner/core/stats.go": "planner/core/stats.go", 
       "planner/core/find_best_task.go": "planner/core/find_best_task.go", 
       "planner/core/task.go": "planner/core/task.go", 
       "planner/core/preprocess.go": "planner/core/preprocess.go", 
@@ -560,7 +558,8 @@
       "extension/": "extension code",
       "resourcemanager/": "resourcemanager code",
       "keyspace/": "keyspace code",
-      "owner/": "owner code"
+      "owner/": "owner code",
+      "timer/": "timer code"
     }
   },
   "shift": {
@@ -963,6 +962,7 @@
       "br/pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated"
     },
     "only_files": {
+      "expression/bench_test.go": "expression/bench_test.go",
       "domain/": "domain code",
       "util/gctuner": "util/gctuner",
       "util/cgroup": "util/cgroup code",
@@ -978,7 +978,8 @@
       "keyspace/": "keyspace code",
       "server/": "server code",
       "owner/": "owner code",
-      "meta": "meta code"
+      "meta": "meta code",
+      "timer/": "timer code"
     }
   },
   "SA1029": {
@@ -1159,6 +1160,13 @@
       "parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "etcdconfig": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
+      "external/": "no need to vet third party code"
     }
   }
 }
