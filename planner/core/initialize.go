@@ -252,9 +252,9 @@ func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
 	return &p
 }
 
-// Init initializes IngestInto.
-func (p IngestInto) Init(ctx sessionctx.Context) *IngestInto {
-	p.basePlan = newBasePlan(ctx, plancodec.TypeIngestInto, 0)
+// Init initializes ImportInto.
+func (p ImportInto) Init(ctx sessionctx.Context) *ImportInto {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeImportInto, 0)
 	return &p
 }
 

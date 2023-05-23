@@ -420,7 +420,6 @@ var tokenMap = map[string]int{
 	"INFILE":                   infile,
 	"INNER":                    inner,
 	"INOUT":                    inout,
-	"INGEST":                   ingest,
 	"INPLACE":                  inplace,
 	"INSERT_METHOD":            insertMethod,
 	"INSERT":                   insert,

@@ -28,8 +28,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// IngestIntoExec represents a ingest into executor.
-type IngestIntoExec struct {
+// ImportIntoExec represents a ingest into executor.
+type ImportIntoExec struct {
 	baseExecutor
 	importPlan *importer.Plan
 	controller *importer.LoadDataController
@@ -38,18 +38,18 @@ type IngestIntoExec struct {
 	detachHandled bool
 }
 
-func newIngestIntoExec(b baseExecutor, userSctx sessionctx.Context, plan *plannercore.IngestInto, tbl table.Table) (
-	*IngestIntoExec, error) {
-	importPlan, err := importer.NewIngestPlan(userSctx, plan, tbl)
+func newImportIntoExec(b baseExecutor, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (
+	*ImportIntoExec, error) {
+	importPlan, err := importer.NewImportPlan(userSctx, plan, tbl)
 	if err != nil {
 		return nil, err
 	}
-	astArgs := importer.ASTArgsFromIngestPlan(plan)
+	astArgs := importer.ASTArgsFromImportPlan(plan)
 	controller, err := importer.NewLoadDataController(importPlan, tbl, astArgs)
 	if err != nil {
 		return nil, err
 	}
-	return &IngestIntoExec{
+	return &ImportIntoExec{
 		baseExecutor: b,
 		importPlan:   importPlan,
 		controller:   controller,
@@ -58,7 +58,7 @@ func newIngestIntoExec(b baseExecutor, userSctx sessionctx.Context, plan *planne
 }
 
 // Next implements the Executor Next interface.
-func (e *IngestIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.detachHandled {
 		// need to return an empty req to indicate all results have been written
@@ -105,7 +105,7 @@ func (e *IngestIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	return e.doIngest(distImporter)
 }
 
-func (*IngestIntoExec) doIngest(distImporter *loaddata.DistImporter) error {
+func (*ImportIntoExec) doIngest(distImporter *loaddata.DistImporter) error {
 	distImporter.Import()
 	group := distImporter.Param().Group
 	return group.Wait()

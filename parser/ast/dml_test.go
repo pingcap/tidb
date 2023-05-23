@@ -35,7 +35,7 @@ func TestDMLVisitorCover(t *testing.T) {
 			Order: &OrderByClause{}, Limit: &Limit{Count: ce, Offset: ce}}, 4, 4},
 		{&ShowStmt{Table: &TableName{}, Column: &ColumnName{}, Pattern: &PatternLikeOrIlikeExpr{Expr: ce, Pattern: ce}, Where: ce}, 3, 3},
 		{&LoadDataStmt{Table: &TableName{}, Columns: []*ColumnName{{}}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}}, 0, 0},
-		{&IngestIntoStmt{Table: &TableName{}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}}, 0, 0},
+		{&ImportIntoStmt{Table: &TableName{}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}}, 0, 0},
 		{&Assignment{Column: &ColumnName{}, Expr: ce}, 1, 1},
 		{&ByItem{Expr: ce}, 1, 1},
 		{&GroupByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}}, 2, 2},

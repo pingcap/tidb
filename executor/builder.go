@@ -186,8 +186,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildBatchPointGet(v)
 	case *plannercore.Insert:
 		return b.buildInsert(v)
-	case *plannercore.IngestInto:
-		return b.buildIngestInto(v)
+	case *plannercore.ImportInto:
+		return b.buildImportInto(v)
 	case *plannercore.LoadData:
 		return b.buildLoadData(v)
 	case *plannercore.LoadStats:
@@ -965,7 +965,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	return insert
 }
 
-func (b *executorBuilder) buildIngestInto(v *plannercore.IngestInto) Executor {
+func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) Executor {
 	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
@@ -977,7 +977,7 @@ func (b *executorBuilder) buildIngestInto(v *plannercore.IngestInto) Executor {
 	}
 
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
-	exec, err := newIngestIntoExec(base, b.ctx, v, tbl)
+	exec, err := newImportIntoExec(base, b.ctx, v, tbl)
 	if err != nil {
 		b.err = err
 		return nil

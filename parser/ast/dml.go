@@ -2061,17 +2061,17 @@ func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// IngestIntoStmt represents a INGEST INTO statement node.
+// ImportIntoStmt represents a INGEST INTO statement node.
 // this statement is used to import data into TiDB using lightning local mode.
 // see  https://github.com/pingcap/tidb/issues/42930
-type IngestIntoStmt struct {
+type ImportIntoStmt struct {
 	dmlNode
 
 	Table              *TableName
 	ColumnsAndUserVars []*ColumnNameOrUserVar
 	ColumnAssignments  []*Assignment
 	Path               string
-	Format             string
+	Format             *string
 	Charset            *string
 	FieldsInfo         *FieldsClause
 	LinesInfo          *LinesClause
@@ -2080,10 +2080,10 @@ type IngestIntoStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *IngestIntoStmt) Restore(ctx *format.RestoreCtx) error {
+func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("INGEST INTO ")
 	if err := n.Table.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore IngestIntoStmt.Table")
+		return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.Table")
 	}
 	if len(n.ColumnsAndUserVars) != 0 {
 		ctx.WritePlain(" (")
@@ -2092,7 +2092,7 @@ func (n *IngestIntoStmt) Restore(ctx *format.RestoreCtx) error {
 				ctx.WritePlain(",")
 			}
 			if err := c.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore IngestIntoStmt.ColumnsAndUserVars")
+				return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.ColumnsAndUserVars")
 			}
 		}
 		ctx.WritePlain(")")
@@ -2106,26 +2106,28 @@ func (n *IngestIntoStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WritePlain(" ")
 			if err := assign.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore IngestIntoStmt.ColumnAssignments")
+				return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.ColumnAssignments")
 			}
 		}
 	}
 	ctx.WriteKeyWord(" FROM ")
 	ctx.WriteString(n.Path)
-	ctx.WriteKeyWord(" FORMAT ")
-	ctx.WriteString(n.Format)
+	if n.Format != nil {
+		ctx.WriteKeyWord(" FORMAT ")
+		ctx.WriteString(*n.Format)
+	}
 	if n.Charset != nil {
 		ctx.WriteKeyWord(" CHARACTER SET ")
 		ctx.WritePlain(*n.Charset)
 	}
 	if n.FieldsInfo != nil {
 		if err := n.FieldsInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore IngestIntoStmt.FieldsInfo")
+			return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.FieldsInfo")
 		}
 	}
 	if n.LinesInfo != nil {
 		if err := n.LinesInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore IngestIntoStmt.LinesInfo")
+			return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.LinesInfo")
 		}
 	}
 	if n.IgnoreLines != nil {
@@ -2142,7 +2144,7 @@ func (n *IngestIntoStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WritePlain(" ")
 			if err := option.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore IngestIntoStmt.Options")
+				return errors.Annotatef(err, "An error occurred while restore ImportIntoStmt.Options")
 			}
 		}
 	}
@@ -2150,12 +2152,12 @@ func (n *IngestIntoStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 // Accept implements Node Accept interface.
-func (n *IngestIntoStmt) Accept(v Visitor) (Node, bool) {
+func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*IngestIntoStmt)
+	n = newNode.(*ImportIntoStmt)
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {

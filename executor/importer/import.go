@@ -289,11 +289,17 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 	return p, nil
 }
 
-// NewIngestPlan creates a new ingest into plan.
-func NewIngestPlan(userSctx sessionctx.Context, plan *plannercore.IngestInto, tbl table.Table) (*Plan, error) {
+// NewImportPlan creates a new ingest into plan.
+func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
 	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
-	format := strings.ToLower(plan.Format)
+	var format string
+	if plan.Format != nil {
+		format = strings.ToLower(*plan.Format)
+	} else {
+		// without FORMAT 'xxx' clause, default to DELIMITED DATA
+		format = LoadDataFormatDelimitedData
+	}
 	charset := plan.Charset
 	if charset == nil {
 		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
@@ -341,9 +347,9 @@ func ASTArgsFromPlan(plan *plannercore.LoadData) *ASTArgs {
 	}
 }
 
-// ASTArgsFromIngestPlan creates ASTArgs from plan.
-func ASTArgsFromIngestPlan(plan *plannercore.IngestInto) *ASTArgs {
-	// FileLocRef are not used in IngestIntoStmt, OnDuplicate not used now.
+// ASTArgsFromImportPlan creates ASTArgs from plan.
+func ASTArgsFromImportPlan(plan *plannercore.ImportInto) *ASTArgs {
+	// FileLocRef are not used in ImportIntoStmt, OnDuplicate not used now.
 	return &ASTArgs{
 		FileLocRef:         ast.FileLocServerOrRemote,
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
@@ -360,18 +366,18 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 	if err != nil {
 		return nil, err
 	}
-	ingestIntoStmt, ok := stmtNode.(*ast.IngestIntoStmt)
+	importIntoStmt, ok := stmtNode.(*ast.ImportIntoStmt)
 	if !ok {
 		return nil, errors.Errorf("stmt %s is not ingest into stmt", stmt)
 	}
-	// FileLocRef are not used in IngestIntoStmt, OnDuplicate not used now.
+	// FileLocRef are not used in ImportIntoStmt, OnDuplicate not used now.
 	return &ASTArgs{
 		FileLocRef:         ast.FileLocServerOrRemote,
-		ColumnsAndUserVars: ingestIntoStmt.ColumnsAndUserVars,
-		ColumnAssignments:  ingestIntoStmt.ColumnAssignments,
+		ColumnsAndUserVars: importIntoStmt.ColumnsAndUserVars,
+		ColumnAssignments:  importIntoStmt.ColumnAssignments,
 		OnDuplicate:        ast.OnDuplicateKeyHandlingReplace,
-		FieldsInfo:         ingestIntoStmt.FieldsInfo,
-		LinesInfo:          ingestIntoStmt.LinesInfo,
+		FieldsInfo:         importIntoStmt.FieldsInfo,
+		LinesInfo:          importIntoStmt.LinesInfo,
 	}, nil
 }
 

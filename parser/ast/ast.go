@@ -217,8 +217,8 @@ func GetStmtLabel(stmtNode StmtNode) string {
 			return "Replace"
 		}
 		return "Insert"
-	case *IngestIntoStmt:
-		return "IngestInto"
+	case *ImportIntoStmt:
+		return "ImportInto"
 	case *LoadDataStmt:
 		return "LoadData"
 	case *RollbackStmt:

@@ -798,8 +798,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildTrace(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(ctx, x)
-	case *ast.IngestIntoStmt:
-		return b.buildIngestInto(ctx, x)
+	case *ast.ImportIntoStmt:
+		return b.buildImportInto(ctx, x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
@@ -4345,7 +4345,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	return p, nil
 }
 
-func (b *PlanBuilder) buildIngestInto(ctx context.Context, ld *ast.IngestIntoStmt) (Plan, error) {
+func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (Plan, error) {
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
 		err      error
@@ -4365,7 +4365,7 @@ func (b *PlanBuilder) buildIngestInto(ctx context.Context, ld *ast.IngestIntoStm
 		}
 		options = append(options, &loadDataOpt)
 	}
-	p := IngestInto{
+	p := ImportInto{
 		Path:               ld.Path,
 		Format:             ld.Format,
 		Table:              ld.Table,

@@ -1523,10 +1523,10 @@ func TestPrepareLoadData(t *testing.T) {
 	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, mysql.ErrUnsupportedPs)
 }
 
-func TestPrepareIngestInto(t *testing.T) {
+func TestPrepareImportInto(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustGetErrCode(`prepare stmt from "ingest into test from 'xx' format 'delimited'";`, mysql.ErrUnsupportedPs)
+	tk.MustGetErrCode(`prepare stmt from "import into test from 'xx' format 'delimited'";`, mysql.ErrUnsupportedPs)
 }
 
 func TestSetOperation(t *testing.T) {

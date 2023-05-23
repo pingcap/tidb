@@ -588,15 +588,15 @@ type LoadDataOpt struct {
 	Value expression.Expression
 }
 
-// IngestInto represents a ingest into plan.
-type IngestInto struct {
+// ImportInto represents a ingest into plan.
+type ImportInto struct {
 	baseSchemaProducer
 
 	Table              *ast.TableName
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Path               string
-	Format             string
+	Format             *string
 	Charset            *string
 	FieldsInfo         *ast.FieldsClause
 	LinesInfo          *ast.LinesClause
