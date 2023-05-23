@@ -128,6 +128,7 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 }
 
 func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
+	s.T().Skip("WITH detached is removed in LOAD DATA")
 	//s.simpleShowLoadDataJobs(importer.PhysicalImportMode)
 	s.simpleShowLoadDataJobs(importer.LogicalImportMode)
 
@@ -219,6 +220,7 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 }
 
 func (s *mockGCSSuite) TestInternalStatus() {
+	s.T().Skip("WITH detached is removed in LOAD DATA")
 	s.testInternalStatus(importer.LogicalImportMode)
 	//s.testInternalStatus(importer.PhysicalImportMode)
 }

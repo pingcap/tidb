@@ -2295,7 +2295,7 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	return nil
 }
 
-// querySpecialKeys contains the keys of special query, the special query will handled by handleQuerySpecial method.
+// querySpecialKeys contains the keys of special query, the special query will be handled by handleFileTransInConn method.
 var querySpecialKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,

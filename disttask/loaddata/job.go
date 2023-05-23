@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -116,62 +117,11 @@ func (*DistImporter) Close() error {
 	return nil
 }
 
-// submitGlobalTaskAndRun submits a global task and returns a channel that will be closed when the task is done.
-// TODO: move to handle, see https://github.com/pingcap/tidb/pull/43066
-func submitGlobalTaskAndRun(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
-	if err != nil {
-		return err
-	}
-
-	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, concurrency, taskMeta)
-		if err != nil {
-			return err
-		}
-
-		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
-		if err != nil {
-			return err
-		}
-
-		if globalTask == nil {
-			return errors.Errorf("cannot find global task with ID %d", taskID)
-		}
-	}
-
-	ticker := time.NewTicker(checkTaskFinishInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			logutil.BgLogger().Warn("context done", zap.Error(ctx.Err()))
-			return ctx.Err()
-		case <-ticker.C:
-			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
-			if err != nil {
-				logutil.BgLogger().Info("get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
-				continue
-			}
-
-			if found == nil {
-				return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
-			}
-
-			if found.State == proto.TaskStateSucceed {
-				return nil
-			}
-
-			// TODO: get the original error message.
-			if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
-				return errors.Errorf("task stopped with state %s", found.State)
-			}
-		}
+func buildDistTask(plan *importer.Plan, jobID int64, stmt string) TaskMeta {
+	return TaskMeta{
+		Plan:  *plan,
+		JobID: jobID,
+		Stmt:  stmt,
 	}
 }
 
@@ -190,7 +140,7 @@ func (ti *DistImporter) doImport(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return submitGlobalTaskAndRun(ctx, ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
+	return handle.SubmitAndRunGlobalTask(ctx, ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
 }
 
 func (ti *DistImporter) taskKey() string {
