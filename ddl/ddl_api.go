@@ -1159,7 +1159,17 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
 			case ast.ColumnOptionCheck:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
+				// Check the column CHECK constraint dependency lazily, after fill all the name.
+				// Extract column constraint from column option.
+				constraint := &ast.Constraint{
+					Tp:           ast.ConstraintCheck,
+					Expr:         v.Expr,
+					Enforced:     v.Enforced,
+					Name:         v.ConstraintName,
+					InColumn:     true,
+					InColumnName: colDef.Name.Name.O,
+				}
+				constraints = append(constraints, constraint)
 			}
 		}
 	}
@@ -1954,10 +1964,6 @@ func BuildTableInfo(
 			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
 			continue
 		}
-		if constr.Tp == ast.ConstraintCheck {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
-			continue
-		}
 
 		var (
 			indexName       = constr.Name
@@ -2296,7 +2302,16 @@ func BuildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInf
 	if referTblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
+	renameCheckConstraint(&tblInfo)
 	return &tblInfo, nil
+}
+
+func renameCheckConstraint(tblInfo *model.TableInfo) {
+	for _, cons := range tblInfo.Constraints {
+		cons.Name = model.NewCIStr("")
+		cons.Table = tblInfo.Name
+	}
+	setNameForConstraintInfo(tblInfo.Name.L, map[string]bool{}, tblInfo.Constraints)
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
@@ -5531,6 +5546,11 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	if oldCol == nil {
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
 	}
+	// check if column can rename with check constraint
+	err = IsColumnRenameableWithCheckConstraint(oldCol.Name, tbl.Meta())
+	if err != nil {
+		return err
+	}
 
 	if oldColName.L == newColName.L {
 		return nil
@@ -7268,6 +7288,10 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	}
 	// We only support dropping column with single-value none Primary Key index covered now.
 	err := isColumnCanDropWithIndex(colName.L, tblInfo.Indices)
+	if err != nil {
+		return err
+	}
+	err = IsColumnDroppableWithCheckConstraint(colName, tblInfo)
 	if err != nil {
 		return err
 	}

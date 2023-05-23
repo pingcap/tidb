@@ -416,10 +416,14 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
 		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement,
-		model.ActionRecoverSchema:
+		model.ActionRecoverSchema, model.ActionAlterCheckConstraint:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
 		err = rollingBackMultiSchemaChange(job)
+	case model.ActionAddCheckConstraint:
+		ver, err = rollingbackAddConstraint(d, t, job)
+	case model.ActionDropCheckConstraint:
+		ver, err = rollingbackDropConstraint(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -464,4 +468,46 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	}
 
 	return
+}
+
+func rollingbackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	job.State = model.JobStateRollingback
+	_, tblInfo, constrInfoInMeta, _, err := checkAddCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if constrInfoInMeta == nil {
+		// Add constraint hasn't stored constraint info into meta, so we can cancel the job
+		// directly without further rollback action.
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	// Add constraint has stored constraint info into meta, that means the job has at least
+	// arrived write only state.
+	originalState := constrInfoInMeta.State
+	constrInfoInMeta.State = model.StateWriteOnly
+	job.SchemaState = model.StateWriteOnly
+
+	job.Args = []interface{}{constrInfoInMeta.Name}
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != constrInfoInMeta.State)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return ver, dbterror.ErrCancelledDDLJob
+}
+
+func rollingbackDropConstraint(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, constrInfoInMeta, err := checkDropCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// StatePublic means when the job is not running yet.
+	if constrInfoInMeta.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	// Can not rollback like drop other element, so just continue to drop constraint.
+	job.State = model.JobStateRunning
+	return ver, nil
 }

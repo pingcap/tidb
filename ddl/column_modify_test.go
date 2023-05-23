@@ -705,17 +705,6 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 	tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 }
 
-func TestColumnCheck(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists column_check")
-	tk.MustExec("create table column_check (pk int primary key, a int check (a > 1))")
-	defer tk.MustExec("drop table if exists column_check")
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|CONSTRAINT CHECK is not supported"))
-}
-
 func TestModifyGeneratedColumn(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)

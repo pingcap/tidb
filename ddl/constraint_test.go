@@ -514,7 +514,7 @@ func TestCheckConstraintForeignKey(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
-	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t(a int, b int, index(a), index(a, b))")
 	tk.MustGetErrMsg("create table s(a int, check (a > 0), foreign key (a) references t(a) on update cascade)",
 		"[ddl:3823]Column 'a' cannot be used in a check constraint 's_chk_1': needed in a foreign key constraint referential action.")
 	tk.MustGetErrMsg("create table s(a int, b int,  check (a > 0), foreign key (a, b) references t(a, b) on update cascade)",
@@ -662,14 +662,6 @@ func TestCheckConstraintEvaluated(t *testing.T) {
 	tk.MustExec("replace into t set a = 1")
 }
 
-type checkConstraintTestCase struct {
-	data1       []byte
-	data2       []byte
-	expected    []string
-	restData    []byte
-	expectedMsg string
-}
-
 func TestGenerateColumnCheckConstraint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -759,4 +751,105 @@ func TestCheckConstraintOnDuplicateKeyUpdate(t *testing.T) {
 	tk.MustGetErrMsg("insert into s values(1) on duplicate key update a = -1", "[table:3819]Check constraint 's_chk_1' is violated.")
 	tk.MustExec("insert ignore into s values(1) on duplicate key update a = -1")
 	tk.MustQuery("select * from s").Check(testkit.Rows("1"))
+}
+
+func TestCheckConstraintOnInsert(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("DROP DATABASE IF EXISTS test_insert_check_constraint;")
+	tk.MustExec("CREATE DATABASE test_insert_check_constraint;")
+	tk.MustExec("USE test_insert_check_constraint;")
+	tk.MustExec("CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0));")
+	tk.MustGetErrMsg("insert into t1 values (2, 2)", "[table:3819]Check constraint 't1_chk_1' is violated.")
+	tk.MustGetErrMsg("insert into t1 values (9, 2)", "[table:3819]Check constraint 't1_chk_2' is violated.")
+	tk.MustGetErrMsg("insert into t1 values (14, -4)", "[table:3819]Check constraint 'c2_positive' is violated.")
+	tk.MustGetErrMsg("insert into t1(c1) values (9)", "[table:3819]Check constraint 't1_chk_2' is violated.")
+	tk.MustGetErrMsg("insert into t1(c2) values (-3)", "[table:3819]Check constraint 'c2_positive' is violated.")
+	tk.MustExec("insert into t1 values (14, 4)")
+	tk.MustExec("insert into t1 values (null, 4)")
+	tk.MustExec("insert into t1 values (13, null)")
+	tk.MustExec("insert into t1 values (null, null)")
+	tk.MustExec("insert into t1(c1) values (null)")
+	tk.MustExec("insert into t1(c2) values (null)")
+
+	// Test generated column with check constraint.
+	tk.MustExec("CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));")
+	tk.MustGetErrMsg("insert into t2(c1, c2) values (11, 1)", "[table:3819]Check constraint 't2_chk_3' is violated.")
+	tk.MustExec("insert into t2(c1, c2) values (12, 7)")
+}
+
+func TestCheckConstraintOnUpdate(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("DROP DATABASE IF EXISTS test_update_check_constraint;")
+	tk.MustExec("CREATE DATABASE test_update_check_constraint;")
+	tk.MustExec("USE test_update_check_constraint;")
+
+	tk.MustExec("CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0));")
+	tk.MustExec("insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);")
+	tk.MustGetErrMsg("update t1 set c2 = -c2;", "[table:3819]Check constraint 'c2_positive' is violated.")
+	tk.MustGetErrMsg("update t1 set c2 = c1;", "[table:3819]Check constraint 't1_chk_1' is violated.")
+	tk.MustGetErrMsg("update t1 set c1 = c1 - 10;", "[table:3819]Check constraint 't1_chk_2' is violated.")
+	tk.MustGetErrMsg("update t1 set c2 = -10 where c2 = 12;", "[table:3819]Check constraint 'c2_positive' is violated.")
+
+	// Test generated column with check constraint.
+	tk.MustExec("CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));")
+	tk.MustExec("insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);")
+	tk.MustGetErrMsg("update t2 set c2 = c2 - 10;", "[table:3819]Check constraint 't2_chk_3' is violated.")
+	tk.MustExec("update t2 set c2 = c2 - 5;")
+}
+
+func TestCheckConstraintOnUpdateWithPartition(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("DROP DATABASE IF EXISTS test_update_check_constraint_hash;")
+	tk.MustExec("CREATE DATABASE test_update_check_constraint_hash;")
+	tk.MustExec("USE test_update_check_constraint_hash;")
+
+	tk.MustExec("CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0)) partition by hash(c2) partitions 5;")
+	tk.MustExec("insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);")
+	tk.MustGetErrMsg("update t1 set c2 = -c2;", "[table:3819]Check constraint 'c2_positive' is violated.")
+	tk.MustGetErrMsg("update t1 set c2 = c1;", "[table:3819]Check constraint 't1_chk_1' is violated.")
+	tk.MustGetErrMsg("update t1 set c1 = c1 - 10;", "[table:3819]Check constraint 't1_chk_2' is violated.")
+	tk.MustGetErrMsg("update t1 set c2 = -10 where c2 = 12;", "[table:3819]Check constraint 'c2_positive' is violated.")
+
+	// Test generated column with check constraint.
+	tk.MustExec("CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15)) partition by hash(c2) partitions 5;")
+	tk.MustExec("insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);")
+	tk.MustGetErrMsg("update t2 set c2 = c2 - 10;", "[table:3819]Check constraint 't2_chk_3' is violated.")
+	tk.MustExec("update t2 set c2 = c2 - 5;")
+}
+
+func TestShowCheckConstraint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	// Create table with check constraint
+	tk.MustExec("create table t(a int check (a>1), b int, constraint my_constr check(a<10))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"CONSTRAINT `my_constr` CHECK ((`a` < 10)),\n" +
+		"CONSTRAINT `t_chk_1` CHECK ((`a` > 1))\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Alter table add constraint.
+	tk.MustExec("alter table t add constraint my_constr2 check (a<b) not enforced")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"CONSTRAINT `my_constr` CHECK ((`a` < 10)),\n" +
+		"CONSTRAINT `t_chk_1` CHECK ((`a` > 1)),\n" +
+		"CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Alter table drop constraint.
+	tk.MustExec("alter table t drop constraint t_chk_1")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"CONSTRAINT `my_constr` CHECK ((`a` < 10)),\n" +
+		"CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table if exists t")
 }

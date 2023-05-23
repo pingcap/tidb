@@ -1202,6 +1202,25 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			buf.WriteString(" /* FOREIGN KEY INVALID */")
 		}
 	}
+	// add constraints info
+	publicConstraints := make([]*model.ConstraintInfo, 0, len(tableInfo.Indices))
+	for _, constr := range tableInfo.Constraints {
+		if constr.State == model.StatePublic {
+			publicConstraints = append(publicConstraints, constr)
+		}
+	}
+	if len(publicConstraints) > 0 {
+		buf.WriteString(",\n")
+	}
+	for i, constrInfo := range publicConstraints {
+		fmt.Fprintf(buf, "CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
+		if !constrInfo.Enforced {
+			buf.WriteString(" /*!80016 NOT ENFORCED */")
+		}
+		if i != len(publicConstraints)-1 {
+			buf.WriteString(",\n")
+		}
+	}
 
 	buf.WriteString("\n")
 
