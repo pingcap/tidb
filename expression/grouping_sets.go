@@ -429,14 +429,24 @@ func (g GroupingExprs) MemoryUsage() int64 {
 // still only care about the gid as before.
 //
 // mysql> select count(1), grouping(a+1) from t group by a+1, 1+a with rollup;
+// original grouping sets are:
+//        1: {a+1,  1+a}    ---> duplicate! proj a+1 let's say as column#1
+//        2: {a+1}
+//        3: {}
+//  distinguish them in projection item:
+//        Expand schema:[a, column#1, gid, gpos]
+//          |     L1 proj: [a, column#1, 0, 0]; L2 proj: [a, column#1, 0, 1]; L3 proj: [a, null, 1, 2]
+//          |
+//          +--- Projection a+1 as column#1
+//
 // +----------+---------------+
 // | count(1) | grouping(a+1) |
-// +----------+---------------+                         a+1, gid, gpos
-// |        1 |             0 | ---+-----> grouping set{a+1,  0,   0}
+// +----------+---------------+                            a+1,  gid,  gpos
+// |        1 |             0 | ---+-----> grouping set{column#1,  0,   0}
 // |        1 |             0 | ---+
-// |        1 |             0 | ---+-----> grouping set{a+1,  0,   1}
+// |        1 |             0 | ---+-----> grouping set{column#1,  0,   1}
 // |        1 |             0 | ---+
-// |        2 |             1 | ---------> grouping set{a+1,  1,   2}
+// |        2 |             1 | ---------> grouping set{column#1,  1,   2}
 // +----------+---------------+
 // 5 rows in set (0.01 sec)
 //
