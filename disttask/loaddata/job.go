@@ -53,7 +53,7 @@ func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt s
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
-		logger:         logutil.BgLogger().With(zap.String("component", "distribute importer"), zap.Int("id", int(param.Job.ID))),
+		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
 	}, nil
 }
 
@@ -67,6 +67,7 @@ func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
+		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
 		instance:       serverInfo,
 	}, nil
 }
@@ -138,7 +139,15 @@ func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	return handle.SubmitGlobalTask(ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
+	globalTask, err := handle.SubmitGlobalTask(ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
+	if err != nil {
+		return nil, err
+	}
+
+	// update logger with task id.
+	ti.logger = ti.logger.With(zap.Int64("id", globalTask.ID))
+
+	return globalTask, nil
 }
 
 func (ti *DistImporter) taskKey() string {

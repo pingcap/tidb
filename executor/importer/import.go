@@ -480,7 +480,8 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("load data with empty field terminator")
 	}
 	// TODO: support lines terminated is "".
-	if len(e.LinesTerminatedBy) == 0 {
+	// todo: remove !e.InImportInto when load data is reverted
+	if len(e.LinesTerminatedBy) == 0 && !e.InImportInto {
 		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
 	}
 	if len(e.FieldsEnclosedBy) > 0 &&

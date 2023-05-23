@@ -47,36 +47,30 @@ func adjustOptions(options string, distributed bool) string {
 	return options
 }
 
-func (s *mockGCSSuite) TestPhysicalMode() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
-	s.testPhysicalMode(false)
-	s.testPhysicalMode(true)
-}
-
-func (s *mockGCSSuite) testPhysicalMode(distributed bool) {
+func (s *mockGCSSuite) TestBasicImportInto() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
-			Name:       "db.tbl.001.tsv",
+			Name:       "db.tbl.001.csv",
 		},
-		Content: []byte("1\ttest1\t11\n" +
-			"2\ttest2\t22"),
+		Content: []byte("1,test1,11\n" +
+			"2,test2,22"),
 	})
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
-			Name:       "db.tbl.002.tsv",
+			Name:       "db.tbl.002.csv",
 		},
-		Content: []byte("3\ttest3\t33\n" +
-			"4\ttest4\t44"),
+		Content: []byte("3,test3,33\n" +
+			"4,test4,44"),
 	})
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
-			Name:       "db.tbl.003.tsv",
+			Name:       "db.tbl.003.csv",
 		},
-		Content: []byte("5\ttest5\t55\n" +
-			"6\ttest6\t66"),
+		Content: []byte("5,test5,55\n" +
+			"6,test6,66"),
 	})
 	s.prepareAndUseDB("load_data")
 
@@ -143,17 +137,16 @@ func (s *mockGCSSuite) testPhysicalMode(distributed bool) {
 		},
 	}
 
-	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
-		INTO TABLE t %%s with thread=1, import_mode='physical'`, gcsEndpoint)
-	loadDataSQL = adjustOptions(loadDataSQL, distributed)
+	loadDataSQL := fmt.Sprintf(`import into t %%s FROM 'gs://test-multi-load/db.tbl.*.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
 	for _, c := range cases {
 		s.tk.MustExec("drop table if exists t;")
 		s.tk.MustExec(c.createTableSQL)
 		sql := fmt.Sprintf(loadDataSQL, c.flags)
 		s.tk.MustExec(sql)
-		s.Equal("Records: 6  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-		s.Equal(uint64(6), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
-		//s.Equal(c.lastInsertID, s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
+		// todo: open it after we support it.
+		//s.Equal("Records: 6  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
+		//s.Equal(uint64(6), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 		querySQL := "SELECT * FROM t;"
 		if c.querySQL != "" {
 			querySQL = c.querySQL

@@ -33,6 +33,7 @@ import (
 // ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
 	baseExecutor
+	userSctx   sessionctx.Context
 	importPlan *importer.Plan
 	controller *importer.LoadDataController
 	stmt       string
@@ -53,6 +54,7 @@ func newImportIntoExec(b baseExecutor, userSctx sessionctx.Context, plan *planne
 	}
 	return &ImportIntoExec{
 		baseExecutor: b,
+		userSctx:     userSctx,
 		importPlan:   importPlan,
 		controller:   controller,
 		stmt:         plan.Stmt,
@@ -71,7 +73,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 
-	sqlExec := ctx.(sqlexec.SQLExecutor)
+	sqlExec := e.userSctx.(sqlexec.SQLExecutor)
 	if err2 := e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
 	}
