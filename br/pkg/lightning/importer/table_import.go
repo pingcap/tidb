@@ -221,7 +221,7 @@ func (tr *TableImporter) importTable(
 				logger: tr.logger,
 			}
 			err := d.run(ctx, workingDir, dupIgnoreRows)
-			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
+			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusDupDetected)
 			if err := firstErr(err, saveCpErr); err != nil {
 				return false, errors.Trace(err)
 			}
