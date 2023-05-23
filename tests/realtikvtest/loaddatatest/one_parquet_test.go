@@ -29,6 +29,7 @@ import (
 var content []byte
 
 func (s *mockGCSSuite) TestLoadParquet() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.testLoadParquet(importer.LogicalImportMode)
 	//s.testLoadParquet(importer.PhysicalImportMode)
 }
