@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/tiflash"
 	"math"
 	"runtime"
 	"strconv"
@@ -2519,6 +2520,15 @@ var defaultSysVars = []*SysVar{
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTiflashNodeSelectionPolicy, Value: DefTiDBTiflashNodeSelectionPolicy, Type: TypeEnum, PossibleValues: []string{DefTiDBTiflashNodeSelectionPolicy, "priority_local_zone_nodes", "only_local_zone_nodes"},
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiflashNodeSelectionPolicy = tiflash.GetNodeSelectionPolicyByStr(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return tiflash.GetNodeSelectionPolicy(s.TiflashNodeSelectionPolicy), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLAuthMethodName, Value: DefAuthenticationLDAPSASLAuthMethodName, Type: TypeEnum, PossibleValues: []string{ldap.SASLAuthMethodSCRAMSHA1, ldap.SASLAuthMethodSCRAMSHA256, ldap.SASLAuthMethodGSSAPI}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		ldap.LDAPSASLAuthImpl.SetSASLAuthMethod(s)
 		return nil

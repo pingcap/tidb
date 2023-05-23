@@ -866,6 +866,9 @@ const (
 
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
+
+	// TiDBTiflashNodeSelectionPolicy is used to set the policy of TiFlash node selection when the query needs the TiFlash engine.
+	TiDBTiflashNodeSelectionPolicy = "tidb_tiflash_node_selection_policy"
 )
 
 // TiDB vars that have only global scope
@@ -1328,6 +1331,7 @@ const (
 	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
 	DefAuthenticationLDAPSimpleInitPoolSize           = 10
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefTiDBTiflashNodeSelectionPolicy                 = "all_nodes"
 )
 
 // Process global variables.

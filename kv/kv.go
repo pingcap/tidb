@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/tidb/util/tiflash"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -307,6 +308,8 @@ type ClientSendOption struct {
 	EnabledRateLimitAction     bool
 	EventCb                    trxevents.EventCallback
 	EnableCollectExecutionInfo bool
+	TiflashNodeSelectionPolicy tiflash.NodeSelectionPolicy
+	AppendWarning              func(warn error)
 }
 
 // ReqTypes.

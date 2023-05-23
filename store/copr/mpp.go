@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/tiflash"
 	"io"
 	"strconv"
 	"sync"
@@ -63,7 +64,7 @@ func (c *batchCopTask) GetAddress() string {
 }
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration, dispatchPolicy tiflashcompute.DispatchPolicy) ([]kv.MPPTaskMeta, error) {
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration, dispatchPolicy tiflashcompute.DispatchPolicy, nodeSelectionPolicy tiflash.NodeSelectionPolicy, appendWarning func(error)) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	var tasks []*batchCopTask
@@ -75,13 +76,13 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 			rangesForEachPartition[i] = NewKeyRanges(p.KeyRanges)
 			partitionIDs[i] = p.ID
 		}
-		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs, dispatchPolicy)
+		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs, dispatchPolicy, nodeSelectionPolicy, appendWarning)
 	} else {
 		if req.KeyRanges == nil {
 			return nil, errors.New("KeyRanges in MPPBuildTasksRequest is nil")
 		}
 		ranges := NewKeyRanges(req.KeyRanges)
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20, dispatchPolicy)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20, dispatchPolicy, nodeSelectionPolicy, appendWarning)
 	}
 
 	if err != nil {

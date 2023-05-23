@@ -1238,3 +1238,42 @@ func TestTiDBEnableRowLevelChecksum(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, Off, val)
 }
+
+func TestTiDBTiflashNodeSelectionPolicy(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	// Test tidb_server_memory_limit
+	tidbTiFlashNodeSelectionPolicy := GetSysVar(TiDBTiflashNodeSelectionPolicy)
+	// Check default value
+	require.Equal(t, DefTiDBTiflashNodeSelectionPolicy, tidbTiFlashNodeSelectionPolicy.Value)
+
+	err := mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, "all_nodes")
+	require.NoError(t, err)
+	val, err := mock.GetGlobalSysVar(TiDBTiflashNodeSelectionPolicy)
+	require.NoError(t, err)
+	require.Equal(t, DefTiDBTiflashNodeSelectionPolicy, val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, "priority_local_zone_nodes")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBTiflashNodeSelectionPolicy)
+	require.NoError(t, err)
+	require.Equal(t, "priority_local_zone_nodes", val)
+
+	// Test MaxValue
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, "only_local_zone_nodes")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBTiflashNodeSelectionPolicy)
+	require.NoError(t, err)
+	require.Equal(t, "only_local_zone_nodes", val)
+
+	// Test Normal Value
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, DefTiDBTiflashNodeSelectionPolicy)
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, "random")
+	require.Error(t, fmt.Errorf(""))
+	val, err = mock.GetGlobalSysVar(TiDBTiflashNodeSelectionPolicy)
+	require.NoError(t, err)
+	require.Equal(t, DefTiDBTiflashNodeSelectionPolicy, val)
+}

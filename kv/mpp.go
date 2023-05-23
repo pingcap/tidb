@@ -16,6 +16,7 @@ package kv
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/tiflash"
 	"strconv"
 	"strings"
 	"time"
@@ -151,7 +152,7 @@ type MPPDispatchRequest struct {
 type MPPClient interface {
 	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration, tiflashcompute.DispatchPolicy) ([]MPPTaskMeta, error)
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration, tiflashcompute.DispatchPolicy, tiflash.NodeSelectionPolicy, func(error)) ([]MPPTaskMeta, error)
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
 	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppQueryID MPPQueryID, mppVersion MppVersion, memTracker *memory.Tracker) Response
 	// GetMPPStoreCount returns number of TiFlash stores if there is no error, else return (0, error)
