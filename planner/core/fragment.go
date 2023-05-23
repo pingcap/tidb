@@ -397,7 +397,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	return tasks, nil
 }
 
-// flipCTEReader fix the plan tree. Before we enter the func. The plan tree is like ParentPlan->CTEConsumer->ExchangeReceiver.
+// flipCTEReader fix the plan tree. In the func generateTasksForCTEReader, we create the plan tree like ParentPlan->CTEConsumer->ExchangeReceiver.
 // The CTEConsumer has no real meaning in MPP's execution. We prune it to make the plan become ParentPlan->ExchangeReceiver.
 // But the Receiver needs a schema since itself doesn't hold the schema. So the final plan become ParentPlan->ExchangeReceiver->CTEConsumer.
 func (f *Fragment) flipCTEReader(currentPlan PhysicalPlan) {
@@ -416,6 +416,9 @@ func (f *Fragment) flipCTEReader(currentPlan PhysicalPlan) {
 	currentPlan.SetChildren(newChildren...)
 }
 
+// genereateTasksForCTEReader generates the task leaf for cte reader.
+// A fragment's leaf must be Exchange and we could not lost the information of the CTE.
+// So we create the plan like ParentPlan->CTEReader->ExchangeReceiver.
 func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (err error) {
 	group := e.CTEGroups[cteReader.CTE.IDForStorage]
 	if group.StorageFragments == nil {
