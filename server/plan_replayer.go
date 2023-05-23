@@ -16,12 +16,12 @@ package server
 
 import (
 	"fmt"
-	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/config"
