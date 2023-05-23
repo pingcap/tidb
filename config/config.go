@@ -990,7 +990,7 @@ var defaultConf = Config{
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
-		ForceInitStats:                    false,
+		ForceInitStats:                    true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

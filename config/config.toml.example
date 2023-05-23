@@ -283,7 +283,7 @@ gogc = 100
 lite-init-stats = true
 
 # Whether to wait for init stats to finish before providing service during startup
-force-init-stats = false
+force-init-stats = true
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
