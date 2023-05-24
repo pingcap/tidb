@@ -2142,6 +2142,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		plannercore.DebugTraceReceivedCommand(s, cmdByte, stmtNode)
 	}
 
+	if err := s.validateStatementInTxn(stmtNode); err != nil {
+		return nil, err
+	}
+
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
 		return nil, err
 	}
@@ -2259,6 +2263,17 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 		return sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
 	}
 	return sessiontxn.GetTxnManager(s).OnStmtStart(ctx, node)
+}
+
+func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
+	vars := s.GetSessionVars()
+	switch stmtNode.(type) {
+	case *ast.ImportIntoStmt:
+		if vars.InTxn() {
+			return errors.New("cannot run IMPORT INTO in explicit transaction")
+		}
+	}
+	return nil
 }
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
