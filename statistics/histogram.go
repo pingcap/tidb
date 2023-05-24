@@ -825,7 +825,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount int64) (result float64) {
+func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount, topNNDV int64) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -945,6 +945,8 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	}
 	rowCount = totalPercent * hg.notNullCount()
 
+	// Upper bound logic
+
 	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
 	// a rather loose upper bound.
 	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
@@ -952,6 +954,17 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	// can produce a reasonable results in this scenario.
 	if rowCount > float64(modifyCount) && sctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
 		return float64(modifyCount)
+	}
+
+	if !sctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
+		histNDV := hg.NDV - topNNDV
+		var upperBound float64
+		if histNDV > 0 {
+			upperBound = hg.notNullCount() / float64(histNDV)
+		}
+		if rowCount > upperBound {
+			return upperBound
+		}
 	}
 	return rowCount
 }
