@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
@@ -63,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -2188,7 +2186,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context, isShow bool) (rows [][]
 				getRemainDurationForAnalyzeStatusHelper(sctx, startTime,
 					dbName, tableName, partitionName, processedRows)
 			if RemainDurationErr != nil {
-				log.Warn("get remaining duration failed", zap.Error(RemainDurationErr))
+				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(RemainDurationErr))
 			}
 			if RemainingDuration != nil {
 				remainDurationStr = execdetails.FormatDuration(*RemainingDuration)
@@ -2251,35 +2249,46 @@ func getRemainDurationForAnalyzeStatusHelper(
 		}
 		duration := time.Now().UTC().Sub(start)
 		var tid int64
-		if !intest.InTest {
-			is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-			tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
-			if err != nil {
-				return nil, percentage, totalCnt, err
-			}
-
-			if partitionName != "" {
-				pt := tb.Meta().GetPartitionInfo()
-				tid = pt.GetPartitionIDByName(partitionName)
-			} else {
-				tid = tb.Meta().ID
-			}
+		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+		tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+		if err != nil {
+			return nil, percentage, totalCnt, err
 		}
-		if tid > 0 || intest.InTest {
+		if partitionName != "" {
+			pt := tb.Meta().GetPartitionInfo()
+			tid = pt.GetPartitionIDByName(partitionName)
+		} else {
+			statsTable := statistics.PseudoTable(tb.Meta())
+			if statsTable.RealtimeCount > 0 {
+				totalCnt = float64(statsTable.RealtimeCount)
+				RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(statsTable.RealtimeCount, processedRows, duration)
+				return &RemainingDuration, percentage, totalCnt, nil
+			}
+			tid = tb.Meta().ID
+		}
+		if tid > 0 {
 			totalCnt, _ = internalutil.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
-			remainline := int64(totalCnt) - processedRows
-			if processedRows == 0 {
-				processedRows = 1
-			}
-			if duration == 0 {
-				duration = 1 * time.Second
-			}
-			i := float64(remainline) * duration.Seconds() / float64(processedRows)
-			log.Info("fuck", zap.Float64("i", i), zap.Int64("remainline", remainline), zap.Float64("totalCnt", totalCnt))
-			RemainingDuration = time.Duration(i)
+			RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(int64(totalCnt), processedRows, duration)
+			return &RemainingDuration, percentage, totalCnt, nil
 		}
 	}
 	return &RemainingDuration, percentage, totalCnt, nil
+}
+
+func calRemainInfoForAnalyzeStatus(totalCnt int64, processedRows int64, duration time.Duration) (time.Duration, float64) {
+	if totalCnt == 0 {
+		return 0, 100.0
+	}
+	remainLine := totalCnt - processedRows
+	if processedRows == 0 {
+		processedRows = 1
+	}
+	if duration == 0 {
+		duration = 1 * time.Second
+	}
+	i := float64(remainLine) * duration.Seconds() / float64(processedRows)
+	persentage := float64(processedRows) / float64(totalCnt)
+	return time.Duration(i), persentage
 }
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
