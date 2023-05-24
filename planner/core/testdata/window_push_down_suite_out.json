@@ -153,17 +153,16 @@
       {
         "SQL": "explain select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;",
         "Plan": [
-          "TableReader_77 8000.00 root  MppVersion: 1, data:ExchangeSender_76",
+          "TableReader_77 8000.00 root  data:ExchangeSender_76",
           "└─ExchangeSender_76 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_75 8000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
-          "    └─ExchangeReceiver_26 8000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_25 8000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "        └─Projection_21 8000.00 mpp[tiflash]  test.employee.deptid",
-          "          └─HashAgg_22 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:firstrow(test.employee.deptid)->test.employee.deptid",
-          "            └─ExchangeReceiver_24 8000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_23 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
-          "                └─HashAgg_13 8000.00 mpp[tiflash]  group by:test.employee.deptid, ",
-          "                  └─TableFullScan_20 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "    └─ExchangeReceiver_19 8000.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_18 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Projection_17 8000.00 mpp[tiflash]  test.employee.deptid",
+          "          └─HashAgg_12 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:firstrow(test.employee.deptid)->test.employee.deptid",
+          "            └─ExchangeReceiver_16 10000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "                └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -354,28 +353,16 @@
       {
         "SQL": "explain select *, row_number() over () from (select count(empid) from employee group by deptid) t",
         "Plan": [
-<<<<<<< HEAD:planner/core/testdata/window_push_down_suite_out.json
-          "TableReader_84 8000.00 root  data:ExchangeSender_83",
-          "└─ExchangeSender_83 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_82 8000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
-          "    └─Projection_19 8000.00 mpp[tiflash]  Column#5",
-          "      └─HashAgg_12 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#5",
-          "        └─ExchangeReceiver_18 10000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
-          "            └─TableFullScan_16 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
-=======
-          "TableReader_77 8000.00 root  MppVersion: 1, data:ExchangeSender_76",
+          "TableReader_77 8000.00 root  data:ExchangeSender_76",
           "└─ExchangeSender_76 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_75 8000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
-          "    └─ExchangeReceiver_26 8000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_25 8000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "        └─Projection_21 8000.00 mpp[tiflash]  Column#5",
-          "          └─HashAgg_22 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:sum(Column#8)->Column#5",
-          "            └─ExchangeReceiver_24 8000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_23 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
-          "                └─HashAgg_13 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#8",
-          "                  └─TableFullScan_20 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
->>>>>>> d14644bfe64 (planner: add missing exchange between hash-partition agg and single-partition window (#43981)):planner/core/casetest/testdata/window_push_down_suite_out.json
+          "    └─ExchangeReceiver_19 8000.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_18 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Projection_17 8000.00 mpp[tiflash]  Column#5",
+          "          └─HashAgg_12 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#5",
+          "            └─ExchangeReceiver_16 10000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "                └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
