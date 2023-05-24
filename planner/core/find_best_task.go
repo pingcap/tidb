@@ -1541,7 +1541,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 				})
 			}
 			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
-			if !is.Index.Global && cop.tablePlan != nil {
+			if !is.Index.Global && cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
 				is.schema.Append(&expression.Column{
 					RetType:  types.NewFieldType(mysql.TypeLonglong),

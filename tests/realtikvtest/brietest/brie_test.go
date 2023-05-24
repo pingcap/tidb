@@ -126,3 +126,14 @@ func TestCancel(t *testing.T) {
 		req.FailNow("the backup job doesn't be canceled")
 	}
 }
+
+// for https://github.com/pingcap/tidb/issues/44123
+func TestIndexLookUpWithStaticPrune(t *testing.T) {
+	tk := initTestKit(t)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint, b decimal(41,16), c set('a', 'b', 'c'), key idx_c(c)) partition by hash(a) partitions 4")
+	tk.MustExec("insert into t values (1,2.0,'c')")
+	tk.MustExec("select * from t order by b limit 5")
+}

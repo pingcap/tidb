@@ -3890,7 +3890,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	} else {
 		handleLen = 1
 	}
-	if is.Index.Global || len(is.ByItems) != 0 {
+	if is.Index.Global || (len(is.ByItems) != 0 && is.Table.Partition != nil && b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune()) {
 		// Should output pid col.
 		handleLen++
 	}
