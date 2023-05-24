@@ -326,7 +326,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		// handling the out-of-range part
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			cnt += c.Histogram.outOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount)
+			cnt += c.Histogram.outOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, int64(c.TopN.Num()))
 		}
 
 		if debugTrace {

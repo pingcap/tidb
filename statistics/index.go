@@ -363,7 +363,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 
 		// handling the out-of-range part
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			count += idx.Histogram.outOfRangeRowCount(sctx, &l, &r, modifyCount)
+			count += idx.Histogram.outOfRangeRowCount(sctx, &l, &r, modifyCount, int64(idx.TopN.Num()))
 		}
 
 		if debugTrace {
