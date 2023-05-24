@@ -1483,6 +1483,9 @@ type SessionVars struct {
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+
+	// ConsiderRealtimeStats xxx
+	ConsiderRealtimeStats bool
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -2056,7 +2059,7 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 // ConsiderRealtimeStatsForEstimation means whether the estimation
 // logic need to consider modify count and the realtime row count.
 func (s *SessionVars) ConsiderRealtimeStatsForEstimation() bool {
-	return false
+	return s.ConsiderRealtimeStats
 }
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.

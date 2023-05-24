@@ -121,12 +121,13 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
 	}
 	testKit.MustExec("analyze table t with 2000 samples")
+	testKit.MustExec("set @@tidb_opt_consider_realtime_stats = true")
 
 	h := dom.StatsHandle()
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(table.Meta())
-	sctx := mock.NewContext()
+	sctx := testKit.Session()
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
 	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
@@ -176,6 +177,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	}
 	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	testKit.MustExec("set @@tidb_opt_consider_realtime_stats = true")
 	testKit.MustExec("delete from t where a < 500")
 	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.Nil(t, h.Update(dom.InfoSchema()))
@@ -1117,6 +1119,7 @@ func TestIssue39593(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, index idx(a, b))")
+	testKit.MustExec("set @@tidb_opt_consider_realtime_stats = true")
 	is := dom.InfoSchema()
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)

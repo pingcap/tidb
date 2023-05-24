@@ -868,6 +868,8 @@ const (
 	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
+	// TiDBOptConsiderRealtimeStats xxx
+	TiDBOptConsiderRealtimeStats = "tidb_opt_consider_realtime_stats"
 )
 
 // TiDB vars that have only global scope
