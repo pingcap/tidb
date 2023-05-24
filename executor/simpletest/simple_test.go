@@ -21,11 +21,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-<<<<<<< HEAD:executor/simpletest/simple_test.go
-	"github.com/pingcap/tidb/executor"
-=======
 	"github.com/pingcap/tidb/errno"
->>>>>>> a98e98e2ab4 (executor: disable password validation for `tidb_auth_token` users (#44101)):executor/test/simpletest/simple_test.go
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -1109,37 +1106,6 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	require.True(t, statsTbl2.Pseudo)
 	h.SetLease(0)
 }
-<<<<<<< HEAD:executor/simpletest/simple_test.go
-=======
-
-func TestCreateUserWithLDAP(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com'")
-	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob'").Check(testkit.Rows("localhost bob uid=bob,ou=People,dc=example,dc=com authentication_ldap_simple"))
-
-	tk.MustExec("CREATE USER 'bob2'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob2,ou=People,dc=example,dc=com'")
-	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob2'").Check(testkit.Rows("localhost bob2 uid=bob2,ou=People,dc=example,dc=com authentication_ldap_sasl"))
-}
-
-func TestAlterUserWithLDAP(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// case 1: alter from a LDAP user to LDAP user
-	tk.MustExec("CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com'")
-	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob'").Check(testkit.Rows("localhost bob uid=bob,ou=People,dc=example,dc=com authentication_ldap_simple"))
-	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
-	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob'").Check(testkit.Rows("localhost bob uid=bob,ou=Manager,dc=example,dc=com authentication_ldap_sasl"))
-
-	// case 2: should ignore the password history
-	tk.MustExec("ALTER USER 'bob'@'localhost' PASSWORD HISTORY 5\n")
-	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com'")
-	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
-	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com'")
-	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
-}
 
 func TestIssue44098(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1156,4 +1122,3 @@ func TestIssue44098(t *testing.T) {
 	tk.MustGetErrCode("create user u5 identified with 'mysql_clear_password'", errno.ErrPluginIsNotLoaded)
 	tk.MustGetErrCode("create user u5 identified with 'tidb_session_token'", errno.ErrPluginIsNotLoaded)
 }
->>>>>>> a98e98e2ab4 (executor: disable password validation for `tidb_auth_token` users (#44101)):executor/test/simpletest/simple_test.go
