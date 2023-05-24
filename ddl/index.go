@@ -1847,6 +1847,10 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			// Every time we finish a partition, we update the progress of the job.
+			if rc := w.getReorgCtx(reorgInfo.Job.ID); rc != nil {
+				reorgInfo.Job.SetRowCount(rc.getRowCount())
+			}
 		}
 	} else {
 		//nolint:forcetypeassert
