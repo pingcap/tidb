@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -245,4 +246,132 @@ func TestGroupingSetsMergeUnitTest(t *testing.T) {
 	require.Equal(t, len(newGroupingSets[0][2]), 3)
 	// [d]
 	require.Equal(t, len(newGroupingSets[1][0]), 1)
+}
+
+func TestDistinctGroupingSets(t *testing.T) {
+	defer view.Stop()
+	// premise: every grouping item in grouping sets should be a col.
+	a := &Column{
+		UniqueID: 1,
+	}
+	b := &Column{
+		UniqueID: 2,
+	}
+	c := &Column{
+		UniqueID: 3,
+	}
+	d := &Column{
+		UniqueID: 4,
+	}
+	// case1: non-duplicated case.
+	// raw rollup expressions: [a,b,c,d]
+	rawRollupExprs := []Expression{a, b, c, d}
+	mockCtx := mock.NewContext()
+	deduplicateExprs, pos := DeduplicateGbyExpression(mockCtx, rawRollupExprs)
+
+	// nothing to deduplicate.
+	require.Equal(t, len(rawRollupExprs), len(deduplicateExprs))
+	require.Equal(t, len(pos), 4)
+	require.Equal(t, pos[0], 0)
+	require.Equal(t, pos[1], 1)
+	require.Equal(t, pos[2], 2)
+	require.Equal(t, pos[3], 3)
+
+	// rollup grouping sets.
+	gss := RollupGroupingSets(deduplicateExprs)
+	require.Equal(t, len(gss), 5) // len = N + 1 (N = len(raw rollup expression))
+	require.Equal(t, gss[0].AllColIDs().String(), "()")
+	require.Equal(t, gss[1].AllColIDs().String(), "(1)")
+	require.Equal(t, gss[2].AllColIDs().String(), "(1,2)")
+	require.Equal(t, gss[3].AllColIDs().String(), "(1-3)")
+	require.Equal(t, gss[4].AllColIDs().String(), "(1-4)")
+
+	size, _, _ := gss.DistinctSize()
+	require.Equal(t, size, 5)
+
+	// case2: duplicated case.
+	rawRollupExprs = []Expression{a, b, b, c}
+	deduplicateExprs, pos = DeduplicateGbyExpression(mockCtx, rawRollupExprs)
+	require.Equal(t, len(deduplicateExprs), 3)
+	require.Equal(t, deduplicateExprs[0].String(), "Column#1")
+	require.Equal(t, deduplicateExprs[1].String(), "Column#2")
+	require.Equal(t, deduplicateExprs[2].String(), "Column#3")
+	deduplicateColumns := make([]*Column, 0, len(deduplicateExprs))
+	for _, one := range deduplicateExprs {
+		deduplicateColumns = append(deduplicateColumns, one.(*Column))
+	}
+	require.Equal(t, len(pos), 4)
+	require.Equal(t, pos[0], 0)
+	require.Equal(t, pos[1], 1) // ref to column#2
+	require.Equal(t, pos[2], 1) // ref to column#2
+	require.Equal(t, pos[3], 2)
+
+	// restoreGbyExpression (some complicated expression will be projected as column before enter Expand)
+	// so cases like below is possible:
+	// GBY: a+b, b+a, c  ==>  Expand:  rollup with (column#1, column#1, c)
+	//                          +-----  proj: (a+b) as column#1
+	// so that why restore gby expression according to their pos is necessary.
+	restoreGbyExpressions := RestoreGbyExpression(deduplicateColumns, pos)
+	require.Equal(t, len(restoreGbyExpressions), 4)
+	require.Equal(t, restoreGbyExpressions[0].String(), "Column#1")
+	require.Equal(t, restoreGbyExpressions[1].String(), "Column#2")
+	require.Equal(t, restoreGbyExpressions[2].String(), "Column#2")
+	require.Equal(t, restoreGbyExpressions[3].String(), "Column#3")
+
+	// rollup grouping sets (build grouping sets on the restored gby expression, because all the
+	// complicated expressions have been projected as simple columns at this time).
+	gss = RollupGroupingSets(restoreGbyExpressions)
+	require.Equal(t, len(gss), 5) // len = N + 1 (N = len(raw rollup expression))
+	require.Equal(t, gss[0].AllColIDs().String(), "()")
+	require.Equal(t, gss[1].AllColIDs().String(), "(1)")
+	require.Equal(t, gss[2].AllColIDs().String(), "(1,2)")
+	require.Equal(t, gss[3].AllColIDs().String(), "(1,2)")
+	require.Equal(t, gss[4].AllColIDs().String(), "(1-3)")
+
+	// after gss is built on all the simple columns, get the distinct size if possible.
+	size, _, _ = gss.DistinctSize()
+	require.Equal(t, size, 4)
+
+	// case3: when grouping sets number bigger than 64, we will allocate gid incrementally rather bit map.
+	// here we inject the N as 3, so we can test the computation logic easily.
+	size, gids, id2Gids := gss.DistinctSizeWithThreshold(3)
+	require.Equal(t, size, 4)
+	require.Equal(t, len(gids), len(gss))
+	// assigned gids should be equal to the origin gss size.
+	// for this case:
+	// {}          ()      --> 0
+	// {a}         (1)     --> 1
+	// {a,b}       (1,2)   --> 2  --+---> has the same gid
+	// {a,b,b}     (1,2)   --> 2  __/
+	// {a,b,b,c}   (1,2,3) --> 3
+	require.Equal(t, gids[0], uint64(0))
+	require.Equal(t, gids[1], uint64(1))
+	require.Equal(t, gids[2], uint64(2))
+	require.Equal(t, gids[3], uint64(2))
+	require.Equal(t, gids[4], uint64(3))
+
+	// for every col id, mapping them to a slice of gid.
+	require.Equal(t, len(id2Gids), 3)
+	// 0 -->  when grouping(column#1), the corresponding affected gids should be {0}
+	//            +--- explanation: when grouping(a), a is only grouped when grouping id = 0.
+	require.Equal(t, len(id2Gids[1]), 1)
+	_, ok := id2Gids[1][0]
+	require.Equal(t, ok, true)
+	// 1 --> when grouping(column#2), the corresponding affected gids should be {0,1}
+	//            +--- explanation: when grouping(b), b is only grouped when grouping id = 0 or 1.
+	require.Equal(t, len(id2Gids[2]), 2)
+	_, ok = id2Gids[2][0]
+	require.Equal(t, ok, true)
+	_, ok = id2Gids[2][1]
+	require.Equal(t, ok, true)
+	// 2 --> when grouping(column#3), the corresponding affected gids should be {0,1,2}
+	//            +--- explanation: when grouping(c), c is only grouped when grouping id = 0 or 1 or 2.
+	require.Equal(t, len(id2Gids[3]), 3)
+	_, ok = id2Gids[3][0]
+	require.Equal(t, ok, true)
+	_, ok = id2Gids[3][1]
+	require.Equal(t, ok, true)
+	_, ok = id2Gids[3][2]
+	require.Equal(t, ok, true)
+	// column d is not in the grouping set columns, so it won't be here.
 }
