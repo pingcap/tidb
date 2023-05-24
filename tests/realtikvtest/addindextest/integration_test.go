@@ -413,6 +413,7 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	ddl.SetBackfillTaskChanSizeForTest(1024)
 }
 
+<<<<<<< HEAD
 type testCallback struct {
 	ddl.Callback
 	OnJobRunBeforeExported func(job *model.Job)
@@ -430,4 +431,26 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 	if c.OnJobRunBeforeExported != nil {
 		c.OnJobRunBeforeExported(job)
 	}
+=======
+func TestAddIndexFinishImportError(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 4; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/ingest/mockFinishImportErr", "1*return"))
+	tk.MustExec("alter table t add index idx(a);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/ingest/mockFinishImportErr"))
+	tk.MustExec("admin check table t;")
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	//nolint: forcetypeassert
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+>>>>>>> adbcb4efbf9 (ddl/ingest: create new local backend if necessary (#44140))
 }
