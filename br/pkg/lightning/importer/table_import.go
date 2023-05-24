@@ -232,6 +232,10 @@ func (tr *TableImporter) importTable(
 				return false, errors.Trace(err)
 			}
 		}
+
+		failpoint.Inject("FailAfterDuplicateDetection", func() {
+			panic("forcing failure after duplicate detection")
+		})
 	}
 
 	// 3. Drop indexes if add-index-by-sql is enabled

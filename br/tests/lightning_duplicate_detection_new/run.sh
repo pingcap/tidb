@@ -70,3 +70,19 @@ run_sql "SELECT count(*) FROM test.dup_detect"
 check_contains "count(*): 173"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
 check_contains "count(*): 50"
+
+# 5. Test fail after duplicate detection.
+cleanup
+
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/FailAfterDuplicateDetection=return()"
+run_lightning --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-replace.toml" --log-file "$LOG_FILE" || true
+
+unset GO_FAILPOINTS
+rm -f "$LOG_FILE"
+run_lightning_ctl --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-replace.toml" --checkpoint-error-ignore="\`test\`.\`dup_detect\`"
+run_lightning --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-replace.toml" --log-file "$LOG_FILE"
+run_sql "SELECT count(*) FROM test.dup_detect"
+check_contains "count(*): 173"
+run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
+check_contains "count(*): 227"
+check_not_contains "duplicate detection start" "$LOG_FILE"
