@@ -777,8 +777,11 @@ func cleanupSortPath(currentJobID int64) error {
 			logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
 			continue
 		}
-		// For now, there is only one task using ingest at the same time,
-		// so we can remove all the temp data of the previous jobs.
+		if _, ok := ingest.LitBackCtxMgr.Load(jobID); ok {
+			// The job is still running, skip it.
+			continue
+		}
+		// Remove all the temp data of the previous done jobs.
 		if jobID < currentJobID {
 			logutil.BgLogger().Info("[ddl-ingest] remove stale temp index data",
 				zap.Int64("jobID", jobID), zap.Int64("currentJobID", currentJobID))
