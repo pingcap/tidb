@@ -78,7 +78,7 @@ func (ti *DistImporter) Param() *importer.JobImportParam {
 }
 
 // Import implements JobImporter.Import.
-func (ti *DistImporter) Import() {
+func (*DistImporter) Import() {
 	// todo: remove it
 }
 
@@ -150,7 +150,7 @@ func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
 	return globalTask, nil
 }
 
-func (ti *DistImporter) taskKey() string {
+func (*DistImporter) taskKey() string {
 	// task key is meaningless to IMPORT INTO, so we use a random uuid.
 	return fmt.Sprintf("%s/%s", proto.LoadData, uuid.New().String())
 }
