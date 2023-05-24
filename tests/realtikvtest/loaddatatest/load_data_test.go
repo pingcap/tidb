@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +46,33 @@ func adjustOptions(options string, distributed bool) string {
 		options += ", __distributed=true"
 	}
 	return options
+}
+
+// NOTE: for negative cases, see TestImportIntoPrivilegeNegativeCase in privileges_test.go
+func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-multi-load",
+			Name:       "db.tbl.001.csv",
+		},
+		Content: []byte("1,test1,11\n" +
+			"2,test2,22"),
+	})
+	s.prepareAndUseDB("import_into")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec(`DROP USER IF EXISTS 'test_import_into'@'localhost';`)
+	s.tk.MustExec(`CREATE USER 'test_import_into'@'localhost';`)
+	s.tk.MustExec(`GRANT SELECT on import_into.t to 'test_import_into'@'localhost'`)
+	s.tk.MustExec(`GRANT UPDATE on import_into.t to 'test_import_into'@'localhost'`)
+	s.tk.MustExec(`GRANT INSERT on import_into.t to 'test_import_into'@'localhost'`)
+	s.tk.MustExec(`GRANT DELETE on import_into.t to 'test_import_into'@'localhost'`)
+	s.tk.MustExec(`GRANT ALTER on import_into.t to 'test_import_into'@'localhost'`)
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	sql := fmt.Sprintf(`import into t FROM 'gs://test-multi-load/db.tbl.*.csv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("select * from t").Check(testkit.Rows(
+		"1 test1 11", "2 test2 22"))
 }
 
 func (s *mockGCSSuite) TestBasicImportInto() {
@@ -72,7 +100,7 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 		Content: []byte("5,test5,55\n" +
 			"6,test6,66"),
 	})
-	s.prepareAndUseDB("load_data")
+	s.prepareAndUseDB("import_into")
 
 	allData := []string{"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44", "5 test5 55", "6 test6 66"}
 	cases := []struct {

@@ -303,15 +303,13 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 	}
 	// todo: use charset in options
 	var charset *string
-	if charset == nil {
-		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
-		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
-			context.Background(), variable.CharsetDatabase)
-		if err2 != nil {
-			logger.Error("LOAD DATA get charset failed", zap.Error(err2))
-		} else {
-			charset = &d
-		}
+	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
+	d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
+		context.Background(), variable.CharsetDatabase)
+	if err2 != nil {
+		logger.Error("LOAD DATA get charset failed", zap.Error(err2))
+	} else {
+		charset = &d
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
 
