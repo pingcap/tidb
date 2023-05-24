@@ -88,7 +88,7 @@ IndexLookUp	0.00	root
   └─TableRowIDScan	0.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where c1 = 1 and c2 > 1;
 id	estRows	task	access object	operator info
-Selection	1.00	root		gt(test.t1.c2, 1)
+Selection	0.50	root		gt(test.t1.c2, 1)
 └─Point_Get	1.00	root	table:t1	handle:1
 explain format = 'brief' select c1 from t1 where c1 in (select c2 from t2);
 id	estRows	task	access object	operator info
