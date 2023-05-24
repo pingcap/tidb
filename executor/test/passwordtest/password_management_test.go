@@ -103,9 +103,9 @@ func TestValidatePassword(t *testing.T) {
 		// "IDENTIFIED AS 'xxx'" is not affected by validation
 		tk.MustExec(fmt.Sprintf("ALTER USER testuser IDENTIFIED WITH '%s' AS ''", authPlugin))
 	}
-	tk.MustContainErrMsg("CREATE USER 'testuser1'@'localhost'", "Your password does not satisfy the current policy requirements")
-	tk.MustContainErrMsg("CREATE USER 'testuser1'@'localhost' IDENTIFIED WITH 'caching_sha2_password'", "Your password does not satisfy the current policy requirements")
-	tk.MustContainErrMsg("CREATE USER 'testuser1'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS ''", "Your password does not satisfy the current policy requirements")
+	tk.MustGetErrCode("CREATE USER 'testuser1'@'localhost'", errno.ErrNotValidPassword)
+	tk.MustGetErrCode("CREATE USER 'testuser1'@'localhost' IDENTIFIED WITH 'caching_sha2_password'", errno.ErrNotValidPassword)
+	tk.MustGetErrCode("CREATE USER 'testuser1'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS ''", errno.ErrNotValidPassword)
 
 	// if the username is '', all password can pass the check_user_name
 	subtk.MustQuery("SELECT user(), current_user()").Check(testkit.Rows("@localhost @localhost"))
