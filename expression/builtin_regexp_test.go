@@ -954,6 +954,7 @@ func TestRegexpReplace(t *testing.T) {
 		{nil, "bc", nil, nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil},
 		{"abc", "\\d*", "d", "dadbdcd", "0x64616462646364", nil},
+		{"abc", "\\d*$", "d", "abcd", "0x64616462646364", nil},
 		{"我们", "\\d*", "d", "d我d们d", "0x64C3A664CB8664E2809864C3A464C2BB64C2AC64", nil},
 		{"a", "", "a", nil, nil, ErrRegexp}, // issue 37988
 	}
@@ -1061,13 +1062,14 @@ func TestRegexpReplace(t *testing.T) {
 		{"", "^$", "cc", int64(1), int64(1), "cc", "0x6363", nil},
 		{"", "^$", "cc", int64(1), int64(2), "", "0x", nil},
 		{"", "^$", "cc", int64(1), int64(-1), "cc", "0x6363", nil},
-		{"abc", "\\d*", "p", 1, 2, "apbc", "0x", nil}, // index 15
-		{"我们", "\\d*", "p", 1, 2, "我p们", "0x", nil},
+		{"abc", "\\d*", "p", 1, 2, "apbc", "0x61706263", nil}, // index 15
+		{"abc", "\\d*$", "p", 1, 1, "abcp", "0x61626370", nil},
+		{"我们", "\\d*", "p", 1, 2, "我p们", "0xC3A670CB86E28098C3A4C2BBC2AC", nil},
 		// Some nullable input tests
 		{"", "^$", "a", nil, int64(1), nil, nil, nil},
 		{nil, "^$", "a", nil, nil, nil, nil, nil},
-		{"", nil, nil, nil, int64(1), nil, nil, nil},
-		{nil, nil, nil, int64(1), int64(1), nil, nil, nil}, // index 20
+		{"", nil, nil, nil, int64(1), nil, nil, nil}, // index 20
+		{nil, nil, nil, int64(1), int64(1), nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil, nil, nil},
 	}
 

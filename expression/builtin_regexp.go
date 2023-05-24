@@ -1170,15 +1170,16 @@ func (re *builtinRegexpReplaceFuncSig) replaceAllMatchedBinStr(reg *regexp.Regex
 
 		// Matched string is an empty string, and this circmstance should be specially treated,
 		// such as regexp_replace("abc", "\d*", "d") -> result: dadbdcd
-		if res[1] == 0 {
-			if len(trimmedBexpr) == 0 {
+		if res[0] == res[1] {
+			if len(trimmedBexpr) <= res[0] {
+				trimmedBexpr = []byte("")
 				break
 			}
 
-			// When the matched string is empty, we need to stride across the first character
-			utf8Len := stringutil.Utf8Len(trimmedBexpr[0])
-			replacedBStr = append(replacedBStr, trimmedBexpr[:utf8Len]...)
-			trimmedBexpr = trimmedBexpr[utf8Len:]
+			// When the matched string is empty, we need to stride across one character
+			utf8Len := stringutil.Utf8Len(trimmedBexpr[res[0]])
+			replacedBStr = append(replacedBStr, trimmedBexpr[res[0]:res[0]+utf8Len]...)
+			trimmedBexpr = trimmedBexpr[res[0]+utf8Len:]
 			continue
 		}
 		trimmedBexpr = trimmedBexpr[res[1]:]
@@ -1199,17 +1200,18 @@ func (re *builtinRegexpReplaceFuncSig) replaceOneMatchedBinStr(reg *regexp.Regex
 
 		occurrence -= 1
 		if occurrence != 0 {
-			if res[1] == 0 {
+			if res[0] == res[1] {
 				// Matched string is an empty string, and this circmstance should be specially treated,
 				// such as regexp_replace("abc", "\d*", "d") -> result: dadbdcd
-				if len(trimmedBexpr) == 0 {
+				if len(trimmedBexpr) <= res[0] {
+					trimmedBexpr = []byte("")
 					break
 				}
 
-				// When the matched string is empty, we need to stride across the first character
-				utf8Len := stringutil.Utf8Len(trimmedBexpr[0])
-				replacedBStr = append(replacedBStr, trimmedBexpr[:utf8Len]...)
-				trimmedBexpr = trimmedBexpr[utf8Len:]
+				// When the matched string is empty, we need to stride across one character
+				utf8Len := stringutil.Utf8Len(trimmedBexpr[res[0]])
+				replacedBStr = append(replacedBStr, trimmedBexpr[res[0]:res[0]+utf8Len]...)
+				trimmedBexpr = trimmedBexpr[res[0]+utf8Len:]
 			} else {
 				replacedBStr = append(replacedBStr, trimmedBexpr[:res[1]]...) // Copy prefix
 				trimmedBexpr = trimmedBexpr[res[1]:]
