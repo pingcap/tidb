@@ -1688,7 +1688,7 @@ func TestAbnormalIndexFeedback(t *testing.T) {
 			// The real count of `a = 1` is 0.
 			sql: "select * from t where a = 1 and b < 21",
 			hist: "column:2 ndv:20 totColSize:20\n" +
-				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 6 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
 				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
 				"num: 4 lower_bound: 14 upper_bound: 21 repeats: 0 ndv: 0",
 			rangeID: tblInfo.Columns[1].ID,
@@ -1699,9 +1699,9 @@ func TestAbnormalIndexFeedback(t *testing.T) {
 			// The real count of `b > 10` is 0.
 			sql: "select * from t where a = 2 and b > 10",
 			hist: "column:2 ndv:20 totColSize:20\n" +
-				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
-				"num: 6 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
-				"num: 8 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0 ndv: 0",
+				"num: 6 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 5 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0 ndv: 0",
 			rangeID: tblInfo.Columns[1].ID,
 			idxID:   tblInfo.Indices[0].ID,
 			eqCount: 3,
