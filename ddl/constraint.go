@@ -101,7 +101,7 @@ func (w *worker) onAddCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			}
 		})
 		if !skipCheck {
-			err = w.addTableCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta, job)
+			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta, job)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -232,7 +232,7 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 			}
 		})
 		if !skipCheck {
-			err = w.addTableCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
+			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
 			if err != nil {
 				// check constraint error will cancel the job, job state has been changed
 				// to cancelled in addTableCheckConstraint.
@@ -325,9 +325,9 @@ func checkTooLongConstraint(constr model.CIStr) error {
 	return nil
 }
 
-// findDependedColsMapInExpr returns a set of string, which indicates
-// the names of the columns that are depended by exprNode.
-func findDependedColsMapInExpr(expr ast.ExprNode) map[string]struct{} {
+// findDependentColsInExpr returns a set of string, which indicates
+// the names of the columns that are dependent by exprNode.
+func findDependentColsInExpr(expr ast.ExprNode) map[string]struct{} {
 	colNames := FindColumnNamesInExpr(expr)
 	colsMap := make(map[string]struct{}, len(colNames))
 	for _, depCol := range colNames {
@@ -336,7 +336,7 @@ func findDependedColsMapInExpr(expr ast.ExprNode) map[string]struct{} {
 	return colsMap
 }
 
-func (w *worker) addTableCheckConstraint(dbInfo *model.DBInfo, tableInfo *model.TableInfo, constr *model.ConstraintInfo, job *model.Job) error {
+func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tableInfo *model.TableInfo, constr *model.ConstraintInfo, job *model.Job) error {
 	// Get sessionctx from ddl context resource pool in ddl worker.
 	var sctx sessionctx.Context
 	sctx, err := w.sessPool.Get()

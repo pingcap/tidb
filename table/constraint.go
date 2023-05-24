@@ -33,7 +33,6 @@ import (
 // Constraint provides meta and map dependency describing a table constraint.
 type Constraint struct {
 	*model.ConstraintInfo
-
 	ConstraintExpr expression.Expression
 }
 
@@ -99,11 +98,6 @@ func buildConstraintExpression(ctx sessionctx.Context, exprString string,
 		return nil, errors.Trace(err)
 	}
 	return exprs[0], nil
-}
-
-// ToInfo get the ConstraintInfo of the Constraint
-func (c *Constraint) ToInfo() *model.ConstraintInfo {
-	return c.ConstraintInfo
 }
 
 // IsSupportedExpr checks whether the check constraint expression is allowed

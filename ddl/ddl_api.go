@@ -1990,7 +1990,7 @@ func BuildTableInfo(
 				return nil, err
 			}
 			var dependedCols []model.CIStr
-			dependedColsMap := findDependedColsMapInExpr(constr.Expr)
+			dependedColsMap := findDependentColsInExpr(constr.Expr)
 			if !constr.InColumn {
 				dependedCols = make([]model.CIStr, 0, len(dependedColsMap))
 				for k := range dependedColsMap {
@@ -8487,7 +8487,7 @@ func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constr
 		return err
 	}
 
-	dependedColsMap := findDependedColsMapInExpr(constr.Expr)
+	dependedColsMap := findDependentColsInExpr(constr.Expr)
 	dependedCols := make([]model.CIStr, 0, len(dependedColsMap))
 	for k := range dependedColsMap {
 		if _, ok := existedColsMap[k]; !ok {
