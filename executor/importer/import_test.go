@@ -104,10 +104,6 @@ func TestInitOptions(t *testing.T) {
 		{OptionStr: threadOption + "=-100", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: threadOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: batchSizeOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: batchSizeOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: batchSizeOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-
 		{OptionStr: maxWriteSpeedOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: maxWriteSpeedOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: maxWriteSpeedOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
@@ -159,7 +155,6 @@ func TestInitOptions(t *testing.T) {
 		analyzeOption+"='required', "+
 		distributedOption+"=false, "+
 		threadOption+"='100000', "+
-		batchSizeOption+"=2000, "+
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+"=true, "+
 		recordErrorsOption+"=123, "+
