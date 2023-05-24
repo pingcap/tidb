@@ -317,6 +317,46 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 	return nil
 }
 
+func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
+	if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge {
+		// Only used for the ingest mode job.
+		return nil
+	}
+	if reorgInfo.mergingTmpIdx {
+		// Merging the temporary index uses txn mode, so we don't need to consider the checkpoint.
+		return nil
+	}
+	if job.ReorgMeta.IsDistReorg {
+		// The global checkpoint is not used in distributed tasks.
+		return nil
+	}
+	if w.getReorgCtx(job.ID) != nil {
+		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
+		return nil
+	}
+	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
+	if ok {
+		// We create the checkpoint manager here because we need to wait for the reorg meta to be initialized.
+		if bc.GetCheckpointManager() == nil {
+			mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, reorgInfo.currElement.ID)
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl-ingest] create checkpoint manager failed", zap.Error(err))
+			}
+			bc.AttachCheckpointManager(mgr)
+		}
+	}
+	start, end, pid, err := getCheckpointReorgHandle(sess, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(start) > 0 && len(end) > 0 && pid > 0 {
+		reorgInfo.StartKey = start
+		reorgInfo.EndKey = end
+		reorgInfo.PhysicalTableID = pid
+	}
+	return nil
+}
+
 func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 	rc := w.getReorgCtx(job.ID)
 	rc.mu.Lock()
@@ -339,7 +379,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if totalCount > 0 {
 			progress = float64(addedRowCount) / float64(totalCount)
 		} else {
-			progress = 1
+			progress = 0
 		}
 		if progress > 1 {
 			progress = 1

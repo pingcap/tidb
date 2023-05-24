@@ -28,57 +28,58 @@ import (
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.IsTruthWithoutNull: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.IsFalsity: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.LogicOr: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETReal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETDuration}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDecimal, types.ETReal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt, types.ETDuration}},
 	},
 	ast.LogicXor: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
 	ast.Xor: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
 	ast.LogicAnd: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETReal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETDuration}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDecimal, types.ETReal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt, types.ETDuration}},
 	},
 	ast.Or: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
 	ast.BitNeg: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.UnaryNot: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.And: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
 	ast.RightShift: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 	},
 	ast.LeftShift: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 	},
 	ast.UnaryMinus: {
-		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
-		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETReal, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETDecimal, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt}},
 		{
 			retEvalType:   types.ETInt,
+			aesModes:      "aes-128-ecb",
 			childrenTypes: []types.EvalType{types.ETInt},
 			childrenFieldTypes: []*types.FieldType{
 				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
@@ -87,11 +88,11 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 		},
 	},
 	ast.IsNull: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDuration}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 }
 
