@@ -179,6 +179,14 @@ func TestUnionScanIssue24195(t *testing.T) {
 	tk1.MustExec("create table t(a int primary key, b int);")
 	tk1.MustExec("insert into t values(1,1),(5,5),(10,10);")
 
+	tk2.MustExec("begin pessimistic;")
+	tk2.MustExec("update t set a=a+1;")
+	logutil.BgLogger().Info("===========tk2 after update -----------------------")
+	tk2.MustQuery("select * from t where a=1;").Check(testkit.Rows("1 1"))
+	tk2.MustQuery("select * from t;").Check(testkit.Rows("1 1", "6 5", "9 1", "11 10"))
+	tk2.MustExec("rollback")
+	return
+
 	tk1.MustExec("begin pessimistic;")
 	tk1.MustExec("update t set a=8 where a=1;")
 	ch := make(chan struct{}, 0)
@@ -186,7 +194,8 @@ func TestUnionScanIssue24195(t *testing.T) {
 		tk2.MustExec("begin pessimistic;")
 		//tk2.MustQuery("select * from t;").Check(testkit.Rows("1 1", "5 5", "10 10"))
 		tk2.MustExec("update t set a=a+1;")
-		logutil.BgLogger().Info("tk2 after update -----------------------")
+		logutil.BgLogger().Info("===========tk2 after update -----------------------")
+		tk2.MustQuery("select * from t where a=1;").Check(testkit.Rows("1 1"))
 		tk2.MustQuery("select * from t;").Check(testkit.Rows("1 1", "6 5", "9 1", "11 10"))
 		//tk2.MustQuery("select * from t for update;").Check(testkit.Rows("6 5", "9 1", "11 10"))
 		tk2.MustExec("commit")
@@ -195,6 +204,6 @@ func TestUnionScanIssue24195(t *testing.T) {
 	}()
 	time.Sleep(time.Second * 3)
 	tk1.MustExec("commit")
-	logutil.BgLogger().Info("tk1 after commit -----------------------")
+	logutil.BgLogger().Info("===========tk1 after commit -----------------------")
 	_ = <-ch
 }

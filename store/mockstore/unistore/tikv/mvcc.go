@@ -1649,8 +1649,15 @@ func (store *MVCCStore) DeleteFileInRange(start, end []byte) {
 
 // Get implements the MVCCStore interface.
 func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]byte, error) {
+	logutil.BgLogger().Info("-------unistore get request 1",
+		zap.Uint64("startTs", version),
+		zap.String("key", hex.EncodeToString(key)),
+		zap.Bool("is-snapshotIsolation", reqCtx.isSnapshotIsolation()))
+
+	var lockPairs []*LockPair
 	if reqCtx.isSnapshotIsolation() {
-		lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
+		var err error
+		lockPairs, err = store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
 		if err != nil {
 			return nil, err
 		}
@@ -1667,6 +1674,12 @@ func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]b
 	if val == nil {
 		return nil, err
 	}
+	logutil.BgLogger().Info("-------unistore get request 2",
+		zap.Uint64("startTs", version),
+		zap.String("key", hex.EncodeToString(key)),
+		zap.Int("len-lockPairs", len(lockPairs)),
+		zap.Int("len-val", len(val)))
+
 	return safeCopy(val), err
 }
 
