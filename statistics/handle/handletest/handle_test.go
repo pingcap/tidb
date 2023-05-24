@@ -541,36 +541,57 @@ func TestLoadStats(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
+	colAID := tableInfo.Columns[0].ID
+	colCID := tableInfo.Columns[2].ID
+	idxBID := tableInfo.Indices[0].ID
 	h := dom.StatsHandle()
+
+	// Index/column stats are not be loaded after analyze.
 	stat := h.GetTableStats(tableInfo)
-	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
-	require.Greater(t, hg.Len(), 0)
-	cms := stat.Columns[tableInfo.Columns[0].ID].CMSketch
+	require.True(t, stat.Columns[colAID].IsAllEvicted())
+	hg := stat.Columns[colAID].Histogram
+	require.Equal(t, hg.Len(), 0)
+	cms := stat.Columns[colAID].CMSketch
 	require.Nil(t, cms)
-	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
-	require.Greater(t, hg.Len(), 0)
-	cms = stat.Indices[tableInfo.Indices[0].ID].CMSketch
-	topN := stat.Indices[tableInfo.Indices[0].ID].TopN
-	require.Greater(t, cms.TotalCount()+topN.TotalCount(), uint64(0))
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
+	require.True(t, stat.Indices[idxBID].IsAllEvicted())
+	hg = stat.Indices[idxBID].Histogram
+	require.Equal(t, hg.Len(), 0)
+	cms = stat.Indices[idxBID].CMSketch
+	topN := stat.Indices[idxBID].TopN
+	require.Equal(t, cms.TotalCount()+topN.TotalCount(), uint64(0))
+	require.True(t, stat.Columns[colCID].IsAllEvicted())
+	hg = stat.Columns[colCID].Histogram
 	require.Equal(t, 0, hg.Len())
-	cms = stat.Columns[tableInfo.Columns[2].ID].CMSketch
+	cms = stat.Columns[colCID].CMSketch
 	require.Nil(t, cms)
-	_, err = stat.ColumnEqualRowCount(testKit.Session(), types.NewIntDatum(1), tableInfo.Columns[2].ID)
+
+	// Column stats are loaded after they are needed.
+	_, err = stat.ColumnEqualRowCount(testKit.Session(), types.NewIntDatum(1), colAID)
+	require.NoError(t, err)
+	_, err = stat.ColumnEqualRowCount(testKit.Session(), types.NewIntDatum(1), colCID)
 	require.NoError(t, err)
 	require.NoError(t, h.LoadNeededHistograms())
 	stat = h.GetTableStats(tableInfo)
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
+	require.True(t, stat.Columns[colAID].IsFullLoad())
+	hg = stat.Columns[colAID].Histogram
 	require.Greater(t, hg.Len(), 0)
+	// We don't maintain cmsketch for pk.
+	cms = stat.Columns[colAID].CMSketch
+	require.Nil(t, cms)
+	require.True(t, stat.Columns[colCID].IsFullLoad())
+	hg = stat.Columns[colCID].Histogram
+	require.Greater(t, hg.Len(), 0)
+	cms = stat.Columns[colCID].CMSketch
+	require.NotNil(t, cms)
 
-	// assert index LoadNeededHistograms
-	idx := stat.Indices[tableInfo.Indices[0].ID]
-	idx.EvictAllStats()
+	// Index stats are loaded after they are needed.
+	idx := stat.Indices[idxBID]
 	hg = idx.Histogram
 	cms = idx.CMSketch
 	topN = idx.TopN
 	require.Equal(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.False(t, idx.IsEssentialStatsLoaded())
+	// IsInvalid adds the index to HistogramNeededItems.
 	idx.IsInvalid(testKit.Session(), false)
 	require.NoError(t, h.LoadNeededHistograms())
 	stat = h.GetTableStats(tableInfo)

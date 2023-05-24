@@ -1077,16 +1077,10 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(11,11,11),(12,12,12),(13,13,13),(14,14,14)")
 
 	h := dom.StatsHandle()
-	oriLease := h.Lease()
-	h.SetLease(1)
-	defer func() {
-		h.SetLease(oriLease)
-	}()
+
 	// analyze partition only sets options of partition
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
 	is := dom.InfoSchema()
-	tk.MustQuery("select * from t where b > 1 and c > 1")
-	require.NoError(t, h.LoadNeededHistograms())
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -1106,8 +1100,6 @@ PARTITION BY RANGE ( a ) (
 
 	// merge partition & table level options
 	tk.MustExec("analyze table t columns a,b with 0 topn, 2 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
-	require.NoError(t, h.LoadNeededHistograms())
 	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
 	require.Greater(t, p0.Version, lastVersion)
@@ -1142,8 +1134,6 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition only updates this partition, and set different collist
 	tk.MustExec("analyze table t partition p1 columns a,c with 1 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
-	require.NoError(t, h.LoadNeededHistograms())
 	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	p1 = h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
 	require.Equal(t, p0.Version, lastVersion)
@@ -1282,11 +1272,6 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	tk.MustExec("insert into t2 values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
 
 	h := dom.StatsHandle()
-	oriLease := h.Lease()
-	h.SetLease(1)
-	defer func() {
-		h.SetLease(oriLease)
-	}()
 
 	tk.MustExec("analyze table t1 with 1 topn, 3 buckets")
 	tk.MustExec("analyze table t2 with 0 topn, 2 buckets")
