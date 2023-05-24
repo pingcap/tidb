@@ -52,7 +52,7 @@ func adjustOptions(options string, distributed bool) string {
 func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-multi-load",
+			BucketName: "privilege-test",
 			Name:       "db.tbl.001.csv",
 		},
 		Content: []byte("1,test1,11\n" +
@@ -69,7 +69,7 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	s.tk.MustExec(`GRANT DELETE on import_into.t to 'test_import_into'@'localhost'`)
 	s.tk.MustExec(`GRANT ALTER on import_into.t to 'test_import_into'@'localhost'`)
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
-	sql := fmt.Sprintf(`import into t FROM 'gs://test-multi-load/db.tbl.*.csv?endpoint=%s'`, gcsEndpoint)
+	sql := fmt.Sprintf(`import into t FROM 'gs://privilege-test/db.tbl.*.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows(
 		"1 test1 11", "2 test2 22"))
