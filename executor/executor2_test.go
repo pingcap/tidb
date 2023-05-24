@@ -3,7 +3,6 @@ package executor_test
 import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
 	"testing"
 	"time"
 )
@@ -125,52 +124,61 @@ func TestUnionScanIssue24195(t *testing.T) {
 	tk3.MustExec("set tidb_txn_mode = 'pessimistic'")
 	tk3.MustExec("set @@tidb_constraint_check_in_place_pessimistic=on")
 
-	/*
-		// case-1: when primary key is clustered index
-		tk1.MustExec("set @@tidb_enable_clustered_index = 1;")
-		tk1.MustExec("drop table if exists t;")
-		tk1.MustExec("create table t (c1 varchar(10), c2 int, c3 char(20), primary key (c1, c2));")
-		tk1.MustExec("insert into t values ('tag', 10, 't'), ('cat', 20, 'c');")
-		tk2.MustExec("begin;")
-		tk2.MustExec("update t set c1=reverse(c1) where c1='tag';")
-		ch := make(chan struct{}, 0)
-		go func() {
-			tk3.MustExec("begin")
-			tk3.MustExec("insert into t values('dress',40,'d'),('tag', 10, 't');")
-			tk3.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "tag 10 t"))
-			ch <- struct{}{}
-		}()
-		time.Sleep(time.Second * 2)
-		tk2.MustExec("commit")
-		_ = <-ch
+	// MySQL case-1
+	///* s1 */ drop table if exists t;
+	///* s1 */ create table t (c1 varchar(10), c2 int, c3 char(20), primary key (c1, c2));
+	///* s1 */ insert into t values ('tag', 10, 't'), ('cat', 20, 'c');
+	///* s2 */ begin;
+	///* s2 */ update t set c1=reverse(c1) where c1='tag';
+	///* s3 */ begin;
+	///* s3 */ insert into t values('dress',40,'d'),('tag', 10, 't');
+	///* s2 */ commit;
+	///* s3 */ select * from t use index(primary) order by c1,c2; // MySQL returns [cat 20 c] [dress 40 d] [gat 10 t] [tag 10 t]
 
-		// case-2: when primary key is non-clustered index
-		tk1.MustExec("rollback")
-		tk2.MustExec("rollback")
-		tk3.MustExec("rollback")
-		tk1.MustExec("set @@tidb_enable_clustered_index = 0;")
-		tk1.MustExec("drop table if exists t;")
-		tk1.MustExec("create table t (c1 varchar(10), c2 int, c3 char(20), primary key (c1, c2));")
-		tk1.MustExec("insert into t values ('tag', 10, 't'), ('cat', 20, 'c');")
-		tk2.MustExec("begin;")
-		tk2.MustExec("update t set c1=reverse(c1) where c1='tag';")
-		tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "gat 10 t"))
-		ch = make(chan struct{}, 0)
-		go func() {
-			tk3.MustExec("begin")
-			tk3.MustExec("insert into t values('dress',40,'d'),('tag', 10, 't');")
-			tk3.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "tag 10 t", "tag 10 t"))
-			tk3.MustQuery("select * from t use index(primary) order by c1,c2 for update;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
-			tk3.MustExec("commit")
-			tk3.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
-			ch <- struct{}{}
-		}()
-		time.Sleep(time.Second * 2)
-		tk2.MustExec("commit")
-		_ = <-ch
-	*/
+	// case-1: when primary key is clustered index
+	tk1.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (c1 varchar(10), c2 int, c3 char(20), primary key (c1, c2));")
+	tk1.MustExec("insert into t values ('tag', 10, 't'), ('cat', 20, 'c');")
+	tk2.MustExec("begin;")
+	tk2.MustExec("update t set c1=reverse(c1) where c1='tag';")
+	ch := make(chan struct{}, 0)
+	go func() {
+		tk3.MustExec("begin")
+		tk3.MustExec("insert into t values('dress',40,'d'),('tag', 10, 't');")
+		tk3.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "tag 10 t"))
+		ch <- struct{}{}
+	}()
+	time.Sleep(time.Second * 2)
+	tk2.MustExec("commit")
+	_ = <-ch
 
-	// case-3: insert some record into the table，union scan can not merge when update clustered index set the value of the first record bigger than the second record;
+	// case-2: when primary key is non-clustered index
+	tk1.MustExec("rollback")
+	tk2.MustExec("rollback")
+	tk3.MustExec("rollback")
+	tk1.MustExec("set @@tidb_enable_clustered_index = 0;")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (c1 varchar(10), c2 int, c3 char(20), primary key (c1, c2));")
+	tk1.MustExec("insert into t values ('tag', 10, 't'), ('cat', 20, 'c');")
+	tk2.MustExec("begin;")
+	tk2.MustExec("update t set c1=reverse(c1) where c1='tag';")
+	tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "gat 10 t"))
+	ch = make(chan struct{}, 0)
+	go func() {
+		tk3.MustExec("begin")
+		tk3.MustExec("insert into t values('dress',40,'d'),('tag', 10, 't');")
+		tk3.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "tag 10 t", "tag 10 t"))
+		tk3.MustQuery("select * from t use index(primary) order by c1,c2 for update;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
+		tk3.MustExec("commit")
+		tk3.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
+		ch <- struct{}{}
+	}()
+	time.Sleep(time.Second * 2)
+	tk2.MustExec("commit")
+	_ = <-ch
+
+	// case-3:
 	tk1.MustExec("rollback")
 	tk2.MustExec("rollback")
 	tk3.MustExec("rollback")
@@ -178,32 +186,19 @@ func TestUnionScanIssue24195(t *testing.T) {
 	tk1.MustExec("drop table if exists t;")
 	tk1.MustExec("create table t(a int primary key, b int);")
 	tk1.MustExec("insert into t values(1,1),(5,5),(10,10);")
-
-	tk2.MustExec("begin pessimistic;")
-	tk2.MustExec("update t set a=a+1;")
-	logutil.BgLogger().Info("===========tk2 after update -----------------------")
-	tk2.MustQuery("select * from t where a=1;").Check(testkit.Rows("1 1"))
-	tk2.MustQuery("select * from t;").Check(testkit.Rows("1 1", "6 5", "9 1", "11 10"))
-	tk2.MustExec("rollback")
-	return
-
 	tk1.MustExec("begin pessimistic;")
 	tk1.MustExec("update t set a=8 where a=1;")
-	ch := make(chan struct{}, 0)
+	ch = make(chan struct{}, 0)
 	go func() {
 		tk2.MustExec("begin pessimistic;")
-		//tk2.MustQuery("select * from t;").Check(testkit.Rows("1 1", "5 5", "10 10"))
 		tk2.MustExec("update t set a=a+1;")
-		logutil.BgLogger().Info("===========tk2 after update -----------------------")
-		tk2.MustQuery("select * from t where a=1;").Check(testkit.Rows("1 1"))
-		tk2.MustQuery("select * from t;").Check(testkit.Rows("1 1", "6 5", "9 1", "11 10"))
-		//tk2.MustQuery("select * from t for update;").Check(testkit.Rows("6 5", "9 1", "11 10"))
+		tk2.MustQuery("select * from t;").Check(testkit.Rows("1 1", "6 5", "9 1", "11 10")) // This is same with MySQL.
+		tk2.MustQuery("select * from t for update;").Check(testkit.Rows("6 5", "9 1", "11 10"))
 		tk2.MustExec("commit")
 		tk2.MustQuery("select * from t;").Check(testkit.Rows("6 5", "9 1", "11 10"))
 		ch <- struct{}{}
 	}()
 	time.Sleep(time.Second * 3)
 	tk1.MustExec("commit")
-	logutil.BgLogger().Info("===========tk1 after commit -----------------------")
 	_ = <-ch
 }
