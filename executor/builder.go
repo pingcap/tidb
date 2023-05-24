@@ -3890,7 +3890,7 @@ func needExtraCol(is *plannercore.PhysicalIndexScan) bool {
 	if is.Index.Global {
 		return true
 	}
-	// has embeded limit, should return physical table id
+	// has embedded limit, should return physical table id
 	if len(is.ByItems) != 0 && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return true
 	}
