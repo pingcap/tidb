@@ -319,10 +319,10 @@ func TestPlanStatsStatusRecord(t *testing.T) {
 			continue
 		}
 		for _, status := range usedStatsForTbl.IndexStatsLoadStatus {
-			require.Equal(t, status, "allEvicted")
+			require.Equal(t, "unInitialized", status)
 		}
 		for _, status := range usedStatsForTbl.ColumnStatsLoadStatus {
-			require.Equal(t, status, "allEvicted")
+			require.Equal(t, "unInitialized", status)
 		}
 	}
 }
