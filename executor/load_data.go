@@ -626,14 +626,7 @@ func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum) error
 	if row == nil {
 		return nil
 	}
-	err := w.addRecord(ctx, row)
-	if err != nil {
-		if w.controller.Restrictive {
-			return err
-		}
-		w.handleWarning(err)
-	}
-	return nil
+	return w.addRecord(ctx, row)
 }
 
 // GetInfilePath get infile path.
