@@ -921,6 +921,8 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	if err != nil {
 		if !errorIsRetryable(err, job) {
+			logutil.BgLogger().Warn("[ddl] run reorg job failed, convert job to rollback",
+				zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
