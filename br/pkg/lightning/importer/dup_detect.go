@@ -269,9 +269,6 @@ func (d *dupDetector) addKeysByChunk(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
 	kvEncoder, err := d.rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:   d.rc.cfg.TiDB.SQLMode,
