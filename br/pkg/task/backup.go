@@ -325,7 +325,17 @@ func (cfg *BackupConfig) Hash() ([]byte, error) {
 		LastBackupTS:  cfg.LastBackupTS,
 		IgnoreStats:   cfg.IgnoreStats,
 		UseCheckpoint: cfg.UseCheckpoint,
-		Config:        cfg.Config,
+		Config: Config{
+			BackendOptions: cfg.BackendOptions,
+			Storage:        cfg.Storage,
+			PD:             cfg.PD,
+			SendCreds:      cfg.SendCreds,
+			CaseSensitive:  cfg.CaseSensitive,
+			NoCreds:        cfg.NoCreds,
+			FilterStr:      cfg.FilterStr,
+			CipherInfo:     cfg.CipherInfo,
+			KeyspaceName:   cfg.KeyspaceName,
+		},
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
