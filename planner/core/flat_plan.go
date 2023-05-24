@@ -200,7 +200,7 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	return res
 }
 
-func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
+func (*FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
 	// Some operators are not initialized and given an ExplainID. So their explain IDs are "_0"
 	// (when in EXPLAIN FORMAT = 'brief' it will be ""), we skip such operators.
 	// Examples: Explain, Execute
