@@ -779,6 +779,8 @@ func cleanupSortPath(currentJobID int64) error {
 		}
 		if _, ok := ingest.LitBackCtxMgr.Load(jobID); ok {
 			// The job is still running, skip it.
+			logutil.BgLogger().Warn("[ddl-ingest] the job is still running, skip removing it",
+				zap.Int64("running job ID", jobID))
 			continue
 		}
 		// Remove all the temp data of the previous done jobs.
