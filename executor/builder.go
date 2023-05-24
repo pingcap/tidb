@@ -3882,6 +3882,21 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	return indexReq, err
 }
 
+func needExtraCol(is *plannercore.PhysicalIndexScan) bool {
+	if is.Table.Partition == nil {
+		return false
+	}
+	// has global index, should return pid
+	if is.Index.Global {
+		return true
+	}
+	// has embeded limit, should return physical table id
+	if len(is.ByItems) != 0 && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return true
+	}
+	return false
+}
+
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	var handleLen int
@@ -3890,8 +3905,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	} else {
 		handleLen = 1
 	}
-	if is.Index.Global || (len(is.ByItems) != 0 && is.Table.Partition != nil && b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune()) {
-		// Should output pid col.
+	if needExtraCol(is) {
 		handleLen++
 	}
 	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
@@ -4067,7 +4081,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
 			handleLen := ts.HandleCols.NumCols()
-			if len(is.ByItems) != 0 && is.Table.Partition != nil && b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			if needExtraCol(is) {
 				handleLen += 1
 			}
 			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.PartialPlans[i])
