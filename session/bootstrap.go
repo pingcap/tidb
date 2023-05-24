@@ -869,11 +869,13 @@ const (
 	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
 	// if it's upgraded from an existing old version cluster.
 	version144 = 144
+	// version 145 to only add a version make we know when we support upgrade state.
+	version145 = 145
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version144
+var currentBootstrapVersion int64 = version145
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1006,6 +1008,7 @@ var (
 		upgradeToVer142,
 		upgradeToVer143,
 		upgradeToVer144,
+		// We will only use upgradeToVer145 to differentiate versions, so it is skipped here.
 	}
 )
 
@@ -1064,7 +1067,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 }
 
 // SupportUpgradeStateVer is exported for testing.
-var SupportUpgradeStateVer = version144
+var SupportUpgradeStateVer = version145
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
