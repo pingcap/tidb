@@ -428,6 +428,11 @@ func TestLoadHist(t *testing.T) {
 }
 
 func TestInitStats(t *testing.T) {
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+	}()
+	config.GetGlobalConfig().Performance.LiteInitStats = false
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -458,6 +463,11 @@ func TestInitStats(t *testing.T) {
 }
 
 func TestInitStatsVer2(t *testing.T) {
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+	}()
+	config.GetGlobalConfig().Performance.LiteInitStats = false
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
