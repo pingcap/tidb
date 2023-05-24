@@ -313,23 +313,36 @@ func (cfg *BackupConfig) Adjust() {
 	}
 }
 
+type immutableBackupConfig struct {
+	LastBackupTS  uint64 `json:"last-backup-ts"`
+	IgnoreStats   bool   `json:"ignore-stats"`
+	UseCheckpoint bool   `json:"use-checkpoint"`
+
+	storage.BackendOptions
+	Storage      string              `json:"storage"`
+	PD           []string            `json:"pd"`
+	SendCreds    bool                `json:"send-credentials-to-tikv"`
+	NoCreds      bool                `json:"no-credentials"`
+	FilterStr    []string            `json:"filter-strings"`
+	CipherInfo   backuppb.CipherInfo `json:"cipher"`
+	KeyspaceName string              `json:"keyspace-name"`
+}
+
 // a rough hash for checkpoint checker
 func (cfg *BackupConfig) Hash() ([]byte, error) {
-	config := &BackupConfig{
+	config := &immutableBackupConfig{
 		LastBackupTS:  cfg.LastBackupTS,
 		IgnoreStats:   cfg.IgnoreStats,
 		UseCheckpoint: cfg.UseCheckpoint,
-		Config: Config{
-			BackendOptions: cfg.BackendOptions,
-			Storage:        cfg.Storage,
-			PD:             cfg.PD,
-			SendCreds:      cfg.SendCreds,
-			CaseSensitive:  cfg.CaseSensitive,
-			NoCreds:        cfg.NoCreds,
-			FilterStr:      cfg.FilterStr,
-			CipherInfo:     cfg.CipherInfo,
-			KeyspaceName:   cfg.KeyspaceName,
-		},
+
+		BackendOptions: cfg.BackendOptions,
+		Storage:        cfg.Storage,
+		PD:             cfg.PD,
+		SendCreds:      cfg.SendCreds,
+		NoCreds:        cfg.NoCreds,
+		FilterStr:      cfg.FilterStr,
+		CipherInfo:     cfg.CipherInfo,
+		KeyspaceName:   cfg.KeyspaceName,
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
