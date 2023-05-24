@@ -5687,6 +5687,7 @@ def go_deps():
     )
     go_repository(
         name = "io_etcd_go_etcd_pkg_v3",
+        build_extra_args = ["-exclude=tests,grpc_testing"],
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/pkg/v3",
         sum = "h1:YZUojdoPhOyl5QILYnR8LTUbbNefu/sV4ma+ZMr2tto=",
@@ -5694,7 +5695,6 @@ def go_deps():
     )
     go_repository(
         name = "io_etcd_go_etcd_raft_v3",
-        build_extra_args = ["-exclude=tests"],
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/raft/v3",
         sum = "h1:uCC37qOXqBvKqTGHGyhASsaCsnTuJugl1GvneJNwHWo=",
