@@ -174,6 +174,9 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		if job.IsPausing() || hasSysDB(job) {
 			return true, nil
 		}
+		if job.IsPaused() {
+			return false, nil
+		}
 		var errs []error
 		// During binary upgrade, pause all running DDL jobs
 		errs, err = PauseJobsBySystem(sess.Session(), []int64{job.ID})
