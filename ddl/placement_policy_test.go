@@ -89,8 +89,7 @@ func checkExistTableBundlesInPD(t *testing.T, do *domain.Domain, dbName string, 
 }
 
 func checkWaitingGCTableBundlesInPD(t *testing.T, do *domain.Domain, tblInfo *model.TableInfo) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	require.NoError(t, kv.RunInNewTxn(ctx, do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
 		checkTableBundlesInPD(t, do, tt, tblInfo, true)
 		return nil
@@ -98,8 +97,7 @@ func checkWaitingGCTableBundlesInPD(t *testing.T, do *domain.Domain, tblInfo *mo
 }
 
 func checkWaitingGCPartitionBundlesInPD(t *testing.T, do *domain.Domain, partitions []model.PartitionDefinition) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	require.NoError(t, kv.RunInNewTxn(ctx, do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
 		checkPartitionBundlesInPD(t, do.InfoSchema(), tt, partitions, true)
 		return nil
@@ -1666,10 +1664,6 @@ func TestAddPartitionWithPlacement(t *testing.T) {
 }
 
 func TestTruncateTableWithPlacement(t *testing.T) {
-<<<<<<< HEAD
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-=======
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
@@ -1681,8 +1675,8 @@ func TestTruncateTableWithPlacement(t *testing.T) {
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
->>>>>>> f7ccac1c230 (ddl: fix the placement behavior when drop/truncate partitions (#44129))
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1808,73 +1802,8 @@ func TestTruncateTablePartitionWithPlacement(t *testing.T) {
 		}
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
-<<<<<<< HEAD
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t0,t1")
-	tk.MustExec("drop placement policy if exists p1")
-	tk.MustExec("drop placement policy if exists p2")
-
-	tk.MustExec("create placement policy p1 primary_region='r0' regions='r0'")
-	defer tk.MustExec("drop placement policy if exists p1")
-
-	tk.MustExec("create placement policy p2 primary_region='r1' regions='r1'")
-	defer tk.MustExec("drop placement policy if exists p2")
-
-	tk.MustExec("create table t0 (id int)")
-	defer tk.MustExec("drop table if exists t0")
-
-	tk.MustExec("create table t1 (id int) placement policy p1")
-	defer tk.MustExec("drop table if exists t1")
-
-	tk.MustExec(`create table t2 (id int) placement policy p1 PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100) placement policy p2,
-        PARTITION p1 VALUES LESS THAN (1000)
-	)`)
-	defer tk.MustExec("drop table if exists t2")
-
-	tk.MustExec("truncate table t2")
-
-	is := dom.InfoSchema()
-	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
-	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.NoError(t, err)
-
-	bundles, err := infosync.GetAllRuleBundles(context.TODO())
-	require.NoError(t, err)
-	require.Equal(t, 5, len(bundles))
-
-	gcWorker, err := gcworker.NewMockGCWorker(store)
-	require.NoError(t, err)
-	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
-
-	bundles, err = infosync.GetAllRuleBundles(context.TODO())
-	require.NoError(t, err)
-	require.Equal(t, 3, len(bundles))
-	bundlesMap := make(map[string]*placement.Bundle)
-	for _, bundle := range bundles {
-		bundlesMap[bundle.ID] = bundle
-	}
-	_, ok := bundlesMap[placement.GroupID(t1.Meta().ID)]
-	require.True(t, ok)
-
-	_, ok = bundlesMap[placement.GroupID(t2.Meta().ID)]
-	require.True(t, ok)
-
-	_, ok = bundlesMap[placement.GroupID(t2.Meta().Partition.Definitions[0].ID)]
-	require.True(t, ok)
-}
-
-func TestTruncateTablePartitionWithPlacement(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-=======
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
->>>>>>> f7ccac1c230 (ddl: fix the placement behavior when drop/truncate partitions (#44129))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1988,13 +1917,9 @@ func TestDropTableWithPlacement(t *testing.T) {
 		}
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
-<<<<<<< HEAD
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-=======
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
->>>>>>> f7ccac1c230 (ddl: fix the placement behavior when drop/truncate partitions (#44129))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2048,7 +1973,9 @@ func TestDropPartitionWithPlacement(t *testing.T) {
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
