@@ -1547,7 +1547,7 @@ func TestApplyKVFilesWithBatchMethod5(t *testing.T) {
 	}
 	var applyWg sync.WaitGroup
 	applyFunc := func(
-		files []*restore.LogDataFileInfo,
+		files []*backuppb.DataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1568,7 +1568,7 @@ func TestApplyKVFilesWithBatchMethod5(t *testing.T) {
 
 	restore.ApplyKVFilesWithBatchMethod(
 		context.TODO(),
-		toLogDataFileInfoIter(iter.FromSlice(ds)),
+		iter.FromSlice(ds),
 		2,
 		1500,
 		applyFunc,
@@ -1581,7 +1581,7 @@ func TestApplyKVFilesWithBatchMethod5(t *testing.T) {
 	types = make([]backuppb.FileType, 0)
 	restore.ApplyKVFilesWithSingelMethod(
 		context.TODO(),
-		toLogDataFileInfoIter(iter.FromSlice(ds)),
+		iter.FromSlice(ds),
 		applyFunc,
 		&applyWg,
 	)
