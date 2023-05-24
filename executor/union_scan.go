@@ -246,27 +246,37 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			var snapshotHandle kv.Handle
-			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
+			ignore, err := us.isSnapshotRowConflictWithMemBufRow(row)
 			if err != nil {
 				return nil, err
 			}
-			var checkKey kv.Key
-			if us.physTblIDIdx >= 0 {
-				tblID := row.GetInt64(us.physTblIDIdx)
-				checkKey = tablecodec.EncodeRowKeyWithHandle(tblID, snapshotHandle)
-			} else {
-				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
-			}
-			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
-				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
-				// commit, but for simplicity, we don't handle it here.
+			if ignore {
 				continue
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
 		}
 	}
 	return us.snapshotRows[0], nil
+}
+
+func (us *UnionScanExec) isSnapshotRowConflictWithMemBufRow(row chunk.Row) (bool, error) {
+	snapshotHandle, err := us.belowHandleCols.BuildHandle(row)
+	if err != nil {
+		return false, err
+	}
+	var checkKey kv.Key
+	if us.physTblIDIdx >= 0 {
+		tblID := row.GetInt64(us.physTblIDIdx)
+		checkKey = tablecodec.EncodeRowKeyWithHandle(tblID, snapshotHandle)
+	} else {
+		checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+	}
+	if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
+		// If snapshot row handle appears in txn's mem-buffer, ignore it.
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func (us *UnionScanExec) getAddedRow() []types.Datum {
