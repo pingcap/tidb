@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -71,6 +72,7 @@ func newImportIntoExec(b baseExecutor, userSctx sessionctx.Context, plan *planne
 // Next implements the Executor Next interface.
 func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.maxChunkSize)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalImportInto)
 	if e.detachHandled {
 		// need to return an empty req to indicate all results have been written
 		return nil
