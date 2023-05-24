@@ -1408,17 +1408,17 @@ Ingest failed: %s
 
 ["ddl:8260"]
 error = '''
-Job [%v] can't be paused now
+Job [%v] can't be paused: %s
 '''
 
 ["ddl:8261"]
 error = '''
-Job [%v] can't be resumed
+Job [%v] can't be resumed: %s
 '''
 
 ["ddl:8262"]
 error = '''
-Job [%v] already paused
+Job [%v] has already been paused
 '''
 
 ["domain:8027"]
@@ -1579,6 +1579,11 @@ Foreign key cascade delete/update exceeds max depth of %v.
 ["executor:3016"]
 error = '''
 The password for anonymous user cannot be expired.
+'''
+
+["executor:3024"]
+error = '''
+Query execution was interrupted, maximum statement execution time exceeded
 '''
 
 ["executor:3523"]
