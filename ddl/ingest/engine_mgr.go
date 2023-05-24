@@ -36,7 +36,7 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 
 	var info string
 	en, exist := bc.Load(indexID)
-	if !exist {
+	if !exist || en.writerCount == 0 {
 		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
 		ok := bc.MemRoot.CheckConsume(StructSizeEngineInfo + engineCacheSize)
 		if !ok {
