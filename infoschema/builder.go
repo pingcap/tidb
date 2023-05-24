@@ -248,6 +248,11 @@ func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.Schema
 		return nil, errors.Trace(err)
 	}
 
+	if diff.Type == model.ActionTruncateTable {
+		b.deleteBundle(b.is, diff.OldTableID)
+		b.markTableBundleShouldUpdate(diff.TableID)
+	}
+
 	for _, opt := range diff.AffectedOpts {
 		if diff.Type == model.ActionTruncateTablePartition {
 			// Reduce the impact on DML when executing partition DDL. eg.
@@ -255,8 +260,6 @@ func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.Schema
 			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			tblIDs = append(tblIDs, opt.OldTableID)
 			b.markPartitionBundleShouldUpdate(opt.TableID)
-		} else {
-			b.markTableBundleShouldUpdate(opt.TableID)
 		}
 		b.deleteBundle(b.is, opt.OldTableID)
 	}
@@ -269,6 +272,7 @@ func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff)
 		return nil, errors.Trace(err)
 	}
 
+	b.markTableBundleShouldUpdate(diff.TableID)
 	for _, opt := range diff.AffectedOpts {
 		b.deleteBundle(b.is, opt.OldTableID)
 	}
