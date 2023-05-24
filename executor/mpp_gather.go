@@ -16,10 +16,12 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -99,6 +101,10 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		err = e.fixTaskForCTEStorageAndReader(dagReq.RootExecutor, mppTask.Meta)
+		if err != nil {
+			return err
+		}
 		pbData, err := dagReq.Marshal()
 		if err != nil {
 			return errors.Trace(err)
@@ -123,6 +129,88 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 			State:      kv.MppTaskReady,
 		}
 		e.mppReqs = append(e.mppReqs, req)
+	}
+	return nil
+}
+
+// fixTaskForCTEStorageAndReader fixes the upstream/downstream tasks for the producers and consumers.
+// After we split the fragments. A CTE producer in the fragment will holds all the task address of the consumers.
+// For example, the producer has two task on node_1 and node_2. As we know that each consumer also has two task on the same nodes(node_1 and node_2)
+// We need to prune address of node_2 for producer's task on node_1 since we just want the producer task on the node_1 only send to the consumer tasks on the node_1.
+// And the same for the task on the node_2.
+// And the same for the consumer task. We need to prune the unnecessary task address of its producer tasks(i.e. the downstream tasks).
+func (e *MPPGather) fixTaskForCTEStorageAndReader(exec *tipb.Executor, meta kv.MPPTaskMeta) error {
+	children := make([]*tipb.Executor, 0, 2)
+	switch exec.Tp {
+	case tipb.ExecType_TypeTableScan, tipb.ExecType_TypePartitionTableScan, tipb.ExecType_TypeIndexScan:
+	case tipb.ExecType_TypeSelection:
+		children = append(children, exec.Selection.Child)
+	case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
+		children = append(children, exec.Aggregation.Child)
+	case tipb.ExecType_TypeTopN:
+		children = append(children, exec.TopN.Child)
+	case tipb.ExecType_TypeLimit:
+		children = append(children, exec.Limit.Child)
+	case tipb.ExecType_TypeExchangeSender:
+		children = append(children, exec.ExchangeSender.Child)
+		if len(exec.ExchangeSender.UpstreamCteTaskMeta) == 0 {
+			break
+		}
+		actualUpStreamTasks := make([][]byte, 0, len(exec.ExchangeSender.UpstreamCteTaskMeta))
+		actualTIDs := make([]int64, 0, len(exec.ExchangeSender.UpstreamCteTaskMeta))
+		for _, tasksFromOneConsumer := range exec.ExchangeSender.UpstreamCteTaskMeta {
+			for _, taskBytes := range tasksFromOneConsumer.EncodedTasks {
+				taskMeta := &mpp.TaskMeta{}
+				err := taskMeta.Unmarshal(taskBytes)
+				if err != nil {
+					return err
+				}
+				if taskMeta.Address != meta.GetAddress() {
+					continue
+				}
+				actualUpStreamTasks = append(actualUpStreamTasks, taskBytes)
+				actualTIDs = append(actualTIDs, taskMeta.TaskId)
+			}
+		}
+		logutil.BgLogger().Warn("refine tunnel for cte producer task", zap.String("the final tunnel", fmt.Sprintf("up stream consumer tasks: %v", actualTIDs)))
+		exec.ExchangeSender.EncodedTaskMeta = actualUpStreamTasks
+	case tipb.ExecType_TypeExchangeReceiver:
+		if len(exec.ExchangeReceiver.OriginalCtePrdocuerTaskMeta) == 0 {
+			break
+		}
+		exec.ExchangeReceiver.EncodedTaskMeta = [][]byte{}
+		actualTIDs := make([]int64, 0, 4)
+		for _, taskBytes := range exec.ExchangeReceiver.OriginalCtePrdocuerTaskMeta {
+			taskMeta := &mpp.TaskMeta{}
+			err := taskMeta.Unmarshal(taskBytes)
+			if err != nil {
+				return err
+			}
+			if taskMeta.Address != meta.GetAddress() {
+				continue
+			}
+			exec.ExchangeReceiver.EncodedTaskMeta = append(exec.ExchangeReceiver.EncodedTaskMeta, taskBytes)
+			actualTIDs = append(actualTIDs, taskMeta.TaskId)
+		}
+		logutil.BgLogger().Warn("refine tunnel for cte consumer task", zap.String("the final tunnel", fmt.Sprintf("down stream producer task: %v", actualTIDs)))
+	case tipb.ExecType_TypeJoin:
+		children = append(children, exec.Join.Children...)
+	case tipb.ExecType_TypeProjection:
+		children = append(children, exec.Projection.Child)
+	case tipb.ExecType_TypeWindow:
+		children = append(children, exec.Window.Child)
+	case tipb.ExecType_TypeSort:
+		children = append(children, exec.Sort.Child)
+	case tipb.ExecType_TypeExpand:
+		children = append(children, exec.Expand.Child)
+	default:
+		return errors.Errorf("unknown new tipb protocol %d", exec.Tp)
+	}
+	for _, child := range children {
+		err := e.fixTaskForCTEStorageAndReader(child, meta)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

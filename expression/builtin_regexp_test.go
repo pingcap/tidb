@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -923,6 +923,19 @@ func TestRegexpInStrVec(t *testing.T) {
 func TestRegexpReplace(t *testing.T) {
 	ctx := createContext(t)
 
+	url1 := "https://go.mail/folder-1/online/ru-en/#lingvo/#1О 50000&price_ashka/rav4/page=/check.xml"
+	url2 := "http://saint-peters-total=меньше 1000-rublyayusche/catalogue/kolasuryat-v-2-kadyirovka-personal/serial_id=0&input_state/apartments/mokrotochki.net/upravda.ru/yandex.ru/GameMain.aspx?mult]/on/orders/50195&text=мыс и орелка в Балаш смотреть онлайн бесплатно в хорошем камбалакс&lr=20030393833539353862643188&op_promo=C-Teaser_id=06d162.html"
+
+	url1Repl := "a$12$13"
+	url1Res := "ago.mail2go.mail3"
+	url1BinRes := "0x61676F2E6D61696C32676F2E6D61696C33"
+
+	url2Repl := "aaa$1233"
+	url2Res := "aaasaint-peters-total=меньше 1000-rublyayusche233"
+	url2BinRes := "0x6161617361696E742D7065746572732D746F74616C3DC390C2BCC390C2B5C390C2BDC391C592C391CB86C390C2B520313030302D7275626C7961797573636865323333"
+
+	urlPat := "^https?://(?:www\\.)?([^/]+)/.*$"
+
 	// test regexp_replace(expr, pat, repl)
 	testParam3 := []struct {
 		input    interface{} // string
@@ -935,9 +948,14 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc abd abe", "ab.", "cz", "cz cz cz", "0x637A20637A20637A", nil},
 		{"你好 好的", "好", "逸", "你逸 逸的", "0xE4BDA0E980B820E980B8E79A84", nil},
 		{"", "^$", "123", "123", "0x313233", nil},
+		{url1, urlPat, url1Repl, url1Res, url1BinRes, nil},
+		{url2, urlPat, url2Repl, url2Res, url2BinRes, nil},
 		{"abc", nil, nil, nil, nil, nil},
 		{nil, "bc", nil, nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil},
+		{"abc", "\\d*", "d", "dadbdcd", "0x64616462646364", nil},
+		{"abc", "\\d*$", "d", "abcd", "0x64616462646364", nil},
+		{"我们", "\\d*", "d", "d我d们d", "0x64C3A664CB8664E2809864C3A464C2BB64C2AC64", nil},
 		{"a", "", "a", nil, nil, ErrRegexp}, // issue 37988
 	}
 
@@ -978,14 +996,19 @@ func TestRegexpReplace(t *testing.T) {
 		{"你好", "好", "的", int64(2), "你的", "0xE4BDA0E79A84", nil},
 		{"你好啊", "好", "的", int64(3), "你好啊", "0xE4BDA0E79A84E5958A", nil},
 		{"", "^$", "cc", int64(1), "cc", "0x6363", nil},
+		{"seafood fool", "foo(.?)", "123", int64(3), "sea123 123", "0x73656131323320313233", nil}, // index 5
+		{"seafood fool", "foo(.?)", "123", int64(5), "seafood 123", "0x736561666F6F6420313233", nil},
+		{"seafood fool", "foo(.?)", "123", int64(10), "seafood fool", "0x736561666F6F6420666F6F6C", nil},
+		{"seafood fool", "foo(.?)", "z$12", int64(3), "seazd2 zl2", "0x7365617A6432207A6C32", nil},
+		{"seafood fool", "foo(.?)", "z$12", int64(5), "seafood zl2", "0x736561666F6F64207A6C32", nil},
 		// Invalid position index tests
-		{"", "^$", "a", int64(2), "", "", ErrRegexp},
+		{"", "^$", "a", int64(2), "", "", ErrRegexp}, // index 10
 		{"", "^&", "a", int64(0), "", "", ErrRegexp},
 		{"abc", "bc", "a", int64(-1), "", "", ErrRegexp},
 		{"abc", "bc", "a", int64(4), "", "", ErrRegexp},
 		// Some nullable input tests
 		{"", "^$", "a", nil, nil, nil, nil},
-		{nil, "^$", "a", nil, nil, nil, nil},
+		{nil, "^$", "a", nil, nil, nil, nil}, // index 15
 		{"", nil, nil, nil, nil, nil, nil},
 		{nil, nil, nil, int64(1), nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil, nil},
@@ -1031,13 +1054,21 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc abd abe", "ab.", "cc", int64(3), int64(10), "abc abd abe", "0x6162632061626420616265", nil},
 		{"你好 好啊", "好", "的", int64(1), int64(1), "你的 好啊", "0xE4BDA0E79A8420E5A5BDE5958A", nil}, // index 5
 		{"你好 好啊", "好", "的", int64(3), int64(1), "你好 的啊", "0xE4BDA0E79A8420E5A5BDE5958A", nil},
+		{"seafood fool", "foo(.?)", "123", int64(1), int(1), "sea123 fool", "0x73656131323320666F6F6C", nil},
+		{"seafood fool", "foo(.?)", "123", int64(1), int(2), "seafood 123", "0x736561666F6F6420313233", nil},
+		{"seafood fool", "foo(.?)", "123", int64(1), int(10), "seafood fool", "0x736561666F6F6420666F6F6C", nil},
+		{"seafood fool", "foo(.?)", "z$12", int64(1), int(1), "seazd2 fool", "0x7365617A643220666F6F6C", nil}, // index 10
+		{"seafood fool", "foo(.?)", "z$12", int64(1), int(2), "seafood zl2", "0x736561666F6F64207A6C32", nil},
 		{"", "^$", "cc", int64(1), int64(1), "cc", "0x6363", nil},
 		{"", "^$", "cc", int64(1), int64(2), "", "0x", nil},
 		{"", "^$", "cc", int64(1), int64(-1), "cc", "0x6363", nil},
+		{"abc", "\\d*", "p", 1, 2, "apbc", "0x61706263", nil}, // index 15
+		{"abc", "\\d*$", "p", 1, 1, "abcp", "0x61626370", nil},
+		{"我们", "\\d*", "p", 1, 2, "我p们", "0xC3A670CB86E28098C3A4C2BBC2AC", nil},
 		// Some nullable input tests
-		{"", "^$", "a", nil, int64(1), nil, nil, nil}, // index 10
+		{"", "^$", "a", nil, int64(1), nil, nil, nil},
 		{nil, "^$", "a", nil, nil, nil, nil, nil},
-		{"", nil, nil, nil, int64(1), nil, nil, nil},
+		{"", nil, nil, nil, int64(1), nil, nil, nil}, // index 20
 		{nil, nil, nil, int64(1), int64(1), nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil, nil, nil},
 	}
@@ -1080,6 +1111,10 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc", "aB.", "cc", int64(1), int64(0), "i", "cc", "0x6363", nil},
 		{"good\nday", "od$", "cc", int64(1), int64(0), "m", "gocc\nday", "0x676F63630A646179", nil},
 		{"good\nday", "oD$", "cc", int64(1), int64(0), "mi", "gocc\nday", "0x676F63630A646179", nil},
+		{"Good\nday", "a(B)", "a$12", int64(2), int64(0), "msi", "Good\nday", "0x476F6F640A646179", nil},
+		{"Good\nday", "(.)", "cc", int64(1), int64(3), "ci", "Goccd\nday", "0x476F6363640A646179", nil},
+		{"seafood fool", "foo(.?)", "的", int64(1), int64(2), "m", "seafood 的", "0x736561666F6F6420C3A7C5A1E2809E", nil},
+		{"abc abd abe", "(.)", "cc", int64(4), int64(1), "cii", "abcccabd abe", "0x616263636361626420616265", nil},
 		{"\n", ".", "cc", int64(1), int64(0), "s", "cc", "0x6363", nil},
 		{"好的 好滴 好~", ".", "的", int64(1), int64(0), "msi", "的的的的的的的的", "0xE79A84E79A84E79A84E79A84E79A84E79A84E79A84E79A84", nil},
 		// Test invalid matchType
@@ -1114,9 +1149,9 @@ func TestRegexpReplace(t *testing.T) {
 }
 
 func TestRegexpReplaceVec(t *testing.T) {
-	var expr []string = []string{"abc abd abe", "你好啊啊啊啊啊", "好的 好滴 好~", "Good\nday", "\n\n\n\n\n\n"}
-	var pattern []string = []string{"^$", "ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", "."}
-	var repl []string = []string{"cc", "的"}
+	var expr []string = []string{"abc abd abe", "你好啊啊啊啊啊", "好的 好滴 好~", "Good\nday", "seafood fool"} // , "\n\n\n\n\n\n"
+	var pattern []string = []string{"(^$)", "(a)b.", "a(B).", "(ab)c", "(好)", "(好).", "(o)d$", "^da(y)", "(d)ay$", "(.)", "foo(.?)", "foo(d|l)"}
+	var repl []string = []string{"cc", "的", "a$12"}
 	var position []int = []int{1, 5}
 	var occurrence []int = []int{-1, 5}
 	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}
@@ -1146,10 +1181,10 @@ func TestRegexpReplaceVec(t *testing.T) {
 	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...)) // index 5
 
 	// Prepare data: pattern is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
 
 	// Prepare data: repl is constant
 	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{2: interface{}("cc")}, len(args), constants, args...)) // index 10
@@ -1176,8 +1211,8 @@ func TestRegexpReplaceVec(t *testing.T) {
 	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...)) // index 25
 
 	// Prepare data: test memorization
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB."), 5: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args)-1, constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("a(B)."), 5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("a(B).")}, len(args)-1, constants, args...))
 
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpReplaceCases = map[string][]vecExprBenchCase{

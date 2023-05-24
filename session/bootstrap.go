@@ -882,13 +882,15 @@ const (
 	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
 	// if it's upgraded from an existing old version cluster.
 	version144 = 144
-	// version 145 add column `step` to `mysql.tidb_background_subtask`
+	// version 145 to only add a version make we know when we support upgrade state.
 	version145 = 145
+	// version 146 add column `step` to `mysql.tidb_background_subtask`
+	version146 = 146
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version145
+var currentBootstrapVersion int64 = version146
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1021,7 +1023,8 @@ var (
 		upgradeToVer142,
 		upgradeToVer143,
 		upgradeToVer144,
-		upgradeToVer145,
+		// We will only use to differentiate versions, so it is skipped here.
+		upgradeToVer146,
 	}
 )
 
@@ -1080,7 +1083,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 }
 
 // SupportUpgradeStateVer is exported for testing.
-var SupportUpgradeStateVer = version144
+var SupportUpgradeStateVer = version145
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
@@ -1161,7 +1164,7 @@ func syncUpgradeState(s Session) {
 	dom := domain.GetDomain(s)
 	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
 	if err != nil {
-		logutil.BgLogger().Fatal("upgrade update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
+		logutil.BgLogger().Fatal("[upgrading] update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
 	}
 
 	retryTimes := 10
@@ -1172,9 +1175,9 @@ func syncUpgradeState(s Session) {
 			break
 		}
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("upgrade get owner op failed", zap.Stringer("state", op), zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
 		}
-		logutil.BgLogger().Warn("upgrade get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
 		time.Sleep(interval)
 	}
 
@@ -1197,22 +1200,21 @@ func syncUpgradeState(s Session) {
 		}
 
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("upgrade pause all jobs failed", zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Error(err))
 		}
-		logutil.BgLogger().Warn("upgrade pause all jobs failed", zap.Error(err))
+		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Error(err))
 		time.Sleep(interval)
 	}
-	logutil.BgLogger().Info("upgrade update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
 }
 
 func syncNormalRunning(s Session) {
 	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
-		logutil.BgLogger().Warn("[upgrading] unexpected error to resume all paused jobs: ", zap.Error(err))
+		logutil.BgLogger().Warn("[upgrading] resume all paused jobs failed", zap.Error(err))
 	}
-
 	for _, e := range jobErrs {
-		logutil.BgLogger().Warn("[upgrading] unable to resume the job, error: ", zap.Error(e))
+		logutil.BgLogger().Warn("[upgrading] resume the job failed ", zap.Error(e))
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1220,9 +1222,9 @@ func syncNormalRunning(s Session) {
 	dom := domain.GetDomain(s)
 	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
 	if err != nil {
-		logutil.BgLogger().Fatal("upgrade update global state failed", zap.String("state", syncer.StateNormalRunning), zap.Error(err))
+		logutil.BgLogger().Fatal("[upgrading] update global state to normal failed", zap.Error(err))
 	}
-	logutil.BgLogger().Info("upgrade update global state to normal running finished", zap.String("state", syncer.StateNormalRunning))
+	logutil.BgLogger().Info("[upgrading] update global state to normal running finished")
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
@@ -2628,8 +2630,8 @@ func upgradeToVer144(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
 }
 
-func upgradeToVer145(s Session, ver int64) {
-	if ver >= version145 {
+func upgradeToVer146(s Session, ver int64) {
+	if ver >= version146 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
