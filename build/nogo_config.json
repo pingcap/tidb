@@ -1129,6 +1129,14 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "SA6002": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      "util/zeropool/pool_test.go": "util/zeropool/pool_test.go",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "SA6005": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
