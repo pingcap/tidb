@@ -321,8 +321,8 @@ def go_deps():
         name = "com_github_benbjohnson_clock",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/benbjohnson/clock",
-        sum = "h1:ip6w0uFQkncKQ979AypyG0ER7mqUSBdKLOgAle/AT8A=",
-        version = "v1.3.0",
+        sum = "h1:VvXlSJBzZpA/zum6Sj74hxwYI2DIxRWuNIoXAzHZz5o=",
+        version = "v1.3.5",
     )
     go_repository(
         name = "com_github_beorn7_perks",
@@ -3632,8 +3632,8 @@ def go_deps():
         name = "com_github_remyoudompheng_bigfft",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/remyoudompheng/bigfft",
-        sum = "h1:OdAsTTz6OkFY5QxjkYwrChwuRruF69c169dPK26NUlk=",
-        version = "v0.0.0-20200410134404-eec4a21b6bb0",
+        sum = "h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=",
+        version = "v0.0.0-20230129092748-24d4a6f8daec",
     )
     go_repository(
         name = "com_github_renekroon_ttlcache_v2",
@@ -4180,8 +4180,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:Xu3sf5rKIqlkLzGjTs5IED6l6soJgZHHEyj5mapc42I=",
-        version = "v2.0.8-0.20230512034316-adb48afeef3e",
+        sum = "h1:uMwa1WlF51WU3capFUiTHjn7U71wiPHyRmdkde7GWlA=",
+        version = "v2.0.8-0.20230524032653-1b2876693630",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -5997,8 +5997,8 @@ def go_deps():
         name = "org_golang_x_exp",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/exp",
-        sum = "h1:SkwG94eNiiYJhbeDE018Grw09HIN/KB9NlRmZsrzfWs=",
-        version = "v0.0.0-20221023144134-a1e5550cf13e",
+        sum = "h1:3xJIFvzUFbu4ls0BTBYcgbCGhA63eAOEMxIHugyXJqA=",
+        version = "v0.0.0-20230519143937-03e91628a987",
     )
     go_repository(
         name = "org_golang_x_exp_typeparams",
@@ -6131,8 +6131,8 @@ def go_deps():
         name = "org_modernc_golex",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/golex",
-        sum = "h1:IaPGsXg0FX9vkth++hQ/YIHjj0v4eZGJwoMrejWR1Ts=",
-        version = "v1.0.4",
+        sum = "h1:M+4kIjbDMvKN4pAuh5gJBOfG7Emi9WXGpg2Eay1dlGI=",
+        version = "v1.0.5",
     )
     go_repository(
         name = "org_modernc_lex",
@@ -6159,8 +6159,8 @@ def go_deps():
         name = "org_modernc_parser",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/parser",
-        sum = "h1:/qHLDn1ezrcRk9/XbErYp84bPPM4+w0kIDuvMdRk6Vc=",
-        version = "v1.0.2",
+        sum = "h1:V3R87gpU97arcjGr2dR6w2qerBd/gV2VKFh3qFD7GpE=",
+        version = "v1.0.7",
     )
     go_repository(
         name = "org_modernc_scanner",
@@ -6187,8 +6187,8 @@ def go_deps():
         name = "org_modernc_y",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/y",
-        sum = "h1:+QT+MtLkwkvLkh3fYQq+YD5vw2s5paVE73jdl5R/Py8=",
-        version = "v1.0.1",
+        sum = "h1:U3EAg4VQmj2eoAUnMFcv+KXxVQFT19ZIA1mO1XX0b1s=",
+        version = "v1.0.9",
     )
     go_repository(
         name = "org_uber_go_atomic",
