@@ -302,6 +302,7 @@ go_test(
         "hash_table_test.go",
         "historical_stats_test.go",
         "hot_regions_history_table_test.go",
+        "import_into_test.go",
         "index_advise_test.go",
         "index_lookup_join_test.go",
         "index_lookup_merge_join_test.go",
