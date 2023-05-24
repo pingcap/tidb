@@ -869,22 +869,13 @@ const (
 	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
 	// if it's upgraded from an existing old version cluster.
 	version144 = 144
-<<<<<<< HEAD
-=======
 	// version 145 to only add a version make we know when we support upgrade state.
 	version145 = 145
-	// version 146 add column `step` to `mysql.tidb_background_subtask`
-	version146 = 146
->>>>>>> 38522b522a7 (ddl: update `run DDL job` log back to info level and SupportUpgradeStateVer (#44121))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-<<<<<<< HEAD
-var currentBootstrapVersion int64 = version144
-=======
-var currentBootstrapVersion int64 = version146
->>>>>>> 38522b522a7 (ddl: update `run DDL job` log back to info level and SupportUpgradeStateVer (#44121))
+var currentBootstrapVersion int64 = version145
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1017,11 +1008,7 @@ var (
 		upgradeToVer142,
 		upgradeToVer143,
 		upgradeToVer144,
-<<<<<<< HEAD
-=======
-		// We will only use to differentiate versions, so it is skipped here.
-		upgradeToVer146,
->>>>>>> 38522b522a7 (ddl: update `run DDL job` log back to info level and SupportUpgradeStateVer (#44121))
+		// We will only use upgradeToVer145 to differentiate versions, so it is skipped here.
 	}
 )
 
@@ -2627,16 +2614,6 @@ func upgradeToVer144(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
 }
 
-<<<<<<< HEAD
-=======
-func upgradeToVer146(s Session, ver int64) {
-	if ver >= version146 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
-}
-
->>>>>>> 38522b522a7 (ddl: update `run DDL job` log back to info level and SupportUpgradeStateVer (#44121))
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
