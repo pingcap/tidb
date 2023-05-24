@@ -1195,80 +1195,6 @@ func TestObjectLock(t *testing.T) {
 	)
 	require.Equal(t, true, s.storage.IsObjectLockEnabled())
 }
-<<<<<<< HEAD
-=======
-
-func TestS3StorageBucketRegion(t *testing.T) {
-	type testcase struct {
-		name         string
-		expectRegion string
-		s3           *backuppb.S3
-	}
-
-	require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
-	require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
-	require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
-
-	cases := []testcase{
-		{
-			"empty region from aws",
-			"us-east-1",
-			&backuppb.S3{
-				Region:   "",
-				Bucket:   "bucket",
-				Prefix:   "prefix",
-				Provider: "aws",
-			},
-		},
-		{
-			"region from different provider",
-			"sdg",
-			&backuppb.S3{
-				Region:   "sdg",
-				Bucket:   "bucket",
-				Prefix:   "prefix",
-				Provider: "ovh",
-			},
-		},
-		{
-			"empty region from different provider",
-			"",
-			&backuppb.S3{
-				Region:   "",
-				Bucket:   "bucket",
-				Prefix:   "prefix",
-				Provider: "ovh",
-			},
-		},
-		{
-			"region from aws",
-			"us-west-2",
-			&backuppb.S3{
-				Region:   "us-west-2",
-				Bucket:   "bucket",
-				Prefix:   "prefix",
-				Provider: "aws",
-			},
-		},
-	}
-	for _, ca := range cases {
-		func(name string, region string, s3 *backuppb.S3) {
-			s := createGetBucketRegionServer(region, 200, true)
-			defer s.Close()
-			s3.ForcePathStyle = true
-			s3.Endpoint = s.URL
-
-			t.Log(name)
-			es, err := New(context.Background(),
-				&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}},
-				&ExternalStorageOptions{})
-			require.NoError(t, err)
-			ss, ok := es.(*S3Storage)
-			require.True(t, ok)
-			require.Equal(t, region, ss.GetOptions().Region)
-		}(ca.name, ca.expectRegion, ca.s3)
-	}
-}
 
 func TestRetryError(t *testing.T) {
 	var count int32 = 0
@@ -1301,13 +1227,12 @@ func TestRetryError(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	s, err := NewS3Storage(ctx, &backuppb.S3{
+	s, err := NewS3Storage(&backuppb.S3{
 		Endpoint:        server.URL,
 		Bucket:          "test",
 		Prefix:          "retry",
 		AccessKey:       "none",
 		SecretAccessKey: "none",
-		Provider:        "skip check region",
 		ForcePathStyle:  true,
 	}, &ExternalStorageOptions{})
 	require.NoError(t, err)
@@ -1315,4 +1240,3 @@ func TestRetryError(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, count, int32(2))
 }
->>>>>>> 2d259bdcb67 (br: add more retryable error for retryer (#43022))

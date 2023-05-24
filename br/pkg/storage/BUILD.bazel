@@ -71,10 +71,7 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
-<<<<<<< HEAD
-=======
     shard_count = 43,
->>>>>>> 2d259bdcb67 (br: add more retryable error for retryer (#43022))
     deps = [
         "//br/pkg/mock",
         "@com_github_aws_aws_sdk_go//aws",
