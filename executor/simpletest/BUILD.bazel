@@ -11,6 +11,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD:executor/simpletest/BUILD.bazel
     shard_count = 30,
     deps = [
         "//config",
@@ -18,6 +19,12 @@ go_test(
         "//errno",
         "//executor",
         "//kv",
+=======
+    shard_count = 36,
+    deps = [
+        "//config",
+        "//errno",
+>>>>>>> a98e98e2ab4 (executor: disable password validation for `tidb_auth_token` users (#44101)):executor/test/simpletest/BUILD.bazel
         "//parser/auth",
         "//parser/model",
         "//parser/mysql",
