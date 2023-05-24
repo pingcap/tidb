@@ -1475,6 +1475,9 @@ type SessionVars struct {
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
 
+	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
+	EnableMPPSharedCTEExecution bool
+
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
 

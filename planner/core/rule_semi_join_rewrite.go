@@ -34,6 +34,9 @@ func (*semiJoinRewriter) name() string {
 }
 
 func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
+	if _, ok := p.(*LogicalCTE); ok {
+		return p, nil
+	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChild, err := smj.recursivePlan(child)

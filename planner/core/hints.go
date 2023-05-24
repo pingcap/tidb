@@ -174,7 +174,10 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 	}
 	switch pp := p.(type) {
 	case *PhysicalTableReader:
-		tbl := pp.TablePlans[0].(*PhysicalTableScan)
+		tbl, ok := pp.TablePlans[0].(*PhysicalTableScan)
+		if !ok {
+			return res
+		}
 		if tbl.StoreType == kv.TiFlash {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,

@@ -201,6 +201,14 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		str = name + "{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
+	case *LogicalSequence:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		name := "Sequence"
+		str = name + "{" + strings.Join(children, ",") + "}"
+		idxs = idxs[:last]
 	case *DataSource:
 		if x.isPartition {
 			str = fmt.Sprintf("Partition(%d)", x.physicalTableID)
@@ -350,6 +358,17 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, task := range x.TargetTasks {
 			str += fmt.Sprintf("%d, ", task.ID)
 		}
+		for _, tasks := range x.TargetCTEReaderTasks {
+			str += "("
+			for _, task := range tasks {
+				str += fmt.Sprintf("%d, ", task.ID)
+			}
+			str += ")"
+		}
+		str += ")"
+	case *PhysicalCTE:
+		str = "CTEReader("
+		str += fmt.Sprintf("%v", x.CTE.IDForStorage)
 		str += ")"
 	default:
 		str = fmt.Sprintf("%T", in)

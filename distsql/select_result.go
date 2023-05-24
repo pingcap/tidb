@@ -558,12 +558,11 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	if hasExecutor {
 		var recorededPlanIDs = make(map[int]int)
-		for i, detail := range r.selectResp.GetExecutionSummaries() {
+		for _, detail := range r.selectResp.GetExecutionSummaries() {
 			if detail != nil && detail.TimeProcessedNs != nil &&
 				detail.NumProducedRows != nil && detail.NumIterations != nil {
-				planID := r.copPlanIDs[i]
 				recorededPlanIDs[r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-					RecordOneCopTask(planID, r.storeType.Name(), callee, detail)] = 0
+					RecordOneCopTask(-1, r.storeType.Name(), callee, detail)] = 0
 			}
 		}
 		num := uint64(0)
