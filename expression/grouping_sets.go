@@ -504,24 +504,34 @@ func AdjustNullabilityFromGroupingSets(gss GroupingSets, schema *Schema) {
 // down, and output another position slice out, the [0, 0, 1] for the case above.
 func DeduplicateGbyExpression(ctx sessionctx.Context, exprs []Expression) ([]Expression, []int) {
 	distinctExprs := make([]Expression, 0, len(exprs))
+	sc := ctx.GetSessionVars().StmtCtx
+	sc.CanonicalHashCode = true
+	defer func() {
+		sc.CanonicalHashCode = false
+	}()
+	distinctMap := make(map[string]int, len(exprs))
+	for _, expr := range exprs {
+		// -1 means pos is not assigned yet.
+		distinctMap[string(expr.HashCode(sc))] = -1
+	}
+	// pos is from 0 to len(distinctMap)-1
+	pos := 0
 	posSlice := make([]int, 0, len(exprs))
 	for _, one := range exprs {
-		found := false
-		for pos, existOne := range distinctExprs {
-			if ExpressionsSemanticEqual(ctx, one, existOne) {
-				// current one can ref to the existed one.
+		key := string(one.HashCode(sc))
+		if val, ok := distinctMap[key]; ok {
+			if val == -1 {
+				// means a new distinct expr.
+				distinctExprs = append(distinctExprs, one)
 				posSlice = append(posSlice, pos)
-				found = true
-				break
+				// assign this pos to val.
+				distinctMap[key] = pos
+				pos++
+			} else {
+				// means this expr is SemanticEqual with a previous one, ref the pos
+				posSlice = append(posSlice, val)
 			}
 		}
-		if found {
-			// found ref already.
-			continue
-		}
-		insertPos := len(distinctExprs)
-		distinctExprs = append(distinctExprs, one)
-		posSlice = append(posSlice, insertPos)
 	}
 	return distinctExprs, posSlice
 }
