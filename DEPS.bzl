@@ -2915,13 +2915,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-<<<<<<< HEAD
         sum = "h1:46ZD6xzQWJ8Jkeal/U7SqkX030Mgs8DAn6QV/9zbqOQ=",
         version = "v0.0.0-20221130022225-6c56ac56fe5f",
-=======
-        sum = "h1:58k95xMDOJkpwKs2ULr/KbEZmU2+UprcguoR/pYy6MA=",
-        version = "v0.0.0-20230424092600-14ac513b9eff",
->>>>>>> 9b9796fc5c8 (unistore: Adjust some behaviors to be consistent with TiKV (#43397))
     )
     go_repository(
         name = "com_github_pingcap_log",
