@@ -821,9 +821,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 200.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 196.08 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9950)",
-          "    └─TableRowIDScan 200.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 196.08 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -831,9 +831,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 200.00 cop[tikv] table:t, index:ic(c) keep order:true, desc, stats:pseudo",
+          "  ├─IndexFullScan(Build) 196.08 cop[tikv] table:t, index:ic(c) keep order:true, desc, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9950)",
-          "    └─TableRowIDScan 200.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 196.08 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -841,9 +841,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 9.98 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 8999)",
-          "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 9.98 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -851,9 +851,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9000)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -861,9 +861,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 10.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9001)",
-          "    └─TableRowIDScan 10.01 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -915,9 +915,9 @@
         "Result": [
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 637.50 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 637.50 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -925,19 +925,9 @@
         "Result": [
           "TopN 1.00 root  test.t.c:desc, offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 637.50 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c:desc, offset:0, count:1",
-          "    └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "Query": "explain format = 'brief' select * from t where b >= 8999 order by c limit 1",
-        "Result": [
-          "Limit 1.00 root  offset:0, count:1",
-          "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 8999)",
-          "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 637.50 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -945,29 +935,29 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9000)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "Query": "explain format = 'brief' select * from t where b >= 9001 order by c limit 1",
         "Result": [
-          "TopN 1.00 root  test.t.c, offset:0, count:1",
-          "└─TableReader 1.00 root  data:TopN",
-          "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─Selection 9990.00 cop[tikv]  ge(test.t.b, 9001)",
-          "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9001)",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "Query": "explain format = 'brief' select * from t where a < 10001 order by c limit 1",
+        "Query": "explain format = 'brief' select * from t where b >= 9002 order by c limit 1",
         "Result": [
-          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "│ └─Selection 1.00 cop[tikv]  lt(test.t.a, 10001)",
-          "│   └─IndexFullScan 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─Selection 9990.00 cop[tikv]  ge(test.t.b, 9002)",
+          "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -983,10 +973,20 @@
       {
         "Query": "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
         "Result": [
+          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "│ └─Selection 1.00 cop[tikv]  lt(test.t.a, 9999)",
+          "│   └─IndexFullScan 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 9998 order by c limit 1",
+        "Result": [
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─TableReader 1.00 root  data:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─TableRangeScan 9999.00 cop[tikv] table:t range:[-inf,9999), keep order:false, stats:pseudo"
+          "    └─TableRangeScan 9999.00 cop[tikv] table:t range:[-inf,9998), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1005,9 +1005,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ic(c) range:[9950,+inf], keep order:true, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ic(c) range:[9950,+inf], keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9950)",
-          "    └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 510.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1015,10 +1015,10 @@
         "Result": [
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─Selection 5.00 cop[tikv]  ge(test.t.c, 9900)",
-          "      └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─Selection 5.15 cop[tikv]  ge(test.t.c, 9900)",
+          "      └─TableRowIDScan 510.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
