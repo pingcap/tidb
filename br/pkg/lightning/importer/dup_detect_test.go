@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/duplicate"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/extsort"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
@@ -92,4 +94,59 @@ func runDupHandlerTest(
 	require.NoError(t, it.Close())
 
 	require.Equal(t, ignoredRowIDs, rowIDs)
+}
+
+func TestSimplifyTable(t *testing.T) {
+	testCases := []struct {
+		table             string
+		colPerm           []int
+		expTable          string
+		expTableHasNoCols bool
+		expColPerm        []int
+	}{
+		{
+			table:             "CREATE TABLE t(a int, b int, c int)",
+			colPerm:           []int{0, 1, 2, -1},
+			expTableHasNoCols: true,
+			expColPerm:        []int{-1},
+		},
+		{
+			table:      "CREATE TABLE t(a int PRIMARY KEY, b int, c int)",
+			colPerm:    []int{2, 0, 1},
+			expTable:   "CREATE TABLE t(a int PRIMARY KEY)",
+			expColPerm: []int{2},
+		},
+		{
+			table:      "CREATE TABLE t(a int UNIQUE KEY, b int, c int, d int, INDEX idx_b(b), INDEX idx_c(c), UNIQUE INDEX idx_bc(b, c))",
+			colPerm:    []int{0, 1, 2, 3, 10},
+			expTable:   "CREATE TABLE t(a int UNIQUE KEY, b int, c int, UNIQUE INDEX idx_bc(b, c))",
+			expColPerm: []int{0, 1, 2, 10},
+		},
+	}
+	for _, tc := range testCases {
+		p := parser.New()
+		tblInfo, err := dbutil.GetTableInfoBySQL(tc.table, p)
+		require.NoError(t, err)
+		actualTblInfo, actualColPerm := simplifyTable(tblInfo, tc.colPerm)
+
+		if tc.expTableHasNoCols {
+			require.Empty(t, actualTblInfo.Columns)
+		} else {
+			expTblInfo, err := dbutil.GetTableInfoBySQL(tc.expTable, p)
+			require.NoError(t, err)
+
+			require.Equal(t, len(expTblInfo.Columns), len(actualTblInfo.Columns))
+			for i, col := range actualTblInfo.Columns {
+				require.Equal(t, expTblInfo.Columns[i].Name, col.Name)
+				require.Equal(t, expTblInfo.Columns[i].Offset, col.Offset)
+			}
+
+			require.Equal(t, len(expTblInfo.Indices), len(actualTblInfo.Indices))
+			for i, idxInfo := range actualTblInfo.Indices {
+				require.Equal(t, expTblInfo.Indices[i].Name, idxInfo.Name)
+				require.Equal(t, expTblInfo.Indices[i].Columns, idxInfo.Columns)
+			}
+		}
+		require.Equal(t, tc.expColPerm, actualColPerm)
+	}
 }

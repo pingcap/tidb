@@ -23,13 +23,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/duplicate"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/extsort"
@@ -264,7 +264,11 @@ func (d *dupDetector) addKeysByChunk(
 	}
 
 	// 3. Simplify table structure and create kv encoder.
-	encTable, colPerm, err := d.simplifyTable(colPerm)
+	tblInfo, colPerm = simplifyTable(tblInfo, colPerm)
+	encTable, err := tables.TableFromMeta(d.tr.alloc, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -326,23 +330,28 @@ func (d *dupDetector) addKeysByChunk(
 	}
 }
 
-func (d *dupDetector) simplifyTable(colPerm []int) (_ table.Table, newColPerm []int, _ error) {
-	tblInfo := d.tr.tableInfo.Core.Clone()
+// simplifyTable simplifies the table structure for duplicate detection.
+// It tries to remove all unused indices and columns and make the table
+// structure as simple as possible.
+func simplifyTable(
+	tblInfo *model.TableInfo, colPerm []int,
+) (_ *model.TableInfo, newColPerm []int) {
+	newTblInfo := tblInfo.Clone()
 
 	var usedIndices []*model.IndexInfo
-	usedCols := make(map[int]struct{})
+	usedColOffsets := make(map[int]struct{})
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.Primary || idxInfo.Unique {
 			usedIndices = append(usedIndices, idxInfo)
 			for _, col := range idxInfo.Columns {
-				usedCols[col.Offset] = struct{}{}
+				usedColOffsets[col.Offset] = struct{}{}
 			}
 		}
 	}
-	tblInfo.Indices = usedIndices
 	if tblInfo.PKIsHandle {
-		usedCols[tblInfo.GetPkColInfo().Offset] = struct{}{}
+		usedColOffsets[tblInfo.GetPkColInfo().Offset] = struct{}{}
 	}
+	newTblInfo.Indices = usedIndices
 
 	hasGenCols := false
 	for _, col := range tblInfo.Columns {
@@ -352,36 +361,33 @@ func (d *dupDetector) simplifyTable(colPerm []int) (_ table.Table, newColPerm []
 		}
 	}
 
-	encTable := d.tr.encTable
 	newColPerm = colPerm
 	// If there is no generated column, we can remove all unused columns.
 	// TODO: We can also remove columns that are not referenced by generated columns.
 	if !hasGenCols {
-		cols := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
-		colOffsets := make(map[string]int)
-		newColPerm = make([]int, 0, len(tblInfo.Columns))
+		newCols := make([]*model.ColumnInfo, 0, len(usedColOffsets))
+		newColPerm = make([]int, 0, len(usedColOffsets)+1)
+		colNameOffsets := make(map[string]int)
 		for i, col := range tblInfo.Columns {
-			if _, ok := usedCols[i]; ok {
-				col.Offset = len(cols)
-				cols = append(cols, col)
-				colOffsets[col.Name.L] = col.Offset
+			if _, ok := usedColOffsets[i]; ok {
+				newCol := col.Clone()
+				newCol.Offset = len(newCols)
+				newCols = append(newCols, newCol)
+				colNameOffsets[col.Name.L] = newCol.Offset
 				newColPerm = append(newColPerm, colPerm[i])
 			}
 		}
+		if common.TableHasAutoRowID(tblInfo) {
+			newColPerm = append(newColPerm, colPerm[len(tblInfo.Columns)])
+		}
+		newTblInfo.Columns = newCols
+
 		// Fix up the index columns offset.
-		for _, idxInfo := range tblInfo.Indices {
+		for _, idxInfo := range newTblInfo.Indices {
 			for _, col := range idxInfo.Columns {
-				col.Offset = colOffsets[col.Name.L]
+				col.Offset = colNameOffsets[col.Name.L]
 			}
 		}
-		tblInfo.Columns = cols
-
-		// Rebuild the table meta.
-		tbl, err := tables.TableFromMeta(d.tr.alloc, tblInfo)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		encTable = tbl
 	}
-	return encTable, newColPerm, nil
+	return newTblInfo, newColPerm
 }
