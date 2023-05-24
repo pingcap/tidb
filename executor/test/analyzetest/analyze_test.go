@@ -2350,6 +2350,7 @@ func TestAnalyzeJob(t *testing.T) {
 		require.Equal(t, connID, rows[0][10])
 
 		executor.StartAnalyzeJob(se, job)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/calcSampleRateByStorageCountForAnalyze", "return(1)"))
 		rows = tk.MustQuery("show analyze status").Rows()
 		checkTime := func(val interface{}) {
 			str, ok := val.(string)
@@ -2359,6 +2360,10 @@ func TestAnalyzeJob(t *testing.T) {
 		}
 		checkTime(rows[0][5])
 		require.Equal(t, statistics.AnalyzeRunning, rows[0][7])
+		require.Equal(t, "0", rows[0][11]) // PROGRESS
+		require.Equal(t, "0", rows[0][12]) // PROGRESS
+		require.Equal(t, "0", rows[0][13]) // ESTIMATED_TOTAL_ROWS
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/calcSampleRateByStorageCountForAnalyze"))
 
 		// UpdateAnalyzeJob requires the interval between two updates to mysql.analyze_jobs is more than 5 second.
 		// Hence we fake last dump time as 10 second ago in order to make update to mysql.analyze_jobs happen.

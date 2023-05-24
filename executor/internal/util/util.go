@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
@@ -29,6 +30,7 @@ import (
 func GetApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, dbName, tableName, partitionName string) (float64, bool) {
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
+		log.Info("fuckfuck")
 		return 0, false
 	}
 	regionStats := &helper.PDRegionStats{}
@@ -41,6 +43,13 @@ func GetApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, dbN
 		// Set a very large approximate count.
 		regionStats.StorageKeys = 1000000
 	})
+	failpoint.Inject("calcSampleRateByStorageCountForAnalyze", func() {
+		// Force the TiDB thinking that there's PD and the count of region is small.
+		err = nil
+		regionStats.Count = 100
+		// Set a very large approximate count.
+		regionStats.StorageKeys = 100000000
+	})
 	if err != nil {
 		return 0, false
 	}
@@ -48,6 +57,7 @@ func GetApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, dbN
 	// since for a small table, it's possible that it's data is in the same region with part of another large table.
 	// Thus, we use the number of the regions of the table's table KV to decide whether the table is small.
 	if regionStats.Count > 2 {
+		log.Info("fuck ok")
 		return float64(regionStats.StorageKeys), true
 	}
 	// Otherwise, we use count(*) to calc it's size, since it's very small, the table data can be filled in no more than 2 regions.

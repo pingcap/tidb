@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -2193,7 +2194,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context, isShow bool) (rows [][]
 				remainDurationStr = execdetails.FormatDuration(*RemainingDuration)
 			}
 			progressStr = progress
-			estimatedRowCntStr = estimatedRowCnt
+			estimatedRowCntStr = int64(estimatedRowCnt)
 		}
 		var row []types.Datum
 		if isShow {
@@ -2235,10 +2236,10 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context, isShow bool) (rows [][]
 
 func getRemainDurationForAnalyzeStatusHelper(
 	sctx sessionctx.Context, startTime interface{},
-	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, int64, error) {
+	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
 	var RemainingDuration = time.Duration(0)
 	var percentage = 0.0
-	var totalCnt = int64(0)
+	var totalCnt = float64(0)
 	if startTime != nil {
 		startTime, ok := startTime.(types.Time)
 		if !ok {
@@ -2249,22 +2250,32 @@ func getRemainDurationForAnalyzeStatusHelper(
 			return nil, percentage, totalCnt, err
 		}
 		duration := time.Now().UTC().Sub(start)
-		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-		tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
-		if err != nil {
-			return nil, percentage, totalCnt, err
-		}
 		var tid int64
-		if partitionName != "" {
-			pt := tb.Meta().GetPartitionInfo()
-			tid = pt.GetPartitionIDByName(partitionName)
-		} else {
-			tid = tb.Meta().ID
+		if !intest.InTest {
+			is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+			tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+			if err != nil {
+				return nil, percentage, totalCnt, err
+			}
+
+			if partitionName != "" {
+				pt := tb.Meta().GetPartitionInfo()
+				tid = pt.GetPartitionIDByName(partitionName)
+			} else {
+				tid = tb.Meta().ID
+			}
 		}
-		if tid > 0 {
-			totalCnt, _ := internalutil.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
+		if tid > 0 || intest.InTest {
+			totalCnt, _ = internalutil.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
 			remainline := int64(totalCnt) - processedRows
+			if processedRows == 0 {
+				processedRows = 1
+			}
+			if duration == 0 {
+				duration = 1 * time.Second
+			}
 			i := float64(remainline) * duration.Seconds() / float64(processedRows)
+			log.Info("fuck", zap.Float64("i", i), zap.Int64("remainline", remainline), zap.Float64("totalCnt", totalCnt))
 			RemainingDuration = time.Duration(i)
 		}
 	}
