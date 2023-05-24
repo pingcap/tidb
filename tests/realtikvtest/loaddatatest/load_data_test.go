@@ -68,6 +68,9 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	s.tk.MustExec(`GRANT INSERT on import_into.t to 'test_import_into'@'localhost'`)
 	s.tk.MustExec(`GRANT DELETE on import_into.t to 'test_import_into'@'localhost'`)
 	s.tk.MustExec(`GRANT ALTER on import_into.t to 'test_import_into'@'localhost'`)
+	s.T().Cleanup(func() {
+		_ = s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
+	})
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
 	sql := fmt.Sprintf(`import into t FROM 'gs://privilege-test/db.tbl.*.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(sql)
