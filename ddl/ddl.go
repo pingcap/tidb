@@ -1474,11 +1474,6 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 
 	job.State = model.JobStatePausing
 	job.AdminOperator = byWho
-
-	if job.RawArgs == nil {
-		return nil
-	}
-
 	return nil
 }
 
