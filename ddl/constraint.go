@@ -121,6 +121,35 @@ func (w *worker) onAddCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	return ver, errors.Trace(err)
 }
 
+func checkAddCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) {
+	schemaID := job.SchemaID
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return nil, nil, nil, nil, errors.Trace(err)
+	}
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, nil, nil, nil, errors.Trace(err)
+	}
+	constraintInfo1 := &model.ConstraintInfo{}
+	err = job.DecodeArgs(constraintInfo1)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, nil, nil, errors.Trace(err)
+	}
+	// do the double-check with constraint existence.
+	constraintInfo2 := tblInfo.FindConstraintInfoByName(constraintInfo1.Name.L)
+	if constraintInfo2 != nil {
+		if constraintInfo2.State == model.StatePublic {
+			// We already have a constraint with the same constraint name.
+			job.State = model.JobStateCancelled
+			return nil, nil, nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(constraintInfo1.Name)
+		}
+		// if not, that means constraint was in intermediate state.
+	}
+	return dbInfo, tblInfo, constraintInfo2, constraintInfo1, nil
+}
+
 // onDropCheckConstraint can be called from two case:
 // 1: rollback in add constraint.(in rollback function the job.args will be changed)
 // 2: user drop constraint ddl.
@@ -165,6 +194,29 @@ func onDropCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, errors.Trace(err)
 }
 
+func checkDropCheckConstraint(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ConstraintInfo, error) {
+	schemaID := job.SchemaID
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	var constrName model.CIStr
+	err = job.DecodeArgs(&constrName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, errors.Trace(err)
+	}
+
+	// do the double-check with constraint existence.
+	constraintInfo := tblInfo.FindConstraintInfoByName(constrName.L)
+	if constraintInfo == nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, dbterror.ErrConstraintNotFound.GenWithStackByArgs(constrName)
+	}
+	return tblInfo, constraintInfo, nil
+}
+
 func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
 	if err != nil {
@@ -197,58 +249,6 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
-}
-
-func checkDropCheckConstraint(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ConstraintInfo, error) {
-	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	var constrName model.CIStr
-	err = job.DecodeArgs(&constrName)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
-	}
-
-	// do the double-check with constraint existence.
-	constraintInfo := tblInfo.FindConstraintInfoByName(constrName.L)
-	if constraintInfo == nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, dbterror.ErrConstraintNotFound.GenWithStackByArgs(constrName)
-	}
-	return tblInfo, constraintInfo, nil
-}
-
-func checkAddCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) {
-	schemaID := job.SchemaID
-	dbInfo, err := t.GetDatabase(job.SchemaID)
-	if err != nil {
-		return nil, nil, nil, nil, errors.Trace(err)
-	}
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
-	if err != nil {
-		return nil, nil, nil, nil, errors.Trace(err)
-	}
-	constraintInfo1 := &model.ConstraintInfo{}
-	err = job.DecodeArgs(constraintInfo1)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, nil, nil, errors.Trace(err)
-	}
-	// do the double-check with constraint existence.
-	constraintInfo2 := tblInfo.FindConstraintInfoByName(constraintInfo1.Name.L)
-	if constraintInfo2 != nil {
-		if constraintInfo2.State == model.StatePublic {
-			// We already have a constraint with the same constraint name.
-			job.State = model.JobStateCancelled
-			return nil, nil, nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(constraintInfo1.Name)
-		}
-		// if not, that means constraint was in intermediate state.
-	}
-	return dbInfo, tblInfo, constraintInfo2, constraintInfo1, nil
 }
 
 func checkAlterCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, bool, error) {

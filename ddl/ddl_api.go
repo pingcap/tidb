@@ -8465,11 +8465,6 @@ func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constr
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	if err = checkTooLongConstraint(constrName); err != nil {
-		return errors.Trace(err)
-	}
-
 	if constraintInfo := t.Meta().FindConstraintInfoByName(constrName.L); constraintInfo != nil {
 		return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constrName.L)
 	}
