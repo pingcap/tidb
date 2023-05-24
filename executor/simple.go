@@ -1019,13 +1019,6 @@ func deletePasswordLockingAttribute(ctx context.Context, sqlExecutor sqlexec.SQL
 	return err
 }
 
-func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin string) bool {
-	if authOpt == nil || !authOpt.ByAuthString {
-		return false
-	}
-	return mysql.IsAuthPluginClearText(authPlugin)
-}
-
 func (e *SimpleExec) isValidatePasswordEnabled() bool {
 	validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
 	if err != nil {
@@ -1155,14 +1148,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
-		if e.isValidatePasswordEnabled() && !s.IsCreateRole {
-			if spec.AuthOpt == nil || !spec.AuthOpt.ByAuthString && spec.AuthOpt.HashString == "" {
-				return variable.ErrNotValidPassword.GenWithStackByArgs()
+		// Validate the strength of the password if necessary
+		if e.isValidatePasswordEnabled() && !s.IsCreateRole && mysql.IsAuthPluginClearText(authPlugin) {
+			pwd := ""
+			if spec.AuthOpt != nil {
+				pwd = spec.AuthOpt.AuthString
 			}
-			if e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
-				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
-					return err
-				}
+			if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), pwd); err != nil {
+				return err
 			}
 		}
 		pwd, ok := spec.EncodedPassword()
@@ -1809,7 +1802,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					break
 				}
 			}
-			if e.isValidatePasswordEnabled() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
+			if e.isValidatePasswordEnabled() && spec.AuthOpt.ByAuthString && mysql.IsAuthPluginClearText(spec.AuthOpt.AuthPlugin) {
 				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
 					return err
 				}
