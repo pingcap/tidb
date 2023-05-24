@@ -953,6 +953,8 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc", nil, nil, nil, nil, nil},
 		{nil, "bc", nil, nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil},
+		{"abc", "\\d*", "d", "dadbdcd", "0x", nil},
+		{"我们", "\\d*", "d", "d我d们d", "0x", nil},
 		{"a", "", "a", nil, nil, ErrRegexp}, // issue 37988
 	}
 
@@ -1059,6 +1061,8 @@ func TestRegexpReplace(t *testing.T) {
 		{"", "^$", "cc", int64(1), int64(1), "cc", "0x6363", nil},
 		{"", "^$", "cc", int64(1), int64(2), "", "0x", nil},
 		{"", "^$", "cc", int64(1), int64(-1), "cc", "0x6363", nil},
+		{"abc", "\\d*", "p", 1, 2, "apbc", "0x", nil},
+		{"我们", "\\d*", "p", 1, 2, "我p们", "0x", nil},
 		// Some nullable input tests
 		{"", "^$", "a", nil, int64(1), nil, nil, nil}, // index 15
 		{nil, "^$", "a", nil, nil, nil, nil, nil},

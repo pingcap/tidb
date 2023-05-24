@@ -1168,8 +1168,18 @@ func (re *builtinRegexpReplaceFuncSig) replaceAllMatchedBinStr(reg *regexp.Regex
 			return []byte(""), err
 		}
 
+		// Matched string is an empty string, and this circmstance should be specially treated,
+		// such as regexp_replace("abc", "\d*", "d") -> result: dadbdcd
 		if res[1] == 0 {
-			break
+			if len(trimmedBexpr) == 0 {
+				break
+			}
+
+			// When the matched string is empty, we need to stride across the first character
+			utf8Len := stringutil.Utf8Len(trimmedBexpr[0])
+			replacedBStr = append(replacedBStr, trimmedBexpr[:utf8Len]...)
+			trimmedBexpr = trimmedBexpr[utf8Len:]
+			continue
 		}
 		trimmedBexpr = trimmedBexpr[res[1]:]
 	}
@@ -1189,8 +1199,21 @@ func (re *builtinRegexpReplaceFuncSig) replaceOneMatchedBinStr(reg *regexp.Regex
 
 		occurrence -= 1
 		if occurrence != 0 {
-			replacedBStr = append(replacedBStr, trimmedBexpr[:res[1]]...) // Copy prefix
-			trimmedBexpr = trimmedBexpr[res[1]:]
+			if res[1] == 0 {
+				// Matched string is an empty string, and this circmstance should be specially treated,
+				// such as regexp_replace("abc", "\d*", "d") -> result: dadbdcd
+				if len(trimmedBexpr) == 0 {
+					break
+				}
+
+				// When the matched string is empty, we need to stride across the first character
+				utf8Len := stringutil.Utf8Len(trimmedBexpr[0])
+				replacedBStr = append(replacedBStr, trimmedBexpr[:utf8Len]...)
+				trimmedBexpr = trimmedBexpr[utf8Len:]
+			} else {
+				replacedBStr = append(replacedBStr, trimmedBexpr[:res[1]]...) // Copy prefix
+				trimmedBexpr = trimmedBexpr[res[1]:]
+			}
 		} else {
 			replacedBStr = append(replacedBStr, trimmedBexpr[:res[0]]...) // Copy prefix
 			err := re.copyReplacement(&replacedBStr, &trimmedBexpr, res, instructions)
