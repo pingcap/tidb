@@ -345,7 +345,6 @@ func (c *UniqueIndexCols) ResolveIndices(schema *expression.Schema) error {
 			return err
 		}
 		c.Columns[i] = newCol.(*expression.Column)
-
 	}
 	return nil
 }
