@@ -248,11 +248,12 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			ignore, err := us.isSnapshotRowConflictWithMemBufRow(row)
+			conflict, err := us.isSnapshotRowConflictWithMemBufRow(row)
 			if err != nil {
 				return nil, err
 			}
-			if ignore {
+			// If snapshot row conflict with mem-buffer row, ignore this snapshot row.
+			if conflict {
 				continue
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
@@ -301,7 +302,6 @@ func (us *UnionScanExec) isSnapshotRowConflictWithMemBufRow(row chunk.Row) (bool
 			}
 		}
 	}
-
 	return false, nil
 }
 

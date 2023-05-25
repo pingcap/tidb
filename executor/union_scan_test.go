@@ -17,11 +17,11 @@ package executor_test
 import (
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"

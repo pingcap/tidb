@@ -4837,7 +4837,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		uniqueIndexCols := []UniqueIndexCols{}
+		var uniqueIndexCols []UniqueIndexCols
 		for _, idx := range ds.table.Indices() {
 			if !tables.IsIndexWritable(idx) {
 				continue
