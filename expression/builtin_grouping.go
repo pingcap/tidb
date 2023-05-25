@@ -98,7 +98,7 @@ func (b *BuiltinGroupingImplSig) metadata() proto.Message {
 	args := &tipb.GroupingFunctionMetadata{}
 	*(args.Mode) = b.mode
 	for groupingMark := range b.groupingMarks {
-		args.GroupingMarks = append(args.GroupingMarks, uint64(groupingMark))
+		args.GroupingMarks = append(args.GroupingMarks, groupingMark)
 	}
 	return args
 }
