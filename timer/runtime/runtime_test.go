@@ -23,7 +23,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/timer/api"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -578,8 +577,7 @@ func TestCreateWatchTimerChan(t *testing.T) {
 
 	ch := make(chan api.WatchTimerResponse, 1)
 	ch <- api.WatchTimerResponse{Events: []*api.WatchTimerEvent{{TimerID: "AAA"}}}
-	var retCh api.WatchTimerChan
-	retCh = ch
+	retCh := api.WatchTimerChan(ch)
 	mockCore.On("Watch", mock.Anything).Return(retCh).Once()
 	mockCore.On("WatchSupported").Return(true).Once()
 
@@ -616,12 +614,10 @@ func TestWatchTimerRetry(t *testing.T) {
 	mockCore, mockStore := newMockStore()
 	ch := make(chan api.WatchTimerResponse)
 	close(ch)
-	var closedCh api.WatchTimerChan
-	closedCh = ch
+	closedCh := api.WatchTimerChan(ch)
 
 	ch = make(chan api.WatchTimerResponse)
-	var normalCh api.WatchTimerChan
-	normalCh = ch
+	normalCh := api.WatchTimerChan(ch)
 
 	mockCore.On("WatchSupported").Return(true).Times(3)
 	var watch1StartTime atomic.Pointer[time.Time]
@@ -642,9 +638,170 @@ func TestWatchTimerRetry(t *testing.T) {
 
 	runtime := NewTimerRuntimeBuilder("g1", mockStore).Build()
 	runtime.Start()
+	defer runtime.Stop()
+
 	waitDone(done, time.Minute)
 	require.NotNil(t, watch1StartTime.Load())
 	require.NotNil(t, watch2StartTime.Load())
 	require.GreaterOrEqual(t, watch2StartTime.Load().Sub(*watch1StartTime.Load()), reWatchInterval)
-	runtime.Stop()
+}
+
+func TestTimerFullProcess(t *testing.T) {
+	origBatchProcessWatchRespInterval := batchProcessWatchRespInterval
+	origMinTriggerEventInterval := minTriggerEventInterval
+	origMaxTriggerEventInterval := maxTriggerEventInterval
+	batchProcessWatchRespInterval = time.Millisecond
+	minTriggerEventInterval = time.Millisecond
+	maxTriggerEventInterval = 10 * time.Millisecond
+	defer func() {
+		batchProcessWatchRespInterval = origBatchProcessWatchRespInterval
+		minTriggerEventInterval = origMinTriggerEventInterval
+		maxTriggerEventInterval = origMaxTriggerEventInterval
+	}()
+
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+
+	var now atomic.Pointer[time.Time]
+	setNow := func(n time.Time) { now.Store(&n) }
+	setNow(time.UnixMilli(0))
+	var zeroTime time.Time
+	store := api.NewMemoryTimerStore()
+	cli := api.NewDefaultTimerClient(store)
+	hook := newMockHook()
+	runtime := NewTimerRuntimeBuilder("g1", store).
+		RegisterHookFactory("h1", func(hookClass string, timerCli api.TimerClient) api.Hook {
+			require.Equal(t, "h1", hookClass)
+			require.Equal(t, cli, timerCli)
+			return hook
+		}).
+		Build()
+	runtime.setNowFunc(func() time.Time {
+		return *now.Load()
+	})
+
+	var currentEvent atomic.Pointer[string]
+	var preSchedTimer atomic.Pointer[api.TimerRecord]
+	checkPreSchedEventFunc := func(checkTimer *api.TimerRecord) func(args mock.Arguments) {
+		return func(args mock.Arguments) {
+			argCtx, ok := args[0].(context.Context)
+			require.True(t, ok)
+			require.NotNil(t, argCtx)
+			argEvent, ok := args[1].(api.TimerShedEvent)
+			require.True(t, ok)
+			require.NotNil(t, argEvent)
+			eventID := argEvent.EventID()
+			currentEvent.Store(&eventID)
+			argTimer := argEvent.Timer()
+			require.Equal(t, checkTimer, argTimer)
+			preSchedTimer.Store(argTimer)
+		}
+	}
+
+	onSchedDone := make(chan struct{})
+	var onSchedTimer atomic.Pointer[api.TimerRecord]
+	checkOnSchedEventFunc := func(checkEventData []byte, checkEventStart time.Time) func(args mock.Arguments) {
+		return func(args mock.Arguments) {
+			argCtx, ok := args[0].(context.Context)
+			require.True(t, ok)
+			require.NotNil(t, argCtx)
+			argEvent, ok := args[1].(api.TimerShedEvent)
+			require.True(t, ok)
+			require.NotNil(t, argEvent)
+			eventID := argEvent.EventID()
+			require.Equal(t, *currentEvent.Load(), eventID)
+			argTimer := argEvent.Timer()
+			preTimer := preSchedTimer.Load()
+			require.Equal(t, preTimer.ID, argTimer.ID)
+			require.Equal(t, preTimer.TimerSpec, argTimer.TimerSpec)
+			require.Equal(t, preTimer.Watermark, argTimer.Watermark)
+			require.Equal(t, api.SchedEventTrigger, argTimer.EventStatus)
+			require.Equal(t, preTimer.SummaryData, argTimer.SummaryData)
+			require.Equal(t, eventID, argTimer.EventID)
+			require.Equal(t, checkEventData, argTimer.EventData)
+			require.Equal(t, checkEventStart, argTimer.EventStart)
+			currentEvent.Store(nil)
+			preSchedTimer.Store(nil)
+			onSchedTimer.Store(argTimer)
+			close(onSchedDone)
+		}
+	}
+
+	hookStartWait := make(chan time.Time)
+	hook.On("Start").Return().Once().WaitUntil(hookStartWait)
+	hook.On("Stop").Return().Maybe()
+	runtime.Start()
+	defer runtime.Stop()
+
+	timer, err := cli.CreateTimer(ctx, api.TimerSpec{
+		Key:             "key1",
+		Data:            []byte("timer1data"),
+		SchedPolicyType: api.SchedEventInterval,
+		SchedPolicyExpr: "1m",
+		HookClass:       "h1",
+		Enable:          true,
+	})
+	require.NoError(t, err)
+	timerID := timer.ID
+	close(hookStartWait)
+
+	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
+		Return(api.PreSchedEventResult{EventData: []byte("eventdata1")}, nil).
+		Once().
+		Run(checkPreSchedEventFunc(timer))
+
+	hook.On("OnSchedEvent", mock.Anything, mock.Anything).
+		Return(nil).
+		Once().
+		Run(checkOnSchedEventFunc([]byte("eventdata1"), *now.Load()))
+	waitDone(onSchedDone, 5*time.Second)
+	onSchedDone = make(chan struct{})
+	hook.AssertExpectations(t)
+
+	timer, err = cli.GetTimerByID(ctx, timerID)
+	require.NoError(t, err)
+	require.Equal(t, onSchedTimer.Load(), timer)
+	onSchedTimer.Store(nil)
+
+	// should not trigger again before close previous event
+	setNow(now.Load().Add(2 * time.Minute))
+	checkNotDone(onSchedDone, time.Second)
+	tmpTimer, err := cli.GetTimerByID(ctx, timerID)
+	require.NoError(t, err)
+	require.Equal(t, timer, tmpTimer)
+
+	// close event
+	err = cli.CloseTimerEvent(ctx, timerID, timer.EventID,
+		api.WithSetWatermark(*now.Load()),
+		api.WithSetSummaryData([]byte("summary1")),
+	)
+	require.NoError(t, err)
+	timer, err = cli.GetTimerByID(ctx, timerID)
+	require.NoError(t, err)
+	require.Equal(t, api.SchedEventIdle, timer.EventStatus)
+	require.Empty(t, timer.EventID)
+	require.Equal(t, zeroTime, timer.EventStart)
+	require.Empty(t, timer.EventData)
+	require.Equal(t, []byte("summary1"), timer.SummaryData)
+	checkNotDone(onSchedDone, time.Second)
+
+	// trigger again after 1 minute
+	setNow(now.Load().Add(time.Minute))
+	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
+		Return(api.PreSchedEventResult{EventData: []byte("eventdata2")}, nil).
+		Once().
+		Run(checkPreSchedEventFunc(timer))
+
+	hook.On("OnSchedEvent", mock.Anything, mock.Anything).
+		Return(nil).
+		Once().
+		Run(checkOnSchedEventFunc([]byte("eventdata2"), *now.Load()))
+	waitDone(onSchedDone, 5*time.Second)
+	onSchedDone = make(chan struct{})
+	hook.AssertExpectations(t)
+
+	timer, err = cli.GetTimerByID(ctx, timer.ID)
+	require.Nil(t, err)
+	require.Equal(t, onSchedTimer.Load(), timer)
+	onSchedTimer.Store(nil)
 }

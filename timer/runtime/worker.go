@@ -29,7 +29,7 @@ const (
 	workerRecvChanCap               = 8
 	workerRespChanCap               = 128
 	workerEventDefaultRetryInterval = 10 * time.Second
-	chanBlockInterval               = 30 * time.Second
+	chanBlockInterval               = time.Second
 )
 
 type triggerEventRequest struct {
@@ -67,9 +67,14 @@ type hookWorker struct {
 	hook      api.Hook
 	ch        chan *triggerEventRequest
 	logger    *zap.Logger
+	nowFunc   func() time.Time
 }
 
-func newHookWorker(ctx context.Context, wg *sync.WaitGroup, groupID string, hookClass string, hook api.Hook) *hookWorker {
+func newHookWorker(ctx context.Context, wg *sync.WaitGroup, groupID string, hookClass string, hook api.Hook, nowFunc func() time.Time) *hookWorker {
+	if nowFunc == nil {
+		nowFunc = time.Now
+	}
+
 	w := &hookWorker{
 		ctx:       ctx,
 		wg:        wg,
@@ -80,7 +85,9 @@ func newHookWorker(ctx context.Context, wg *sync.WaitGroup, groupID string, hook
 			zap.String("groupID", groupID),
 			zap.String("hookClass", hookClass),
 		),
+		nowFunc: nowFunc,
 	}
+
 	wg.Add(1)
 	go w.loop()
 	return w
@@ -100,9 +107,6 @@ func (w *hookWorker) loop() {
 		w.wg.Done()
 	}()
 
-	blockTimer := time.NewTimer(chanBlockInterval)
-	defer blockTimer.Stop()
-
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -115,7 +119,7 @@ func (w *hookWorker) loop() {
 				zap.String("eventID", req.eventID),
 			)
 			resp := w.triggerEvent(req, logger)
-			if !w.responseChan(req.resp, resp, blockTimer, logger) {
+			if !w.responseChan(req.resp, resp, logger) {
 				return
 			}
 		}
@@ -156,7 +160,7 @@ func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) 
 			preResult = result
 		}
 
-		update := buildEventUpdate(req, preResult)
+		update := buildEventUpdate(req, preResult, w.nowFunc)
 		if err := req.store.Update(w.ctx, timer.ID, update); err != nil {
 			if errors.ErrorEqual(err, api.ErrVersionNotMatch) {
 				newTimer, getErr := req.store.GetByID(w.ctx, timer.ID)
@@ -233,10 +237,11 @@ func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) 
 	return resp
 }
 
-func (w *hookWorker) responseChan(ch chan<- *triggerEventResponse, resp *triggerEventResponse, blockTimer *time.Timer, logger *zap.Logger) bool {
+func (w *hookWorker) responseChan(ch chan<- *triggerEventResponse, resp *triggerEventResponse, logger *zap.Logger) bool {
 	sendStart := time.Now()
+	timeout := time.NewTimer(chanBlockInterval)
+	defer timeout.Stop()
 	for {
-		blockTimer.Reset(chanBlockInterval)
 		select {
 		case <-w.ctx.Done():
 			logger.Info("sending resp to chan aborted for context cancelled")
@@ -244,7 +249,7 @@ func (w *hookWorker) responseChan(ch chan<- *triggerEventResponse, resp *trigger
 			return false
 		case ch <- resp:
 			return true
-		case <-blockTimer.C:
+		case <-timeout.C:
 			logger.Warn(
 				"sending resp to chan is blocked for a long time",
 				zap.Duration("totalBlock", time.Since(sendStart)),
@@ -253,11 +258,11 @@ func (w *hookWorker) responseChan(ch chan<- *triggerEventResponse, resp *trigger
 	}
 }
 
-func buildEventUpdate(req *triggerEventRequest, result api.PreSchedEventResult) *api.TimerUpdate {
+func buildEventUpdate(req *triggerEventRequest, result api.PreSchedEventResult, nowFunc func() time.Time) *api.TimerUpdate {
 	var update api.TimerUpdate
 	update.EventStatus.Set(api.SchedEventTrigger)
 	update.EventID.Set(req.eventID)
-	update.EventStart.Set(time.Now())
+	update.EventStart.Set(nowFunc())
 	update.EventData.Set(result.EventData)
 	update.CheckVersion.Set(req.timer.Version)
 	return &update

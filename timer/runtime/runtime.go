@@ -183,7 +183,7 @@ func (rt *TimerGroupRuntime) loop() {
 		case resp, ok := <-watchCh:
 			if ok {
 				if len(batchResponses) == 0 {
-					batchHandleResponsesTimer.Reset(batchProcessWatchRespInterval)
+					resetTimer(batchHandleResponsesTimer, batchProcessWatchRespInterval)
 				}
 				batchResponses = append(batchResponses, resp)
 			} else {
@@ -192,7 +192,7 @@ func (rt *TimerGroupRuntime) loop() {
 					zap.Duration("after", reWatchInterval),
 				)
 				watchCh = idleWatchChan
-				reWatchTimer.Reset(reWatchInterval)
+				resetTimer(reWatchTimer, reWatchInterval)
 			}
 		case <-reWatchTimer.C:
 			if watchCh == idleWatchChan {
@@ -284,7 +284,8 @@ func (rt *TimerGroupRuntime) tryCloseTriggeringTimers() bool {
 }
 
 func (rt *TimerGroupRuntime) setTryTriggerTimer(t *time.Timer, lastTryTriggerTime time.Time) {
-	t.Reset(rt.getNextTryTriggerDuration(lastTryTriggerTime))
+	interval := rt.getNextTryTriggerDuration(lastTryTriggerTime)
+	resetTimer(t, interval)
 }
 
 func (rt *TimerGroupRuntime) getNextTryTriggerDuration(lastTryTriggerTime time.Time) time.Duration {
@@ -407,7 +408,7 @@ func (rt *TimerGroupRuntime) ensureWorker(hookClass string) (*hookWorker, bool) 
 		hook = factory(hookClass, rt.cli)
 	}
 
-	worker = newHookWorker(rt.ctx, &rt.wg, rt.groupID, hookClass, hook)
+	worker = newHookWorker(rt.ctx, &rt.wg, rt.groupID, hookClass, hook, rt.nowFunc)
 	rt.workers[hookClass] = worker
 	return worker, true
 }
@@ -427,4 +428,14 @@ func (rt *TimerGroupRuntime) buildTimerIDsCond(ids map[string]struct{}) api.Cond
 func (rt *TimerGroupRuntime) setNowFunc(fn func() time.Time) {
 	rt.nowFunc = fn
 	rt.cache.nowFunc = fn
+}
+
+func resetTimer(t *time.Timer, interval time.Duration) {
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
+	}
+	t.Reset(interval)
 }

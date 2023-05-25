@@ -14,6 +14,7 @@ go_library(
         "//util/logutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//maps",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -29,7 +30,7 @@ go_test(
     ],
     embed = [":runtime"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 18,
     deps = [
         "//testkit/testsetup",
         "//timer/api",

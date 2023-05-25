@@ -35,7 +35,7 @@ func TestWorkerStartStop(t *testing.T) {
 
 	hook := newMockHook()
 	hook.On("Start").Return().Once()
-	newHookWorker(ctx, &wg, "g1", "h1", hook)
+	newHookWorker(ctx, &wg, "g1", "h1", hook, nil)
 	waitDone(hook.started, time.Second)
 	hook.AssertExpectations(t)
 
@@ -149,7 +149,7 @@ func TestWorkerProcessIdleTimerSuccess(t *testing.T) {
 	hook.On("Start").Return().Once()
 	hook.On("Stop").Return().Once()
 
-	w := newHookWorker(ctx, &wg, "g1", "h1", hook)
+	w := newHookWorker(ctx, &wg, "g1", "h1", hook, nil)
 	eventID := uuid.NewString()
 	var eventStartRef atomic.Pointer[time.Time]
 	var finalTimerRef atomic.Pointer[api.TimerRecord]
@@ -228,7 +228,7 @@ func TestWorkerProcessTriggeredTimerSuccess(t *testing.T) {
 	hook.On("Start").Return().Once()
 	hook.On("Stop").Return().Once()
 
-	w := newHookWorker(ctx, &wg, "g1", "h1", hook)
+	w := newHookWorker(ctx, &wg, "g1", "h1", hook, nil)
 	hook.On("OnSchedEvent", mock.Anything, mock.Anything).
 		Return(nil).Once().
 		Run(func(args mock.Arguments) {
@@ -278,7 +278,7 @@ func TestWorkerProcessDelayOrErr(t *testing.T) {
 	hook.On("Start").Return().Once()
 	hook.On("Stop").Return().Once()
 
-	w := newHookWorker(ctx, &wg, "g1", "h1", hook)
+	w := newHookWorker(ctx, &wg, "g1", "h1", hook, nil)
 	eventID := uuid.NewString()
 	request := &triggerEventRequest{
 		eventID: eventID,
