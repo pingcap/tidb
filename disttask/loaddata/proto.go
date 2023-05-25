@@ -34,7 +34,6 @@ const (
 // All the field should be serializable.
 type TaskMeta struct {
 	Plan   importer.Plan
-	JobID  int64
 	Stmt   string
 	Result Result
 	// eligible instances to run this task, we run on all instances if it's empty.

@@ -77,7 +77,7 @@ func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 }
 
 // NewTableImporter creates a new table importer.
-func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableImporter, err error) {
+func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -85,7 +85,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
-	dir, err := prepareSortDir(e, param.Job.ID)
+	dir, err := prepareSortDir(e, taskID)
 	if err != nil {
 		return nil, err
 	}

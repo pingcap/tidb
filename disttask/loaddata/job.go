@@ -131,7 +131,6 @@ func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
 	}
 	task := TaskMeta{
 		Plan:              *ti.plan,
-		JobID:             ti.Job.ID,
 		Stmt:              ti.stmt,
 		EligibleInstances: instances,
 	}

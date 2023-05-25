@@ -90,9 +90,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	// todo: we don't need Job now, remove it later.
 	group, groupCtx := errgroup.WithContext(ctx)
 	param := &importer.JobImportParam{
-		Job: &asyncloaddata.Job{
-			ID: 1, // todo: we don't need Job now, remove it later.
-		},
+		Job:      &asyncloaddata.Job{},
 		Group:    group,
 		GroupCtx: groupCtx,
 		Done:     make(chan struct{}),
