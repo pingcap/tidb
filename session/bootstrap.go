@@ -2642,8 +2642,8 @@ func upgradeToVer146(s Session, ver int64) {
 	if ver >= version146 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD INDEX idx_create_time (create_time)", infoschema.ErrIndexExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_history ADD INDEX idx_create_time (create_time)", infoschema.ErrIndexExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
 }
 
 func upgradeToVer167(s Session, ver int64) {
