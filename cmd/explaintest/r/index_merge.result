@@ -323,7 +323,7 @@ drop view if exists v2;
 create view v2 as select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10;
 show create view v2;
 View	Create View	character_set_client	collation_connection
-v2	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v2` (`c1`, `c2`, `c3`) AS SELECT /*+ USE_INDEX_MERGE(`t1` )*/ `test`.`t1`.`c1` AS `c1`,`test`.`t1`.`c2` AS `c2`,`test`.`t1`.`c3` AS `c3` FROM `test`.`t1` WHERE `c1`<10 OR `c2`<10 AND `c3`<10	utf8mb4	utf8mb4_bin
+v2	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v2` (`c1`, `c2`, `c3`) AS SELECT /*+ USE_INDEX_MERGE(`t1` )*/ `test`.`t1`.`c1` AS `c1`,`test`.`t1`.`c2` AS `c2`,`test`.`t1`.`c3` AS `c3` FROM `test`.`t1` WHERE `c1`<10 OR `c2`<10 AND `c3`<10	utf8mb4	utf8mb4_general_ci
 select * from v2 order by 1;
 c1	c2	c3
 1	1	1
@@ -455,10 +455,9 @@ c1	c2	c3
 ///// MEMORY Table
 explain select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
 id	estRows	task	access object	operator info
-StreamAgg_10	1.00	root		funcs:count(Column#96)->Column#97
-└─Sort_11	1.00	root		Column#96
-  └─StreamAgg_14	1.00	root		funcs:count(1)->Column#96
-    └─MemTableScan_18	10000.00	root	table:STATEMENTS_SUMMARY	
+StreamAgg_9	1.00	root		funcs:count(Column#96)->Column#97
+└─StreamAgg_11	1.00	root		funcs:count(1)->Column#96
+  └─MemTableScan_15	10000.00	root	table:STATEMENTS_SUMMARY	
 show warnings;
 Level	Code	Message
 select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
