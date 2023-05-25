@@ -82,6 +82,7 @@ const (
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
+	flagPushDownSequence
 )
 
 var optRuleList = []logicalOptRule{
@@ -106,6 +107,7 @@ var optRuleList = []logicalOptRule{
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&pushDownSequenceSolver{},
 }
 
 type logicalOptimizeOp struct {
@@ -277,22 +279,17 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
 }
 
-// DoOptimize optimizes a logical plan to a physical plan.
-func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+// DoOptimizeAndLogicAsRet optimizes a logical plan to a physical plan and return the optimized logical plan.
+func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (LogicalPlan, PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
-
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
 	}
-	if checkStableResultMode(sctx) {
+	if checkStableResultMode(logic.SCtx()) {
 		flag |= flagStabilizeResults
 	}
-	if sessVars.StmtCtx.StraightJoinOrder {
+	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^flagJoinReOrder
 	}
@@ -300,10 +297,11 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	flag |= flagSyncWaitStatsLoadPoint
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
+
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
-		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
+		return nil, nil, 0, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	planCounter := PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
@@ -311,11 +309,11 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	physical, cost, err := physicalOptimize(logic, &planCounter)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	finalPlan, err := postOptimize(ctx, sctx, physical)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
@@ -324,7 +322,18 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if sessVars.StmtCtx.EnableOptimizeTrace {
 		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
 	}
-	return finalPlan, cost, nil
+	return logic, finalPlan, cost, nil
+}
+
+// DoOptimize optimizes a logical plan to a physical plan.
+func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+	sessVars := sctx.GetSessionVars()
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
+	}
+	_, finalPlan, cost, err := DoOptimizeAndLogicAsRet(ctx, sctx, flag, logic)
+	return finalPlan, cost, err
 }
 
 // refineCETrace will adjust the content of CETrace.
@@ -778,7 +787,7 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 		return false, 0
 	}
 	var initialMaxCores uint64 = 10000
-	var minLogicalCores uint64 = initialMaxCores // set to a large enough value here
+	var minLogicalCores = initialMaxCores // set to a large enough value here
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
 			logicalCpus, err := strconv.Atoi(row[5].GetString())
@@ -811,7 +820,7 @@ func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Cont
 		return false, 0 // probably won't reach this path
 	}
 
-	var tiflashServerCount uint64 = 0
+	var tiflashServerCount uint64
 	switch (*tiflashServerCountInfo).itemStatus {
 	case unInitialized:
 		serversInfo, err := infoschema.GetTiFlashServerInfo(sctx)

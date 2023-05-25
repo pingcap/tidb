@@ -21,8 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
@@ -30,7 +32,6 @@ import (
 )
 
 var (
-	distLoadDataConcurrency = 16
 	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
@@ -40,6 +41,8 @@ type DistImporter struct {
 	plan   *importer.Plan
 	stmt   string
 	logger *zap.Logger
+	// the instance to import data, used for single-node import, nil means import data on all instances.
+	instance *infosync.ServerInfo
 }
 
 var _ importer.JobImporter = &DistImporter{}
@@ -51,6 +54,20 @@ func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt s
 		plan:           plan,
 		stmt:           stmt,
 		logger:         logutil.BgLogger().With(zap.String("component", "distribute importer"), zap.Int("id", int(param.Job.ID))),
+	}, nil
+}
+
+// NewDistImporterCurrNode creates a new DistImporter to import data on current node.
+func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan, stmt string) (*DistImporter, error) {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return nil, err
+	}
+	return &DistImporter{
+		JobImportParam: param,
+		plan:           plan,
+		stmt:           stmt,
+		instance:       serverInfo,
 	}, nil
 }
 
@@ -107,72 +124,22 @@ func buildDistTask(plan *importer.Plan, jobID int64, stmt string) TaskMeta {
 	}
 }
 
-// submitGlobalTaskAndRun submits a global task and returns a channel that will be closed when the task is done.
-// TODO: move to handle, see https://github.com/pingcap/tidb/pull/43066
-func submitGlobalTaskAndRun(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
-	if err != nil {
-		return err
-	}
-
-	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, concurrency, taskMeta)
-		if err != nil {
-			return err
-		}
-
-		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
-		if err != nil {
-			return err
-		}
-
-		if globalTask == nil {
-			return errors.Errorf("cannot find global task with ID %d", taskID)
-		}
-	}
-
-	ticker := time.NewTicker(checkTaskFinishInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			logutil.BgLogger().Warn("context done", zap.Error(ctx.Err()))
-			return ctx.Err()
-		case <-ticker.C:
-			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
-			if err != nil {
-				logutil.BgLogger().Info("get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
-				continue
-			}
-
-			if found == nil {
-				return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
-			}
-
-			if found.State == proto.TaskStateSucceed {
-				return nil
-			}
-
-			// TODO: get the original error message.
-			if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
-				return errors.Errorf("task stopped with state %s", found.State)
-			}
-		}
-	}
-}
-
 func (ti *DistImporter) doImport(ctx context.Context) error {
-	task := buildDistTask(ti.plan, ti.Job.ID, ti.stmt)
+	var instances []*infosync.ServerInfo
+	if ti.instance != nil {
+		instances = append(instances, ti.instance)
+	}
+	task := TaskMeta{
+		Plan:              *ti.plan,
+		JobID:             ti.Job.ID,
+		Stmt:              ti.stmt,
+		EligibleInstances: instances,
+	}
 	taskMeta, err := json.Marshal(task)
 	if err != nil {
 		return err
 	}
-	return submitGlobalTaskAndRun(ctx, ti.taskKey(), proto.LoadData, distLoadDataConcurrency, taskMeta)
+	return handle.SubmitAndRunGlobalTask(ctx, ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
 }
 
 func (ti *DistImporter) taskKey() string {
