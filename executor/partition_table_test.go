@@ -536,6 +536,11 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	// test indexLookUp with order property pushed down.
 	for i := 0; i < 100; i++ {
+		if i%2 == 0 {
+			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
+		} else {
+			tk.MustExec("set tidb_partition_prune_mode = `dynamic-only`")
+		}
 		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(1099)
@@ -553,9 +558,11 @@ func TestOrderByAndLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "IndexLookUp"))
 		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "Limit"))
 		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "IndexLookUp"))
-		require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
-		require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
-		require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+		if i%2 != 0 {
+			require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
+			require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
+			require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+		}
 		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
 		tk.MustQuery(queryRangePartitionWithLimitHint).Sort().Check(regularResult)
 		tk.MustQuery(queryHashPartitionWithLimitHint).Sort().Check(regularResult)
@@ -564,6 +571,11 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	// test indexLookUp with order property pushed down.
 	for i := 0; i < 100; i++ {
+		if i%2 == 0 {
+			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
+		} else {
+			tk.MustExec("set tidb_partition_prune_mode = `dynamic-only`")
+		}
 		// explain select * from t where b > {y}  use index(idx_b) order by b limit {x}; // check if IndexLookUp is used
 		// select * from t where b > {y} use index(idx_b) order by b limit {x}; // it can return the correct result
 		x := rand.Intn(1999)
@@ -579,14 +591,18 @@ func TestOrderByAndLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "IndexLookUp"))
 		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "Limit"))
 		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "IndexLookUp"))
-		require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
-		require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
-		require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+		if i%2 != 0 {
+			require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
+			require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
+			require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+		}
 		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
 		tk.MustQuery(queryRangePartitionWithLimitHint).Sort().Check(regularResult)
 		tk.MustQuery(queryHashPartitionWithLimitHint).Sort().Check(regularResult)
 		tk.MustQuery(queryListPartitionWithLimitHint).Sort().Check(regularResult)
 	}
+
+	tk.MustExec("set tidb_partition_prune_mode = default")
 
 	// test tableReader
 	for i := 0; i < 100; i++ {
