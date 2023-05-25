@@ -4325,12 +4325,9 @@
         "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
         "Plan": [
           "HashAgg 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#9 desc, Column#10 separator \"--\")->Column#5",
-          "└─Projection 20000.00 root  cast(test.ptest.name, var_string(20))->Column#6, test.ptest.name, cast(test.ptest.id, var_string(20))->Column#8, test.ptest.name, test.ptest.id",
-          "  └─PartitionUnion 20000.00 root  ",
-          "    ├─TableReader 10000.00 root  data:TableFullScan",
-          "    │ └─TableFullScan 10000.00 cop[tikv] table:ptest, partition:p0 keep order:false, stats:pseudo",
-          "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:ptest, partition:p1 keep order:false, stats:pseudo"
+          "└─Projection 10000.00 root  cast(test.ptest.name, var_string(20))->Column#6, test.ptest.name, cast(test.ptest.id, var_string(20))->Column#8, test.ptest.name, test.ptest.id",
+          "  └─TableReader 10000.00 root partition:all data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:ptest keep order:false, stats:pseudo"
         ],
         "Result": [
           "500++200++30++20++20++10 3--3--1--1--2--1"
@@ -4352,12 +4349,9 @@
         "SQL": "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;",
         "Plan": [
           "HashAgg 1.00 root  funcs:group_concat(distinct Column#5 order by Column#6 desc separator \",\")->Column#4",
-          "└─Projection 20000.00 root  cast(test.ptest.name, var_string(20))->Column#5, test.ptest.name",
-          "  └─PartitionUnion 20000.00 root  ",
-          "    ├─TableReader 10000.00 root  data:TableFullScan",
-          "    │ └─TableFullScan 10000.00 cop[tikv] table:ptest, partition:p0 keep order:false, stats:pseudo",
-          "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:ptest, partition:p1 keep order:false, stats:pseudo"
+          "└─Projection 10000.00 root  cast(test.ptest.name, var_string(20))->Column#5, test.ptest.name",
+          "  └─TableReader 10000.00 root partition:all data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:ptest keep order:false, stats:pseudo"
         ],
         "Result": [
           "500,200,30,20,10"
@@ -7356,36 +7350,13 @@
       {
         "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-          "├─PartitionUnion(Build) 49900.05 root  ",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
-          "│ └─TableReader 9980.01 root  data:Selection",
-          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo",
-          "└─PartitionUnion(Probe) 39920.04 root  ",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
-          "  └─TableReader 9980.01 root  data:Selection",
-          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo"
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
@@ -7397,125 +7368,50 @@
       {
         "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-          "├─PartitionUnion(Build) 39920.04 root  ",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
-          "│ └─TableReader 9980.01 root  data:Selection",
-          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo",
-          "└─PartitionUnion(Probe) 49900.05 root  ",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
-          "  └─TableReader 9980.01 root  data:Selection",
-          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo"
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
         ],
-        "Warning": [
-          "Warning 1105 disable dynamic pruning due to t1 has no global stats"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-          "├─PartitionUnion(Build) 39920.04 root  ",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
-          "│ └─TableReader 9980.01 root  data:Selection",
-          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo",
-          "└─PartitionUnion(Probe) 49900.05 root  ",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
-          "  └─TableReader 9980.01 root  data:Selection",
-          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo"
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
         ],
-        "Warning": [
-          "Warning 1105 disable dynamic pruning due to t1 has no global stats"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-          "├─PartitionUnion(Build) 49900.05 root  ",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
-          "│ ├─TableReader 9980.01 root  data:Selection",
-          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
-          "│ └─TableReader 9980.01 root  data:Selection",
-          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo",
-          "└─PartitionUnion(Probe) 39920.04 root  ",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
-          "  ├─TableReader 9980.01 root  data:Selection",
-          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
-          "  └─TableReader 9980.01 root  data:Selection",
-          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo"
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
         ],
-        "Warning": [
-          "Warning 1105 disable dynamic pruning due to t1 has no global stats"
-        ]
+        "Warning": null
       }
     ]
   },
