@@ -291,11 +291,6 @@ func (s *statsInnerCache) SetCapacity(c int64) {
 	s.lru.setCapacity(c)
 }
 
-// EnableQuota implements statsCacheInner
-func (s *statsInnerCache) EnableQuota() bool {
-	return true
-}
-
 // Front implements statsCacheInner
 func (s *statsInnerCache) Front() int64 {
 	s.RLock()
