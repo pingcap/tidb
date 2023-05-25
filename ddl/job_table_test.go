@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
@@ -201,7 +200,9 @@ func TestUpgradingRelatedJobState(t *testing.T) {
 	}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpgradingState", `return(true)`))
-	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/syncer/mockUpgradingState"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpgradingState"))
+	}()
 
 	num := 0
 	hook := &callback.TestDDLCallback{}
@@ -219,25 +220,20 @@ func TestUpgradingRelatedJobState(t *testing.T) {
 				tk.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobs[0].ID))
 			}
 			if jobs[0].State == testCases[num].jobState {
-				logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------upgrading job:%s", jobs[0].String()))
 				dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateUpgrading})
-				logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------upgrading 222 job:%s", jobs[0].String()))
 			}
 			break
 		}
 	}
 	hook.OnGetJobAfterExported = func(jobType string, getJob *model.Job) {
 		if getJob.Query == testCases[num].sql && getJob.State == testCases[num].jobState {
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------normal job:%s", getJob.String()))
 			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateNormalRunning})
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------normal 222 job:%s", getJob.String()))
 		}
 	}
 	d.SetHook(hook)
 
 	for i, tc := range testCases {
 		num = i
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------sql:%s", tc.sql))
 		if tc.err == nil {
 			tk.MustExec(tc.sql)
 		} else {
