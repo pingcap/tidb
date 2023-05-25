@@ -160,7 +160,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = e.fixTaskForCTEStorageAndReader(dagReq.RootExecutor, mppTask.Meta)
+		err = c.fixTaskForCTEStorageAndReader(dagReq.RootExecutor, mppTask.Meta)
 		if err != nil {
 			return err
 		}
