@@ -267,13 +267,9 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 }
 
 func (s *mockGCSSuite) TestGeneratedColumns() {
-	s.testLoadDataForGeneratedColumns(importer.LogicalImportMode)
-	//s.testLoadDataForGeneratedColumns(importer.PhysicalImportMode)
-}
-
-func (s *mockGCSSuite) testLoadDataForGeneratedColumns(importMode string) {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	// For issue https://github.com/pingcap/tidb/issues/39885
-	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	withOptions := fmt.Sprintf("WITH import_mode='%s'", importer.PhysicalImportMode)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("USE load_csv;")
@@ -397,7 +393,7 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 }
 
 func (s *mockGCSSuite) TestMultiValueIndex() {
-	s.testMultiValueIndex(importer.LogicalImportMode, false)
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	//s.testMultiValueIndex(importer.PhysicalImportMode, false)
 	//s.testMultiValueIndex(importer.PhysicalImportMode, true)
 }
@@ -433,7 +429,7 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) 
 }
 
 func (s *mockGCSSuite) TestMixedCompression() {
-	s.testMixedCompression(importer.LogicalImportMode, false)
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	//s.testMixedCompression(importer.PhysicalImportMode, false)
 	//s.testMixedCompression(importer.PhysicalImportMode, true)
 }
@@ -496,7 +492,6 @@ func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool)
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
 	s.T().Skip("skip due to LOAD DATA does not support FORMAT")
-	s.testLoadSQLDump(importer.LogicalImportMode, false)
 	//s.testLoadSQLDump(importer.PhysicalImportMode, false)
 	//s.testLoadSQLDump(importer.PhysicalImportMode, true)
 }
@@ -536,7 +531,7 @@ func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
 }
 
 func (s *mockGCSSuite) TestGBK() {
-	s.testGBK(importer.LogicalImportMode, false)
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	//s.testGBK(importer.PhysicalImportMode, false)
 	//s.testGBK(importer.PhysicalImportMode, true)
 }
@@ -654,7 +649,7 @@ func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 }
 
 func (s *mockGCSSuite) TestOtherCharset() {
-	s.testOtherCharset(importer.LogicalImportMode, false)
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	//s.testOtherCharset(importer.PhysicalImportMode, false)
 	//s.testOtherCharset(importer.PhysicalImportMode, true)
 }
@@ -848,7 +843,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 }
 
 func (s *mockGCSSuite) TestColumnsAndUserVars() {
-	s.testColumnsAndUserVars(importer.LogicalImportMode, false)
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	//s.testColumnsAndUserVars(importer.PhysicalImportMode, false)
 	//s.testColumnsAndUserVars(importer.PhysicalImportMode, true)
 }
