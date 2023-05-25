@@ -4362,7 +4362,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
-		return statistics.PseudoTable(tblInfo)
+		return statistics.PseudoTable(tblInfo, nil, nil)
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -4372,9 +4372,19 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
 	}
 
+	availableStatsColIDs := make(map[int64]struct{})
+	availableStatsIdxIDs := make(map[int64]struct{})
 	analyzeCount := mathutil.Max(statsTbl.GetAnalyzeRowCount(), 0)
 	if !ctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
 		statsTbl = statsTbl.Copy()
+		if !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 && analyzeCount == 0 {
+			for id := range statsTbl.Columns {
+				availableStatsColIDs[id] = struct{}{}
+			}
+			for id := range statsTbl.Indices {
+				availableStatsIdxIDs[id] = struct{}{}
+			}
+		}
 		statsTbl.RealtimeCount = int64(analyzeCount)
 	}
 
@@ -4382,7 +4392,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	if statsTbl.RealtimeCount == 0 {
 		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
-		return statistics.PseudoTable(tblInfo)
+		return statistics.PseudoTable(tblInfo, availableStatsColIDs, availableStatsIdxIDs)
 	}
 
 	// 3. statistics is uninitialized or outdated.

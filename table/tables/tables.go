@@ -2285,7 +2285,7 @@ type TemporaryTable struct {
 func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
 	return &TemporaryTable{
 		modified:        false,
-		stats:           statistics.PseudoTable(tblInfo),
+		stats:           statistics.PseudoTable(tblInfo, nil, nil),
 		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
 		meta:            tblInfo,
 	}
