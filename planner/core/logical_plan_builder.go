@@ -17,6 +17,14 @@ package core
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/bits"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
@@ -58,13 +66,6 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
-	"math"
-	"math/bits"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
-	"unicode"
 )
 
 const (

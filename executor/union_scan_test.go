@@ -17,6 +17,7 @@ package executor_test
 import (
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"testing"
 	"time"
 
@@ -577,4 +578,179 @@ func TestBenchDaily(t *testing.T) {
 		executor.BenchmarkReadLastLinesOfHugeLine,
 		BenchmarkUnionScanRead,
 	)
+}
+
+func TestUnionScanIssue24195(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_constraint_check_in_place = false")
+	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set @@tidb_constraint_check_in_place_pessimistic=on")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@tidb_constraint_check_in_place = false")
+	tk2.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic=on")
+
+	// case-1: query return duplicate primary key which is non-clustered.
+	tk1.MustExec("set @@tidb_enable_clustered_index = 0;")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (c1 varchar(10), c2 int, primary key (c1) nonclustered);")
+	tk1.MustExec("insert into t values ('a', 1);")
+	tk1.MustExec("begin;")
+	tk1.MustExec("update t set c1='b' where c1='a';")
+	ch := make(chan struct{}, 0)
+	go func() {
+		defer func() { ch <- struct{}{} }()
+		tk2.MustExec("begin")
+		tk2.MustExec("insert into t values ('a', 2);")
+		tk2.MustQuery("select * from t use index(primary) order by c1, c2;").Check(testkit.Rows("a 2"))
+		tk2.MustQuery("select * from t use index(primary) order by c1, c2 for update;").Check(testkit.Rows("a 2", "b 1"))
+		tk2.MustExec("commit")
+	}()
+	time.Sleep(time.Second * 2)
+	tk1.MustExec("commit")
+	_ = <-ch
+
+	// case-2: query return duplicate unique key
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (c1 varchar(10), c2 int, unique key idx(c1));")
+	tk1.MustExec("insert into t values ('a', 1);")
+	tk1.MustExec("begin;")
+	tk1.MustExec("update t set c1='b' where c1='a';")
+	go func() {
+		defer func() { ch <- struct{}{} }()
+		tk2.MustExec("begin")
+		tk2.MustExec("insert into t values ('a', 2);")
+		tk2.MustQuery("select * from t use index(idx);").Check(testkit.Rows("a 2"))
+		tk2.MustQuery("select c2 from t;").Check(testkit.Rows("2"))
+		tk2.MustQuery("select * from t use index(idx) order by c1, c2 for update;").Check(testkit.Rows("a 2", "b 1"))
+		tk2.MustExec("commit")
+	}()
+	time.Sleep(time.Second * 2)
+	tk1.MustExec("commit")
+	_ = <-ch
+
+	// case-3: when primary key is clustered index
+	tk1.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (c1 varchar(10), c2 int, c3 char(20), primary key (c1, c2));")
+	tk1.MustExec("insert into t values ('tag', 10, 't'), ('cat', 20, 'c');")
+	tk1.MustExec("begin;")
+	tk1.MustExec("update t set c1=reverse(c1) where c1='tag';")
+	ch = make(chan struct{}, 0)
+	go func() {
+		tk2.MustExec("begin")
+		tk2.MustExec("insert into t values('dress',40,'d'),('tag', 10, 't');")
+		tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "tag 10 t"))
+		tk2.MustQuery("select * from t use index(primary) order by c1,c2 for update;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
+		tk2.MustExec("commit")
+		tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
+		ch <- struct{}{}
+	}()
+	time.Sleep(time.Second * 2)
+	tk1.MustExec("commit")
+	_ = <-ch
+
+	// case-4: when primary key is non-clustered.
+	tk1.MustExec("set @@tidb_enable_clustered_index = 0;")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (c1 varchar(10), c2 int, c3 char(20), primary key (c1, c2));")
+	tk1.MustExec("insert into t values ('tag', 10, 't'), ('cat', 20, 'c');")
+	tk1.MustExec("begin;")
+	tk1.MustExec("update t set c1=reverse(c1) where c1='tag';")
+	tk1.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "gat 10 t"))
+	ch = make(chan struct{}, 0)
+	go func() {
+		tk2.MustExec("begin")
+		tk2.MustExec("insert into t values('dress',40,'d'),('tag', 10, 't');")
+		tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "tag 10 t"))
+		tk2.MustQuery("select * from t use index(primary) order by c1,c2 for update;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
+		tk2.MustExec("commit")
+		tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
+		ch <- struct{}{}
+	}()
+	time.Sleep(time.Second * 2)
+	tk1.MustExec("commit")
+	_ = <-ch
+}
+
+func TestUnionScanDuplicateRecord(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_constraint_check_in_place = false")
+	// case-1: duplicate primary key in insert, and primary key is handle.
+	tk.MustExec("create table t (pk int key, val int)")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t values (1,2)") // MySQL returns error here, so following query result in MySQL is [1 1].
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustGetDBError("commit", kv.ErrKeyExists)
+
+	// case-2: duplicate unique key in insert, and primary key is handle.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk int key, val int, unique index (val))")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t values (2,1)") // MySQL returns error here, so following query result in MySQL is [1 1].
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1"))
+	tk.MustGetDBError("commit", kv.ErrKeyExists)
+
+	// case-3: duplicate primary key in insert, and primary key is not handle.
+	tk.MustExec("set @@tidb_enable_clustered_index = 0;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk varchar(10) key, val int)")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustQuery("select _tidb_rowid, pk, val from t").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t values (1,2)") // MySQL returns error here, so following query result in MySQL is [1 1].
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustGetDBError("commit", kv.ErrKeyExists)
+
+	// case-4: in pessimistic transaction, duplicate primary key in insert, and primary key is handle.
+	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=off")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk int key, val int)")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1,2)") // MySQL returns error here, so following query result in MySQL is [1 1].
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustGetDBError("commit", kv.ErrAssertionFailed)
+
+	// case-5: in pessimistic transaction, duplicate unique key in insert, and primary key is handle.
+	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=off")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk int key, val int, unique index (val))")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (2,1)") // MySQL returns error here, so following query result in MySQL is [1 1].
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1"))
+	tk.MustGetDBError("commit", kv.ErrAssertionFailed)
+
+	// case-6: duplicate primary key in insert, and primary key is not handle.
+	tk.MustExec("set @@tidb_enable_clustered_index = 0;")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=off")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk varchar(10) key, val int)")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustQuery("select _tidb_rowid, pk, val from t").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1,2)") // MySQL returns error here, so following query result in MySQL is [1 1].
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustGetDBError("commit", kv.ErrAssertionFailed)
+
+	// case-7: duplicate unique key in insert, and query condition filtered the conflict row in tikv.
+	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=off")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk int key, val int, unique index(val))")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (2,1)") // MySQL returns error here, so following query result in MySQL is empty.
+	tk.MustQuery("select * from t where pk > 1").Check(testkit.Rows("2 1"))
+	tk.MustGetDBError("commit", kv.ErrAssertionFailed)
 }

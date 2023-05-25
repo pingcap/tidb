@@ -275,7 +275,8 @@ func (us *UnionScanExec) isSnapshotRowConflictWithMemBufRow(row chunk.Row) (bool
 		checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
 	}
 	if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
-		// If snapshot row handle appears in txn's mem-buffer, ignore it.
+		// If src handle appears in added rows, it means there is conflict and the transaction will fail to
+		// commit, but for simplicity, we don't handle it here.
 		return true, nil
 	}
 
@@ -295,6 +296,7 @@ func (us *UnionScanExec) isSnapshotRowConflictWithMemBufRow(row chunk.Row) (bool
 				continue
 			}
 			if _, err := us.memBufSnap.Get(context.TODO(), uniqueKey); err == nil {
+				// If snapshot row unique-key appears in txn's mem-buffer, it means there is conflict.
 				return true, nil
 			}
 		}

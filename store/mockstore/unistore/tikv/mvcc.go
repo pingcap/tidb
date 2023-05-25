@@ -227,12 +227,6 @@ func sortKeys(keys [][]byte) [][]byte {
 
 // PessimisticLock will add pessimistic lock on key
 func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.PessimisticLockRequest, resp *kvrpcpb.PessimisticLockResponse) (*lockwaiter.Waiter, error) {
-	//logutil.BgLogger().Info("-------unistore pessimistic lock request",
-	//	zap.Uint64("startTs", req.StartVersion),
-	//	zap.Int("len-mutations", len(req.Mutations)),
-	//	zap.String("first-key", hex.EncodeToString(req.Mutations[0].Key)),
-	//	zap.Uint64("forUpdateTs", req.ForUpdateTs))
-
 	waiter, err := store.pessimisticLockInner(reqCtx, req, resp)
 	if err != nil && req.GetWakeUpMode() == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
 		// The execution of `pessimisticLockInner` is broken by error. If resp.Results is not completely set yet, fill it with LockResultFailed.
@@ -735,13 +729,6 @@ func (store *MVCCStore) Prewrite(reqCtx *requestCtx, req *kvrpcpb.PrewriteReques
 
 	regCtx.AcquireLatches(hashVals)
 	defer regCtx.ReleaseLatches(hashVals)
-
-	//logutil.BgLogger().Info("-------unistore prewrite",
-	//	zap.Uint64("startTs", req.StartVersion),
-	//	zap.Int("len-mutations", len(req.Mutations)),
-	//	zap.String("first-key", hex.EncodeToString(req.Mutations[0].Key)),
-	//	zap.Bool("is-pessimistic", req.ForUpdateTs > 0),
-	//	zap.Uint64("forUpdateTs", req.ForUpdateTs))
 
 	isPessimistic := req.ForUpdateTs > 0
 	var err error
@@ -1647,15 +1634,8 @@ func (store *MVCCStore) DeleteFileInRange(start, end []byte) {
 
 // Get implements the MVCCStore interface.
 func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]byte, error) {
-	//logutil.BgLogger().Info("-------unistore get request 1",
-	//	zap.Uint64("startTs", version),
-	//	zap.String("key", hex.EncodeToString(key)),
-	//	zap.Bool("is-snapshotIsolation", reqCtx.isSnapshotIsolation()))
-
-	var lockPairs []*LockPair
 	if reqCtx.isSnapshotIsolation() {
-		var err error
-		lockPairs, err = store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
+		lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
 		if err != nil {
 			return nil, err
 		}
@@ -1672,12 +1652,6 @@ func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]b
 	if val == nil {
 		return nil, err
 	}
-	//logutil.BgLogger().Info("-------unistore get request 2",
-	//	zap.Uint64("startTs", version),
-	//	zap.String("key", hex.EncodeToString(key)),
-	//	zap.Int("len-lockPairs", len(lockPairs)),
-	//	zap.Int("len-val", len(val)))
-	//
 	return safeCopy(val), err
 }
 

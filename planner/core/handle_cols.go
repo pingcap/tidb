@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/table"
 	"strings"
 	"unsafe"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -336,6 +336,7 @@ type UniqueIndexCols struct {
 
 const emptyUniqueIndexColsSize = int64(unsafe.Sizeof(UniqueIndexCols{}))
 
+// ResolveIndices resolves handle column indices.
 func (c *UniqueIndexCols) ResolveIndices(schema *expression.Schema) error {
 	for i := range c.Columns {
 		newCol, err := c.Columns[i].ResolveIndices(schema)
@@ -348,6 +349,7 @@ func (c *UniqueIndexCols) ResolveIndices(schema *expression.Schema) error {
 	return nil
 }
 
+// FetchIndexValues fetches index values from the row.
 func (c *UniqueIndexCols) FetchIndexValues(row chunk.Row) []types.Datum {
 	datumBuf := make([]types.Datum, 0, len(c.Columns))
 	for _, col := range c.Columns {
@@ -356,6 +358,7 @@ func (c *UniqueIndexCols) FetchIndexValues(row chunk.Row) []types.Datum {
 	return datumBuf
 }
 
+// MemoryUsage return the memory usage
 func (c *UniqueIndexCols) MemoryUsage() (sum int64) {
 	if c == nil {
 		return 0
