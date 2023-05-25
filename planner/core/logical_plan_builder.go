@@ -17,14 +17,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"math"
-	"math/bits"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
-	"unicode"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
@@ -66,6 +58,13 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
+	"math"
+	"math/bits"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
 )
 
 const (
@@ -4837,7 +4836,28 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
+		uniqueIndexCols := []UniqueIndexCols{}
+		for _, idx := range ds.table.Indices() {
+			if !tables.IsIndexWritable(idx) {
+				continue
+			}
+			idxInfo := idx.Meta()
+			if !idxInfo.Unique {
+				continue
+			}
+			if ds.table.Meta().IsCommonHandle && idxInfo.Primary {
+				continue
+			}
+			idxCols := make([]*expression.Column, len(idxInfo.Columns))
+			for i, idxCol := range idxInfo.Columns {
+				idxCols[i] = ds.TblCols[idxCol.Offset]
+			}
+			uniqueIndexCols = append(uniqueIndexCols, UniqueIndexCols{
+				IdxInfo: idx,
+				Columns: idxCols,
+			})
+		}
+		us := LogicalUnionScan{handleCols: handleCols, uniqueIndexCols: uniqueIndexCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		if tableInfo.Partition != nil && b.optFlag&flagPartitionProcessor == 0 {
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)

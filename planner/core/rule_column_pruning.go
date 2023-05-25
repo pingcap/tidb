@@ -292,6 +292,9 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
+	for _, idxCols := range p.uniqueIndexCols {
+		parentUsedCols = append(parentUsedCols, idxCols.Columns...)
+	}
 	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
 			parentUsedCols = append(parentUsedCols, col)

@@ -16,11 +16,7 @@ package executor
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
@@ -461,19 +457,19 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	)
 
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
-		it, err := e.txn.GetMemBuffer().Iter(nil, nil)
-		if err != nil {
-			return val, err
-		}
-		for it.Valid() {
-			k := it.Key()
-			v := it.Value()
-			logutil.BgLogger().Info("iter mem buf", zap.String("key", hex.EncodeToString(k)), zap.Int("len-val", len(v)))
-			err = it.Next()
-			if err != nil {
-				return val, err
-			}
-		}
+		//it, err := e.txn.GetMemBuffer().Iter(nil, nil)
+		//if err != nil {
+		//	return val, err
+		//}
+		//for it.Valid() {
+		//	k := it.Key()
+		//	v := it.Value()
+		//	logutil.BgLogger().Info("iter mem buf", zap.String("key", hex.EncodeToString(k)), zap.Int("len-val", len(v)))
+		//	err = it.Next()
+		//	if err != nil {
+		//		return val, err
+		//	}
+		//}
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
 		val, err = e.txn.GetMemBuffer().Get(ctx, key)

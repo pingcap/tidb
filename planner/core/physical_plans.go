@@ -2008,6 +2008,8 @@ type PhysicalUnionScan struct {
 	Conditions []expression.Expression
 
 	HandleCols HandleCols
+
+	UniqueIndexCols []UniqueIndexCols
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -2028,6 +2030,9 @@ func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
 	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice
 	if p.HandleCols != nil {
 		sum += p.HandleCols.MemoryUsage()
+	}
+	for _, idxCols := range p.UniqueIndexCols {
+		sum += idxCols.MemoryUsage()
 	}
 	for _, cond := range p.Conditions {
 		sum += cond.MemoryUsage()

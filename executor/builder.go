@@ -1298,6 +1298,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
 	// Get the handle column index of the below Plan.
 	us.belowHandleCols = v.HandleCols
+	us.uniqueIndexCols = v.UniqueIndexCols
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader

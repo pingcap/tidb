@@ -1174,6 +1174,8 @@ type LogicalUnionScan struct {
 	conditions []expression.Expression
 
 	handleCols HandleCols
+
+	uniqueIndexCols []UniqueIndexCols
 }
 
 // DataSource represents a tableScan without condition push down.

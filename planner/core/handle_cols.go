@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/table"
 	"strings"
 	"unsafe"
 
@@ -326,4 +327,34 @@ func GetCommonHandleDatum(cols HandleCols, row chunk.Row) []types.Datum {
 	}
 
 	return datumBuf
+}
+
+type UniqueIndexCols struct {
+	IdxInfo table.Index
+	Columns []*expression.Column
+}
+
+const emptyUniqueIndexColsSize = int64(unsafe.Sizeof(UniqueIndexCols{}))
+
+func (c *UniqueIndexCols) MemoryUsage() (sum int64) {
+	if c == nil {
+		return 0
+	}
+	sum = emptyUniqueIndexColsSize + int64(cap(c.Columns))*size.SizeOfPointer
+	for _, col := range c.Columns {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
+func (c *UniqueIndexCols) ResolveIndices(schema *expression.Schema) error {
+	for i := range c.Columns {
+		newCol, err := c.Columns[i].ResolveIndices(schema)
+		if err != nil {
+			return err
+		}
+		c.Columns[i] = newCol.(*expression.Column)
+
+	}
+	return nil
 }

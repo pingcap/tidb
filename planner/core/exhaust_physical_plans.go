@@ -54,8 +54,9 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	}
 	childProp := prop.CloneEssentialFields()
 	us := PhysicalUnionScan{
-		Conditions: p.conditions,
-		HandleCols: p.handleCols,
+		Conditions:      p.conditions,
+		HandleCols:      p.handleCols,
+		UniqueIndexCols: p.uniqueIndexCols,
 	}.Init(p.ctx, p.stats, p.blockOffset, childProp)
 	return []PhysicalPlan{us}, true, nil
 }
@@ -1143,8 +1144,9 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	// Use `reader.stats` instead of `us.stats` because it should be more accurate. No need to specify
 	// childrenReqProps now since we have got reader already.
 	physicalUnionScan := PhysicalUnionScan{
-		Conditions: us.conditions,
-		HandleCols: us.handleCols,
+		Conditions:      us.conditions,
+		HandleCols:      us.handleCols,
+		UniqueIndexCols: us.uniqueIndexCols,
 	}.Init(us.ctx, reader.statsInfo(), us.blockOffset, nil)
 	physicalUnionScan.SetChildren(reader)
 	return physicalUnionScan

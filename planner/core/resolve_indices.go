@@ -265,6 +265,12 @@ func (p *PhysicalUnionScan) ResolveIndices() (err error) {
 		return err
 	}
 	p.HandleCols = resolvedHandleCol
+	for i := range p.UniqueIndexCols {
+		err = p.UniqueIndexCols[i].ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+	}
 	return
 }
 

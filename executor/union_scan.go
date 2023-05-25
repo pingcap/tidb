@@ -48,6 +48,8 @@ type UnionScanExec struct {
 	table                table.Table
 	// belowHandleCols is the handle's position of the below scan plan.
 	belowHandleCols plannercore.HandleCols
+	// uniqueIndexCols is the unique index's columns position info of the below scan plan.
+	uniqueIndexCols []plannercore.UniqueIndexCols
 
 	addedRows           [][]types.Datum
 	cursor4AddRows      int
