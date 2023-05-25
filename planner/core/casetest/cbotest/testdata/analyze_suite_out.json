@@ -45,10 +45,10 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t group by a",
         "Plan": [
-          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
-          "└─TableReader 2.00 root  data:HashAgg",
-          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
-          "    └─TableFullScan 8.00 cop[tikv] table:t keep order:false"
+          "HashAgg 10.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
+          "└─TableReader 10.00 root  data:HashAgg",
+          "  └─HashAgg 10.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
+          "    └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       }
     ]
@@ -61,9 +61,9 @@
         "EnablePseudoForOutdatedStats": true,
         "RatioOfPseudoEstimate": 10,
         "Plan": [
-          "TableReader 28.80 root  data:Selection",
-          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
+          "TableReader 3.60 root  data:Selection",
+          "└─Selection 3.60 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 10.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
@@ -71,9 +71,9 @@
         "EnablePseudoForOutdatedStats": true,
         "RatioOfPseudoEstimate": 0.7,
         "Plan": [
-          "TableReader 8.84 root  data:Selection",
-          "└─Selection 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 1.10 root  data:Selection",
+          "└─Selection 1.10 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -81,9 +81,9 @@
         "EnablePseudoForOutdatedStats": false,
         "RatioOfPseudoEstimate": 10,
         "Plan": [
-          "TableReader 28.80 root  data:Selection",
-          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
+          "TableReader 3.60 root  data:Selection",
+          "└─Selection 3.60 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 10.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
@@ -91,9 +91,9 @@
         "EnablePseudoForOutdatedStats": false,
         "RatioOfPseudoEstimate": 0.7,
         "Plan": [
-          "TableReader 28.80 root  data:Selection",
-          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
+          "TableReader 3.60 root  data:Selection",
+          "└─Selection 3.60 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 10.00 cop[tikv] table:t keep order:false"
         ]
       }
     ]
@@ -478,18 +478,18 @@
       {
         "SQL": "explain format = 'brief' select * from t where a = 7639902",
         "Plan": [
-          "IndexReader 5.95 root  index:IndexRangeScan",
-          "└─IndexRangeScan 5.95 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "IndexReader 0.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 0.00 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select c, b from t where a = 7639902 order by b asc limit 6",
         "Plan": [
-          "Projection 5.95 root  test.t.c, test.t.b",
-          "└─TopN 5.95 root  test.t.b, offset:0, count:6",
-          "  └─IndexReader 5.95 root  index:TopN",
-          "    └─TopN 5.95 cop[tikv]  test.t.b, offset:0, count:6",
-          "      └─IndexRangeScan 5.95 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "Projection 0.00 root  test.t.c, test.t.b",
+          "└─TopN 0.00 root  test.t.b, offset:0, count:6",
+          "  └─IndexReader 0.00 root  index:TopN",
+          "    └─TopN 0.00 cop[tikv]  test.t.b, offset:0, count:6",
+          "      └─IndexRangeScan 0.00 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
         ]
       }
     ]
@@ -503,7 +503,7 @@
           "TopN 1.00 root  test.t.b, offset:0, count:1",
           "└─TableReader 1.00 root  data:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.b, offset:0, count:1",
-          "    └─Selection 10000.00 cop[tikv]  le(test.t.a, 10000)",
+          "    └─Selection 10001.00 cop[tikv]  le(test.t.a, 10000)",
           "      └─TableFullScan 1000000.00 cop[tikv] table:t keep order:false"
         ]
       },

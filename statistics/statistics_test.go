@@ -198,7 +198,7 @@ func TestPseudoTable(t *testing.T) {
 		State:     model.StatePublic,
 	}
 	ti.Columns = append(ti.Columns, colInfo)
-	tbl := PseudoTable(ti)
+	tbl := PseudoTable(ti, nil, nil)
 	require.Len(t, tbl.Columns, 1)
 	require.Greater(t, tbl.RealtimeCount, int64(0))
 	sctx := mock.NewContext()
@@ -215,7 +215,7 @@ func TestPseudoTable(t *testing.T) {
 		Hidden:    true,
 		State:     model.StatePublic,
 	})
-	tbl = PseudoTable(ti)
+	tbl = PseudoTable(ti, nil, nil)
 	// We added a hidden column. The pseudo table still only have one column.
 	require.Equal(t, len(tbl.Columns), 1)
 }

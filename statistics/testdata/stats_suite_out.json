@@ -320,8 +320,8 @@
         "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
       ],
       [
-        "TableReader_7 1.00 root  data:Selection_6",
-        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 1)",
+        "TableReader_7 1.84 root  data:Selection_6",
+        "└─Selection_6 1.84 cop[tikv]  eq(test.tint.b, 1)",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
@@ -330,8 +330,8 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
-        "TableReader_7 1.00 root  data:Selection_6",
-        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 8)",
+        "TableReader_7 2.00 root  data:Selection_6",
+        "└─Selection_6 2.00 cop[tikv]  eq(test.tint.b, 8)",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
@@ -395,8 +395,8 @@
         "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
       ],
       [
-        "TableReader_6 5.00 root  data:TableRangeScan_5",
-        "└─TableRangeScan_5 5.00 cop[tikv] table:ct1 range:[\"1\",\"4\"], keep order:false"
+        "TableReader_6 6.25 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 6.25 cop[tikv] table:ct1 range:[\"1\",\"4\"], keep order:false"
       ],
       [
         "TableReader_6 3.75 root  data:TableRangeScan_5",

@@ -230,11 +230,11 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(9, 30))
 	require.NoError(t, err)
-	require.Equal(t, 7.2, count)
+	require.Equal(t, 3.2, count)
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(9, math.MaxInt64))
 	require.NoError(t, err)
-	require.Equal(t, 7.2, count)
+	require.Equal(t, 3.2, count)
 
 	idxID := table.Meta().Indices[0].ID
 	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(30, 30))
@@ -243,7 +243,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(9, 30))
 	require.NoError(t, err)
-	require.Equal(t, 7.0, count)
+	require.Equal(t, 3.0, count)
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")
@@ -502,6 +502,7 @@ func TestSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	statsTbl, err := prepareSelectivity(testKit, dom)
+	testKit.MustExec("set @@tidb_opt_consider_realtime_stats = true")
 	require.NoError(t, err)
 	longExpr := "0 < a and a = 1 "
 	for i := 1; i < 64; i++ {
@@ -1054,6 +1055,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	h := dom.StatsHandle()
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("set @@tidb_opt_consider_realtime_stats = true")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int unsigned) " +
 		"partition by range (a) " +

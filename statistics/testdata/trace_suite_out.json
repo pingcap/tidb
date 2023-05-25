@@ -1218,13 +1218,13 @@
                             "rowCount": 1294.0277777777778
                           },
                           {
-                            "Result": 0
+                            "Result": 1.5555555555555556
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 0,
+                          "RowCount": 1.5555555555555556,
                           "Type": "Range"
                         }
                       }
@@ -1232,7 +1232,7 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 0
+                    "Result": 1.5555555555555556
                   }
                 ]
               },
@@ -1500,13 +1500,13 @@
                                 "rowCount": 1540
                               },
                               {
-                                "Result": 0
+                                "Result": 1.539230384807596
                               }
                             ]
                           },
                           {
                             "End estimate range": {
-                              "RowCount": 0,
+                              "RowCount": 1.539230384807596,
                               "Type": "Range"
                             }
                           }
@@ -1514,7 +1514,7 @@
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 0,
+                          "RowCount": 1.539230384807596,
                           "Type": "Range"
                         }
                       }
@@ -1522,7 +1522,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 0
+                    "Result": 1.539230384807596
                   }
                 ]
               },
@@ -2075,11 +2075,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0,
+                "Selectivity": 0.0004997501249375312,
                 "partial cover": false
               },
               {
-                "Result": 0
+                "Result": 3.24513068141254e-7
               }
             ]
           }
@@ -2216,13 +2216,13 @@
                             "rowCount": 555.760693125558
                           },
                           {
-                            "Result": 100
+                            "Result": 1
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 100,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
@@ -2230,7 +2230,7 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 100
+                    "Result": 1
                   }
                 ]
               },
