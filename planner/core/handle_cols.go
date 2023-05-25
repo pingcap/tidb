@@ -336,17 +336,6 @@ type UniqueIndexCols struct {
 
 const emptyUniqueIndexColsSize = int64(unsafe.Sizeof(UniqueIndexCols{}))
 
-func (c *UniqueIndexCols) MemoryUsage() (sum int64) {
-	if c == nil {
-		return 0
-	}
-	sum = emptyUniqueIndexColsSize + int64(cap(c.Columns))*size.SizeOfPointer
-	for _, col := range c.Columns {
-		sum += col.MemoryUsage()
-	}
-	return
-}
-
 func (c *UniqueIndexCols) ResolveIndices(schema *expression.Schema) error {
 	for i := range c.Columns {
 		newCol, err := c.Columns[i].ResolveIndices(schema)
@@ -357,4 +346,23 @@ func (c *UniqueIndexCols) ResolveIndices(schema *expression.Schema) error {
 
 	}
 	return nil
+}
+
+func (c *UniqueIndexCols) FetchIndexValues(row chunk.Row) []types.Datum {
+	datumBuf := make([]types.Datum, 0, len(c.Columns))
+	for _, col := range c.Columns {
+		datumBuf = append(datumBuf, row.GetDatum(col.Index, col.RetType))
+	}
+	return datumBuf
+}
+
+func (c *UniqueIndexCols) MemoryUsage() (sum int64) {
+	if c == nil {
+		return 0
+	}
+	sum = emptyUniqueIndexColsSize + int64(cap(c.Columns))*size.SizeOfPointer
+	for _, col := range c.Columns {
+		sum += col.MemoryUsage()
+	}
+	return
 }

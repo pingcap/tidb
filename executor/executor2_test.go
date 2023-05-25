@@ -290,8 +290,8 @@ func TestUnionScanIssue24195Debug(t *testing.T) {
 		}()
 		tk2.MustExec("begin")
 		tk2.MustExec("insert into t values ('a', 2);")
-		tk2.MustQuery("select * from t use index(idx) order by c1, c2;").Check(testkit.Rows("a 1", "a 2")) // expect is "a 2"
-		tk2.MustQuery("select c2 from t order by c2;").Check(testkit.Rows("2"))                            // expect is "2"
+		tk2.MustQuery("select * from t use index(idx);").Check(testkit.Rows("a 2"))
+		tk2.MustQuery("select c2 from t;").Check(testkit.Rows("2"))
 		tk2.MustQuery("select * from t use index(idx) order by c1, c2 for update;").Check(testkit.Rows("a 2", "b 1"))
 		tk2.MustExec("commit")
 	}()

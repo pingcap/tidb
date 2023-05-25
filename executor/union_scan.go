@@ -262,6 +262,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 }
 
 func (us *UnionScanExec) isSnapshotRowConflictWithMemBufRow(row chunk.Row) (bool, error) {
+	// Check conflict by handle.
 	snapshotHandle, err := us.belowHandleCols.BuildHandle(row)
 	if err != nil {
 		return false, err
@@ -276,6 +277,27 @@ func (us *UnionScanExec) isSnapshotRowConflictWithMemBufRow(row chunk.Row) (bool
 	if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 		// If snapshot row handle appears in txn's mem-buffer, ignore it.
 		return true, nil
+	}
+
+	// Check conflict by unique index.
+	stmtCtx := us.ctx.GetSessionVars().StmtCtx
+	for _, idxCols := range us.uniqueIndexCols {
+		idxVals := idxCols.FetchIndexValues(row)
+		// Pass handle = 0 to GenIndexKey, due to we only care about distinct key.
+		iter := idxCols.IdxInfo.GenIndexKVIter(stmtCtx, idxVals, kv.IntHandle(0), nil)
+		for iter.Valid() {
+			uniqueKey, _, distinct, err := iter.Next(nil)
+			if err != nil {
+				return false, err
+			}
+			// Skip the non-distinct keys.
+			if !distinct {
+				continue
+			}
+			if _, err := us.memBufSnap.Get(context.TODO(), uniqueKey); err == nil {
+				return true, nil
+			}
+		}
 	}
 
 	return false, nil
