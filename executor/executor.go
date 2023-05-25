@@ -628,9 +628,12 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			req.AppendInt64(5, job.SchemaID)
 			req.AppendInt64(6, job.TableID)
 			req.AppendInt64(7, subJob.RowCount)
-			req.AppendNull(8)
-			req.AppendNull(9)
-			req.AppendNull(10)
+			req.AppendTime(8, createTime)
+			realStartTS := ts2Time(subJob.RealStartTS, e.TZLoc)
+			req.AppendTime(9, realStartTS)
+			if finishTS > 0 {
+				req.AppendTime(10, finishTime)
+			}
 			req.AppendString(11, subJob.State.String())
 		}
 	}
