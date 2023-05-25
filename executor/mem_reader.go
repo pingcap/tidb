@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	transaction "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/table"
@@ -59,9 +58,7 @@ type memIndexReader struct {
 	addedRowsLen  int
 	retFieldTypes []*types.FieldType
 	outputOffset  []int
-	// belowHandleCols is the handle's position of the below scan plan.
-	belowHandleCols plannercore.HandleCols
-	cacheTable      kv.MemBuffer
+	cacheTable    kv.MemBuffer
 }
 
 func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -72,16 +69,15 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 		outputOffset = append(outputOffset, col.Index)
 	}
 	return &memIndexReader{
-		ctx:             us.ctx,
-		index:           idxReader.index,
-		table:           idxReader.table.Meta(),
-		kvRanges:        kvRanges,
-		desc:            us.desc,
-		conditions:      us.conditions,
-		retFieldTypes:   retTypes(us),
-		outputOffset:    outputOffset,
-		belowHandleCols: us.belowHandleCols,
-		cacheTable:      us.cacheTable,
+		ctx:           us.ctx,
+		index:         idxReader.index,
+		table:         idxReader.table.Meta(),
+		kvRanges:      kvRanges,
+		desc:          us.desc,
+		conditions:    us.conditions,
+		retFieldTypes: retTypes(us),
+		outputOffset:  outputOffset,
+		cacheTable:    us.cacheTable,
 	}
 }
 
@@ -487,15 +483,14 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
-		ctx:             us.ctx,
-		index:           idxLookUpReader.index,
-		table:           idxLookUpReader.table.Meta(),
-		kvRanges:        kvRanges,
-		desc:            idxLookUpReader.desc,
-		retFieldTypes:   retTypes(us),
-		outputOffset:    outputOffset,
-		belowHandleCols: us.belowHandleCols,
-		cacheTable:      us.cacheTable,
+		ctx:           us.ctx,
+		index:         idxLookUpReader.index,
+		table:         idxLookUpReader.table.Meta(),
+		kvRanges:      kvRanges,
+		desc:          idxLookUpReader.desc,
+		retFieldTypes: retTypes(us),
+		outputOffset:  outputOffset,
+		cacheTable:    us.cacheTable,
 	}
 
 	return &memIndexLookUpReader{
@@ -615,14 +610,13 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		} else {
 			outputOffset := []int{len(indexMergeReader.indexes[i].Columns)}
 			memReaders = append(memReaders, &memIndexReader{
-				ctx:             us.ctx,
-				index:           indexMergeReader.indexes[i],
-				table:           indexMergeReader.table.Meta(),
-				kvRanges:        nil,
-				desc:            indexMergeReader.descs[i],
-				retFieldTypes:   retTypes(us),
-				outputOffset:    outputOffset,
-				belowHandleCols: us.belowHandleCols,
+				ctx:           us.ctx,
+				index:         indexMergeReader.indexes[i],
+				table:         indexMergeReader.table.Meta(),
+				kvRanges:      nil,
+				desc:          indexMergeReader.descs[i],
+				retFieldTypes: retTypes(us),
+				outputOffset:  outputOffset,
 			})
 		}
 	}
