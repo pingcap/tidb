@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/executor/internal/builder"
-	"github.com/pingcap/tidb/executor/internal/utils"
+	"github.com/pingcap/tidb/executor/internal/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -151,11 +151,11 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 	}
 	for _, mppTask := range pf.ExchangeSender.Tasks {
 		if mppTask.PartitionTableIDs != nil {
-			err = utils.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
+			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
 		} else if !mppTask.IsDisaggregatedTiFlashStaticPrune {
 			// If isDisaggregatedTiFlashStaticPrune is true, it means this TableScan is under PartitionUnoin,
 			// tableID in TableScan is already the physical table id of this partition, no need to update again.
-			err = utils.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, []int64{mppTask.TableID})
+			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, []int64{mppTask.TableID})
 		}
 		if err != nil {
 			return errors.Trace(err)

@@ -9,7 +9,7 @@ go_library(
         "//config",
         "//distsql",
         "//executor/internal/builder",
-        "//executor/internal/utils",
+        "//executor/internal/util",
         "//infoschema",
         "//kv",
         "//planner/core",

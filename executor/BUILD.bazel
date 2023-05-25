@@ -120,7 +120,7 @@ go_library(
         "//executor/importer",
         "//executor/internal/builder",
         "//executor/internal/mpp",
-        "//executor/internal/utils",
+        "//executor/internal/util",
         "//executor/metrics",
         "//expression",
         "//expression/aggregation",
