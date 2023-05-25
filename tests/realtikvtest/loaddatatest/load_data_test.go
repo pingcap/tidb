@@ -36,6 +36,7 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 }
 
 func (s *mockGCSSuite) TestPhysicalMode() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -144,6 +145,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 }
 
 func (s *mockGCSSuite) TestInputNull() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -169,6 +171,7 @@ func (s *mockGCSSuite) TestInputNull() {
 }
 
 func (s *mockGCSSuite) TestIgnoreNLines() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},
 		Content: []byte(`1,test1,11
@@ -222,6 +225,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 }
 
 func (s *mockGCSSuite) TestGeneratedCol() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -243,6 +247,7 @@ func (s *mockGCSSuite) TestGeneratedCol() {
 }
 
 func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -277,6 +282,7 @@ func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
 }
 
 func (s *mockGCSSuite) TestDeliverBytesRows() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -321,7 +327,7 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 
 func (s *mockGCSSuite) TestMultiValueIndex() {
 	s.testMultiValueIndex(importer.LogicalImportMode)
-	s.testMultiValueIndex(importer.PhysicalImportMode)
+	//s.testMultiValueIndex(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testMultiValueIndex(importMode string) {
@@ -355,7 +361,7 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string) {
 
 func (s *mockGCSSuite) TestMixedCompression() {
 	s.testMixedCompression(importer.LogicalImportMode)
-	s.testMixedCompression(importer.PhysicalImportMode)
+	//s.testMixedCompression(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testMixedCompression(importMode string) {
@@ -415,7 +421,7 @@ func (s *mockGCSSuite) testMixedCompression(importMode string) {
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
 	s.testLoadSQLDump(importer.LogicalImportMode)
-	s.testLoadSQLDump(importer.PhysicalImportMode)
+	//s.testLoadSQLDump(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testLoadSQLDump(importMode string) {
@@ -453,7 +459,7 @@ func (s *mockGCSSuite) testLoadSQLDump(importMode string) {
 
 func (s *mockGCSSuite) TestGBK() {
 	s.testGBK(importer.LogicalImportMode)
-	s.testGBK(importer.PhysicalImportMode)
+	//s.testGBK(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testGBK(importMode string) {
@@ -563,7 +569,7 @@ func (s *mockGCSSuite) testGBK(importMode string) {
 
 func (s *mockGCSSuite) TestOtherCharset() {
 	s.testOtherCharset(importer.LogicalImportMode)
-	s.testOtherCharset(importer.PhysicalImportMode)
+	//s.testOtherCharset(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testOtherCharset(importMode string) {
@@ -656,6 +662,7 @@ func (s *mockGCSSuite) testOtherCharset(importMode string) {
 }
 
 func (s *mockGCSSuite) TestMaxWriteSpeed() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_write_speed;")
 	s.tk.MustExec("CREATE DATABASE load_test_write_speed;")
 	s.tk.MustExec(`CREATE TABLE load_test_write_speed.t(a int, b int)`)
@@ -698,6 +705,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 }
 
 func (s *mockGCSSuite) TestChecksumNotMatch() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",

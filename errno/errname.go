@@ -782,7 +782,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInnodbImport:                                          mysql.Message("ALTER TABLE '%-.192s' IMPORT TABLESPACE failed with error %d : '%s'", nil),
 	ErrInnodbIndexCorrupt:                                    mysql.Message("Index corrupt: %s", nil),
 	ErrInvalidYearColumnLength:                               mysql.Message("Supports only YEAR or YEAR(4) column", nil),
-	ErrNotValidPassword:                                      mysql.Message("Your password does not satisfy the current policy requirements", nil),
+	ErrNotValidPassword:                                      mysql.Message("Your password does not satisfy the current policy requirements (%s)", nil),
 	ErrMustChangePassword:                                    mysql.Message("You must reset your password using ALTER USER statement before executing this statement", nil),
 	ErrFkNoIndexChild:                                        mysql.Message("Failed to add the foreign key constraint. Missing index for constraint '%s' in the foreign table '%s'", nil),
 	ErrForeignKeyNoIndexInParent:                             mysql.Message("Failed to add the foreign key constraint. Missing index for constraint '%s' in the referenced table '%s'", nil),
@@ -1139,7 +1139,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTiKVStaleCommand:          mysql.Message("TiKV server reports stale command", nil),
 	ErrTiKVMaxTimestampNotSynced: mysql.Message("TiKV max timestamp is not synced", nil),
 
-	ErrCannotPauseDDLJob:  mysql.Message("Job [%v] can't be paused now", nil),
-	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed", nil),
-	ErrPausedDDLJob:       mysql.Message("Job [%v] already paused", nil),
+	ErrCannotPauseDDLJob:  mysql.Message("Job [%v] can't be paused: %s", nil),
+	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed: %s", nil),
+	ErrPausedDDLJob:       mysql.Message("Job [%v] has already been paused", nil),
 }

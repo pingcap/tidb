@@ -313,13 +313,36 @@ func (cfg *BackupConfig) Adjust() {
 	}
 }
 
+type immutableBackupConfig struct {
+	LastBackupTS  uint64 `json:"last-backup-ts"`
+	IgnoreStats   bool   `json:"ignore-stats"`
+	UseCheckpoint bool   `json:"use-checkpoint"`
+
+	storage.BackendOptions
+	Storage      string              `json:"storage"`
+	PD           []string            `json:"pd"`
+	SendCreds    bool                `json:"send-credentials-to-tikv"`
+	NoCreds      bool                `json:"no-credentials"`
+	FilterStr    []string            `json:"filter-strings"`
+	CipherInfo   backuppb.CipherInfo `json:"cipher"`
+	KeyspaceName string              `json:"keyspace-name"`
+}
+
 // a rough hash for checkpoint checker
 func (cfg *BackupConfig) Hash() ([]byte, error) {
-	config := &BackupConfig{
+	config := &immutableBackupConfig{
 		LastBackupTS:  cfg.LastBackupTS,
 		IgnoreStats:   cfg.IgnoreStats,
 		UseCheckpoint: cfg.UseCheckpoint,
-		Config:        cfg.Config,
+
+		BackendOptions: cfg.BackendOptions,
+		Storage:        cfg.Storage,
+		PD:             cfg.PD,
+		SendCreds:      cfg.SendCreds,
+		NoCreds:        cfg.NoCreds,
+		FilterStr:      cfg.FilterStr,
+		CipherInfo:     cfg.CipherInfo,
+		KeyspaceName:   cfg.KeyspaceName,
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
@@ -628,9 +651,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		defer func() {
 			if !gcSafePointKeeperRemovable {
 				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint(ctx)
+				client.WaitForFinishCheckpoint(ctx, true)
 			} else {
 				log.Info("start to remove checkpoint data for backup")
+				client.WaitForFinishCheckpoint(ctx, false)
 				if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
 					log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
 				} else {

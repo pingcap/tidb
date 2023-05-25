@@ -12,15 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package resourcemanager
 
 import (
-	"time"
+	"testing"
+
+	"github.com/pingcap/tidb/resourcemanager/scheduler"
+	"github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/stretchr/testify/require"
 )
 
-// CheckBackfillJobFinishInterval is export for test.
-var CheckBackfillJobFinishInterval = 300 * time.Millisecond
-
-const (
-	distPhysicalTableConcurrency = 16
-)
+func TestSchedulerOverloadTooMuch(t *testing.T) {
+	rm := NewResourceManger()
+	mp := util.NewMockGPool("test", 1)
+	pool := &util.PoolContainer{
+		Pool:      mp,
+		Component: util.DDL,
+	}
+	rm.Exec(pool, scheduler.Overclock)
+	require.Equal(t, int32(2), pool.Pool.Cap())
+	rm.Exec(pool, scheduler.Overclock)
+	require.Equal(t, int32(2), pool.Pool.Cap())
+}

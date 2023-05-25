@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -333,9 +334,9 @@ func (rc *Client) InitCheckpoint(
 	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
 }
 
-func (rc *Client) WaitForFinishCheckpoint(ctx context.Context) {
+func (rc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 	if rc.checkpointRunner != nil {
-		rc.checkpointRunner.WaitForFinish(ctx)
+		rc.checkpointRunner.WaitForFinish(ctx, flush)
 	}
 }
 
@@ -1326,11 +1327,14 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 
 func (rc *Client) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*LogFilesSkipMap, error) {
 	skipMap := NewLogFilesSkipMap()
-	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueType) {
-		// filter out the checkpoint data of dropped table
-		_, exists := downstreamIdset[off.TableID]
-		if exists {
-			skipMap.Insert(groupKey, off.Goff, off.Foff)
+	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+		for tableID, foffs := range off.Foffs {
+			// filter out the checkpoint data of dropped table
+			if _, exists := downstreamIdset[tableID]; exists {
+				for _, foff := range foffs {
+					skipMap.Insert(groupKey, off.Goff, foff)
+				}
+			}
 		}
 	})
 	if err != nil {
@@ -3148,34 +3152,46 @@ const (
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
 )
 
-// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
-func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage) error {
-	dom, err := g.GetDomain(storage)
-	if err != nil {
-		return errors.Trace(err)
+func (rc *Client) generateRepairIngestIndexSQLs(
+	ctx context.Context,
+	ingestRecorder *ingestrec.IngestRecorder,
+	allSchema []*model.DBInfo,
+	taskName string,
+) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
+	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
+	if rc.useCheckpoint {
+		exists, err := checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.storage, taskName)
+		if err != nil {
+			return sqls, false, errors.Trace(err)
+		}
+		if exists {
+			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.storage, taskName)
+			if err != nil {
+				return sqls, false, errors.Trace(err)
+			}
+			sqls = checkpointSQLs.SQLs
+			log.Info("[ingest] load ingest index repair sqls from checkpoint", zap.Reflect("sqls", sqls))
+			return sqls, true, nil
+		}
 	}
-	info := dom.InfoSchema()
-	allSchema := info.AllSchemas()
+
 	ingestRecorder.UpdateIndexInfo(allSchema)
-	console := glue.GetConsole(g)
-	err = ingestRecorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
+	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
-			addSQL        strings.Builder
-			addArgs       []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
-			progressTitle string        = fmt.Sprintf("repair ingest index %s for table %s.%s", info.IndexInfo.Name.O, info.SchemaName, info.TableName)
+			addSQL  strings.Builder
+			addArgs []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
 		)
-		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
 		if info.IsPrimary {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
-			addArgs = append(addArgs, info.SchemaName, info.TableName)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else if info.IndexInfo.Unique {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
-			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
-			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		}
 		// USING BTREE/HASH/RTREE
@@ -3197,20 +3213,114 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 			addSQL.WriteString(" VISIBLE")
 		}
 
-		if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, info.SchemaName, info.TableName, info.IndexInfo.Name.O); err != nil {
-			return errors.Trace(err)
-		}
-		if err := rc.db.se.ExecuteInternal(ctx, addSQL.String(), addArgs...); err != nil {
-			return errors.Trace(err)
-		}
-		w.Inc()
-		if err := w.Wait(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		w.Close()
+		sqls = append(sqls, checkpoint.CheckpointIngestIndexRepairSQL{
+			IndexID:    indexID,
+			SchemaName: info.SchemaName,
+			TableName:  info.TableName,
+			IndexName:  info.IndexInfo.Name.O,
+			AddSQL:     addSQL.String(),
+			AddArgs:    addArgs,
+		})
+
 		return nil
-	})
-	return errors.Trace(err)
+	}); err != nil {
+		return sqls, false, errors.Trace(err)
+	}
+
+	if rc.useCheckpoint && len(sqls) > 0 {
+		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.storage, &checkpoint.CheckpointIngestIndexRepairSQLs{
+			SQLs: sqls,
+		}, taskName); err != nil {
+			return sqls, false, errors.Trace(err)
+		}
+	}
+	return sqls, false, nil
+}
+
+// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
+func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage, taskName string) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, info.AllSchemas(), taskName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	console := glue.GetConsole(g)
+NEXTSQL:
+	for _, sql := range sqls {
+		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
+
+		tableInfo, err := info.TableByName(sql.SchemaName, sql.TableName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		oldIndexIDFound := false
+		if fromCheckpoint {
+			for _, idx := range tableInfo.Indices() {
+				indexInfo := idx.Meta()
+				if indexInfo.ID == sql.IndexID {
+					// the original index id is not dropped
+					oldIndexIDFound = true
+					break
+				}
+				// what if index's state is not public?
+				if indexInfo.Name.O == sql.IndexName {
+					// find the same name index, but not the same index id,
+					// which means the repaired index id is created
+					if _, err := console.Out().Write(
+						[]byte(fmt.Sprintf("%s ... %s\n", progressTitle, color.HiGreenString("SKIPPED DUE TO CHECKPOINT MODE"))),
+					); err != nil {
+						return errors.Trace(err)
+					}
+					continue NEXTSQL
+				}
+			}
+		}
+
+		if err := func(sql checkpoint.CheckpointIngestIndexRepairSQL) error {
+			w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
+			defer w.Close()
+
+			// TODO: When the TiDB supports the DROP and CREATE the same name index in one SQL,
+			//   the checkpoint for ingest recorder can be removed and directly use the SQL:
+			//      ALTER TABLE db.tbl DROP INDEX `i_1`, ADD IDNEX `i_1` ...
+			//
+			// This SQL is compatible with checkpoint: If one ingest index has been recreated by
+			// the SQL, the index's id would be another one. In the next retry execution, BR can
+			// not find the ingest index's dropped id so that BR regards it as a dropped index by
+			// restored metakv and then skips repairing it.
+
+			// only when first execution or old index id is not dropped
+			if !fromCheckpoint || oldIndexIDFound {
+				if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			failpoint.Inject("failed-before-create-ingest-index", func(v failpoint.Value) {
+				if v != nil && v.(bool) {
+					failpoint.Return(errors.New("failed before create ingest index"))
+				}
+			})
+			// create the repaired index when first execution or not found it
+			if err := rc.db.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
+				return errors.Trace(err)
+			}
+			w.Inc()
+			if err := w.Wait(ctx); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}(sql); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
 }
 
 const (
