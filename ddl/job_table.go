@@ -189,9 +189,6 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 			isCannotPauseDDLJobErr := dbterror.ErrCannotPauseDDLJob.Equal(err)
 			logutil.BgLogger().Warn("[ddl-upgrading] pause the job failed", zap.Stringer("job", job),
 				zap.Bool("isRunnable", isCannotPauseDDLJobErr), zap.Error(err))
-			failpoint.Inject("mockPauseJobOnOneState", func(val failpoint.Value) {
-				job.State = model.JobState(val.(int))
-			})
 			if isCannotPauseDDLJobErr {
 				return true, nil
 			}
@@ -202,7 +199,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		return false, nil
 	}
 
-	if job.IsPausedBySystem() {
+	if job.IsPausedBySystem() && !hasSysDB(job) {
 		var errs []error
 		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
 		if len(errs) > 0 {

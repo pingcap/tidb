@@ -1652,7 +1652,6 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 			err = updateDDLJob2Table(ns, job, true)
 			if err != nil {
 				jobErrs[job.ID] = err
-				logutil.BgLogger().Info("xxx----------------------------process all, one", zap.Stringer("job", job), zap.Error(err))
 				continue
 			}
 		}
@@ -1672,7 +1671,6 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 
 	err = ns.Commit()
 	if err != nil {
-		logutil.BgLogger().Info("xxx----------------------------process all, commit", zap.Error(err))
 		return nil, err
 	}
 	return jobErrs, nil
