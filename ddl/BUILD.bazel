@@ -227,6 +227,7 @@ go_test(
         "//ddl/internal/session",
         "//ddl/placement",
         "//ddl/schematracker",
+        "//ddl/syncer",
         "//ddl/testutil",
         "//ddl/util",
         "//disttask/framework/proto",
