@@ -768,6 +768,113 @@
       }
     },
     {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
+      "description": "",
+      "editable": true,
+      "error": false,
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "fill": 1,
+      "fillGradient": 0,
+      "grid": {},
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "hiddenSeries": false,
+      "id": 18,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": true,
+        "max": true,
+        "min": true,
+        "rightSide": true,
+        "show": true,
+        "total": false,
+        "values": true
+      },
+      "lines": true,
+      "linewidth": 2,
+      "links": [],
+      "nullPointMode": "null as zero",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "7.5.10",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "exemplar": true,
+          "expr": "resource_manager_resource_unit_available{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "{{name}}",
+          "refId": "A",
+          "step": 40
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Available RU",
+      "tooltip": {
+        "msResolution": true,
+        "shared": true,
+        "sort": 0,
+        "value_type": "cumulative"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "$$hashKey": "object:869",
+          "format": "short",
+          "label": null,
+          "logBase": 10,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "$$hashKey": "object:870",
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
       "collapsed": true,
       "datasource": null,
       "gridPos": {
@@ -776,7 +883,7 @@
         "x": 0,
         "y": 23
       },
-      "id": 18,
+      "id": 19,
       "panels": [
         {
           "aliasColors": {},
@@ -801,7 +908,7 @@
             "y": 24
           },
           "hiddenSeries": false,
-          "id": 19,
+          "id": 20,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -919,7 +1026,7 @@
             "y": 24
           },
           "hiddenSeries": false,
-          "id": 20,
+          "id": 21,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -1058,7 +1165,7 @@
             "y": 31
           },
           "hiddenSeries": false,
-          "id": 21,
+          "id": 22,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -1177,7 +1284,7 @@
             "y": 31
           },
           "hiddenSeries": false,
-          "id": 22,
+          "id": 23,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -1296,7 +1403,7 @@
             "y": 39
           },
           "hiddenSeries": false,
-          "id": 23,
+          "id": 24,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -1414,7 +1521,7 @@
             "y": 39
           },
           "hiddenSeries": false,
-          "id": 24,
+          "id": 25,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -1532,7 +1639,7 @@
             "y": 47
           },
           "hiddenSeries": false,
-          "id": 25,
+          "id": 26,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -1651,7 +1758,7 @@
             "y": 47
           },
           "hiddenSeries": false,
-          "id": 26,
+          "id": 27,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -1759,7 +1866,7 @@
         "x": 0,
         "y": 55
       },
-      "id": 27,
+      "id": 28,
       "panels": [
         {
           "aliasColors": {},
@@ -1777,7 +1884,7 @@
             "y": 56
           },
           "hiddenSeries": false,
-          "id": 28,
+          "id": 29,
           "legend": {
             "alignAsTable": true,
             "avg": false,
@@ -1879,7 +1986,7 @@
             "y": 64
           },
           "hiddenSeries": false,
-          "id": 29,
+          "id": 30,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -1995,7 +2102,7 @@
             "y": 64
           },
           "hiddenSeries": false,
-          "id": 30,
+          "id": 31,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -2111,7 +2218,7 @@
             "y": 71
           },
           "hiddenSeries": false,
-          "id": 31,
+          "id": 32,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -2226,7 +2333,7 @@
             "y": 71
           },
           "hiddenSeries": false,
-          "id": 32,
+          "id": 33,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -2342,7 +2449,7 @@
             "y": 78
           },
           "hiddenSeries": false,
-          "id": 36,
+          "id": 34,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -2457,7 +2564,7 @@
             "y": 78
           },
           "hiddenSeries": false,
-          "id": 37,
+          "id": 35,
           "legend": {
             "alignAsTable": true,
             "avg": true,
