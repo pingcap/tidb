@@ -17,12 +17,16 @@ package admintest
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
@@ -1594,11 +1598,11 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"10\", index-values:\"KindInt64 19\" != record-values:\"KindInt64 20\", compare err:<nil>")
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 10, index-values:\"handle: 10, values: [KindInt64 19]\" != record-values:\"handle: 10, values: [KindInt64 20]\"")
 	tk.MustExec("set @@tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"?\", index-values:\"?\" != record-values:\"?\", compare err:\"?\"")
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
 	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Recover records.
@@ -1614,5 +1618,51 @@ func TestAdminCheckTableFailed(t *testing.T) {
 }
 
 func TestAdminCheckTableErrorLocate(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
+	executor.CheckTableFastBucketSize.Store(8)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, primary key(c1), key(c2))")
+	tk.MustExec("set cte_max_recursion_depth=10000;")
+	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
+
+	// Make some corrupted index. Build the index information.
+	ctx := mock.NewContext()
+	ctx.Store = store
+	is := domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	sc := ctx.GetSessionVars().StmtCtx
+
+	pattern := "handle:\\s(\\d+)"
+	r := regexp.MustCompile(pattern)
+
+	for i := 0; i < 100; i++ {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		randomRow := rand.Intn(10000) + 1
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(randomRow), kv.IntHandle(randomRow))
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		err = tk.ExecToErr("admin check table admin_test")
+		require.Error(t, err)
+		match := r.FindStringSubmatch(err.Error())
+		require.Greater(t, len(match), 0)
+		handle, err := strconv.Atoi(match[1])
+		require.NoError(t, err)
+		require.Equalf(t, randomRow, handle, "i :%d", i)
+		tk.MustQuery("admin recover index admin_test c2")
+		tk.MustExec("set @@tidb_fast_check_table = 0")
+		tk.MustExec("admin check table admin_test")
+		tk.MustExec("set @@tidb_fast_check_table = 1")
+	}
 }

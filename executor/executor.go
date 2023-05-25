@@ -121,6 +121,9 @@ var (
 	_ dataSourceExecutor = &IndexReaderExecutor{}
 	_ dataSourceExecutor = &IndexLookUpExecutor{}
 	_ dataSourceExecutor = &IndexMergeReaderExecutor{}
+
+	// CheckTableFastBucketSize is the bucket size of fast check table.
+	CheckTableFastBucketSize = atomic.Int64{}
 )
 
 // dataSourceExecutor is a table DataSource converted Executor.
@@ -174,6 +177,9 @@ func init() {
 
 	schematracker.ConstructResultOfShowCreateDatabase = ConstructResultOfShowCreateDatabase
 	schematracker.ConstructResultOfShowCreateTable = ConstructResultOfShowCreateTable
+
+	// CheckTableFastBucketSize is used to set the fast analyze bucket size for check table.
+	CheckTableFastBucketSize.Store(1024)
 }
 
 // Action panics when storage usage exceeds storage quota.
@@ -2396,7 +2402,7 @@ func getCheckSum(se sessionctx.Context, sql string) (map[uint64]groupByChecksum,
 func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
-	bucketSize := 1024
+	bucketSize := int(CheckTableFastBucketSize.Load())
 
 	ctx := kv.WithInternalSourceType(context.TODO(), kv.InternalTxnAdmin)
 
@@ -2459,14 +2465,14 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 	// Used to group by and order.
 	var md5Handle strings.Builder
-	md5Handle.WriteString("md5(concat(")
+	md5Handle.WriteString("crc32(md5(concat(")
 	for i, col := range pkCols {
 		md5Handle.WriteString(col)
 		if i != len(pkCols)-1 {
 			md5Handle.WriteString(", ")
 		}
 	}
-	md5Handle.WriteString("))")
+	md5Handle.WriteString(")))")
 
 	handleColumnField := strings.Join(pkCols, ", ")
 	var indexColumnField strings.Builder
@@ -2495,16 +2501,20 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	times := 0
 	const maxTimes = 10
 	for tableRowCntToCheck > lookupCheckThreshold || !checkOnce {
-		checkOnce = true
 		times++
 		if times == maxTimes {
 			logutil.BgLogger().Warn("compare checksum by group reaches time limit", zap.Int("times", times))
 			break
 		}
-		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
+		whereKey := fmt.Sprintf("((%s - %d) %% %d)", md5Handle.String(), offset, mod)
+		groupByKey := fmt.Sprintf("(cast((%s - %d) / %d as unsigned) %% %d)", md5Handle.String(), offset, mod, bucketSize)
+		if !checkOnce {
+			whereKey = "0"
+		}
+		checkOnce = true
 
 		// compute table side checksum.
-		sql := fmt.Sprintf("select /*+ read_from_storage(tikv[%s.%s]) */ bit_xor(%s), %s, count(*) from %s.%s use index() group by %s", w.e.dbName, w.e.table.Meta().Name, md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, groupByKey)
+		sql := fmt.Sprintf("select /*+ read_from_storage(tikv[%s.%s]) */ bit_xor(%s), %s, count(*) from %s.%s use index() where %s = 0 group by %s", w.e.dbName, w.e.table.Meta().Name, md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, whereKey, groupByKey)
 		logutil.BgLogger().Info("check table index on table side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
 		tableCheckSumMap, err := getCheckSum(se, sql)
 		if err != nil {
@@ -2513,7 +2523,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		}
 
 		// compute index side checksum.
-		sql = fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s.%s use index(%s) group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey)
+		sql = fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s.%s use index(%s) where %s = 0 group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, whereKey, groupByKey)
 		logutil.BgLogger().Info("check table index on index side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
 		indexCheckSumMap, err := getCheckSum(se, sql)
 		if err != nil {
@@ -2573,7 +2583,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	}
 
 	if meetError {
-		groupByKey := fmt.Sprintf("((%s - %d) / %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
+		groupByKey := fmt.Sprintf("((%s - %d) %% %d)", md5Handle.String(), offset, mod)
 		indexSQL := fmt.Sprintf("select %s, %s, %s from %s.%s use index(%s) where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, groupByKey, handleColumnField)
 		tableSQL := fmt.Sprintf("select /*+ read_from_storage(tikv[%s.%s]) */ %s, %s, %s from %s.%s use index() where %s = 0 order by %s", w.e.dbName, w.e.table.Meta().Name, handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), w.e.dbName, w.e.table.Meta().Name, groupByKey, handleColumnField)
 
@@ -2650,7 +2660,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		i := 0
 		j := 0
 		for i < len(tblRow) || j < len(idxRow) {
-			if i+1 == len(tblRow) {
+			if i == len(tblRow) {
 				// No more rows in table side.
 				tableRecord = nil
 			} else {
@@ -2666,7 +2676,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 				}
 				tableRecord = &consistency.RecordData{Handle: handle, Values: value}
 			}
-			if j+1 == len(idxRow) {
+			if j == len(idxRow) {
 				// No more rows in index side.
 				indexRecord = nil
 			} else {
