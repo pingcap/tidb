@@ -34,7 +34,7 @@ import (
 
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{}
-	plan.initDefaultOptions()
+	plan.initDefaultOptions(nil)
 	require.Equal(t, LogicalImportMode, plan.ImportMode)
 	require.Equal(t, config.ByteSize(50<<30), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
@@ -48,7 +48,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, false, plan.Detached)
 
 	plan = &Plan{Format: LoadDataFormatParquet}
-	plan.initDefaultOptions()
+	plan.initDefaultOptions(nil)
 	require.Greater(t, plan.ThreadCnt, int64(0))
 	require.Equal(t, int64(math.Max(1, float64(runtime.NumCPU())*0.75)), plan.ThreadCnt)
 }
@@ -66,7 +66,7 @@ func TestInitOptions(t *testing.T) {
 		{OptionStr: importModeOption + "='logical', " + diskQuotaOption + "='100GiB'", Err: exeerrors.ErrLoadDataUnsupportedOption},
 		{OptionStr: importModeOption + "='logical', " + checksumOption + "='optional'", Err: exeerrors.ErrLoadDataUnsupportedOption},
 		{OptionStr: importModeOption + "='logical', " + addIndexOption + "=false", Err: exeerrors.ErrLoadDataUnsupportedOption},
-		{OptionStr: importModeOption + "='logical', " + analyzeOption + "='optional'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: importModeOption + "='logical', " + analyzeTableOption + "='optional'", Err: exeerrors.ErrLoadDataUnsupportedOption},
 		{OptionStr: importModeOption + "='logical', " + distributedOption + "=false", Err: exeerrors.ErrLoadDataUnsupportedOption},
 
 		{OptionStr: importModeOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
@@ -88,10 +88,10 @@ func TestInitOptions(t *testing.T) {
 		{OptionStr: importModeOption + "='physical', " + addIndexOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: importModeOption + "='physical', " + addIndexOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: importModeOption + "='physical', " + analyzeOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + analyzeTableOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + analyzeTableOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + analyzeTableOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + analyzeTableOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
 		{OptionStr: importModeOption + "='physical', " + distributedOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: importModeOption + "='physical', " + distributedOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
@@ -151,7 +151,7 @@ func TestInitOptions(t *testing.T) {
 		diskQuotaOption+"='100gib', "+
 		checksumOption+"='optional', "+
 		addIndexOption+"=false, "+
-		analyzeOption+"='required', "+
+		analyzeTableOption+"='required', "+
 		distributedOption+"=false, "+
 		threadOption+"='100000', "+
 		maxWriteSpeedOption+"='200mib', "+

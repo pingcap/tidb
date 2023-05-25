@@ -16,7 +16,6 @@ package importer
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"math"
 	"path/filepath"
@@ -65,52 +64,47 @@ const (
 	// LoadDataFormatParquet represents the data source file of LOAD DATA is parquet.
 	LoadDataFormatParquet = "parquet"
 
-	// LogicalImportMode represents the import mode is SQL-like.
-	LogicalImportMode = "logical"
-	// PhysicalImportMode represents the import mode is KV-like.
-	PhysicalImportMode = "physical"
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
 	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
 
-	importModeOption    = "import_mode"
-	diskQuotaOption     = "disk_quota"
-	checksumOption      = "checksum_table"
-	addIndexOption      = "add_index"
-	analyzeOption       = "analyze_table"
-	threadOption        = "thread"
-	maxWriteSpeedOption = "max_write_speed"
-	splitFileOption     = "split_file"
-	recordErrorsOption  = "record_errors"
-	detachedOption      = plannercore.DetachedOption
-
-	// test option, not for user
-	distributedOption = "__distributed"
+	characterSetOption        = "character_set"
+	fieldsTerminatedByOption  = "fields_terminated_by"
+	fieldsEnclosedByOption    = "fields_enclosed_by"
+	fieldsEscapedByOption     = "fields_escaped_by"
+	fieldsDefinedNullByOption = "fields_defined_null_by"
+	linesTerminatedByOption   = "lines_terminated_by"
+	skipRowsOption            = "skip_rows"
+	splitFileOption           = "split_file"
+	diskQuotaOption           = "disk_quota"
+	threadOption              = "thread"
+	maxWriteSpeedOption       = "max_write_speed"
+	checksumTableOption       = "checksum_table"
+	addIndexOption            = "add_index"
+	analyzeTableOption        = "analyze_table"
+	recordErrorsOption        = "record_errors"
+	detachedOption            = plannercore.DetachedOption
 )
 
 var (
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
-		importModeOption:    true,
-		diskQuotaOption:     true,
-		checksumOption:      true,
-		addIndexOption:      true,
-		analyzeOption:       true,
-		threadOption:        true,
-		maxWriteSpeedOption: true,
-		splitFileOption:     true,
-		recordErrorsOption:  true,
-		detachedOption:      false,
-		distributedOption:   true,
-	}
-
-	// options only allowed when import mode is physical
-	optionsForPhysicalImport = map[string]struct{}{
-		diskQuotaOption:   {},
-		checksumOption:    {},
-		addIndexOption:    {},
-		analyzeOption:     {},
-		distributedOption: {},
+		characterSetOption:        true,
+		fieldsTerminatedByOption:  true,
+		fieldsEnclosedByOption:    true,
+		fieldsEscapedByOption:     true,
+		fieldsDefinedNullByOption: true,
+		linesTerminatedByOption:   true,
+		skipRowsOption:            true,
+		splitFileOption:           true,
+		diskQuotaOption:           true,
+		threadOption:              true,
+		maxWriteSpeedOption:       true,
+		checksumTableOption:       true,
+		addIndexOption:            true,
+		analyzeTableOption:        true,
+		recordErrorsOption:        true,
+		detachedOption:            false,
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
@@ -149,13 +143,17 @@ type Plan struct {
 	// operation.
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
-	IgnoreLines *uint64
 
 	SQLMode          mysql.SQLMode
 	Charset          *string
 	ImportantSysVars map[string]string
 
-	ImportMode        string
+	// used for LOAD DATA and CSV format of IMPORT INTO
+	FieldNullDef         []string
+	NullValueOptEnclosed bool
+	plannercore.LineFieldsInfo
+	IgnoreLines uint64
+
 	DiskQuota         config.ByteSize
 	Checksum          config.PostOpLevel
 	AddIndex          bool
@@ -208,12 +206,6 @@ type LoadDataController struct {
 	// - ref columns in set clause is allowed in mysql, but not in tidb
 	InsertColumns []*table.Column
 
-	// used for DELIMITED DATA format
-	FieldNullDef         []string
-	NullValueOptEnclosed bool
-	plannercore.LineFieldsInfo
-	IgnoreLines uint64
-
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
@@ -258,21 +250,56 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
 
+	var ignoreLines uint64
+	if plan.IgnoreLines != nil {
+		ignoreLines = *plan.IgnoreLines
+	}
+
+	var (
+		nullDef              []string
+		nullValueOptEnclosed = false
+	)
+
+	lineFieldsInfo := plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo)
+	// todo: move null defined into plannercore.LineFieldsInfo
+	// in load data, there maybe multiple null def, but in SELECT ... INTO OUTFILE there's only one
+	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
+		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
+		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
+	} else if len(lineFieldsInfo.FieldsEnclosedBy) != 0 {
+		nullDef = append(nullDef, "NULL")
+	}
+	if len(lineFieldsInfo.FieldsEscapedBy) != 0 {
+		nullDef = append(nullDef, string([]byte{lineFieldsInfo.FieldsEscapedBy[0], 'N'}))
+	}
+
 	p := &Plan{
-		DBName:      plan.Table.Schema.O,
-		Path:        plan.Path,
-		Format:      LoadDataFormatDelimitedData,
-		Restrictive: restrictive,
-		IgnoreLines: plan.IgnoreLines,
-		Charset:     charset,
+		TableInfo: tbl.Meta(),
+		DBName:    plan.Table.Schema.O,
+		DBID:      plan.Table.DBInfo.ID,
+
+		Path:                 plan.Path,
+		Format:               LoadDataFormatDelimitedData,
+		Restrictive:          restrictive,
+		FieldNullDef:         nullDef,
+		NullValueOptEnclosed: nullValueOptEnclosed,
+		LineFieldsInfo:       lineFieldsInfo,
+		IgnoreLines:          ignoreLines,
+
+		SQLMode:          userSctx.GetSessionVars().SQLMode,
+		Charset:          charset,
+		ImportantSysVars: getImportantSysVars(userSctx),
+
+		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
+	}
+	if err := p.initOptions(userSctx, plan.Options); err != nil {
+		return nil, err
 	}
 	return p, nil
 }
 
 // NewImportPlan creates a new import into plan.
 func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
-	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
-	logger := log.L().With(zap.String("table", fullTableName))
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
@@ -280,29 +307,31 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 		// without FORMAT 'xxx' clause, default to DELIMITED DATA
 		format = LoadDataFormatDelimitedData
 	}
-	// todo: use charset in options
-	var charset *string
-	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
-	d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
-		context.Background(), variable.CharsetDatabase)
-	if err2 != nil {
-		logger.Error("LOAD DATA get charset failed", zap.Error(err2))
-	} else {
-		charset = &d
-	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
+	// those are the default values for lightning CSV format too
+	lineFieldsInfo := plannercore.LineFieldsInfo{
+		FieldsTerminatedBy: `,`,
+		FieldsEnclosedBy:   `"`,
+		FieldsEscapedBy:    `\`,
+		FieldsOptEnclosed:  false,
+		LinesStartingBy:    ``,
+		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
+		LinesTerminatedBy: ``,
+	}
 
 	p := &Plan{
 		TableInfo: tbl.Meta(),
 		DBName:    plan.Table.Schema.O,
 		DBID:      plan.Table.DBInfo.ID,
 
-		Path:        plan.Path,
-		Format:      format,
-		Restrictive: restrictive,
+		Path:                 plan.Path,
+		Format:               format,
+		Restrictive:          restrictive,
+		FieldNullDef:         []string{`\N`},
+		NullValueOptEnclosed: true, // it's always true for IMPORT INTO
+		LineFieldsInfo:       lineFieldsInfo,
 
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
-		Charset:          charset,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
@@ -360,26 +389,11 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
-	lineFieldsInfo := plannercore.NewLineFieldsInfo(astArgs.FieldsInfo, astArgs.LinesInfo)
-	if plan.InImportInto {
-		// todo: refactor this part when load data reverted
-		// those are the default values for lightning CSV format too
-		lineFieldsInfo = plannercore.LineFieldsInfo{
-			FieldsTerminatedBy: `,`,
-			FieldsEnclosedBy:   `"`,
-			FieldsEscapedBy:    `\`,
-			FieldsOptEnclosed:  false,
-			LinesStartingBy:    ``,
-			// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
-			LinesTerminatedBy: ``,
-		}
-	}
 	c := &LoadDataController{
-		Plan:           plan,
-		ASTArgs:        astArgs,
-		Table:          tbl,
-		LineFieldsInfo: lineFieldsInfo,
-		logger:         logger,
+		Plan:    plan,
+		ASTArgs: astArgs,
+		Table:   tbl,
+		logger:  logger,
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
@@ -408,24 +422,9 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 			// parquet parser need seek around, it's not supported for client local file
 			return exeerrors.ErrLoadParquetFromLocal
 		}
-		if e.ImportMode == PhysicalImportMode {
-			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("import_mode='physical'")
-		}
 		if e.Distributed {
 			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("__distributed=true")
 		}
-	}
-
-	if e.Format != LoadDataFormatDelimitedData {
-		if e.FieldsInfo != nil || e.LinesInfo != nil || plan.IgnoreLines != nil {
-			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs(fmt.Sprintf("cannot specify FIELDS ... or LINES ... or IGNORE N LINES for format '%s'", e.Format))
-		}
-		// no need to init those param for sql/parquet
-		return nil
-	}
-
-	if plan.IgnoreLines != nil {
-		e.IgnoreLines = *plan.IgnoreLines
 	}
 
 	var (
@@ -469,13 +468,12 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions() {
+func (p *Plan) initDefaultOptions(userSctx sessionctx.Context) {
 	threadCnt := runtime.NumCPU()
 	if p.Format == LoadDataFormatParquet {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
 
-	p.ImportMode = LogicalImportMode
 	_ = p.DiskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
 	p.Checksum = config.OpLevelRequired
 	p.AddIndex = true
@@ -487,14 +485,12 @@ func (p *Plan) initDefaultOptions() {
 	p.Detached = false
 	p.Distributed = false
 
-	// todo: remove it when load data is reverted
-	if p.InImportInto {
-		p.ImportMode = PhysicalImportMode
-	}
+	v := "utf8mb4"
+	p.Charset = &v
 }
 
 func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	p.initDefaultOptions()
+	p.initDefaultOptions(seCtx)
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
@@ -516,25 +512,71 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		err    error
 		isNull bool
 	)
-	if opt, ok := specifiedOptions[importModeOption]; ok {
+	if opt, ok := specifiedOptions[characterSetOption]; ok {
+		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
+		if err != nil || isNull || v == "" {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		_, err = config.ParseCharset(v)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.Charset = &v
+	}
+	if opt, ok := specifiedOptions[fieldsTerminatedByOption]; ok {
+		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
+		if err != nil || isNull || v == "" {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.FieldsTerminatedBy = v
+	}
+	if opt, ok := specifiedOptions[fieldsEnclosedByOption]; ok {
+		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
+		if err != nil || isNull || len(v) > 1 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.FieldsEnclosedBy = v
+	}
+	if opt, ok := specifiedOptions[fieldsEscapedByOption]; ok {
+		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
+		if err != nil || isNull || len(v) > 1 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.FieldsEscapedBy = v
+	}
+	if opt, ok := specifiedOptions[fieldsDefinedNullByOption]; ok {
 		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		v = strings.ToLower(v)
-		if v != LogicalImportMode && v != PhysicalImportMode {
+		p.FieldNullDef = []string{v}
+	}
+	if opt, ok := specifiedOptions[linesTerminatedByOption]; ok {
+		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
+		// cannot set terminator to empty string explicitly
+		if err != nil || isNull || v == "" {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		p.ImportMode = v
+		p.LinesTerminatedBy = v
 	}
-
-	if p.ImportMode == LogicalImportMode {
-		// some options are only allowed in physical mode
-		for _, opt := range specifiedOptions {
-			if _, ok := optionsForPhysicalImport[opt.Name]; ok {
-				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, p.ImportMode)
-			}
+	if opt, ok := specifiedOptions[skipRowsOption]; ok {
+		var vInt int64
+		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || vInt < 0 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+		p.IgnoreLines = uint64(vInt)
+	}
+	if opt, ok := specifiedOptions[splitFileOption]; ok {
+		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		var vInt int64
+		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.SplitFile = vInt == 1
 	}
 	if opt, ok := specifiedOptions[diskQuotaOption]; ok {
 		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
@@ -542,35 +584,6 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		if err = p.DiskQuota.UnmarshalText([]byte(v)); err != nil || p.DiskQuota <= 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
-	if opt, ok := specifiedOptions[checksumOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = p.Checksum.FromStringValue(v); err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
-	if opt, ok := specifiedOptions[addIndexOption]; ok {
-		var vInt int64
-		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.AddIndex = vInt == 1
-	}
-	if opt, ok := specifiedOptions[analyzeOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = p.Analyze.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -590,16 +603,34 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
-	if opt, ok := specifiedOptions[splitFileOption]; ok {
+	if opt, ok := specifiedOptions[checksumTableOption]; ok {
+		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
+		if err != nil || isNull {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = p.Checksum.FromStringValue(v); err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[addIndexOption]; ok {
+		var vInt int64
 		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		var vInt int64
 		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
 		if err != nil || isNull {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		p.SplitFile = vInt == 1
+		p.AddIndex = vInt == 1
+	}
+	if opt, ok := specifiedOptions[analyzeTableOption]; ok {
+		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
+		if err != nil || isNull {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = p.Analyze.FromStringValue(v); err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
 	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
 		p.MaxRecordedErrors, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
@@ -610,19 +641,6 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
 		p.Detached = true
-	}
-
-	// test
-	if opt, ok := specifiedOptions[distributedOption]; ok {
-		var vInt int64
-		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.Distributed = vInt == 1
 	}
 
 	p.adjustOptions()
