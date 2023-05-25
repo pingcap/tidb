@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -51,89 +50,8 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, int64(math.Max(1, float64(runtime.NumCPU())*0.75)), plan.ThreadCnt)
 }
 
-func TestInitOptions(t *testing.T) {
-	cases := []struct {
-		OptionStr string
-		Err       error
-	}{
-		{OptionStr: "xx=1", Err: exeerrors.ErrUnknownOption},
-		{OptionStr: detachedOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: characterSetOption, Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: detachedOption + ", " + detachedOption, Err: exeerrors.ErrDuplicateOption},
-
-		{OptionStr: characterSetOption + "=true", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: characterSetOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: characterSetOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: characterSetOption + "=true", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: characterSetOption + "=''", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: characterSetOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: fieldsTerminatedByOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsTerminatedByOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsTerminatedByOption + "=true", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsTerminatedByOption + "=''", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: fieldsEnclosedByOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsEnclosedByOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsEnclosedByOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsEnclosedByOption + "=true", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: fieldsEscapedByOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsEscapedByOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsEscapedByOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsEscapedByOption + "=true", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: fieldsDefinedNullByOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsDefinedNullByOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: fieldsDefinedNullByOption + "=true", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: linesTerminatedByOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: linesTerminatedByOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: linesTerminatedByOption + "=true", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: linesTerminatedByOption + "=''", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: skipRowsOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: skipRowsOption + "=''", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: skipRowsOption + "=-1", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: skipRowsOption + "=true", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: diskQuotaOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: diskQuotaOption + "='220MiBxxx'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: diskQuotaOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: diskQuotaOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: diskQuotaOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: checksumTableOption + "=''", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: checksumTableOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: checksumTableOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: checksumTableOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: analyzeTableOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: analyzeTableOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: analyzeTableOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: analyzeTableOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: threadOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: threadOption + "=0", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: threadOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: threadOption + "=-100", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: threadOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: maxWriteSpeedOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: maxWriteSpeedOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: maxWriteSpeedOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: maxWriteSpeedOption + "=-1", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: maxWriteSpeedOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: splitFileOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-
-		{OptionStr: recordErrorsOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: recordErrorsOption + "='111aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: recordErrorsOption + "=-123", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: recordErrorsOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: recordErrorsOption + "=true", Err: exeerrors.ErrInvalidOptionVal},
-	}
-
+// for negative case see TestImportIntoOptionsNegativeCase
+func TestInitOptionsPositiveCase(t *testing.T) {
 	ctx := mock.NewContext()
 	defer ctx.Close()
 
@@ -153,14 +71,6 @@ func TestInitOptions(t *testing.T) {
 
 	sqlTemplate := "import into t from '/file.csv' with %s"
 	p := parser.New()
-	for _, c := range cases {
-		sql := fmt.Sprintf(sqlTemplate, c.OptionStr)
-		stmt, err2 := p.ParseOneStmt(sql, "", "")
-		require.NoError(t, err2, sql)
-		plan := &Plan{}
-		err := plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-		require.ErrorIs(t, err, c.Err, sql)
-	}
 	plan := &Plan{}
 	sql := fmt.Sprintf(sqlTemplate, characterSetOption+"='utf8', "+
 		fieldsTerminatedByOption+"='aaa', "+

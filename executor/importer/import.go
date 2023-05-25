@@ -149,8 +149,10 @@ type Plan struct {
 	ImportantSysVars map[string]string
 
 	// used for LOAD DATA and CSV format of IMPORT INTO
-	FieldNullDef         []string
+	FieldNullDef []string
+	// this is not used in IMPORT INTO
 	NullValueOptEnclosed bool
+	// LinesStartingBy is not used in IMPORT INTO
 	plannercore.LineFieldsInfo
 	IgnoreLines uint64
 
@@ -296,7 +298,7 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
 	} else {
-		// without FORMAT 'xxx' clause, default to DELIMITED DATA
+		// without FORMAT 'xxx' clause, default to CSV
 		format = DataFormatCSV
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
@@ -308,6 +310,7 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 		FieldsOptEnclosed:  false,
 		LinesStartingBy:    ``,
 		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
+		// But user cannot set this to empty explicitly.
 		LinesTerminatedBy: ``,
 	}
 
@@ -387,7 +390,7 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 		Table:   tbl,
 		logger:  logger,
 	}
-	if err := c.initFieldParams(plan); err != nil {
+	if err := c.checkFieldParams(); err != nil {
 		return nil, err
 	}
 
@@ -398,56 +401,28 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 	return c, nil
 }
 
-func (e *LoadDataController) initFieldParams(plan *Plan) error {
+func (e *LoadDataController) checkFieldParams() error {
 	if e.Path == "" {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
-	if e.Format != DataFormatDelimitedData && e.Format != DataFormatParquet && e.Format != DataFormatSQL {
-		return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
-	}
-
-	if e.FileLocRef == ast.FileLocClient {
-		if e.Detached {
-			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("DETACHED")
+	if e.InImportInto {
+		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL {
+			return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 		}
-		if e.Format == DataFormatParquet {
-			// parquet parser need seek around, it's not supported for client local file
-			return exeerrors.ErrLoadParquetFromLocal
+	} else {
+		if e.NullValueOptEnclosed && len(e.FieldsEnclosedBy) == 0 {
+			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
 		}
-	}
-
-	var (
-		nullDef              []string
-		nullValueOptEnclosed = false
-	)
-
-	// todo: move null defined into plannercore.LineFieldsInfo
-	// in load data, there maybe multiple null def, but in SELECT ... INTO OUTFILE there's only one
-	if e.FieldsInfo != nil && e.FieldsInfo.DefinedNullBy != nil {
-		nullDef = append(nullDef, *e.FieldsInfo.DefinedNullBy)
-		nullValueOptEnclosed = e.FieldsInfo.NullValueOptEnclosed
-	} else if len(e.FieldsEnclosedBy) != 0 {
-		nullDef = append(nullDef, "NULL")
-	}
-	if len(e.FieldsEscapedBy) != 0 {
-		nullDef = append(nullDef, string([]byte{e.FieldsEscapedBy[0], 'N'}))
-	}
-
-	e.FieldNullDef = nullDef
-	e.NullValueOptEnclosed = nullValueOptEnclosed
-
-	if nullValueOptEnclosed && len(e.FieldsEnclosedBy) == 0 {
-		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
-	}
-	// moved from planerbuilder.buildLoadData
-	// see https://github.com/pingcap/tidb/issues/33298
-	if len(e.FieldsTerminatedBy) == 0 {
-		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("load data with empty field terminator")
-	}
-	// TODO: support lines terminated is "".
-	// todo: remove !e.InImportInto when load data is reverted
-	if len(e.LinesTerminatedBy) == 0 && !e.InImportInto {
-		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
+		// NOTE: IMPORT INTO also don't support user set empty LinesTerminatedBy or FieldsTerminatedBy,
+		// but it's check in initOptions.
+		// TODO: support lines terminated is "".
+		if len(e.LinesTerminatedBy) == 0 {
+			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
+		}
+		// see https://github.com/pingcap/tidb/issues/33298
+		if len(e.FieldsTerminatedBy) == 0 {
+			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("load data with empty field terminator")
+		}
 	}
 	if len(e.FieldsEnclosedBy) > 0 &&
 		(strings.HasPrefix(e.FieldsEnclosedBy, e.FieldsTerminatedBy) || strings.HasPrefix(e.FieldsTerminatedBy, e.FieldsEnclosedBy)) {
@@ -821,7 +796,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}()
 		size, err3 := fileReader.Seek(0, io.SeekEnd)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek in LOAD DATA")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
 		compressTp := mydump.ParseCompressionOnFileExtension(path)
 		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
