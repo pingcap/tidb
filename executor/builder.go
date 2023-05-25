@@ -3082,6 +3082,8 @@ func constructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 		dagReq.CollectExecutionSummaries = &collExec
 	}
 	dagReq.Flags = sc.PushDownFlags()
+	sqlMode := uint64(ctx.GetSessionVars().SQLMode)
+	dagReq.SqlMode = &sqlMode
 	if storeType == kv.TiFlash {
 		var executors []*tipb.Executor
 		executors, err = constructDistExecForTiFlash(ctx, plans[0])
