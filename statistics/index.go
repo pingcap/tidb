@@ -120,9 +120,7 @@ func (idx *Index) TotalRowCount() float64 {
 
 // IsInvalid checks if this index is invalid.
 func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
-	if !collPseudo {
-		idx.checkStats()
-	}
+	idx.checkStats()
 	var notAccurate bool
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -468,7 +466,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 
 func (idx *Index) checkStats() {
 	// When we are using stats from PseudoTable(), all column/index ID will be -1.
-	if idx.IsFullLoad() || idx.PhysicalID <= 0 {
+	if idx.IsFullLoad() || idx.PhysicalID <= 0 || idx.Info == nil || idx.Info.ID < 0 {
 		return
 	}
 	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
