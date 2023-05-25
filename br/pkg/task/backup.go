@@ -91,11 +91,12 @@ type BackupConfig struct {
 	CompressionConfig
 
 	// for ebs-based backup
-	FullBackupType      FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
-	VolumeFile          string         `json:"volume-file" toml:"volume-file"`
-	SkipAWS             bool           `json:"skip-aws" toml:"skip-aws"`
-	CloudAPIConcurrency uint           `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
-	ProgressFile        string         `json:"progress-file" toml:"progress-file"`
+	FullBackupType          FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
+	VolumeFile              string         `json:"volume-file" toml:"volume-file"`
+	SkipAWS                 bool           `json:"skip-aws" toml:"skip-aws"`
+	CloudAPIConcurrency     uint           `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
+	ProgressFile            string         `json:"progress-file" toml:"progress-file"`
+	SkipPauseGCAndScheduler bool           `json:"skip-pause-gc-and-scheduler" toml:"skip-pause-gc-and-scheduler"`
 }
 
 // DefineBackupFlags defines common flags for the backup command.
@@ -240,6 +241,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 			return errors.Trace(err)
 		}
 		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
 		if err != nil {
 			return errors.Trace(err)
 		}
