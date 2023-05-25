@@ -17,6 +17,7 @@ package etcdconfig
 import (
 	"go/ast"
 
+	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
 )
@@ -35,20 +36,9 @@ const (
 	configStructName  = "Config"
 )
 
-// Adapted from https://github.com/mdempsky/unconvert/blob/beb68d938016d2dec1d1b078054f4d3db25f97be/unconvert.go#L371-L414.
 func run(pass *analysis.Pass) (interface{}, error) {
 	for _, file := range pass.Files {
-		packageName := ""
-		for _, spec := range file.Imports {
-			if spec.Path.Value != "\""+configPackagePath+"\"" {
-				continue
-			}
-			if spec.Name != nil {
-				packageName = spec.Name.Name
-			} else {
-				packageName = configPackageName
-			}
-		}
+		packageName := util.GetPackageName(file.Imports, configPackagePath, configPackageName)
 		if packageName == "" {
 			continue
 		}
