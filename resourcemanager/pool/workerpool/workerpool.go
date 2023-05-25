@@ -97,9 +97,10 @@ func NewWorkerPool[T any](name string, component util.Component, numWorkers int,
 func (p *WorkerPool[T]) handleTaskWithRecover(w Worker[T], task T) {
 	p.runningTask.Add(1)
 	defer func() {
-		tidbutil.Recover(metrics.LabelWorkerPool, "handleTaskWithRecover", nil, false)
 		p.runningTask.Add(-1)
 	}()
+	defer tidbutil.Recover(metrics.LabelWorkerPool, "handleTaskWithRecover", nil, false)
+
 	w.HandleTask(task)
 }
 
