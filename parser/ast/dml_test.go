@@ -35,6 +35,7 @@ func TestDMLVisitorCover(t *testing.T) {
 			Order: &OrderByClause{}, Limit: &Limit{Count: ce, Offset: ce}}, 4, 4},
 		{&ShowStmt{Table: &TableName{}, Column: &ColumnName{}, Pattern: &PatternLikeOrIlikeExpr{Expr: ce, Pattern: ce}, Where: ce}, 3, 3},
 		{&LoadDataStmt{Table: &TableName{}, Columns: []*ColumnName{{}}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}}, 0, 0},
+		{&ImportIntoStmt{Table: &TableName{}}, 0, 0},
 		{&Assignment{Column: &ColumnName{}, Expr: ce}, 1, 1},
 		{&ByItem{Expr: ce}, 1, 1},
 		{&GroupByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}}, 2, 2},
@@ -540,6 +541,52 @@ func TestLoadDataActions(t *testing.T) {
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestImportIntoRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			sourceSQL: "IMPORT INTO t from '/file.csv'",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv'",
+		},
+		{
+			sourceSQL: "IMPORT INTO t (a, @1, c) from '/file.csv'",
+			expectSQL: "IMPORT INTO `t` (`a`,@`1`,`c`) FROM '/file.csv'",
+		},
+		{
+			sourceSQL: "IMPORT INTO t set a=100 from '/file.csv'",
+			expectSQL: "IMPORT INTO `t` SET `a`=100 FROM '/file.csv'",
+		},
+		{
+			sourceSQL: "IMPORT INTO t (b, c) set a=100 from '/file.csv'",
+			expectSQL: "IMPORT INTO `t` (`b`,`c`) SET `a`=100 FROM '/file.csv'",
+		},
+		{
+			sourceSQL: "IMPORT INTO t from '/file.csv' format 'csv'",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv' FORMAT 'csv'",
+		},
+		{
+			sourceSQL: "IMPORT INTO `t` from '/file.csv' with detached",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH detached",
+		},
+		{
+			sourceSQL: "IMPORT INTO `t` from '/file.csv' with detached, thread=1",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH detached, thread=1",
+		},
+		{
+			// if we don't include _UTF8MB4, when comparing Stmt object, the token position will be different
+			sourceSQL: "IMPORT INTO `t` from '/file.csv' with fields_terminated_by=_UTF8MB4'\t', detached",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH fields_terminated_by=_UTF8MB4'\t', detached",
+		},
+		{
+			sourceSQL: "IMPORT INTO `t` from '/file.csv' with fields_terminated_by=_UTF8MB4'\t', detached, thread=1",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH fields_terminated_by=_UTF8MB4'\t', detached, thread=1",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*ImportIntoStmt)
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }

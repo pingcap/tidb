@@ -252,6 +252,12 @@ func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
 	return &p
 }
 
+// Init initializes ImportInto.
+func (p ImportInto) Init(ctx sessionctx.Context) *ImportInto {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeImportInto, 0)
+	return &p
+}
+
 // Init initializes LogicalShow.
 func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)
@@ -620,7 +626,7 @@ func (p LogicalCTE) Init(ctx sessionctx.Context, offset int) *LogicalCTE {
 
 // Init only assigns type and context.
 func (p PhysicalCTE) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTE {
-	p.basePlan = newBasePlan(ctx, plancodec.TypeCTE, 0)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeCTE, &p, 0)
 	p.stats = stats
 	return &p
 }
@@ -649,5 +655,19 @@ func (p FKCheck) Init(ctx sessionctx.Context) *FKCheck {
 func (p FKCascade) Init(ctx sessionctx.Context) *FKCascade {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCascade, &p, 0)
 	p.stats = &property.StatsInfo{}
+	return &p
+}
+
+// Init initializes LogicalSequence
+func (p LogicalSequence) Init(ctx sessionctx.Context, offset int) *LogicalSequence {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSequence, &p, offset)
+	return &p
+}
+
+// Init initializes PhysicalSequence
+func (p PhysicalSequence) Init(ctx sessionctx.Context, stats *property.StatsInfo, blockOffset int, props ...*property.PhysicalProperty) *PhysicalSequence {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSequence, &p, blockOffset)
+	p.stats = stats
+	p.childrenReqProps = props
 	return &p
 }

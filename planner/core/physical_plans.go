@@ -1508,6 +1508,8 @@ type PhysicalExchangeReceiver struct {
 
 	Tasks []*kv.MPPTask
 	frags []*Fragment
+
+	IsCTEReader bool
 }
 
 // Clone implment PhysicalPlan interface.
@@ -1518,6 +1520,8 @@ func (p *PhysicalExchangeReceiver) Clone() (PhysicalPlan, error) {
 		return nil, errors.Trace(err)
 	}
 	np.basePhysicalPlan = *base
+
+	np.IsCTEReader = p.IsCTEReader
 	return np, nil
 }
 
@@ -1597,9 +1601,10 @@ func (p *PhysicalExpand) MemoryUsage() (sum int64) {
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
 
-	TargetTasks  []*kv.MPPTask
-	ExchangeType tipb.ExchangeType
-	HashCols     []*property.MPPPartitionColumn
+	TargetTasks          []*kv.MPPTask
+	TargetCTEReaderTasks [][]*kv.MPPTask
+	ExchangeType         tipb.ExchangeType
+	HashCols             []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks           []*kv.MPPTask
 	CompressionMode kv.ExchangeCompressionMode
@@ -1891,9 +1896,19 @@ func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
 func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
+	newGbyItems := make([]expression.Expression, len(la.GroupByItems))
+	copy(newGbyItems, la.GroupByItems)
+	newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
+	// There's some places that rewrites the aggFunc in-place.
+	// I clone it first.
+	// It needs a well refactor to make sure that the physical optimize should not change the things of logical plan.
+	// It's bad for cascades
+	for i, aggFunc := range la.AggFuncs {
+		newAggFuncs[i] = aggFunc.Clone()
+	}
 	agg := basePhysicalAgg{
-		GroupByItems: la.GroupByItems,
-		AggFuncs:     la.AggFuncs,
+		GroupByItems: newGbyItems,
+		AggFuncs:     newAggFuncs,
 	}.initForHash(la.ctx, newStats, la.blockOffset, prop)
 	return agg
 }
@@ -2454,6 +2469,9 @@ type PhysicalCTE struct {
 	CTE       *CTEClass
 	cteAsName model.CIStr
 	cteName   model.CIStr
+
+	readerReceiver *PhysicalExchangeReceiver
+	storageSender  *PhysicalExchangeSender
 }
 
 // PhysicalCTETable is for CTE table.
@@ -2490,6 +2508,45 @@ func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 		}
 		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalCTE) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalCTE)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	if p.SeedPlan != nil {
+		cloned.SeedPlan, err = p.SeedPlan.Clone()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if p.RecurPlan != nil {
+		cloned.RecurPlan, err = p.RecurPlan.Clone()
+		if err != nil {
+			return nil, err
+		}
+	}
+	cloned.cteAsName, cloned.cteName = p.cteAsName, p.cteName
+	cloned.CTE = p.CTE
+	if p.storageSender != nil {
+		clonedSender, err := p.storageSender.Clone()
+		if err != nil {
+			return nil, err
+		}
+		cloned.storageSender = clonedSender.(*PhysicalExchangeSender)
+	}
+	if p.readerReceiver != nil {
+		clonedReceiver, err := p.readerReceiver.Clone()
+		if err != nil {
+			return nil, err
+		}
+		cloned.readerReceiver = clonedReceiver.(*PhysicalExchangeReceiver)
+	}
+	return cloned, nil
 }
 
 // MemoryUsage return the memory usage of PhysicalCTE
@@ -2568,6 +2625,43 @@ func (p *CTEDefinition) MemoryUsage() (sum int64) {
 	return
 }
 
+// PhysicalCTEStorage is used for representing CTE storage, or CTE producer in other words.
+type PhysicalCTEStorage PhysicalCTE
+
+// ExplainInfo overrides the ExplainInfo
+func (*PhysicalCTEStorage) ExplainInfo() string {
+	return "Non-Recursive CTE Storage"
+}
+
+// ExplainID overrides the ExplainID.
+func (p *PhysicalCTEStorage) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
+	})
+}
+
+// MemoryUsage return the memory usage of CTEDefinition
+func (p *PhysicalCTEStorage) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalCTEStorage) Clone() (PhysicalPlan, error) {
+	cloned, err := (*PhysicalCTE)(p).Clone()
+	if err != nil {
+		return nil, err
+	}
+	return (*PhysicalCTEStorage)(cloned.(*PhysicalCTE)), nil
+}
+
 func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {
 	candidate := &tracing.CandidatePlanTrace{
 		PlanTrace: &tracing.PlanTrace{
@@ -2580,4 +2674,52 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 	op.tracer.AppendCandidate(candidate)
 	pp.appendChildCandidate(op)
 	op.tracer.Candidates[origin.ID()].AppendChildrenID(pp.ID())
+}
+
+// PhysicalSequence is the physical representation of LogicalSequence. Used to mark the CTE producers in the plan tree.
+type PhysicalSequence struct {
+	physicalSchemaProducer
+}
+
+// MemoryUsage returns the memory usage of the PhysicalSequence.
+func (p *PhysicalSequence) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage()
+
+	return
+}
+
+// ExplainID overrides the ExplainID.
+func (p *PhysicalSequence) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.TP()
+		}
+		return p.TP() + "_" + strconv.Itoa(p.id)
+	})
+}
+
+// ExplainInfo overrides the ExplainInfo.
+func (*PhysicalSequence) ExplainInfo() string {
+	res := "Sequence Node"
+	return res
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalSequence) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalSequence)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	return cloned, nil
+}
+
+// Schema returns its last child(which is the main query tree)'s schema.
+func (p *PhysicalSequence) Schema() *expression.Schema {
+	return p.Children()[len(p.Children())-1].Schema()
 }
