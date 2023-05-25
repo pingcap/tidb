@@ -61,7 +61,7 @@ func (m *mppResponse) GetData() []byte {
 }
 
 // GetStartKey implements the kv.ResultSubset GetStartKey interface.
-func (m *mppResponse) GetStartKey() kv.Key {
+func (_ *mppResponse) GetStartKey() kv.Key {
 	return nil
 }
 
