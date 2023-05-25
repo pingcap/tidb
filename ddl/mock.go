@@ -179,7 +179,6 @@ func (s *MockStateSyncer) GetGlobalState(context.Context) (*syncer.StateInfo, er
 
 // IsUpgradingState implements StateSyncer.IsUpgradingState interface.
 func (s *MockStateSyncer) IsUpgradingState() bool {
-
 	return s.clusterState.Load().State == syncer.StateUpgrading
 }
 
