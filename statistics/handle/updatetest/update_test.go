@@ -446,6 +446,8 @@ func TestAutoUpdate(t *testing.T) {
 		tableInfo = tbl.Meta()
 		h.HandleAutoAnalyze(is)
 		require.NoError(t, h.Update(is))
+		testKit.MustExec("explain select * from t where a > 'a'")
+		require.NoError(t, h.LoadNeededHistograms())
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
