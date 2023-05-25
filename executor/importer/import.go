@@ -57,12 +57,14 @@ import (
 )
 
 const (
-	// LoadDataFormatDelimitedData delimited data.
-	LoadDataFormatDelimitedData = "delimited data"
-	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is mydumper-format DML file.
-	LoadDataFormatSQLDump = "sql file"
-	// LoadDataFormatParquet represents the data source file of LOAD DATA is parquet.
-	LoadDataFormatParquet = "parquet"
+	// DataFormatCSV represents the data source file of IMPORT INTO is csv.
+	DataFormatCSV = "csv"
+	// DataFormatDelimitedData delimited data.
+	DataFormatDelimitedData = "delimited data"
+	// DataFormatSQL represents the data source file of IMPORT INTO is mydumper-format DML file.
+	DataFormatSQL = "sql"
+	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
+	DataFormatParquet = "parquet"
 
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
@@ -80,7 +82,6 @@ const (
 	threadOption              = "thread"
 	maxWriteSpeedOption       = "max_write_speed"
 	checksumTableOption       = "checksum_table"
-	addIndexOption            = "add_index"
 	analyzeTableOption        = "analyze_table"
 	recordErrorsOption        = "record_errors"
 	detachedOption            = plannercore.DetachedOption
@@ -96,12 +97,11 @@ var (
 		fieldsDefinedNullByOption: true,
 		linesTerminatedByOption:   true,
 		skipRowsOption:            true,
-		splitFileOption:           true,
+		splitFileOption:           false,
 		diskQuotaOption:           true,
 		threadOption:              true,
 		maxWriteSpeedOption:       true,
 		checksumTableOption:       true,
-		addIndexOption:            true,
 		analyzeTableOption:        true,
 		recordErrorsOption:        true,
 		detachedOption:            false,
@@ -156,7 +156,6 @@ type Plan struct {
 
 	DiskQuota         config.ByteSize
 	Checksum          config.PostOpLevel
-	AddIndex          bool
 	Analyze           config.PostOpLevel
 	ThreadCnt         int64
 	MaxWriteSpeed     config.ByteSize
@@ -167,8 +166,6 @@ type Plan struct {
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
 
-	// test
-	Distributed bool `json:"-"`
 	// todo: remove it when load data code is reverted.
 	InImportInto bool
 }
@@ -233,7 +230,7 @@ func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 }
 
 // NewPlanFromLoadDataPlan creates a import plan from LOAD DATA.
-func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*Plan, error) {
+func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.LoadData) (*Plan, error) {
 	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
 	charset := plan.Charset
@@ -273,13 +270,12 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 		nullDef = append(nullDef, string([]byte{lineFieldsInfo.FieldsEscapedBy[0], 'N'}))
 	}
 
-	p := &Plan{
-		TableInfo: tbl.Meta(),
-		DBName:    plan.Table.Schema.O,
-		DBID:      plan.Table.DBInfo.ID,
+	return &Plan{
+		DBName: plan.Table.Schema.O,
+		DBID:   plan.Table.DBInfo.ID,
 
 		Path:                 plan.Path,
-		Format:               LoadDataFormatDelimitedData,
+		Format:               DataFormatDelimitedData,
 		Restrictive:          restrictive,
 		FieldNullDef:         nullDef,
 		NullValueOptEnclosed: nullValueOptEnclosed,
@@ -291,11 +287,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 		ImportantSysVars: getImportantSysVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
-	}
-	if err := p.initOptions(userSctx, plan.Options); err != nil {
-		return nil, err
-	}
-	return p, nil
+	}, nil
 }
 
 // NewImportPlan creates a new import into plan.
@@ -305,7 +297,7 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 		format = strings.ToLower(*plan.Format)
 	} else {
 		// without FORMAT 'xxx' clause, default to DELIMITED DATA
-		format = LoadDataFormatDelimitedData
+		format = DataFormatCSV
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
 	// those are the default values for lightning CSV format too
@@ -410,7 +402,7 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 	if e.Path == "" {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
-	if e.Format != LoadDataFormatDelimitedData && e.Format != LoadDataFormatParquet && e.Format != LoadDataFormatSQLDump {
+	if e.Format != DataFormatDelimitedData && e.Format != DataFormatParquet && e.Format != DataFormatSQL {
 		return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 	}
 
@@ -418,12 +410,9 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 		if e.Detached {
 			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("DETACHED")
 		}
-		if e.Format == LoadDataFormatParquet {
+		if e.Format == DataFormatParquet {
 			// parquet parser need seek around, it's not supported for client local file
 			return exeerrors.ErrLoadParquetFromLocal
-		}
-		if e.Distributed {
-			return exeerrors.ErrLoadDataLocalUnsupportedOption.FastGenByArgs("__distributed=true")
 		}
 	}
 
@@ -468,29 +457,27 @@ func (e *LoadDataController) initFieldParams(plan *Plan) error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions(userSctx sessionctx.Context) {
+func (p *Plan) initDefaultOptions() {
 	threadCnt := runtime.NumCPU()
-	if p.Format == LoadDataFormatParquet {
+	if p.Format == DataFormatParquet {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
 
 	_ = p.DiskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
 	p.Checksum = config.OpLevelRequired
-	p.AddIndex = true
 	p.Analyze = config.OpLevelOptional
 	p.ThreadCnt = int64(threadCnt)
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
 	p.Detached = false
-	p.Distributed = false
 
 	v := "utf8mb4"
 	p.Charset = &v
 }
 
 func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	p.initDefaultOptions(seCtx)
+	p.initDefaultOptions()
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
@@ -507,14 +494,30 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		specifiedOptions[opt.Name] = opt
 	}
 
-	var (
-		v      string
-		err    error
-		isNull bool
-	)
+	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
+		if opt.Value.GetType().GetType() != mysql.TypeVarString {
+			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		val, isNull, err2 := opt.Value.EvalString(seCtx, chunk.Row{})
+		if err2 != nil || isNull {
+			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		return val, nil
+	}
+	optAsInt64 := func(opt *plannercore.LoadDataOpt) (int64, error) {
+		// current parser takes integer and bool as mysql.TypeLonglong
+		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		val, isNull, err2 := opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err2 != nil || isNull {
+			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		return val, nil
+	}
 	if opt, ok := specifiedOptions[characterSetOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull || v == "" {
+		v, err := optAsString(opt)
+		if err != nil || v == "" {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		_, err = config.ParseCharset(v)
@@ -524,63 +527,54 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		p.Charset = &v
 	}
 	if opt, ok := specifiedOptions[fieldsTerminatedByOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull || v == "" {
+		v, err := optAsString(opt)
+		if err != nil || v == "" {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.FieldsTerminatedBy = v
 	}
 	if opt, ok := specifiedOptions[fieldsEnclosedByOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull || len(v) > 1 {
+		v, err := optAsString(opt)
+		if err != nil || len(v) > 1 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.FieldsEnclosedBy = v
 	}
 	if opt, ok := specifiedOptions[fieldsEscapedByOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull || len(v) > 1 {
+		v, err := optAsString(opt)
+		if err != nil || len(v) > 1 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.FieldsEscapedBy = v
 	}
 	if opt, ok := specifiedOptions[fieldsDefinedNullByOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull {
+		v, err := optAsString(opt)
+		if err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.FieldNullDef = []string{v}
 	}
 	if opt, ok := specifiedOptions[linesTerminatedByOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
+		v, err := optAsString(opt)
 		// cannot set terminator to empty string explicitly
-		if err != nil || isNull || v == "" {
+		if err != nil || v == "" {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.LinesTerminatedBy = v
 	}
 	if opt, ok := specifiedOptions[skipRowsOption]; ok {
-		var vInt int64
-		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || vInt < 0 {
+		vInt, err := optAsInt64(opt)
+		if err != nil || vInt < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.IgnoreLines = uint64(vInt)
 	}
-	if opt, ok := specifiedOptions[splitFileOption]; ok {
-		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		var vInt int64
-		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.SplitFile = vInt == 1
+	if _, ok := specifiedOptions[splitFileOption]; ok {
+		p.SplitFile = true
 	}
 	if opt, ok := specifiedOptions[diskQuotaOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull {
+		v, err := optAsString(opt)
+		if err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		if err = p.DiskQuota.UnmarshalText([]byte(v)); err != nil || p.DiskQuota <= 0 {
@@ -588,15 +582,15 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		}
 	}
 	if opt, ok := specifiedOptions[threadOption]; ok {
-		// boolean true will be taken as 1
-		p.ThreadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || p.ThreadCnt <= 0 {
+		vInt, err := optAsInt64(opt)
+		if err != nil || vInt <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+		p.ThreadCnt = vInt
 	}
 	if opt, ok := specifiedOptions[maxWriteSpeedOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull {
+		v, err := optAsString(opt)
+		if err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		if err = p.MaxWriteSpeed.UnmarshalText([]byte(v)); err != nil || p.MaxWriteSpeed < 0 {
@@ -604,28 +598,17 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		}
 	}
 	if opt, ok := specifiedOptions[checksumTableOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull {
+		v, err := optAsString(opt)
+		if err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		if err = p.Checksum.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
-	if opt, ok := specifiedOptions[addIndexOption]; ok {
-		var vInt int64
-		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.AddIndex = vInt == 1
-	}
 	if opt, ok := specifiedOptions[analyzeTableOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull {
+		v, err := optAsString(opt)
+		if err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		if err = p.Analyze.FromStringValue(v); err != nil {
@@ -633,10 +616,11 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		}
 	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
-		p.MaxRecordedErrors, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || p.MaxRecordedErrors < -1 {
+		vInt, err := optAsInt64(opt)
+		if err != nil || vInt < -1 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+		p.MaxRecordedErrors = vInt
 		// todo: set a max value for this param?
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
@@ -654,6 +638,7 @@ func (p *Plan) adjustOptions() {
 	// max value is cpu-count
 	numCPU := int64(runtime.NumCPU())
 	if p.ThreadCnt > numCPU {
+		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
 		p.ThreadCnt = numCPU
 	}
 }
@@ -885,12 +870,12 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 func (e *LoadDataController) getSourceType() mydump.SourceType {
 	switch e.Format {
-	case LoadDataFormatParquet:
+	case DataFormatParquet:
 		return mydump.SourceTypeParquet
-	case LoadDataFormatDelimitedData:
+	case DataFormatDelimitedData, DataFormatCSV:
 		return mydump.SourceTypeCSV
 	default:
-		// LoadDataFormatSQLDump
+		// DataFormatSQL
 		return mydump.SourceTypeSQL
 	}
 }
@@ -931,7 +916,7 @@ func (e *LoadDataController) GetParser(
 		}
 	}()
 	switch e.Format {
-	case LoadDataFormatDelimitedData:
+	case DataFormatDelimitedData, DataFormatCSV:
 		var charsetConvertor *mydump.CharsetConvertor
 		if e.Charset != nil {
 			charsetConvertor, err = mydump.NewCharsetConvertor(*e.Charset, string(utf8.RuneError))
@@ -950,7 +935,7 @@ func (e *LoadDataController) GetParser(
 			nil,
 			false,
 			charsetConvertor)
-	case LoadDataFormatSQLDump:
+	case DataFormatSQL:
 		parser = mydump.NewChunkParser(
 			ctx,
 			e.SQLMode,
@@ -958,7 +943,7 @@ func (e *LoadDataController) GetParser(
 			LoadDataReadBlockSize,
 			nil,
 		)
-	case LoadDataFormatParquet:
+	case DataFormatParquet:
 		parser, err = mydump.NewParquetParser(
 			ctx,
 			e.dataStore,
