@@ -699,22 +699,22 @@ insert into t1 values (0), (1), (2), (3), (4);
 create table t2 (a int);
 insert into t2 values (1), (2), (3), (4), (5);
 drop view if exists v1,v2;
-create view v1 as with t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
-create view v2 as with recursive t1 as ( select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
+create view v1 as with t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc limit 5;
+create view v2 as with recursive t1 as ( select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc limit 5;
 create database if not exists test1;
 use test1;
 select * from test.v1;
 a
+5
 4
 3
-5
 2
 select * from test.v2;
 a
-3
-4
-5
 6
+5
+4
+3
 use test;
 drop table if exists t ,t1, t2;
 create table t(a int);
