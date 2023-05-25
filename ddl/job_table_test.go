@@ -15,16 +15,21 @@
 package ddl_test
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
@@ -175,14 +180,69 @@ func check(t *testing.T, record []int64, ids ...int64) {
 	}
 }
 
-func TestPausedStateJob(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+func TestUpgradingRelatedJobState(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE e2 (id INT NOT NULL);")
 
-	fpReturn := fmt.Sprint("return(%d)", int(model.JobStateDone))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockPauseJobOnOneState", fpReturn))
-	tk.MustExec("create table pause_tbl(a int)")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockPauseJobOnOneState"))
+	d := dom.DDL()
+
+	testCases := []struct {
+		sql      string
+		jobState model.JobState
+		err      error
+	}{
+		{"alter table e2 add index idx(id)", model.JobStateDone, nil},
+		{"alter table e2 add index idx1(id)", model.JobStateCancelling, errors.New("[ddl:8214]Cancelled DDL job")},
+		{"alter table e2 add index idx2(id)", model.JobStateRollingback, errors.New("[ddl:8214]Cancelled DDL job")},
+		{"alter table e2 add index idx3(id)", model.JobStateRollbackDone, errors.New("[ddl:8214]Cancelled DDL job")},
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpgradingState", `return(true)`))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/syncer/mockUpgradingState"))
+
+	num := 0
+	hook := &callback.TestDDLCallback{}
+	hook.OnGetJobBeforeExported = func(jobType string) {
+		for i := 0; i < 100; i++ {
+			time.Sleep(time.Millisecond * 100)
+			jobs, err := ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session(), nil)
+			require.NoError(t, err)
+			if len(jobs) < 1 || jobs[0].Query != testCases[num].sql {
+				continue
+			}
+
+			if testCases[num].err != nil && jobs[0].SchemaState == model.StateWriteOnly {
+				tk.MustExec("use test")
+				tk.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobs[0].ID))
+			}
+			if jobs[0].State == testCases[num].jobState {
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------upgrading job:%s", jobs[0].String()))
+				dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateUpgrading})
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------upgrading 222 job:%s", jobs[0].String()))
+			}
+			break
+		}
+	}
+	hook.OnGetJobAfterExported = func(jobType string, getJob *model.Job) {
+		if getJob.Query == testCases[num].sql && getJob.State == testCases[num].jobState {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------normal job:%s", getJob.String()))
+			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateNormalRunning})
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------normal 222 job:%s", getJob.String()))
+		}
+	}
+	d.SetHook(hook)
+
+	for i, tc := range testCases {
+		num = i
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------sql:%s", tc.sql))
+		if tc.err == nil {
+			tk.MustExec(tc.sql)
+		} else {
+			_, err := tk.Exec(tc.sql)
+			require.Equal(t, tc.err.Error(), err.Error())
+		}
+	}
 }

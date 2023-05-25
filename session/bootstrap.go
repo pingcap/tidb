@@ -1172,16 +1172,14 @@ func syncUpgradeState(s Session) {
 		if err == nil && len(jobErrs) == 0 {
 			break
 		}
-		isAllFinished := true
 		jobErrStrs := make([]string, 0, len(jobErrs))
 		for _, jobErr := range jobErrs {
 			if dbterror.ErrPausedDDLJob.Equal(jobErr) {
 				continue
 			}
-			isAllFinished = false
 			jobErrStrs = append(jobErrStrs, jobErr.Error())
 		}
-		if isAllFinished {
+		if err == nil && len(jobErrs) == 0 {
 			break
 		}
 

@@ -188,7 +188,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		if err != nil {
 			isCannotPauseDDLJobErr := dbterror.ErrCannotPauseDDLJob.Equal(err)
 			logutil.BgLogger().Warn("[ddl-upgrading] pause the job failed", zap.Stringer("job", job),
-				zap.Bool("isCannotPauseDDLJobErr", isCannotPauseDDLJobErr), zap.Error(err))
+				zap.Bool("isRunnable", isCannotPauseDDLJobErr), zap.Error(err))
 			failpoint.Inject("mockPauseJobOnOneState", func(val failpoint.Value) {
 				job.State = model.JobState(val.(int))
 			})
