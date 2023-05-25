@@ -61,8 +61,7 @@ go_test(
     ],
     embed = [":ingest"],
     flaky = True,
-    race = "on",
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         "//config",
         "//ddl/internal/session",
