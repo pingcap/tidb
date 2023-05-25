@@ -224,3 +224,15 @@ func TestIssue42426(t *testing.T) {
 	tk.MustExec(`INSERT INTO sbtest1 (id, k, c, pad) VALUES (502571, 499449, "abc", "def");`)
 	tk.MustExec(`COMMIT;`)
 }
+
+// for https://github.com/pingcap/tidb/issues/44123
+func TestIndexLookUpWithStaticPrune(t *testing.T) {
+	tk := initTestKit(t)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint, b decimal(41,16), c set('a', 'b', 'c'), key idx_c(c)) partition by hash(a) partitions 4")
+	tk.MustExec("insert into t values (1,2.0,'c')")
+	tk.HasPlan("select * from t use index(idx_c) order by c limit 5", "Limit")
+	tk.MustExec("select * from t use index(idx_c) order by c limit 5")
+}
