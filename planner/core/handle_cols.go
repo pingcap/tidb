@@ -329,6 +329,7 @@ func GetCommonHandleDatum(cols HandleCols, row chunk.Row) []types.Datum {
 	return datumBuf
 }
 
+// UniqueIndexCols contains the unique index info and the columns of the index.
 type UniqueIndexCols struct {
 	IdxInfo table.Index
 	Columns []*expression.Column

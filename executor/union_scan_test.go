@@ -600,7 +600,7 @@ func TestUnionScanIssue24195(t *testing.T) {
 	tk1.MustExec("insert into t values ('a', 1);")
 	tk1.MustExec("begin;")
 	tk1.MustExec("update t set c1='b' where c1='a';")
-	ch := make(chan struct{}, 0)
+	ch := make(chan struct{})
 	go func() {
 		defer func() { ch <- struct{}{} }()
 		tk2.MustExec("begin")
@@ -611,7 +611,7 @@ func TestUnionScanIssue24195(t *testing.T) {
 	}()
 	time.Sleep(time.Second * 2)
 	tk1.MustExec("commit")
-	_ = <-ch
+	<-ch
 
 	// case-2: query return duplicate unique key
 	tk1.MustExec("drop table if exists t;")
@@ -630,7 +630,7 @@ func TestUnionScanIssue24195(t *testing.T) {
 	}()
 	time.Sleep(time.Second * 2)
 	tk1.MustExec("commit")
-	_ = <-ch
+	<-ch
 
 	// case-3: when primary key is clustered index
 	tk1.MustExec("set @@tidb_enable_clustered_index = 1;")
@@ -639,7 +639,6 @@ func TestUnionScanIssue24195(t *testing.T) {
 	tk1.MustExec("insert into t values ('tag', 10, 't'), ('cat', 20, 'c');")
 	tk1.MustExec("begin;")
 	tk1.MustExec("update t set c1=reverse(c1) where c1='tag';")
-	ch = make(chan struct{}, 0)
 	go func() {
 		tk2.MustExec("begin")
 		tk2.MustExec("insert into t values('dress',40,'d'),('tag', 10, 't');")
@@ -651,7 +650,7 @@ func TestUnionScanIssue24195(t *testing.T) {
 	}()
 	time.Sleep(time.Second * 2)
 	tk1.MustExec("commit")
-	_ = <-ch
+	<-ch
 
 	// case-4: when primary key is non-clustered.
 	tk1.MustExec("set @@tidb_enable_clustered_index = 0;")
@@ -661,7 +660,6 @@ func TestUnionScanIssue24195(t *testing.T) {
 	tk1.MustExec("begin;")
 	tk1.MustExec("update t set c1=reverse(c1) where c1='tag';")
 	tk1.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "gat 10 t"))
-	ch = make(chan struct{}, 0)
 	go func() {
 		tk2.MustExec("begin")
 		tk2.MustExec("insert into t values('dress',40,'d'),('tag', 10, 't');")
@@ -673,7 +671,7 @@ func TestUnionScanIssue24195(t *testing.T) {
 	}()
 	time.Sleep(time.Second * 2)
 	tk1.MustExec("commit")
-	_ = <-ch
+	<-ch
 }
 
 func TestUnionScanDuplicateRecord(t *testing.T) {
