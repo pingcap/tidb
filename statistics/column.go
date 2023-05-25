@@ -132,10 +132,6 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	if collPseudo && c.NotAccurate() {
-		inValidForCollPseudo = true
-		return true
-	}
 	if sctx != nil {
 		stmtctx := sctx.GetSessionVars().StmtCtx
 		if c.IsLoadNeeded() && stmtctx != nil {
@@ -144,10 +140,14 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) 
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 			}
 			// In some tests, the c.Info is not set, so we add this check here.
-			if c.Info != nil {
+			if c.Info != nil && c.PhysicalID > 0 && c.Info.ID > 0 {
 				HistogramNeededItems.insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
 			}
 		}
+	}
+	if collPseudo && c.NotAccurate() {
+		inValidForCollPseudo = true
+		return true
 	}
 	// In some cases, some statistics in column would be evicted
 	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
