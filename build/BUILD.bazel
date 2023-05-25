@@ -139,6 +139,7 @@ nogo(
                "//build/linter/noloopclosure",
                "//build/linter/prealloc",
                "//build/linter/predeclared",
+               "//build/linter/recover",
                "//build/linter/unconvert",
                "//build/linter/rowserrcheck",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
