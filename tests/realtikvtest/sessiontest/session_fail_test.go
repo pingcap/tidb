@@ -227,8 +227,8 @@ func TestIssue42426(t *testing.T) {
 
 // for https://github.com/pingcap/tidb/issues/44123
 func TestIndexLookUpWithStaticPrune(t *testing.T) {
-	tk := initTestKit(t)
-
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint, b decimal(41,16), c set('a', 'b', 'c'), key idx_c(c)) partition by hash(a) partitions 4")
