@@ -31,6 +31,7 @@ go_library(
         "//parser/mysql",
         "//table/tables",
         "//util/logutil",
+        "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],

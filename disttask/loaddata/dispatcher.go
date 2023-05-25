@@ -197,7 +197,7 @@ func buildTableImporter(ctx context.Context, taskMeta *TaskMeta) (*importer.Tabl
 
 	return importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
-		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
+		Progress: asyncloaddata.NewProgress(false),
 		Job: &asyncloaddata.Job{
 			ID: taskMeta.JobID,
 		},

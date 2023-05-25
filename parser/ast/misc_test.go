@@ -122,7 +122,8 @@ insert into t_copy select * from t where t.x > 5;
 (select /*+ TIDB_INLJ(t1) */ a from t1 where a=10 and b=1) union (select /*+ TIDB_SMJ(t2) */ a from t2 where a=11 and b=2) order by a limit 10;
 update t1 set col1 = col1 + 1, col2 = col1;
 show create table t;
-load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b';`
+load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b';
+import into t from '/file.csv'`
 
 	p := parser.New()
 	stmts, _, err := p.Parse(sql, "", "")

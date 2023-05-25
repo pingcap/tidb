@@ -252,6 +252,12 @@ func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
 	return &p
 }
 
+// Init initializes ImportInto.
+func (p ImportInto) Init(ctx sessionctx.Context) *ImportInto {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeImportInto, 0)
+	return &p
+}
+
 // Init initializes LogicalShow.
 func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)

@@ -687,6 +687,16 @@ func TestDMLStmt(t *testing.T) {
 		{"load data infile '/tmp/t.csv' into table `t` with threads=10", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` WITH threads=10"},
 		{"load data infile '/tmp/t.csv' into table `t` with threads=10, detached", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` WITH threads=10, detached"},
 
+		// IMPORT INTO
+		{"import into t from '/file.csv'", true, "IMPORT INTO `t` FROM '/file.csv'"},
+		{"import into t (a,b) from '/file.csv'", true, "IMPORT INTO `t` (`a`,`b`) FROM '/file.csv'"},
+		{"import into t (a,@1) from '/file.csv'", true, "IMPORT INTO `t` (`a`,@`1`) FROM '/file.csv'"},
+		{"import into t (a,@1) set b=@1+100 from '/file.csv'", true, "IMPORT INTO `t` (`a`,@`1`) SET `b`=@`1`+100 FROM '/file.csv'"},
+		{"import into t from '/file.csv' format 'sql file'", true, "IMPORT INTO `t` FROM '/file.csv' FORMAT 'sql file'"},
+		{"import into t from '/file.csv' with detached", true, "IMPORT INTO `t` FROM '/file.csv' WITH detached"},
+		{"import into `t` from '/file.csv' with thread=1", true, "IMPORT INTO `t` FROM '/file.csv' WITH thread=1"},
+		{"import into `t` from '/file.csv' with detached, thread=1", true, "IMPORT INTO `t` FROM '/file.csv' WITH detached, thread=1"},
+
 		// select for update/share
 		{"select * from t for update", true, "SELECT * FROM `t` FOR UPDATE"},
 		{"select * from t for share", true, "SELECT * FROM `t` FOR SHARE"},
