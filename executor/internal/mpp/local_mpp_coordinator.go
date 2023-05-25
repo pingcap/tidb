@@ -193,7 +193,6 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 	return nil
 }
 
-
 // fixTaskForCTEStorageAndReader fixes the upstream/downstream tasks for the producers and consumers.
 // After we split the fragments. A CTE producer in the fragment will holds all the task address of the consumers.
 // For example, the producer has two task on node_1 and node_2. As we know that each consumer also has two task on the same nodes(node_1 and node_2)
