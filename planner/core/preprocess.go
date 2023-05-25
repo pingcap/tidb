@@ -157,6 +157,8 @@ const (
 	inSequenceFunction
 	// initTxnContextProvider is set when we should init txn context in preprocess
 	initTxnContextProvider
+	// inImportInto is set when visiting an import into statement.
+	inImportInto
 )
 
 // Make linter happy.
@@ -335,6 +337,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
 		p.flag |= inRepairTable
 		p.checkRepairTableGrammar(node)
+	case *ast.ImportIntoStmt:
+		p.stmtTp = TypeImportInto
+		p.flag |= inImportInto
 	case *ast.CreateSequenceStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -439,6 +444,8 @@ const (
 	TypeShow
 	// TypeExecute for ExecuteStmt
 	TypeExecute
+	// TypeImportInto for ImportIntoStmt
+	TypeImportInto
 )
 
 func bindableStmtType(node ast.StmtNode) byte {
@@ -1501,6 +1508,8 @@ func (p *preprocessor) stmtType() string {
 		return "SELECT, INSERT"
 	case TypeShow:
 		return "SHOW"
+	case TypeImportInto:
+		return "IMPORT INTO"
 	default:
 		return "SELECT" // matches Select and uncaught cases.
 	}
@@ -1561,10 +1570,13 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.String() != "" {
 		currentDB = tn.Schema.L
 	}
-	table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
-	if err != nil {
-		p.err = err
-		return
+
+	if !p.skipLockMDL() {
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+		if err != nil {
+			p.err = err
+			return
+		}
 	}
 
 	tableInfo := table.Meta()
@@ -1898,4 +1910,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		return tbl, nil
 	}
 	return tbl, nil
+}
+
+func (p *preprocessor) skipLockMDL() bool {
+	return p.flag&inImportInto > 0
 }

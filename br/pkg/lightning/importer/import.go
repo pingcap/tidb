@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -1783,35 +1782,9 @@ func (rc *Controller) dropTableIndexes(ctx context.Context, tblInfo *checkpoints
 	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
 	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 
-	var remainIndexes []*model.IndexInfo
-	cols := tblInfo.Core.Columns
-loop:
-	for _, idxInfo := range tblInfo.Core.Indices {
-		if idxInfo.State != model.StatePublic {
-			remainIndexes = append(remainIndexes, idxInfo)
-			continue
-		}
-		// Primary key is a cluster index.
-		if idxInfo.Primary && tblInfo.Core.HasClusteredIndex() {
-			remainIndexes = append(remainIndexes, idxInfo)
-			continue
-		}
-		// Skip index that contains auto-increment column.
-		// Because auto colum must be defined as a key.
-		for _, idxCol := range idxInfo.Columns {
-			flag := cols[idxCol.Offset].GetFlag()
-			if mysql.HasAutoIncrementFlag(flag) {
-				remainIndexes = append(remainIndexes, idxInfo)
-				continue loop
-			}
-		}
-
-		var sqlStr string
-		if idxInfo.Primary {
-			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
-		} else {
-			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, common.EscapeIdentifier(idxInfo.Name.O))
-		}
+	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
+	for _, idxInfo := range dropIndexes {
+		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
 
 		logger.Info("drop index", zap.String("sql", sqlStr))
 		exec := common.SQLWithRetry{
@@ -1825,7 +1798,7 @@ loop:
 				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
 					remainIndexes = append(remainIndexes, idxInfo)
 					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
-					continue loop
+					continue
 				}
 			}
 			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tableName)

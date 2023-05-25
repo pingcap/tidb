@@ -82,7 +82,19 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 
-	sqlExec := e.userSctx.(sqlexec.SQLExecutor)
+	s, err2 := CreateSession(e.ctx)
+	if err2 != nil {
+		return err2
+	}
+	defer func() {
+		// if the job is detached and there's no error during init, we will close the session in the detached routine.
+		// else we close the session here.
+		if !e.controller.Detached || err != nil {
+			CloseSession(s)
+		}
+	}()
+
+	sqlExec := s.(sqlexec.SQLExecutor)
 	if err2 := e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
 	}
@@ -113,6 +125,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	if e.controller.Detached {
 		go func() {
+			defer CloseSession(s)
 			// todo: there's no need to wait for the import to finish, we can just return here.
 			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck

@@ -106,7 +106,7 @@ go_test(
     ],
     embed = [":importer"],
     flaky = True,
-    shard_count = 49,
+    shard_count = 48,
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/encode",
@@ -143,7 +143,6 @@ go_test(
         "//store/pdtypes",
         "//table/tables",
         "//types",
-        "//util/dbutil",
         "//util/mock",
         "//util/promutil",
         "//util/table-filter",

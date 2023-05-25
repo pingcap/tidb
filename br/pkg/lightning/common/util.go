@@ -15,6 +15,7 @@
 package common
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"database/sql"
@@ -35,10 +36,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/format"
 	"go.uber.org/zap"
 )
 
@@ -487,4 +491,120 @@ func GetAutoRandomColumn(tblInfo *model.TableInfo) *model.ColumnInfo {
 		return tblInfo.Columns[offset]
 	}
 	return nil
+}
+
+// GetDropIndexInfos returns the index infos that need to be dropped and the remain indexes.
+func GetDropIndexInfos(
+	tblInfo *model.TableInfo,
+) (remainIndexes []*model.IndexInfo, dropIndexes []*model.IndexInfo) {
+	cols := tblInfo.Columns
+loop:
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo.State != model.StatePublic {
+			remainIndexes = append(remainIndexes, idxInfo)
+			continue
+		}
+		// Primary key is a cluster index.
+		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
+			remainIndexes = append(remainIndexes, idxInfo)
+			continue
+		}
+		// Skip index that contains auto-increment column.
+		// Because auto colum must be defined as a key.
+		for _, idxCol := range idxInfo.Columns {
+			flag := cols[idxCol.Offset].GetFlag()
+			if tmysql.HasAutoIncrementFlag(flag) {
+				remainIndexes = append(remainIndexes, idxInfo)
+				continue loop
+			}
+		}
+		dropIndexes = append(dropIndexes, idxInfo)
+	}
+	return remainIndexes, dropIndexes
+}
+
+// BuildDropIndexSQL builds the SQL statement to drop index.
+func BuildDropIndexSQL(tableName string, idxInfo *model.IndexInfo) string {
+	if idxInfo.Primary {
+		return fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
+	}
+	return fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, EscapeIdentifier(idxInfo.Name.O))
+}
+
+// BuildAddIndexSQL builds the SQL statement to create missing indexes.
+// It returns both a single SQL statement that creates all indexes at once,
+// and a list of SQL statements that creates each index individually.
+func BuildAddIndexSQL(
+	tableName string,
+	curTblInfo,
+	desiredTblInfo *model.TableInfo,
+) (singleSQL string, multiSQLs []string) {
+	addIndexSpecs := make([]string, 0, len(desiredTblInfo.Indices))
+	for _, desiredIdxInfo := range desiredTblInfo.Indices {
+		present := false
+		for _, curIdxInfo := range curTblInfo.Indices {
+			if curIdxInfo.Name.L == desiredIdxInfo.Name.L {
+				present = true
+			}
+		}
+		if present {
+			continue
+		}
+
+		var buf bytes.Buffer
+		if desiredIdxInfo.Primary {
+			buf.WriteString("ADD PRIMARY KEY ")
+		} else if desiredIdxInfo.Unique {
+			buf.WriteString("ADD UNIQUE KEY ")
+		} else {
+			buf.WriteString("ADD KEY ")
+		}
+		// "primary" is a special name for primary key, we should not use it as index name.
+		if desiredIdxInfo.Name.L != "primary" {
+			buf.WriteString(EscapeIdentifier(desiredIdxInfo.Name.O))
+		}
+
+		colStrs := make([]string, 0, len(desiredIdxInfo.Columns))
+		for _, col := range desiredIdxInfo.Columns {
+			var colStr string
+			if desiredTblInfo.Columns[col.Offset].Hidden {
+				colStr = fmt.Sprintf("(%s)", desiredTblInfo.Columns[col.Offset].GeneratedExprString)
+			} else {
+				colStr = EscapeIdentifier(col.Name.O)
+				if col.Length != types.UnspecifiedLength {
+					colStr = fmt.Sprintf("%s(%s)", colStr, strconv.Itoa(col.Length))
+				}
+			}
+			colStrs = append(colStrs, colStr)
+		}
+		fmt.Fprintf(&buf, "(%s)", strings.Join(colStrs, ","))
+
+		if desiredIdxInfo.Invisible {
+			fmt.Fprint(&buf, " INVISIBLE")
+		}
+		if desiredIdxInfo.Comment != "" {
+			fmt.Fprintf(&buf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
+		}
+		addIndexSpecs = append(addIndexSpecs, buf.String())
+	}
+	if len(addIndexSpecs) == 0 {
+		return "", nil
+	}
+
+	singleSQL = fmt.Sprintf("ALTER TABLE %s %s", tableName, strings.Join(addIndexSpecs, ", "))
+	for _, spec := range addIndexSpecs {
+		multiSQLs = append(multiSQLs, fmt.Sprintf("ALTER TABLE %s %s", tableName, spec))
+	}
+	return singleSQL, multiSQLs
+}
+
+// IsDupKeyError checks if err is a duplicate index error.
+func IsDupKeyError(err error) bool {
+	if merr, ok := errors.Cause(err).(*mysql.MySQLError); ok {
+		switch merr.Number {
+		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique:
+			return true
+		}
+	}
+	return false
 }
