@@ -610,14 +610,6 @@ func (s *mockGCSSuite) TestGBK() {
 }
 
 func (s *mockGCSSuite) TestOtherCharset() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
-	//s.testOtherCharset(importer.PhysicalImportMode, false)
-	//s.testOtherCharset(importer.PhysicalImportMode, true)
-}
-
-func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
-	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
-	withOptions = adjustOptions(withOptions, distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_charset;")
 	s.tk.MustExec("CREATE DATABASE load_charset;")
 	s.tk.MustExec(`CREATE TABLE load_charset.utf8 (
@@ -632,18 +624,18 @@ func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 			BucketName: "test-load",
 			Name:       "utf8.tsv",
 		},
-		Content: []byte("1\tကခဂဃ\n2\tငစဆဇ"),
+		Content: []byte("1,ကခဂဃ\n2,ငစဆဇ"),
 	})
 
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/utf8.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8 CHARACTER SET utf8 %s`, gcsEndpoint, withOptions)
+	sql := fmt.Sprintf(`IMPORT INTO load_charset.utf8 FROM 'gs://test-load/utf8.tsv?endpoint=%s'
+		 WITH character_set='utf8'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8;").Check(testkit.Rows(
 		"1 ကခဂဃ",
 		"2 ငစဆဇ",
 	))
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/utf8.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8mb4 CHARACTER SET utf8 %s`, gcsEndpoint, withOptions)
+	sql = fmt.Sprintf(`IMPORT INTO load_charset.utf8mb4 FROM 'gs://test-load/utf8.tsv?endpoint=%s'
+		 WITH character_set='utf8'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
 		"1 ကခဂဃ",
@@ -656,13 +648,13 @@ func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 			Name:       "latin1.tsv",
 		},
 		// "1\t‘’“”\n2\t¡¢£¤"
-		Content: []byte{0x31, 0x09, 0x91, 0x92, 0x93, 0x94, 0x0a, 0x32, 0x09, 0xa1, 0xa2, 0xa3, 0xa4},
+		Content: []byte{0x31, 0x2c, 0x91, 0x92, 0x93, 0x94, 0x0a, 0x32, 0x2c, 0xa1, 0xa2, 0xa3, 0xa4},
 	})
 	s.tk.MustExec(`CREATE TABLE load_charset.latin1 (
 		i INT, j VARCHAR(255)
 		) CHARACTER SET latin1;`)
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/latin1.tsv?endpoint=%s'
-		INTO TABLE load_charset.latin1 CHARACTER SET latin1 %s`, gcsEndpoint, withOptions)
+	sql = fmt.Sprintf(`IMPORT INTO load_charset.latin1 FROM 'gs://test-load/latin1.tsv?endpoint=%s'
+		 WITH character_set='latin1'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.latin1;").Check(testkit.Rows(
 		"1 ‘’“”",
@@ -670,8 +662,8 @@ func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 	))
 
 	s.tk.MustExec("TRUNCATE TABLE load_charset.utf8mb4;")
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/latin1.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8mb4 CHARACTER SET latin1 %s`, gcsEndpoint, withOptions)
+	sql = fmt.Sprintf(`IMPORT INTO load_charset.utf8mb4 FROM 'gs://test-load/latin1.tsv?endpoint=%s'
+		 WITH character_set='latin1'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
 		"1 ‘’“”",
@@ -691,14 +683,14 @@ func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 	s.tk.MustExec(`CREATE TABLE load_charset.binary (
 		j VARCHAR(255)
 		) CHARACTER SET binary;`)
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/ascii.tsv?endpoint=%s'
-		INTO TABLE load_charset.ascii CHARACTER SET ascii %s`, gcsEndpoint, withOptions)
+	sql = fmt.Sprintf(`IMPORT INTO load_charset.ascii FROM 'gs://test-load/ascii.tsv?endpoint=%s'
+		 WITH character_set='ascii'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT HEX(j) FROM load_charset.ascii;").Check(testkit.Rows(
 		"0001020304050607",
 	))
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/ascii.tsv?endpoint=%s'
-		INTO TABLE load_charset.binary CHARACTER SET binary %s`, gcsEndpoint, withOptions)
+	sql = fmt.Sprintf(`IMPORT INTO load_charset.binary FROM 'gs://test-load/ascii.tsv?endpoint=%s'
+		 WITH character_set='binary'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT HEX(j) FROM load_charset.binary;").Check(testkit.Rows(
 		"0001020304050607",

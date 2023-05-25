@@ -85,6 +85,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
+	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
 	dir, err := prepareSortDir(e, taskID)
 	if err != nil {
 		return nil, err
