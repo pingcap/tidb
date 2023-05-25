@@ -1833,7 +1833,10 @@ func checkPiTRTaskInfo(
 			log.Info("check pitr requirements for the first execution")
 			if err := checkPiTRRequirements(ctx, g, cfg, mgr); err != nil {
 				if len(lastTaskMsg) > 0 {
-					err = errors.Annotatef(err, "The current restore task is regarded as a new task, %s", lastTaskMsg)
+					err = errors.Annotatef(err, "The current restore task is regarded as a new task, %s. "+
+						"If you ensure that no changes have been made to the cluster since the last execution, "+
+						"you can adjust the `start-ts` or `restored-ts` to continue with the previous execution. "+
+						"Otherwise, if you want to restore from scratch, please clean the cluster at first", lastTaskMsg)
 				}
 				return nil, false, errors.Trace(err)
 			}
