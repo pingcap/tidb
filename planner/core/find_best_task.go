@@ -1645,7 +1645,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 				})
 			}
 			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
-			if !is.Index.Global && cop.tablePlan != nil {
+			if !is.Index.Global && cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
 				is.schema.Append(&expression.Column{
 					RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -1797,6 +1797,23 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
+}
+
+// NeedExtraOutputCol is designed for check whether need an extra column for
+// pid or physical table id when build indexReq.
+func (is *PhysicalIndexScan) NeedExtraOutputCol() bool {
+	if is.Table.Partition == nil {
+		return false
+	}
+	// has global index, should return pid
+	if is.Index.Global {
+		return true
+	}
+	// has embedded limit, should return physical table id
+	if len(is.ByItems) != 0 && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return true
+	}
+	return false
 }
 
 // SplitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
