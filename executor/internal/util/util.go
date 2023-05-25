@@ -41,13 +41,6 @@ func GetApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, dbN
 		// Set a very large approximate count.
 		regionStats.StorageKeys = 1000000
 	})
-	failpoint.Inject("calcSampleRateByStorageCountForAnalyze", func() {
-		// Force the TiDB thinking that there's PD and the count of region is small.
-		err = nil
-		regionStats.Count = 100
-		// Set a very large approximate count.
-		regionStats.StorageKeys = 100000000
-	})
 	if err != nil {
 		return 0, false
 	}
